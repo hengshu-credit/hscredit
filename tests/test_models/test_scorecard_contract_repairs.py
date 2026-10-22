@@ -18,12 +18,7 @@ from hscredit.exceptions import DependencyError, ValidationError
 
 def _fit_simple_scorecard(direction="descending", scorecard_cls=ScoreCard, **kwargs):
     X = pd.DataFrame({"x": np.repeat([0.0, 1.0, 2.0, 3.0], 30)})
-    y = pd.Series(
-        ([0] * 27 + [1] * 3)
-        + ([0] * 21 + [1] * 9)
-        + ([0] * 9 + [1] * 21)
-        + ([0] * 3 + [1] * 27)
-    )
+    y = pd.Series(([0] * 27 + [1] * 3) + ([0] * 21 + [1] * 9) + ([0] * 9 + [1] * 21) + ([0] * 3 + [1] * 27))
     binner = OptimalBinning(method="target_bad_rate", max_n_bins=4, n_jobs=1).fit(X, y)
     card = scorecard_cls(direction=direction, binner=binner, **kwargs)
     card.fit(binner.transform(X, metric="woe"), y, input_type="woe")
@@ -172,11 +167,7 @@ def test_python_deployment_uses_zero_contribution_for_unknown_category():
 def test_python_deployment_preserves_numeric_category_types():
     """防止把数值类别渲染为字符串字面量，导致除默认箱外全部失配。"""
     X = pd.DataFrame({"code": [1] * 60 + [2] * 60 + [3] * 60})
-    y = pd.Series(
-        ([0] * 50 + [1] * 10)
-        + ([0] * 30 + [1] * 30)
-        + ([0] * 10 + [1] * 50)
-    )
+    y = pd.Series(([0] * 50 + [1] * 10) + ([0] * 30 + [1] * 30) + ([0] * 10 + [1] * 50))
     binner = OptimalBinning(
         method="target_bad_rate",
         cat_cutoff=10,
@@ -776,10 +767,7 @@ def test_missing_separate_false_uses_learned_target_bin_in_all_rule_deployments(
     """合并缺失箱必须保留训练时目标箱，而不是在部署端退化为零贡献。"""
     X = pd.DataFrame({"x": np.r_[np.repeat([0.0, 1.0, 2.0, 3.0], 30), [np.nan] * 20]})
     y = pd.Series(
-        (([0] * 27 + [1] * 3)
-        + ([0] * 21 + [1] * 9)
-        + ([0] * 9 + [1] * 21)
-        + ([0] * 3 + [1] * 27))
+        (([0] * 27 + [1] * 3) + ([0] * 21 + [1] * 9) + ([0] * 9 + [1] * 21) + ([0] * 3 + [1] * 27))
         + ([0] * 18 + [1] * 2)
     )
     binner = OptimalBinning(
@@ -840,10 +828,7 @@ def test_round_scorecard_preserves_merged_missing_target_for_ascending_deploymen
     """RoundScoreCard 的合并缺失箱分必须按方向取整后用于规则与部署。"""
     X = pd.DataFrame({"x": np.r_[np.repeat([0.0, 1.0, 2.0, 3.0], 30), [np.nan] * 20]})
     y = pd.Series(
-        (([0] * 27 + [1] * 3)
-        + ([0] * 21 + [1] * 9)
-        + ([0] * 9 + [1] * 21)
-        + ([0] * 3 + [1] * 27))
+        (([0] * 27 + [1] * 3) + ([0] * 21 + [1] * 9) + ([0] * 9 + [1] * 21) + ([0] * 3 + [1] * 27))
         + ([0] * 18 + [1] * 2)
     )
     binner = OptimalBinning(

@@ -11,9 +11,7 @@ from typing import Optional
 from packaging.version import Version
 
 
-def installed_version(
-    import_name: str, distribution_name: Optional[str] = None
-) -> Optional[Version]:
+def installed_version(import_name: str, distribution_name: Optional[str] = None) -> Optional[Version]:
     """返回已安装模块对应发行版的版本，模块不存在时返回 None。"""
     if util.find_spec(import_name) is None:
         return None
@@ -36,9 +34,7 @@ def needs_lightgbm_dask_pandas_compat(
     )
 
 
-def needs_lightgbm_sklearn_compat(
-    lightgbm_version: Optional[Version], sklearn_version: Optional[Version]
-) -> bool:
+def needs_lightgbm_sklearn_compat(lightgbm_version: Optional[Version], sklearn_version: Optional[Version]) -> bool:
     """判断是否需要转换 LightGBM 调用 scikit-learn 的校验参数名。"""
     return (
         lightgbm_version is not None
@@ -58,9 +54,7 @@ def needs_logistic_regression_parallel_compat(sklearn_version: Optional[Version]
     return sklearn_version is not None and Version("1.8") <= sklearn_version < Version("1.10")
 
 
-def needs_seaborn_pandas_compat(
-    seaborn_version: Optional[Version], pandas_version: Optional[Version]
-) -> bool:
+def needs_seaborn_pandas_compat(seaborn_version: Optional[Version], pandas_version: Optional[Version]) -> bool:
     """判断是否需要为旧 Seaborn 恢复已移除的 Pandas 配置项。"""
     return (
         seaborn_version is not None
@@ -85,9 +79,7 @@ def _wrap_lightgbm_validation_keyword(func):
     return wrapper
 
 
-def install_lightgbm_sklearn_compat(
-    lightgbm_module, lightgbm_version, sklearn_version
-) -> None:
+def install_lightgbm_sklearn_compat(lightgbm_module, lightgbm_version, sklearn_version) -> None:
     """按明确版本矩阵适配 LightGBM 内部 scikit-learn 校验调用。"""
     if not needs_lightgbm_sklearn_compat(lightgbm_version, sklearn_version):
         return
@@ -177,9 +169,7 @@ def prepare_dependency(name: str) -> None:
         lightgbm_version = installed_version("lightgbm")
         pandas_version = installed_version("pandas")
         dask_version = installed_version("dask")
-        if needs_lightgbm_dask_pandas_compat(
-            lightgbm_version, pandas_version, dask_version
-        ):
+        if needs_lightgbm_dask_pandas_compat(lightgbm_version, pandas_version, dask_version):
             _install_pandas_string_methods_alias()
         return
 

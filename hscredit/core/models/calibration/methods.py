@@ -112,9 +112,7 @@ class HistogramCalibrator(BaseCalibrator):
             else:
                 mask = (probabilities >= self.bin_edges_[index]) & (probabilities < self.bin_edges_[index + 1])
             self.bin_freqs_[index] = (
-                labels[mask].mean()
-                if mask.any()
-                else (self.bin_edges_[index] + self.bin_edges_[index + 1]) / 2
+                labels[mask].mean() if mask.any() else (self.bin_edges_[index] + self.bin_edges_[index + 1]) / 2
             )
         return self
 

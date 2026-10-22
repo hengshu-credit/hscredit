@@ -25,29 +25,31 @@ def _train_lr_on_woe():
     return scorecard.lr_model_, binner
 
 
-def _train_scorecard(cls=ScoreCard, direction: str = 'descending'):
+def _train_scorecard(cls=ScoreCard, direction: str = "descending"):
     df = germancredit().copy()
-    y = df['class'].astype(int)
-    X = df.drop(columns=['class'])
+    y = df["class"].astype(int)
+    X = df.drop(columns=["class"])
 
-    X_train, _, y_train, _ = train_test_split(
-        X, y, test_size=0.3, random_state=42, stratify=y
-    )
+    X_train, _, y_train, _ = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
 
-    binner = OptimalBinning(method='target_bad_rate', max_n_bins=5)
+    binner = OptimalBinning(method="target_bad_rate", max_n_bins=5)
     binner.fit(X_train, y_train)
 
     scorecard = cls(
-        pdo=60, rate=2, base_odds=35, base_score=750,
-        direction=direction, binner=binner,
+        pdo=60,
+        rate=2,
+        base_odds=35,
+        base_score=750,
+        direction=direction,
+        binner=binner,
     )
-    scorecard.fit(binner.transform(X_train, metric='woe'), y_train, input_type='woe')
+    scorecard.fit(binner.transform(X_train, metric="woe"), y_train, input_type="woe")
     return scorecard, binner
 
 
 def _expected_bin_rows(scorecard) -> int:
     """评分卡规则中所有特征的分箱总数（不含基础分行）."""
-    return sum(len(scorecard.rules_[col]['scores']) for col in scorecard.feature_names_)
+    return sum(len(scorecard.rules_[col]["scores"]) for col in scorecard.feature_names_)
 
 
 def test_fitted_scorecard_points_has_base_plus_all_bins():
@@ -55,18 +57,18 @@ def test_fitted_scorecard_points_has_base_plus_all_bins():
     points = scorecard.scorecard_points()
 
     # 第一行为基础分
-    assert points.iloc[0]['变量名称'] == '基础分'
+    assert points.iloc[0]["变量名称"] == "基础分"
     # 行数 = 1（基础分） + 所有分箱数
     assert len(points) == 1 + _expected_bin_rows(scorecard)
     # 拟合得到的评分卡应当带有 WOE 值
-    assert points['WOE值'].notna().any()
+    assert points["WOE值"].notna().any()
 
 
-@pytest.mark.parametrize('cls', [ScoreCard, RoundScoreCard])
+@pytest.mark.parametrize("cls", [ScoreCard, RoundScoreCard])
 @pytest.mark.parametrize(
-    'method_call',
+    "method_call",
     [
-        lambda card: card.predict(pd.DataFrame({'x': [1.0]})),
+        lambda card: card.predict(pd.DataFrame({"x": [1.0]})),
         lambda card: card.predict_score(proba=[0.1, 0.2]),
         lambda card: card.transform([0.1, 0.2]),
         lambda card: card.scorecard_points(),
@@ -77,71 +79,75 @@ def test_unfitted_scorecard_methods_raise_not_fitted(cls, method_call):
     """ScoreCard 构造期有 A_/B_，不能让 sklearn 默认检查误判为已拟合."""
     card = cls()
 
-    with pytest.raises(NotFittedError, match='尚未拟合'):
+    with pytest.raises(NotFittedError, match="尚未拟合"):
         method_call(card)
 
 
 def test_round_scorecard_rejects_unfitted_source_scorecard():
-    with pytest.raises(NotFittedError, match='尚未拟合'):
+    with pytest.raises(NotFittedError, match="尚未拟合"):
         RoundScoreCard(scorecard=ScoreCard())
 
 
 def test_scorecard_reports_keep_single_bin_for_constant_scores():
     card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
-    card.load({
-        '__meta__': {
-            'intercept_score': 600.0,
-            'base_score': 750,
-            'direction': 'descending',
-            'pdo': 60,
-            'rate': 2,
-            'base_odds': 35,
-            'feature_names': ['x'],
-            'coef': [1.0],
-        },
-        'x': {'[-inf, +inf)': 0.0},
-    })
+    card.load(
+        {
+            "__meta__": {
+                "intercept_score": 600.0,
+                "base_score": 750,
+                "direction": "descending",
+                "pdo": 60,
+                "rate": 2,
+                "base_odds": 35,
+                "feature_names": ["x"],
+                "coef": [1.0],
+            },
+            "x": {"[-inf, +inf)": 0.0},
+        }
+    )
 
     scores = np.array([600.0, 600.0, 600.0])
     y = np.array([0, 1, 0])
 
     bad_rate = card.score_to_bad_rate_table(scores, y, max_n_bins=5)
     assert len(bad_rate) == 1
-    assert bad_rate.loc[0, '评分区间'] == '[600.0000, 600.0000]'
-    assert bad_rate.loc[0, '样本数'] == 3
-    assert bad_rate.loc[0, '坏样本率'] == '33.33%'
+    assert bad_rate.loc[0, "评分区间"] == "[600.0000, 600.0000]"
+    assert bad_rate.loc[0, "样本数"] == 3
+    assert bad_rate.loc[0, "坏样本率"] == "33.33%"
 
     probability = card.score_to_probability_table(scores=scores, y=y, max_n_bins=5)
     assert len(probability) == 1
-    assert probability.loc[0, '评分区间'] == '[600.00, 600.00]'
-    assert probability.loc[0, '样本数'] == 3
-    assert probability.loc[0, '实际逾期率'] == '33.33%'
+    assert probability.loc[0, "评分区间"] == "[600.00, 600.00]"
+    assert probability.loc[0, "样本数"] == 3
+    assert probability.loc[0, "实际逾期率"] == "33.33%"
 
 
 def test_score_to_bad_rate_table_formats_score_intervals_without_float_tail():
     card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
 
-    scores = np.array([
-        316.73240000000004,
-        439.7471,
-        443.4899,
-        445.7066,
-        531.0714,
-        1850.462,
-    ])
+    scores = np.array(
+        [
+            316.73240000000004,
+            439.7471,
+            443.4899,
+            445.7066,
+            531.0714,
+            1850.462,
+        ]
+    )
     y = np.array([1, 0, 1, 0, 0, 1])
 
     bad_rate = card.score_to_bad_rate_table(scores, y, max_n_bins=3)
 
-    assert bad_rate['评分区间'].str.contains('000000').sum() == 0
-    assert bad_rate['评分区间'].str.contains(r'\d+\.\d{5,}', regex=True).sum() == 0
-    assert bad_rate.loc[0, '评分区间'].startswith('(')
+    assert bad_rate["评分区间"].str.contains("000000").sum() == 0
+    assert bad_rate["评分区间"].str.contains(r"\d+\.\d{5,}", regex=True).sum() == 0
+    assert bad_rate.loc[0, "评分区间"].startswith("(")
 
     bad_rate_2 = card.score_to_bad_rate_table(scores, y, max_n_bins=3, score_decimal=2)
-    assert bad_rate_2['评分区间'].str.contains(r'\d+\.\d{3,}', regex=True).sum() == 0
+    assert bad_rate_2["评分区间"].str.contains(r"\d+\.\d{3,}", regex=True).sum() == 0
 
 
-@pytest.mark.parametrize('cls', [ScoreCard, RoundScoreCard])
+@pytest.mark.parametrize("cls", [ScoreCard, RoundScoreCard])
 def test_scorecard_points_preserved_after_export_load(cls, tmp_path):
     """回归：导出 + 加载后 scorecard_points 不丢失分箱行."""
     scorecard, binner = _train_scorecard(cls=cls)
@@ -149,7 +155,7 @@ def test_scorecard_points_preserved_after_export_load(cls, tmp_path):
     fitted_rows = len(fitted_points)
     assert fitted_rows > 1  # 至少包含基础分以外的分箱
 
-    json_path = tmp_path / 'rules.json'
+    json_path = tmp_path / "rules.json"
     scorecard.export(to_json=str(json_path), include_meta=True)
 
     loaded = cls(pdo=60, rate=2, base_odds=35, base_score=750)
@@ -158,43 +164,46 @@ def test_scorecard_points_preserved_after_export_load(cls, tmp_path):
 
     # 关键断言：加载后行数与拟合时一致（历史 bug 会退化为仅 1 行）
     assert len(loaded_points) == fitted_rows
-    assert loaded_points.iloc[0]['变量名称'] == '基础分'
+    assert loaded_points.iloc[0]["变量名称"] == "基础分"
     # 每个特征都应出现在分箱表中
     for col in scorecard.feature_names_:
-        assert (loaded_points['变量名称'] == col).any()
+        assert (loaded_points["变量名称"] == col).any()
 
 
 def test_scorecard_points_with_rules_missing_woe_keeps_all_bins():
     """精确回归：rules_ 中无 'woe' 键时仍输出全部分箱行，WOE 值为空."""
     card = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
     rules = {
-        '__meta__': {
-            'intercept_score': 600.0,
-            'base_score': 750,
-            'direction': 'descending',
-            'pdo': 60, 'rate': 2, 'base_odds': 35,
-            'A': 442.0, 'B': 86.0,
-            'feature_names': ['age', 'amount'],
-            'coef': [0.5, 0.3],
+        "__meta__": {
+            "intercept_score": 600.0,
+            "base_score": 750,
+            "direction": "descending",
+            "pdo": 60,
+            "rate": 2,
+            "base_odds": 35,
+            "A": 442.0,
+            "B": 86.0,
+            "feature_names": ["age", "amount"],
+            "coef": [0.5, 0.3],
         },
-        'age': {'[-inf, 25)': 10.0, '[25, 40)': 20.0, '[40, +inf)': 30.0},
-        'amount': {'[-inf, 1000)': 5.0, '[1000, +inf)': 15.0},
+        "age": {"[-inf, 25)": 10.0, "[25, 40)": 20.0, "[40, +inf)": 30.0},
+        "amount": {"[-inf, 1000)": 5.0, "[1000, +inf)": 15.0},
     }
     card.load(rules)
 
     # 加载得到的规则确实不含 WOE
-    assert 'woe' not in card.rules_['age']
+    assert "woe" not in card.rules_["age"]
 
     points = card.scorecard_points()
     # 1 基础分 + 3（age） + 2（amount） = 6 行
     assert len(points) == 6
-    assert (points['变量名称'] == 'age').sum() == 3
-    assert (points['变量名称'] == 'amount').sum() == 2
+    assert (points["变量名称"] == "age").sum() == 3
+    assert (points["变量名称"] == "amount").sum() == 2
     # 无 WOE 时该列应为空
-    feature_rows = points[points['变量名称'] != '基础分']
-    assert feature_rows['WOE值'].isna().all()
+    feature_rows = points[points["变量名称"] != "基础分"]
+    assert feature_rows["WOE值"].isna().all()
     # 分数应与加载的规则一致
-    age_scores = points[points['变量名称'] == 'age']['对应分数'].tolist()
+    age_scores = points[points["变量名称"] == "age"]["对应分数"].tolist()
     assert age_scores == [10.0, 20.0, 30.0]
 
 
@@ -209,11 +218,11 @@ def test_scorecard_points_lr_model_only_shows_all_features():
 
     # 历史 bug：只返回 1 行（基础分）。修复后应为 基础分 + 每个特征一行回退规则
     assert len(points) == 1 + n_features
-    assert points.iloc[0]['变量名称'] == '基础分'
-    feature_rows = points[points['变量名称'] != '基础分']
+    assert points.iloc[0]["变量名称"] == "基础分"
+    feature_rows = points[points["变量名称"] != "基础分"]
     assert len(feature_rows) == n_features
     # 无分箱信息时，分箱标签标注为「每单位WOE(系数=...)」
-    assert feature_rows['变量分箱'].str.contains('每单位WOE').all()
+    assert feature_rows["变量分箱"].str.contains("每单位WOE").all()
 
 
 def test_scorecard_points_lr_model_with_binner_recovers_real_bins():
@@ -226,10 +235,10 @@ def test_scorecard_points_lr_model_with_binner_recovers_real_bins():
 
     # 每个特征都应有多个分箱（远多于回退的 1 行/特征）
     assert len(points) > 1 + n_features
-    feature_rows = points[points['变量名称'] != '基础分']
+    feature_rows = points[points["变量名称"] != "基础分"]
     # 出现真实区间标签（含区间括号），而非回退标签
-    assert feature_rows['变量分箱'].str.contains(r'[\[(]').any()
-    assert not feature_rows['变量分箱'].str.contains('每单位WOE').any()
+    assert feature_rows["变量分箱"].str.contains(r"[\[(]").any()
+    assert not feature_rows["变量分箱"].str.contains("每单位WOE").any()
 
 
 def test_scorecard_scale_includes_formula_matching_score_formula():
@@ -238,26 +247,26 @@ def test_scorecard_scale_includes_formula_matching_score_formula():
     card = ScoreCard(lr_model=lr, binner=binner, base_score=600, pdo=20)
 
     scale = card.scorecard_scale()
-    assert 'formula' in scale['刻度项'].values
-    assert 'direction' in scale['刻度项'].values
+    assert "formula" in scale["刻度项"].values
+    assert "direction" in scale["刻度项"].values
 
-    formula_value = scale.loc[scale['刻度项'] == 'formula', '刻度值'].iloc[0]
+    formula_value = scale.loc[scale["刻度项"] == "formula", "刻度值"].iloc[0]
     info = card.score_formula()
-    assert formula_value == info['公式']
-    assert 'ln(odds)' in formula_value
+    assert formula_value == info["公式"]
+    assert "ln(odds)" in formula_value
 
-    scale_map = scale.set_index('刻度项')['刻度值']
-    assert scale_map['B'] == card.B_
-    assert scale_map['A'] == card.A_
-    assert scale_map['direction'] == '越大越好'
+    scale_map = scale.set_index("刻度项")["刻度值"]
+    assert scale_map["B"] == card.B_
+    assert scale_map["A"] == card.A_
+    assert scale_map["direction"] == "越大越好"
 
     ascending_card = ScoreCard(
         lr_model=lr,
         binner=binner,
         base_score=600,
         pdo=20,
-        direction='ascending',
+        direction="ascending",
     )
     ascending_scale = ascending_card.scorecard_scale()
-    ascending_scale_map = ascending_scale.set_index('刻度项')['刻度值']
-    assert ascending_scale_map['direction'] == '越小越好'
+    ascending_scale_map = ascending_scale.set_index("刻度项")["刻度值"]
+    assert ascending_scale_map["direction"] == "越小越好"

@@ -75,8 +75,8 @@ class QuantileEncoder(BaseEncoder):
         quantile: float = 0.5,
         smoothing: float = 1.0,
         m: float = 1.0,
-        handle_unknown: str = 'value',
-        handle_missing: str = 'value',
+        handle_unknown: str = "value",
+        handle_missing: str = "value",
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
@@ -140,20 +140,18 @@ class QuantileEncoder(BaseEncoder):
             category_quantile = category_y.quantile(self.quantile)
             n = len(category_y)
 
-            smoothed_quantile = (
-                n * category_quantile + self.m * self.global_quantile_
-            ) / (n + self.m)
+            smoothed_quantile = (n * category_quantile + self.m * self.global_quantile_) / (n + self.m)
 
             mapping[category] = smoothed_quantile
 
-        if self.handle_missing == 'value':
+        if self.handle_missing == "value":
             mapping[MISSING] = self.global_quantile_
-        elif self.handle_missing == 'return_nan':
+        elif self.handle_missing == "return_nan":
             mapping[MISSING] = np.nan
 
-        if self.handle_unknown == 'value':
+        if self.handle_unknown == "value":
             mapping[UNKNOWN] = self.global_quantile_
-        elif self.handle_unknown == 'return_nan':
+        elif self.handle_unknown == "return_nan":
             mapping[UNKNOWN] = np.nan
 
         return {"mapping_": mapping}

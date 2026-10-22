@@ -23,8 +23,7 @@ _DATABASE_TEST_ENVIRONMENTS = frozenset(
     }
 )
 _ALLOWED_DATABASE_SKIP_REASONS = frozenset(
-    f"未配置 {environment_variable}"
-    for environment_variable in _DATABASE_TEST_ENVIRONMENTS
+    f"未配置 {environment_variable}" for environment_variable in _DATABASE_TEST_ENVIRONMENTS
 )
 
 # 工作簿存在时不排除任何测试模块。
@@ -56,12 +55,7 @@ def pypmml_model():
 
     py4j_jar = java_gateway.find_jar_path()
     if not py4j_jar:
-        user_jar = (
-            Path(site.USER_BASE)
-            / "share"
-            / "py4j"
-            / f"py4j{py4j.__version__}.jar"
-        )
+        user_jar = Path(site.USER_BASE) / "share" / "py4j" / f"py4j{py4j.__version__}.jar"
         if user_jar.exists():
             py4j_jar = str(user_jar)
             java_gateway.find_jar_path = lambda: py4j_jar

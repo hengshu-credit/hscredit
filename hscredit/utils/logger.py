@@ -34,26 +34,26 @@ def init_logger(
     >>> logger.info("模型训练开始")
     """
     logger = logging.getLogger(name)
-    
+
     # 避免重复添加 handler
     if logger.handlers:
         return logger
-    
+
     logger.setLevel(level)
-    
+
     # 默认格式
     if format is None:
         format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    
+
     formatter = logging.Formatter(format)
-    
+
     # 控制台输出
     if console:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
-    
+
     # 文件输出
     if log_file:
         log_dir = os.path.dirname(log_file)
@@ -63,7 +63,7 @@ def init_logger(
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    
+
     return logger
 
 

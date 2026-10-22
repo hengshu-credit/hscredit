@@ -11,7 +11,6 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
 
-
 FONT_NAME = "Alimama FangYuanTi VF"
 EXCEL_FONT_NAME = "阿里妈妈方圆体 VF Medium"
 FALLBACK_FONT_NAME = "楷体"

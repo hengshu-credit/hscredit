@@ -91,7 +91,9 @@ def test_plot_model_sample_shap_stacks_force_and_full_waterfall(sample_shap_inpu
     assert {text.get_text() for text in waterfall_ax.texts} >= {"+0.4000", "+0.2000", "−0.3000", "−0.1000"}
     assert any("1.1235 = 年龄" in text for text in ytick_text)
     assert any("0.6" in tick.get_text() for ax in fig.axes for tick in ax.get_xticklabels())
-    auxiliary_tick_text = [tick.get_text() for axis in fig.axes if axis not in {force_ax, waterfall_ax} for tick in axis.get_xticklabels()]
+    auxiliary_tick_text = [
+        tick.get_text() for axis in fig.axes if axis not in {force_ax, waterfall_ax} for tick in axis.get_xticklabels()
+    ]
     assert any("0.6000" in text for text in auxiliary_tick_text)
     assert any("0.8000" in text for text in auxiliary_tick_text)
     np.testing.assert_allclose(fig.get_size_inches(), [14.0, 10.0])
@@ -137,7 +139,9 @@ def test_native_force_labels_do_not_overlap_figure_title(sample_shap_inputs):
     renderer = fig.canvas.get_renderer()
     force_ax = next(ax for ax in fig.axes if ax.get_label() == "SHAP力图")
     title_box = fig._suptitle.get_window_extent(renderer)
-    native_top_texts = [text for text in force_ax.texts if text.get_text() in {"base value", "higher", "lower", "output value"}]
+    native_top_texts = [
+        text for text in force_ax.texts if text.get_text() in {"base value", "higher", "lower", "output value"}
+    ]
     assert not any(title_box.overlaps(text.get_window_extent(renderer)) for text in native_top_texts)
     plt.close(fig)
 
@@ -315,7 +319,9 @@ def test_force_labels_do_not_overlap_when_long_feature_count_grows(sample_shap_i
     feature_boxes = [text.get_window_extent(renderer) for text in force_ax.texts if " = " in text.get_text()]
     solid_bar_bottom = max(patch.get_window_extent(renderer).y0 for patch in force_ax.patches)
     assert max(box.y1 for box in feature_boxes) <= solid_bar_bottom
-    assert not any(first.overlaps(second) for index, first in enumerate(feature_boxes) for second in feature_boxes[index + 1 :])
+    assert not any(
+        first.overlaps(second) for index, first in enumerate(feature_boxes) for second in feature_boxes[index + 1 :]
+    )
     plt.close(fig)
 
 
@@ -355,7 +361,9 @@ def test_force_and_waterfall_bar_height_stays_balanced_for_different_feature_cou
         force_ax = next(ax for ax in figure.axes if ax.get_label() == "SHAP力图")
         waterfall_ax = next(ax for ax in figure.axes if ax.get_label() == "SHAP瀑布图")
         force_height = float(np.median([patch.get_window_extent(renderer).height for patch in force_ax.patches]))
-        waterfall_height = float(np.median([patch.get_window_extent(renderer).height for patch in waterfall_ax.patches]))
+        waterfall_height = float(
+            np.median([patch.get_window_extent(renderer).height for patch in waterfall_ax.patches])
+        )
         return force_height / waterfall_height
 
     assert 0.8 <= bar_height_ratio(short_fig) <= 1.25
@@ -423,13 +431,23 @@ def test_force_long_feature_labels_wrap_without_rotation_or_overlap(sample_shap_
     force_ax = next(ax for ax in fig.axes if ax.get_label() == "SHAP力图")
     native_labels = {text.get_text() for text in force_ax.texts}
     assert {"base value", "higher", "lower", "output value"} <= native_labels
-    native_top_texts = [text for text in force_ax.texts if text.get_text() in {"base value", "higher", "lower", "output value"}]
-    assert all(0 <= text.get_window_extent(renderer).x0 and text.get_window_extent(renderer).x1 <= canvas_width and 0 <= text.get_window_extent(renderer).y0 and text.get_window_extent(renderer).y1 <= canvas_height for text in native_top_texts)
+    native_top_texts = [
+        text for text in force_ax.texts if text.get_text() in {"base value", "higher", "lower", "output value"}
+    ]
+    assert all(
+        0 <= text.get_window_extent(renderer).x0
+        and text.get_window_extent(renderer).x1 <= canvas_width
+        and 0 <= text.get_window_extent(renderer).y0
+        and text.get_window_extent(renderer).y1 <= canvas_height
+        for text in native_top_texts
+    )
     feature_texts = [text for text in force_ax.texts if " = " in text.get_text()]
     rendered_feature_names = {text.get_text().split(" = ", maxsplit=1)[0].replace("\n", "") for text in feature_texts}
     assert set(long_names) <= rendered_feature_names
     feature_boxes = [text.get_window_extent(renderer) for text in feature_texts]
-    assert not any(first.overlaps(second) for index, first in enumerate(feature_boxes) for second in feature_boxes[index + 1 :])
+    assert not any(
+        first.overlaps(second) for index, first in enumerate(feature_boxes) for second in feature_boxes[index + 1 :]
+    )
     assert not any(np.asarray(image.get_array()).ndim == 3 for image in force_ax.images)
     waterfall_ax = next(ax for ax in fig.axes if ax.get_label() == "SHAP瀑布图")
     waterfall_text = " ".join(tick.get_text() for tick in waterfall_ax.get_yticklabels())

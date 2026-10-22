@@ -18,10 +18,11 @@ from ...utils.overdue import make_overdue_target, overdue_label, validate_overdu
 from .utils import validate_dataframe
 
 
-def _build_overdue_labels(overdue: Union[str, List[str]],
-                          dpds: Union[int, List[int]], overdue_operator: str = ">") -> List[Tuple[str, int, str]]:
+def _build_overdue_labels(
+    overdue: Union[str, List[str]], dpds: Union[int, List[int]], overdue_operator: str = ">"
+) -> List[Tuple[str, int, str]]:
     """构建逾期标签列表.
-    
+
     :param overdue: 逾期天数字段名或列表
     :param dpds: 逾期天数或列表
     :return: 标签列表 [(标签名, dpd天数, 逾期字段), ...]
@@ -42,13 +43,11 @@ def _build_overdue_labels(overdue: Union[str, List[str]],
     return labels
 
 
-def _create_binary_target(df: pd.DataFrame,
-                          overdue_col: str,
-                          dpd: int,
-                          del_grey: bool = False,
-    overdue_operator: str = ">") -> pd.Series:
+def _create_binary_target(
+    df: pd.DataFrame, overdue_col: str, dpd: int, del_grey: bool = False, overdue_operator: str = ">"
+) -> pd.Series:
     """根据逾期天数创建二元目标变量.
-    
+
     :param df: 输入数据
     :param overdue_col: 逾期天数字段名
     :param dpd: 逾期定义天数
@@ -62,11 +61,11 @@ def _create_binary_target(df: pd.DataFrame,
 
 def target_distribution(df: pd.DataFrame, target: str) -> pd.DataFrame:
     """目标变量分布统计.
-    
+
     :param df: 输入数据
     :param target: 目标变量列名
     :return: 目标分布DataFrame，列包括[类别, 样本数, 占比, 累计占比]
-    
+
     **参考样例**
 
     >>> dist = target_distribution(df, 'fpd15')
@@ -81,8 +80,14 @@ def target_distribution(df: pd.DataFrame, target: str) -> pd.DataFrame:
     for name, values in targets.y_map(frame).items():
         counts = values.value_counts().sort_index()
         ratios = counts / counts.sum() * 100
-        results[name] = pd.DataFrame({"类别": counts.index, "样本数": counts.values,
-                                      "占比(%)": ratios.round(2).values, "累计占比(%)": ratios.cumsum().round(2).values})
+        results[name] = pd.DataFrame(
+            {
+                "类别": counts.index,
+                "样本数": counts.values,
+                "占比(%)": ratios.round(2).values,
+                "累计占比(%)": ratios.cumsum().round(2).values,
+            }
+        )
     return results if len(results) > 1 else next(iter(results.values()))
 
 
@@ -93,12 +98,12 @@ def bad_rate_overall(
     dpds: Optional[Union[int, List[int]]] = None,
     del_grey: bool = False,
     *,
-    overdue_operator: str = ">"
+    overdue_operator: str = ">",
 ) -> Union[Dict, pd.DataFrame]:
     """计算整体逾期率.
-    
+
     支持单标签分析（通过target）或多标签分析（通过overdue+dpds）。
-    
+
     :param df: 输入数据
     :param target: 目标变量列名（单标签模式）
     :param overdue: 逾期天数字段名或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
@@ -106,7 +111,7 @@ def bad_rate_overall(
         - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :return: 单标签返回字典，多标签返回DataFrame
-    
+
     **参考样例**
 
     >>> # 单标签分析
@@ -133,8 +138,15 @@ def bad_rate_overall(
     for name, values in targets.y_map(frame, "plain").items():
         valid = values.dropna()
         total, bad = len(valid), int(valid.sum())
-        rows.append({"标签": name, "样本总数": total, "好样本数": total - bad,
-                     "坏样本数": bad, "逾期率(%)": round(bad / total * 100, 2) if total else np.nan})
+        rows.append(
+            {
+                "标签": name,
+                "样本总数": total,
+                "好样本数": total - bad,
+                "坏样本数": bad,
+                "逾期率(%)": round(bad / total * 100, 2) if total else np.nan,
+            }
+        )
     if targets.mode == "target" and not targets.explicit_multi and len(targets) == 1:
         return {key: value for key, value in rows[0].items() if key != "标签"}
     return pd.DataFrame(rows)
@@ -150,12 +162,12 @@ def bad_rate_by_dimension(
     sort_by: str = "bad_rate",
     *,
     segment_col: Optional[str] = None,
-    overdue_operator: str = ">"
+    overdue_operator: str = ">",
 ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """分维度逾期率分析.
-    
+
     支持单标签或多标签分析。
-    
+
     :param df: 输入数据
     :param dim_col: 维度列名（如渠道、产品类型）
     :param target: 目标变量列名（单标签模式）
@@ -164,7 +176,7 @@ def bad_rate_by_dimension(
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
     :param sort_by: 排序方式，'bad_rate'或'count'
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
-    
+
     **参考样例**
 
     >>> # 单标签
@@ -198,7 +210,7 @@ def bad_rate_by_dimension(
     return results if len(results) > 1 else next(iter(results.values()))
 
 
-@analysis_inputs('df', roles=('date',))
+@analysis_inputs("df", roles=("date",))
 def bad_rate_trend(
     df: pd.DataFrame,
     date: str,
@@ -209,12 +221,12 @@ def bad_rate_trend(
     freq: str = "M",
     dimensions: Optional[List[str]] = None,
     *,
-    overdue_operator: str = ">"
+    overdue_operator: str = ">",
 ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """逾期率时间趋势分析.
-    
+
     支持单标签或多标签分析。
-    
+
     :param df: 输入数据
     :param date: 日期列名
     :param target: 目标变量列名（单标签模式）
@@ -224,7 +236,7 @@ def bad_rate_trend(
     :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季度
     :param dimensions: 分维度分析列表
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
-    
+
     **参考样例**
 
     >>> # 单标签
@@ -265,12 +277,12 @@ def bad_rate_by_bins(
     max_n_bins: int = 10,
     method: str = "quantile",
     *,
-    overdue_operator: str = ">"
+    overdue_operator: str = ">",
 ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """评分分箱逾期率分析.
-    
+
     支持单标签或多标签分析。
-    
+
     :param df: 输入数据
     :param feature: 评分列名
     :param target: 目标变量列名（单标签模式）
@@ -280,7 +292,7 @@ def bad_rate_by_bins(
     :param max_n_bins: 分箱数
     :param method: 分箱方法，'quantile'等频/'uniform'等距
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
-    
+
     **参考样例**
 
     >>> # 单标签
@@ -300,7 +312,11 @@ def bad_rate_by_bins(
     frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
     if frame[feature].notna().sum() == 0:
         return pd.DataFrame()
-    bins = pd.qcut(frame[feature], q=max_n_bins, duplicates="drop") if method == "quantile" else pd.cut(frame[feature], bins=max_n_bins)
+    bins = (
+        pd.qcut(frame[feature], q=max_n_bins, duplicates="drop")
+        if method == "quantile"
+        else pd.cut(frame[feature], bins=max_n_bins)
+    )
     results = {}
     for name, values in targets.y_map(frame, "plain").items():
         grouped = values.groupby(bins, observed=False).agg(["count", "sum", "mean"]).reset_index()
@@ -311,22 +327,24 @@ def bad_rate_by_bins(
         grouped["样本占比(%)"] = (grouped["样本数"] / total * 100).round(2) if total else np.nan
         grouped["提升度"] = (grouped["逾期率"] / values.mean()).round(4)
         grouped["分箱"] = range(1, len(grouped) + 1)
-        results[name] = grouped[["分箱", "分箱区间", "样本数", "好样本数", "坏样本数", "逾期率(%)", "样本占比(%)", "提升度"]]
+        results[name] = grouped[
+            ["分箱", "分箱区间", "样本数", "好样本数", "坏样本数", "逾期率(%)", "样本占比(%)", "提升度"]
+        ]
     return results if len(results) > 1 else next(iter(results.values()))
 
 
-@analysis_inputs('df', roles=('date',))
+@analysis_inputs("df", roles=("date",))
 def sample_distribution(
     df: pd.DataFrame, date: str, freq: str = "M", target: Optional[TargetInput] = None
 ) -> pd.DataFrame:
     """样本时间分布分析.
-    
+
     :param df: 输入数据
     :param date: 日期列名
     :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :param target: 目标变量列名（如有）
     :return: 样本分布DataFrame
-    
+
     **参考样例**
 
     >>> dist = sample_distribution(df, 'apply_date', target='fpd15')
@@ -341,6 +359,7 @@ def sample_distribution(
             table = table.drop(columns=["环比变化(%)"]).copy()
             table["样本环比(%)"] = (table["样本数"].pct_change() * 100).round(2)
             return table
+
         return {name: convert(table) for name, table in result.items()} if isinstance(result, dict) else convert(result)
     dates = pd.to_datetime(df[date])
     periods = date_groups(dates, freq)

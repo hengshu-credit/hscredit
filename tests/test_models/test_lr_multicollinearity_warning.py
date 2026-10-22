@@ -3,12 +3,14 @@
 
 import sys
 import os
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 hscredit_pkg = os.path.dirname(script_dir)
 sys.path.insert(0, hscredit_pkg)
 
 # 确保显示所有警告
 import warnings
+
 warnings.simplefilter("always")
 
 from hscredit.core.models import LogisticRegression
@@ -26,7 +28,7 @@ X = np.column_stack([X, X[:, 0]])  # 第4列与第1列完全相同
 y = np.random.randint(0, 2, 100)
 
 try:
-    model = LogisticRegression(penalty='l2', C=1.0, max_iter=100, random_state=42)
+    model = LogisticRegression(penalty="l2", C=1.0, max_iter=100, random_state=42)
     model.fit(X, y)
     print(f"✓ 模型训练成功")
     print(f"  VIF: {model.vif_}")
@@ -42,7 +44,7 @@ X = np.column_stack([X, X[:, 0] + np.random.randn(100) * 0.01])
 y = np.random.randint(0, 2, 100)
 
 try:
-    model = LogisticRegression(penalty='l2', C=1.0, max_iter=100, random_state=42)
+    model = LogisticRegression(penalty="l2", C=1.0, max_iter=100, random_state=42)
     model.fit(X, y)
     print(f"✓ 模型训练成功")
     print(f"  VIF: {model.vif_}")

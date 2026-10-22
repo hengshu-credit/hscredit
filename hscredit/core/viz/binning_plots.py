@@ -29,11 +29,19 @@ from typing import Union, Optional, List, Dict, Any
 
 from ...utils.overdue import validate_overdue_operator
 from .utils import (
-    DEFAULT_COLORS, setup_axis_style, save_figure,
+    DEFAULT_COLORS,
+    setup_axis_style,
+    save_figure,
     format_bin_label,
-    BAD_RATE_COLOR, REFERENCE_COLOR, EXTENDED_COLORS, get_series_colors,
-    make_colormap, make_diverging_cmap, _layout_top_center_legend,
-    _create_subplots, _tight_layout,
+    BAD_RATE_COLOR,
+    REFERENCE_COLOR,
+    EXTENDED_COLORS,
+    get_series_colors,
+    make_colormap,
+    make_diverging_cmap,
+    _layout_top_center_legend,
+    _create_subplots,
+    _tight_layout,
 )
 from ..._lazy import LazyModule
 from ..._compat import normalize_seaborn_inf
@@ -56,28 +64,28 @@ def _is_feature_table(data):
     if not isinstance(data, pd.DataFrame):
         return False
     # 必须包含样本统计列
-    stat_cols = ['好样本数', '坏样本数', '样本总数', '坏样本率']
+    stat_cols = ["好样本数", "坏样本数", "样本总数", "坏样本率"]
     if not all(col in data.columns for col in stat_cols):
         return False
     # 分箱标识列：'分箱' 或 '分箱标签' 至少有一个
-    return '分箱' in data.columns or '分箱标签' in data.columns
+    return "分箱" in data.columns or "分箱标签" in data.columns
 
 
 def _compute_bin_stats_from_raw_data(
     data: Union[pd.DataFrame, pd.Series],
     target: Union[str, pd.Series, np.ndarray],
     feature: Optional[str] = None,
-    method: str = 'quantile',
+    method: str = "quantile",
     max_n_bins: int = 10,
     min_bin_size: float = 0.01,
     rules: Optional[List] = None,
-    **kwargs
+    **kwargs,
 ) -> pd.DataFrame:
     """从原始数据计算分箱统计表
-    
+
     此函数基于hscredit.core.binning.OptimalBinning进行分箱，
     使用hscredit.core.metrics.compute_bin_stats计算分箱统计。
-    
+
     :param data: 特征数据（DataFrame 或 Series）
     :param target: 目标变量（列名或数据）
     :param feature: 特征列名（当 data 为 DataFrame 时需要）
@@ -101,15 +109,15 @@ def _compute_bin_stats_from_raw_data(
     if isinstance(data, pd.Series):
         X = data.copy()
         if feature is None:
-            feature = data.name if data.name else 'feature'
+            feature = data.name if data.name else "feature"
     elif isinstance(data, pd.DataFrame):
         if feature is None:
             feature = data.columns[0]
         X = data[feature].copy()
     else:
         X = pd.Series(data)
-        feature = 'feature'
-    
+        feature = "feature"
+
     # 处理目标变量
     if isinstance(target, str):
         if isinstance(data, pd.DataFrame) and target in data.columns:
@@ -120,105 +128,98 @@ def _compute_bin_stats_from_raw_data(
         target_values = np.asarray(target)
         if target_values.ndim != 1:
             raise ValueError("target 必须是一维 Series 或数组")
-        y = pd.Series(target_values, index=X.index, name='target')
+        y = pd.Series(target_values, index=X.index, name="target")
     else:
         raise ValueError("target 必须是列名、Series 或数组")
-    
+
     # 确保数据长度一致
     if len(X) != len(y):
         raise ValueError(f"特征数据长度 ({len(X)}) 与目标变量长度 ({len(y)}) 不一致")
-    
+
     # 目标缺失无法参与监督统计；特征缺失由分箱器保留为独立缺失箱。
     valid_mask = ~pd.isna(y)
     X_valid = X[valid_mask]
     y_valid = y[valid_mask]
-    
+
     if len(X_valid) == 0:
         raise ValueError("没有有效数据（全部为缺失值）")
-    
+
     # 构建DataFrame
-    df = pd.DataFrame({
-        feature: X_valid.to_numpy(),
-        'target': y_valid.to_numpy(),
-    })
-    
+    df = pd.DataFrame(
+        {
+            feature: X_valid.to_numpy(),
+            "target": y_valid.to_numpy(),
+        }
+    )
+
     # 使用OptimalBinning进行分箱
     from ..binning import OptimalBinning
-    
+
     if rules is not None:
         # 使用自定义分箱规则
         binner = OptimalBinning(
-            user_splits={feature: rules},
-            max_n_bins=max_n_bins,
-            min_bin_size=min_bin_size,
-            verbose=False,
-            **kwargs
+            user_splits={feature: rules}, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs
         )
     else:
         binner = OptimalBinning(
-            method=method,
-            max_n_bins=max_n_bins,
-            min_bin_size=min_bin_size,
-            verbose=False,
-            **kwargs
+            method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs
         )
-    
-    binner.fit(df[[feature]], df['target'])
-    
+
+    binner.fit(df[[feature]], df["target"])
+
     # 应用分箱获取分箱索引
-    bin_indices = binner.transform(df[[feature]], metric='indices').values.flatten()
-    
+    bin_indices = binner.transform(df[[feature]], metric="indices").values.flatten()
+
     # 获取分箱标签
     bin_labels = None
     if feature in binner.bin_tables_:
         bin_table = binner.bin_tables_[feature]
-        if '分箱' in bin_table.columns and '分箱标签' in bin_table.columns:
+        if "分箱" in bin_table.columns and "分箱标签" in bin_table.columns:
             label_by_bin = {}
             for _, bin_row in bin_table.iterrows():
-                bin_id = int(bin_row['分箱'])
+                bin_id = int(bin_row["分箱"])
                 if bin_id == -1:
-                    label = '缺失值'
+                    label = "缺失值"
                 elif bin_id == -2:
-                    label = '特殊值'
+                    label = "特殊值"
                 else:
-                    label = bin_row['分箱标签']
+                    label = bin_row["分箱标签"]
                 label_by_bin[bin_id] = label
-            bin_labels = [
-                label_by_bin.get(int(bin_id), f'分箱_{int(bin_id)}')
-                for bin_id in np.unique(bin_indices)
-            ]
-    
+            bin_labels = [label_by_bin.get(int(bin_id), f"分箱_{int(bin_id)}") for bin_id in np.unique(bin_indices)]
+
     # 使用统一的compute_bin_stats计算分箱统计
     stats_df = compute_bin_stats(bin_indices, y_valid.values, bin_labels=bin_labels, round_digits=False)
-    
+
     # 构建结果DataFrame（兼容viz模块的期望格式）
     results = []
     for _, row in stats_df.iterrows():
         # 获取分箱标签
-        if '分箱标签' in row and pd.notna(row['分箱标签']):
-            label = row['分箱标签']
+        if "分箱标签" in row and pd.notna(row["分箱标签"]):
+            label = row["分箱标签"]
         else:
-            bin_id = int(row['分箱'])
+            bin_id = int(row["分箱"])
             if bin_id == -1:
                 label = "缺失值"
             elif bin_id == -2:
                 label = "特殊值"
             else:
                 label = f"分箱_{bin_id}"
-        
-        results.append({
-            '分箱': label,
-            '分箱标签': label,
-            '样本总数': int(row['样本总数']),
-            '好样本数': int(row['好样本数']),
-            '坏样本数': int(row['坏样本数']),
-            '坏样本率': row['坏样本率'],
-            '样本占比': row['样本占比'],
-            '指标IV值': row.get('指标IV值', np.nan),
-            '分档KS值': row.get('分档KS值', np.nan),
-            'LIFT值': row.get('LIFT值', np.nan),
-        })
-    
+
+        results.append(
+            {
+                "分箱": label,
+                "分箱标签": label,
+                "样本总数": int(row["样本总数"]),
+                "好样本数": int(row["好样本数"]),
+                "坏样本数": int(row["坏样本数"]),
+                "坏样本率": row["坏样本率"],
+                "样本占比": row["样本占比"],
+                "指标IV值": row.get("指标IV值", np.nan),
+                "分档KS值": row.get("分档KS值", np.nan),
+                "LIFT值": row.get("LIFT值", np.nan),
+            }
+        )
+
     return pd.DataFrame(results)
 
 
@@ -227,7 +228,7 @@ def _is_missing_bin_label(label: Any) -> bool:
     if pd.isna(label):
         return True
     text = str(label).strip().lower()
-    return text in {'missing', 'nan', 'none', 'null', '缺失', '缺失值'}
+    return text in {"missing", "nan", "none", "null", "缺失", "缺失值"}
 
 
 def _is_special_bin_label(label: Any) -> bool:
@@ -235,20 +236,20 @@ def _is_special_bin_label(label: Any) -> bool:
     if pd.isna(label):
         return False
     text = str(label).strip().lower()
-    return text in {'special', '特殊', '特殊值'}
+    return text in {"special", "特殊", "特殊值"}
 
 
 def _is_total_bin_label(label: Any) -> bool:
     """判断是否为分箱表合计标签。"""
     if pd.isna(label):
         return False
-    return str(label).strip() == '合计'
+    return str(label).strip() == "合计"
 
 
 def _exclude_total_bin_rows(feature_table: pd.DataFrame) -> pd.DataFrame:
     """排除分箱表中的合计行。"""
     total_mask = pd.Series(False, index=feature_table.index)
-    for label_col in ('分箱', '分箱标签'):
+    for label_col in ("分箱", "分箱标签"):
         if label_col in feature_table.columns:
             total_mask |= feature_table[label_col].apply(_is_total_bin_label)
     return feature_table.loc[~total_mask].copy()
@@ -261,12 +262,12 @@ def _is_interval_like_label(label: Any) -> bool:
     text = str(label).strip()
     if _is_missing_bin_label(text):
         return False
-    return bool(re.match(r'^[\(\[].*,.*[\)\]]$', text))
+    return bool(re.match(r"^[\(\[].*,.*[\)\]]$", text))
 
 
 def _infer_numeric_feature_table(feature_table: pd.DataFrame) -> bool:
     """根据分箱标签粗略判断是否为数值型特征分箱表。"""
-    label_col = '分箱标签' if '分箱标签' in feature_table.columns else '分箱'
+    label_col = "分箱标签" if "分箱标签" in feature_table.columns else "分箱"
     labels = feature_table[label_col].dropna() if label_col in feature_table.columns else pd.Series(dtype=object)
     labels = labels[~labels.apply(_is_missing_bin_label)]
     if labels.empty:
@@ -277,44 +278,43 @@ def _infer_numeric_feature_table(feature_table: pd.DataFrame) -> bool:
 
 def _detect_bad_rate_trend(feature_table: pd.DataFrame) -> str:
     """判断坏样本率趋势，排除缺失值和特殊值分箱。"""
-    if '坏样本率' not in feature_table.columns:
-        return '未知'
+    if "坏样本率" not in feature_table.columns:
+        return "未知"
 
     working = feature_table.copy()
 
     # 通过分箱索引排除缺失值(-1)和特殊值(-2)分箱
-    if '分箱' in working.columns:
-        bin_idx = pd.to_numeric(working['分箱'], errors='coerce')
+    if "分箱" in working.columns:
+        bin_idx = pd.to_numeric(working["分箱"], errors="coerce")
         working = working[bin_idx.isna() | (bin_idx >= 0)]
 
     # 通过标签排除缺失值和特殊值分箱
-    label_col = '分箱标签' if '分箱标签' in working.columns else '分箱'
+    label_col = "分箱标签" if "分箱标签" in working.columns else "分箱"
     if label_col in working.columns:
         working = working[
-            ~working[label_col].apply(_is_missing_bin_label)
-            & ~working[label_col].apply(_is_special_bin_label)
+            ~working[label_col].apply(_is_missing_bin_label) & ~working[label_col].apply(_is_special_bin_label)
         ]
 
-    rates = pd.to_numeric(working['坏样本率'], errors='coerce').dropna().to_numpy()
+    rates = pd.to_numeric(working["坏样本率"], errors="coerce").dropna().to_numpy()
     if len(rates) <= 1:
-        return '未知'
+        return "未知"
 
     diffs = np.diff(rates)
     tol = 1e-6
     diffs = diffs[np.abs(diffs) > tol]
     if len(diffs) == 0:
-        return '平稳'
+        return "平稳"
     if np.all(diffs >= 0):
-        return '上升'
+        return "上升"
     if np.all(diffs <= 0):
-        return '下降'
+        return "下降"
 
     signs = np.sign(diffs)
     non_zero = signs[signs != 0]
     sign_changes = 0 if len(non_zero) <= 1 else int(np.sum(non_zero[1:] != non_zero[:-1]))
     if sign_changes == 1:
-        return 'U型' if non_zero[0] < 0 < non_zero[-1] else '倒U型'
-    return '波动'
+        return "U型" if non_zero[0] < 0 < non_zero[-1] else "倒U型"
+    return "波动"
 
 
 def _build_bin_metric_summary(feature_table: pd.DataFrame, per_row: int = 2) -> str:
@@ -325,34 +325,34 @@ def _build_bin_metric_summary(feature_table: pd.DataFrame, per_row: int = 2) -> 
     """
     items = []
 
-    if '指标IV值' in feature_table.columns:
-        iv_values = pd.to_numeric(feature_table['指标IV值'], errors='coerce').dropna()
+    if "指标IV值" in feature_table.columns:
+        iv_values = pd.to_numeric(feature_table["指标IV值"], errors="coerce").dropna()
         if not iv_values.empty:
             items.append(f"IV {iv_values.iloc[-1]:.4f}")
 
-    if _infer_numeric_feature_table(feature_table) and '分档KS值' in feature_table.columns:
-        ks_values = pd.to_numeric(feature_table['分档KS值'], errors='coerce').dropna()
+    if _infer_numeric_feature_table(feature_table) and "分档KS值" in feature_table.columns:
+        ks_values = pd.to_numeric(feature_table["分档KS值"], errors="coerce").dropna()
         if not ks_values.empty:
             items.append(f"KS {ks_values.max():.4f}")
 
-    if 'LIFT值' in feature_table.columns:
-        lift_values = pd.to_numeric(feature_table['LIFT值'], errors='coerce').dropna()
+    if "LIFT值" in feature_table.columns:
+        lift_values = pd.to_numeric(feature_table["LIFT值"], errors="coerce").dropna()
         if not lift_values.empty:
             items.append(f"LIFT {lift_values.min():.2f}~{lift_values.max():.2f}")
 
     trend = _detect_bad_rate_trend(feature_table)
-    if trend != '未知':
+    if trend != "未知":
         items.append(f"趋势 {trend}")
 
     if not items:
-        return ''
+        return ""
 
     per_row = max(1, int(per_row))
     rows = []
     for i in range(0, len(items), per_row):
-        rows.append('    '.join(items[i:i + per_row]))
+        rows.append("    ".join(items[i : i + per_row]))
 
-    return '\n'.join(rows)
+    return "\n".join(rows)
 
 
 def _fit_bin_metric_summary_text(
@@ -385,13 +385,13 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
     """与所属坐标轴等宽、文字居中的单行分箱指标摘要。"""
 
     def __init__(self, ax: Any, text: str, fontsize: float, color: str) -> None:
-        self._metric_items = text.split('    ')
+        self._metric_items = text.split("    ")
         text_area = TextArea(
             text,
             textprops={
-                'fontsize': fontsize,
-                'color': color,
-                'horizontalalignment': 'center',
+                "fontsize": fontsize,
+                "color": color,
+                "horizontalalignment": "center",
             },
         )
         self.metric_text = text_area.get_children()[0]
@@ -400,27 +400,27 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
             sep=0,
             width=None,
             height=None,
-            align='center',
-            mode='expand',
+            align="center",
+            mode="expand",
             children=[DrawingArea(0, 0), text_area, DrawingArea(0, 0)],
         )
         super().__init__(
-            loc='lower left',
+            loc="lower left",
             pad=0.28,
             borderpad=0,
             child=self._full_width_child,
-            prop={'size': fontsize},
+            prop={"size": fontsize},
             frameon=True,
             bbox_to_anchor=(0.0, 1.0),
             bbox_transform=ax.transAxes,
         )
-        self.patch.set_boxstyle('round,pad=0')
-        self.patch.set_facecolor('white')
+        self.patch.set_boxstyle("round,pad=0")
+        self.patch.set_facecolor("white")
         self.patch.set_edgecolor(color)
         self.patch.set_alpha(0.9)
         self.patch.set_linewidth(0.8)
         self.set_clip_on(False)
-        self.set_gid('bin-metric-summary')
+        self.set_gid("bin-metric-summary")
 
     def get_extent(self, renderer: Any):
         """在每次渲染时按最新坐标轴像素宽度更新摘要容器。"""
@@ -440,9 +440,9 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
         # 字体/主题切换会改变文字度量。优先压缩指标间空白，不缩小文字，
         # 并在每次渲染时重算，覆盖外层布局随后收窄面板的情况。
         available = max(0.0, axes_width - 2.0 * padding_pixels - 2.0)
-        variants = ['    '.join(self._metric_items), '  '.join(self._metric_items), ' '.join(self._metric_items)]
-        compact_items = [item.replace(' ', '') for item in self._metric_items]
-        variants.extend(['  '.join(compact_items), ' '.join(compact_items)])
+        variants = ["    ".join(self._metric_items), "  ".join(self._metric_items), " ".join(self._metric_items)]
+        compact_items = [item.replace(" ", "") for item in self._metric_items]
+        variants.extend(["  ".join(compact_items), " ".join(compact_items)])
         for variant in variants:
             self.metric_text.set_text(variant)
             if self.metric_text.get_window_extent(renderer).width <= available:
@@ -474,7 +474,7 @@ def _layout_embedded_bin_plot_header(
 ) -> None:
     """按真实渲染边界依次排布坐标轴、指标摘要和子图标题。"""
     title_artist = ax1.set_title(title_text)
-    summary_text.set_gid('bin-metric-summary')
+    summary_text.set_gid("bin-metric-summary")
 
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
@@ -486,7 +486,7 @@ def _layout_embedded_bin_plot_header(
         ax1.transAxes,
         fig=fig,
         y=decoration_offset_points + float(min_gap_points),
-        units='points',
+        units="points",
     )
     if isinstance(summary_text, _FullWidthBinMetricSummary):
         summary_text.set_bbox_to_anchor((0.0, 1.0), transform=summary_transform)
@@ -502,7 +502,7 @@ def _layout_embedded_bin_plot_header(
     missing_gap_pixels = summary_bbox.y1 + min_gap_pixels - title_bbox.y0
 
     if missing_gap_pixels > 0:
-        default_pad = float(plt.rcParams.get('axes.titlepad', 6.0))
+        default_pad = float(plt.rcParams.get("axes.titlepad", 6.0))
         title_pad = default_pad + missing_gap_pixels * 72.0 / fig.dpi
         title_artist = ax1.set_title(title_text, pad=title_pad)
 
@@ -526,8 +526,8 @@ def _xtick_rotation_for_length(max_len: int, threshold: int = 5):
     :return: (rotation, horizontalalignment)
     """
     if max_len <= threshold:
-        return 90, 'center'
-    return max(30, 90 - (max_len - threshold) * 10), 'right'
+        return 90, "center"
+    return max(30, 90 - (max_len - threshold) * 10), "right"
 
 
 def _auto_rotate_horizontal_xticks(fig, ax, threshold: int = 35) -> None:
@@ -546,11 +546,11 @@ def _auto_rotate_horizontal_xticks(fig, ax, threshold: int = 35) -> None:
         return
 
     rotation, ha = _xtick_rotation_for_length(max(lengths), threshold)
-    ax.tick_params(axis='x', labelrotation=rotation)
+    ax.tick_params(axis="x", labelrotation=rotation)
     for label in ax.get_xticklabels():
         label.set_horizontalalignment(ha)
-        if ha == 'right':
-            label.set_rotation_mode('anchor')
+        if ha == "right":
+            label.set_rotation_mode("anchor")
 
 
 @binning_options
@@ -569,24 +569,26 @@ def bin_plot(
     ending: str = "分箱图",
     title: Optional[str] = None,
     max_n_bins: int = 10,
-    method: str = 'quantile',
+    method: str = "quantile",
     rules: Optional[List] = None,
     show_data_points: bool = True,
     show_overall_bad_rate: bool = True,
     show_metric_summary: bool = True,
-    metric_summary_layout: str = 'compact',
+    metric_summary_layout: str = "compact",
     show_rate_axis: bool = True,
     iv: bool = True,
     result: bool = False,
     ax: Optional[Any] = None,
-    orientation: str = 'horizontal',
-    dpi: int = 240, bin_params=None, **kwargs
+    orientation: str = "horizontal",
+    dpi: int = 240,
+    bin_params=None,
+    **kwargs,
 ):
     """
     特征分箱可视化图.
-    
+
     支持两种使用方式：
-    
+
     **方式1：传入原始数据（toad 模式）**
 
     .. code-block:: python
@@ -664,8 +666,8 @@ def bin_plot(
         # 方式2：传入的是分箱统计表
         feature_table = data.copy()
         # 兼容 feature_bin_stats 返回的格式（有 分箱标签 但无 分箱 列）
-        if '分箱' not in feature_table.columns and '分箱标签' in feature_table.columns:
-            feature_table['分箱'] = feature_table['分箱标签']
+        if "分箱" not in feature_table.columns and "分箱标签" in feature_table.columns:
+            feature_table["分箱"] = feature_table["分箱标签"]
     else:
         # 方式1：传入的是原始数据，需要计算分箱统计
         if target is None:
@@ -675,11 +677,11 @@ def bin_plot(
                 "  bin_plot(df, x='feature', target='target')\n"
                 "  bin_plot(df['feature'], target=df['target'])"
             )
-        
+
         # 兼容 toad 的参数命名（x 参数）
-        if 'x' in kwargs:
+        if "x" in kwargs:
             raise TypeError("x 参数已移除，请使用 feature")
-        
+
         feature_table = _compute_bin_stats_from_raw_data(
             data=data,
             target=target,
@@ -697,27 +699,25 @@ def bin_plot(
 
     # 处理分箱标签：优先显示具体分箱标签，而不是分箱索引
     plot_labels = None
-    if '分箱标签' in feature_table.columns:
-        candidate_labels = feature_table['分箱标签']
+    if "分箱标签" in feature_table.columns:
+        candidate_labels = feature_table["分箱标签"]
         if candidate_labels.notna().any():
             plot_labels = candidate_labels.astype(str)
 
     if plot_labels is None:
-        plot_labels = feature_table['分箱'].astype(str)
+        plot_labels = feature_table["分箱"].astype(str)
 
     feature_table = feature_table.copy()
-    feature_table['_plot_bin_label'] = plot_labels.apply(
-        lambda x: format_bin_label(x, max_len)
-    )
+    feature_table["_plot_bin_label"] = plot_labels.apply(lambda x: format_bin_label(x, max_len))
 
     # 判断方向
     orientation_key = orientation.lower()
-    if orientation_key not in ['horizontal', 'h', '横向', 'vertical', 'v', '纵向']:
+    if orientation_key not in ["horizontal", "h", "横向", "vertical", "v", "纵向"]:
         raise ValueError("orientation 仅支持 'horizontal'/'h'/'横向' 或 'vertical'/'v'/'纵向'")
-    is_horizontal = orientation_key in ['horizontal', 'h', '横向']
+    is_horizontal = orientation_key in ["horizontal", "h", "横向"]
 
     # 统一排序：分离缺失值/特殊值分箱，数值型按区间下界升序，类别型保持原顺序
-    label_col = '分箱标签' if '分箱标签' in feature_table.columns else '分箱'
+    label_col = "分箱标签" if "分箱标签" in feature_table.columns else "分箱"
     missing_mask = feature_table[label_col].apply(_is_missing_bin_label)
     special_mask = feature_table[label_col].apply(_is_special_bin_label)
     normal_rows = feature_table[~missing_mask & ~special_mask].copy()
@@ -727,20 +727,21 @@ def bin_plot(
     # 仅对数值型区间分箱排序，类别型分箱保持原有顺序
     is_numeric = _infer_numeric_feature_table(feature_table)
     if len(normal_rows) > 0 and is_numeric:
+
         def extract_lower_bound(bin_label):
             try:
                 text = str(bin_label).strip()
-                if text.startswith('(') or text.startswith('['):
-                    left = text[1:].split(',')[0].strip()
-                    if left in ('-inf', '-∞'):
-                        return float('-inf')
+                if text.startswith("(") or text.startswith("["):
+                    left = text[1:].split(",")[0].strip()
+                    if left in ("-inf", "-∞"):
+                        return float("-inf")
                     return float(left)
             except Exception:
                 pass
-            return float('inf')
+            return float("inf")
 
-        normal_rows['_sort_key'] = normal_rows[label_col].apply(extract_lower_bound)
-        normal_rows = normal_rows.sort_values('_sort_key').drop(columns=['_sort_key'])
+        normal_rows["_sort_key"] = normal_rows[label_col].apply(extract_lower_bound)
+        normal_rows = normal_rows.sort_values("_sort_key").drop(columns=["_sort_key"])
 
     # 重新组合：普通分箱(升序) + 特殊值分箱 + 缺失值分箱(最后)
     feature_table = pd.concat([normal_rows, special_rows, missing_rows], ignore_index=True)
@@ -752,15 +753,17 @@ def bin_plot(
         # barh 第一行在底部、最后一行在顶部，反转使视觉从上到下为升序
         feature_table = feature_table.iloc[::-1].reset_index(drop=True)
 
-    overall_bad_rate = float(feature_table['坏样本率'].mul(feature_table['样本总数']).sum() / feature_table['样本总数'].sum())
+    overall_bad_rate = float(
+        feature_table["坏样本率"].mul(feature_table["样本总数"]).sum() / feature_table["样本总数"].sum()
+    )
     axis_theme = colors[0]
     line_color = BAD_RATE_COLOR
     reference_color = REFERENCE_COLOR
     rate_fontdict = {
-        'color': line_color,
-        'fontsize': 10,
-        'fontweight': 'semibold',
-        'bbox': dict(boxstyle='round,pad=0.18', facecolor='white', edgecolor=line_color, linewidth=0.6, alpha=0.92)
+        "color": line_color,
+        "fontsize": 10,
+        "fontweight": "semibold",
+        "bbox": dict(boxstyle="round,pad=0.18", facecolor="white", edgecolor=line_color, linewidth=0.6, alpha=0.92),
     }
 
     # 获取或创建 Axes
@@ -775,30 +778,63 @@ def bin_plot(
     if is_horizontal:
         # 横向柱状图（默认）—— 统一使用整数位置，与纵向模式保持一致
         y_pos = np.arange(len(feature_table))
-        ax1.barh(y_pos, feature_table['好样本数'], color=colors[0], label='好样本',
-                 hatch="/" if hatch else None, edgecolor='white' if hatch else None, alpha=0.92)
-        ax1.barh(y_pos, feature_table['坏样本数'], left=feature_table['好样本数'], color=colors[1],
-                 label='坏样本', hatch="\\" if hatch else None, edgecolor='white' if hatch else None, alpha=0.92)
+        ax1.barh(
+            y_pos,
+            feature_table["好样本数"],
+            color=colors[0],
+            label="好样本",
+            hatch="/" if hatch else None,
+            edgecolor="white" if hatch else None,
+            alpha=0.92,
+        )
+        ax1.barh(
+            y_pos,
+            feature_table["坏样本数"],
+            left=feature_table["好样本数"],
+            color=colors[1],
+            label="坏样本",
+            hatch="\\" if hatch else None,
+            edgecolor="white" if hatch else None,
+            alpha=0.92,
+        )
         ax1.set_yticks(y_pos)
-        ax1.set_yticklabels(feature_table['_plot_bin_label'])
-        ax1.set_xlabel('样本数', color=axis_theme)
+        ax1.set_yticklabels(feature_table["_plot_bin_label"])
+        ax1.set_xlabel("样本数", color=axis_theme)
 
         ax2 = ax1.twiny()
-        ax2.plot(feature_table['坏样本率'], y_pos, color=line_color, label='坏样本率', linestyle=(0, (4, 3)), linewidth=2.1,
-                 marker='o' if show_data_points else None, markersize=5.5, markerfacecolor='white',
-                 markeredgecolor=line_color, markeredgewidth=1.4)
-        ax2.set_xlabel('坏样本率', color=axis_theme)
-        ax2.set_xlim(left=0.)
+        ax2.plot(
+            feature_table["坏样本率"],
+            y_pos,
+            color=line_color,
+            label="坏样本率",
+            linestyle=(0, (4, 3)),
+            linewidth=2.1,
+            marker="o" if show_data_points else None,
+            markersize=5.5,
+            markerfacecolor="white",
+            markeredgecolor=line_color,
+            markeredgewidth=1.4,
+        )
+        ax2.set_xlabel("坏样本率", color=axis_theme)
+        ax2.set_xlim(left=0.0)
 
         if show_overall_bad_rate:
-            ax2.axvline(overall_bad_rate, color=reference_color, linestyle=(0, (2, 2)), linewidth=1.8, alpha=0.9,
-                        label='整体坏样本率')
+            ax2.axvline(
+                overall_bad_rate,
+                color=reference_color,
+                linestyle=(0, (2, 2)),
+                linewidth=1.8,
+                alpha=0.9,
+                label="整体坏样本率",
+            )
 
-        x_right = max(ax2.get_xlim()[1], float(feature_table['坏样本率'].max()) * 1.15 if len(feature_table) > 0 else 0.1)
+        x_right = max(
+            ax2.get_xlim()[1], float(feature_table["坏样本率"].max()) * 1.15 if len(feature_table) > 0 else 0.1
+        )
         ax2.set_xlim(right=x_right)
         x_offset = max((ax2.get_xlim()[1] - ax2.get_xlim()[0]) * 0.012, 0.003)
-        for i, rate in enumerate(feature_table['坏样本率']):
-            ax2.text(rate + x_offset, i, f'{rate:.2%}', va='center', ha='left', fontdict=rate_fontdict, clip_on=False)
+        for i, rate in enumerate(feature_table["坏样本率"]):
+            ax2.text(rate + x_offset, i, f"{rate:.2%}", va="center", ha="left", fontdict=rate_fontdict, clip_on=False)
 
         ax2.xaxis.set_major_formatter(PercentFormatter(1, decimals=0, is_latex=True))
     else:
@@ -806,70 +842,102 @@ def bin_plot(
         x_pos = np.arange(len(feature_table))
         width = 0.6
 
-        ax1.bar(x_pos, feature_table['好样本数'], width, color=colors[0], label='好样本',
-                hatch="/" if hatch else None, edgecolor='white' if hatch else None, alpha=0.92)
-        ax1.bar(x_pos, feature_table['坏样本数'], width, bottom=feature_table['好样本数'], color=colors[1],
-                label='坏样本', hatch="\\" if hatch else None, edgecolor='white' if hatch else None, alpha=0.92)
-        ax1.set_ylabel('样本数', color=axis_theme)
+        ax1.bar(
+            x_pos,
+            feature_table["好样本数"],
+            width,
+            color=colors[0],
+            label="好样本",
+            hatch="/" if hatch else None,
+            edgecolor="white" if hatch else None,
+            alpha=0.92,
+        )
+        ax1.bar(
+            x_pos,
+            feature_table["坏样本数"],
+            width,
+            bottom=feature_table["好样本数"],
+            color=colors[1],
+            label="坏样本",
+            hatch="\\" if hatch else None,
+            edgecolor="white" if hatch else None,
+            alpha=0.92,
+        )
+        ax1.set_ylabel("样本数", color=axis_theme)
         ax1.set_xticks(x_pos)
         # 分箱标签默认垂直展示，仅当标签非常长（阈值 18）时才按长度动态倾斜
-        bin_labels = feature_table['_plot_bin_label'].tolist()
+        bin_labels = feature_table["_plot_bin_label"].tolist()
         label_rotation, label_ha = _xtick_rotation_for_length(
-            max((len(str(l)) for l in bin_labels), default=0), threshold=18)
+            max((len(str(l)) for l in bin_labels), default=0), threshold=18
+        )
         ax1.set_xticklabels(bin_labels, rotation=label_rotation, ha=label_ha)
         if label_rotation != 90:
             for lbl in ax1.get_xticklabels():
-                lbl.set_rotation_mode('anchor')
+                lbl.set_rotation_mode("anchor")
 
         ax2 = ax1.twinx()
-        ax2.plot(x_pos, feature_table['坏样本率'], color=line_color, label='坏样本率', linestyle=(0, (4, 3)), linewidth=2.1,
-                 marker='o' if show_data_points else None, markersize=5.5, markerfacecolor='white',
-                 markeredgecolor=line_color, markeredgewidth=1.4)
-        ax2.set_ylabel('坏样本率', color=axis_theme)
-        ax2.set_ylim(bottom=0.)
+        ax2.plot(
+            x_pos,
+            feature_table["坏样本率"],
+            color=line_color,
+            label="坏样本率",
+            linestyle=(0, (4, 3)),
+            linewidth=2.1,
+            marker="o" if show_data_points else None,
+            markersize=5.5,
+            markerfacecolor="white",
+            markeredgecolor=line_color,
+            markeredgewidth=1.4,
+        )
+        ax2.set_ylabel("坏样本率", color=axis_theme)
+        ax2.set_ylim(bottom=0.0)
 
         if show_overall_bad_rate:
-            ax2.axhline(overall_bad_rate, color=reference_color, linestyle=(0, (2, 2)), linewidth=1.8, alpha=0.9,
-                        label='整体坏样本率')
+            ax2.axhline(
+                overall_bad_rate,
+                color=reference_color,
+                linestyle=(0, (2, 2)),
+                linewidth=1.8,
+                alpha=0.9,
+                label="整体坏样本率",
+            )
 
-        y_top = max(float(feature_table['坏样本率'].max()) if len(feature_table) > 0 else 0.0, overall_bad_rate)
+        y_top = max(float(feature_table["坏样本率"].max()) if len(feature_table) > 0 else 0.0, overall_bad_rate)
         ax2.set_ylim(top=max(ax2.get_ylim()[1], y_top * 1.18 if y_top > 0 else 0.1))
         y_offset = max(ax2.get_ylim()[1] * 0.015, 0.003)
-        for i, rate in enumerate(feature_table['坏样本率']):
-            ax2.text(i, rate + y_offset, f'{rate:.2%}', ha='center', va='bottom', fontdict=rate_fontdict, clip_on=False)
+        for i, rate in enumerate(feature_table["坏样本率"]):
+            ax2.text(i, rate + y_offset, f"{rate:.2%}", ha="center", va="bottom", fontdict=rate_fontdict, clip_on=False)
 
         ax2.yaxis.set_major_formatter(PercentFormatter(1, decimals=0, is_latex=True))
 
     setup_axis_style(ax1, [axis_theme], hide_top_right=False)
     setup_axis_style(ax2, [axis_theme], hide_top_right=False)
-    ax1.tick_params(axis='both', colors=axis_theme)
-    ax2.tick_params(axis='both', colors=axis_theme)
+    ax1.tick_params(axis="both", colors=axis_theme)
+    ax2.tick_params(axis="both", colors=axis_theme)
     ax1.grid(False)
     ax2.grid(False)
 
     if not show_rate_axis:
         # 隐藏坏样本率坐标轴刻度与标签（趋势线保留）：横向在顶部 x 轴，纵向在右侧 y 轴
         if is_horizontal:
-            ax2.tick_params(axis='x', top=False, labeltop=False)
-            ax2.set_xlabel('')
+            ax2.tick_params(axis="x", top=False, labeltop=False)
+            ax2.set_xlabel("")
         else:
-            ax2.tick_params(axis='y', right=False, labelright=False)
-            ax2.set_ylabel('')
+            ax2.tick_params(axis="y", right=False, labelright=False)
+            ax2.set_ylabel("")
 
     # 横向模式：样本数 x 轴刻度默认垂直，文本过长时按最大长度动态倾斜
     if is_horizontal:
         _auto_rotate_horizontal_xticks(fig, ax1)
 
-    valid_summary_layouts = {'compact', 'full_width_center'}
+    valid_summary_layouts = {"compact", "full_width_center"}
     if metric_summary_layout not in valid_summary_layouts:
         raise ValueError(f"metric_summary_layout 必须是 {sorted(valid_summary_layouts)} 之一")
 
-    _summary_source = feature_table.drop(columns=['_plot_bin_label'], errors='ignore')
-    summary_items_per_row = 100 if metric_summary_layout == 'full_width_center' else 2
+    _summary_source = feature_table.drop(columns=["_plot_bin_label"], errors="ignore")
+    summary_items_per_row = 100 if metric_summary_layout == "full_width_center" else 2
     metric_summary = (
-        _build_bin_metric_summary(_summary_source, per_row=summary_items_per_row)
-        if show_metric_summary
-        else ''
+        _build_bin_metric_summary(_summary_source, per_row=summary_items_per_row) if show_metric_summary else ""
     )
     axis_title = ax1.xaxis.label if is_horizontal else ax1.yaxis.label
     summary_fontsize = float(axis_title.get_fontsize())
@@ -883,7 +951,7 @@ def bin_plot(
         if title is not None:
             title_artist = fig.suptitle(title)
         else:
-            title_artist = fig.suptitle(f'{desc}{ending}')
+            title_artist = fig.suptitle(f"{desc}{ending}")
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
@@ -895,9 +963,15 @@ def bin_plot(
         else:
             legend_ncol = n_items
         legend_anchor = 0.935 if anchor is None else anchor
-        legend = fig.legend(handles1 + handles2, legend_labels, loc='upper center',
-                            ncol=legend_ncol, bbox_to_anchor=(0.5, legend_anchor),
-                            frameon=False, fontsize=legend_fontsize)
+        legend = fig.legend(
+            handles1 + handles2,
+            legend_labels,
+            loc="upper center",
+            ncol=legend_ncol,
+            bbox_to_anchor=(0.5, legend_anchor),
+            frameon=False,
+            fontsize=legend_fontsize,
+        )
 
         _tight_layout(fig)
         if anchor is None:
@@ -907,10 +981,16 @@ def bin_plot(
             renderer = fig.canvas.get_renderer()
             ax_pos = ax1.get_position()
             legend_bbox = legend.get_window_extent(renderer).transformed(fig.transFigure.inverted())
-            summary_text = fig.text(ax_pos.x0, legend_bbox.y0, metric_summary, ha='left', va='bottom',
-                                    fontsize=summary_fontsize, color=axis_theme,
-                                    bbox=dict(boxstyle='round,pad=0.28', facecolor='white',
-                                              edgecolor=axis_theme, alpha=0.9, linewidth=0.8))
+            summary_text = fig.text(
+                ax_pos.x0,
+                legend_bbox.y0,
+                metric_summary,
+                ha="left",
+                va="bottom",
+                fontsize=summary_fontsize,
+                color=axis_theme,
+                bbox=dict(boxstyle="round,pad=0.28", facecolor="white", edgecolor=axis_theme, alpha=0.9, linewidth=0.8),
+            )
             gap_pixels = 8.0 * fig.dpi / 72.0
             axes_left_pixels = ax_pos.x0 * fig.bbox.width
             available_width_pixels = legend.get_window_extent(renderer).x0 - axes_left_pixels - gap_pixels
@@ -948,12 +1028,12 @@ def bin_plot(
         save_figure(fig, save, dpi=dpi)
 
         if result:
-            return fig, _sorted_table.drop(columns=['_plot_bin_label'], errors='ignore')
+            return fig, _sorted_table.drop(columns=["_plot_bin_label"], errors="ignore")
         return fig
     else:
-        title_text = title if title is not None else f'{desc}{ending}'
+        title_text = title if title is not None else f"{desc}{ending}"
         if metric_summary:
-            if metric_summary_layout == 'full_width_center':
+            if metric_summary_layout == "full_width_center":
                 summary_text = _FullWidthBinMetricSummary(
                     ax1,
                     metric_summary,
@@ -968,13 +1048,13 @@ def bin_plot(
                     1.0,
                     metric_summary,
                     transform=ax1.transAxes,
-                    ha='left',
-                    va='bottom',
+                    ha="left",
+                    va="bottom",
                     fontsize=summary_fontsize,
                     color=axis_theme,
                     bbox=dict(
-                        boxstyle='round,pad=0.28',
-                        facecolor='white',
+                        boxstyle="round,pad=0.28",
+                        facecolor="white",
                         edgecolor=axis_theme,
                         alpha=0.9,
                         linewidth=0.8,
@@ -995,13 +1075,26 @@ def bin_plot(
         else:
             ax1.set_title(title_text)
         if result:
-            return ax1, _sorted_table.drop(columns=['_plot_bin_label'], errors='ignore')
+            return ax1, _sorted_table.drop(columns=["_plot_bin_label"], errors="ignore")
         return ax1
 
 
-def corr_plot(data, fontsize=16, mask=False, save=None, 
-              annot=True, max_len=35, linewidths=0.1, fmt='.2f', step=11, linecolor='white', 
-              ax=None, figsize=(16, 8), dpi: int = 240, **kwargs):
+def corr_plot(
+    data,
+    fontsize=16,
+    mask=False,
+    save=None,
+    annot=True,
+    max_len=35,
+    linewidths=0.1,
+    fmt=".2f",
+    step=11,
+    linecolor="white",
+    ax=None,
+    figsize=(16, 8),
+    dpi: int = 240,
+    **kwargs,
+):
     """
     特征相关性热力图.
 
@@ -1028,8 +1121,9 @@ def corr_plot(data, fontsize=16, mask=False, save=None,
     if max_len is None:
         corr = data.corr()
     else:
-        corr = data.rename(columns={c: c if len(str(c)) <= max_len else f"{str(c)[:max_len]}..." 
-                                   for c in data.columns}).corr()
+        corr = data.rename(
+            columns={c: c if len(str(c)) <= max_len else f"{str(c)[:max_len]}..." for c in data.columns}
+        ).corr()
 
     corr_mask = np.zeros_like(corr, dtype=bool)
     corr_mask[np.triu_indices_from(corr_mask)] = True
@@ -1043,14 +1137,25 @@ def corr_plot(data, fontsize=16, mask=False, save=None,
         return_ax = True
 
     map_plot = sns.heatmap(
-        corr, cmap=make_diverging_cmap("hscredit_corr", n=max(step, 3)),
-        vmax=1, vmin=-1, center=0, square=True, linewidths=linewidths,
-        annot=annot, fmt=fmt, linecolor=linecolor, robust=True, cbar=True,
-        ax=ax, mask=corr_mask if mask else None, **kwargs
+        corr,
+        cmap=make_diverging_cmap("hscredit_corr", n=max(step, 3)),
+        vmax=1,
+        vmin=-1,
+        center=0,
+        square=True,
+        linewidths=linewidths,
+        annot=annot,
+        fmt=fmt,
+        linecolor=linecolor,
+        robust=True,
+        cbar=True,
+        ax=ax,
+        mask=corr_mask if mask else None,
+        **kwargs,
     )
 
-    map_plot.tick_params(axis='x', labelrotation=270, labelsize=fontsize)
-    map_plot.tick_params(axis='y', labelrotation=0, labelsize=fontsize)
+    map_plot.tick_params(axis="x", labelrotation=270, labelsize=fontsize)
+    map_plot.tick_params(axis="y", labelrotation=0, labelsize=fontsize)
     setup_axis_style(map_plot)
     if map_plot.collections and map_plot.collections[0].colorbar is not None:
         setup_axis_style(map_plot.collections[0].colorbar.ax)
@@ -1062,9 +1167,22 @@ def corr_plot(data, fontsize=16, mask=False, save=None,
         return ax
 
 
-def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
-            colors=None, anchor=None, axes=None, ax=None, curve='both',
-            pos_label=1, score_direction='auto', sample_weight=None, *,
+def ks_plot(
+    score,
+    target,
+    title="",
+    fontsize=14,
+    figsize=(16, 8),
+    save=None,
+    colors=None,
+    anchor=None,
+    axes=None,
+    ax=None,
+    curve="both",
+    pos_label=1,
+    score_direction="auto",
+    sample_weight=None,
+    *,
     dpi: int = 240,
 ):
     """
@@ -1103,7 +1221,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     """
     if colors is None:
         colors = DEFAULT_COLORS
-    if curve not in ('both', 'ks', 'roc'):
+    if curve not in ("both", "ks", "roc"):
         raise ValueError("curve 仅支持 'both'/'ks'/'roc'")
 
     # 兼容 axes 和 ax 参数；不能对 ndarray 使用布尔求值。
@@ -1113,25 +1231,25 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     result = _binary_roc_statistics(target, score, pos_label, score_direction, sample_weight)
     auc_value = result.auc
     if result.auto_reversed:
-        warnings.warn('评分 AUC 小于 50%，已按“值越大越安全”自动反向后绘图')
+        warnings.warn("评分 AUC 小于 50%，已按“值越大越安全”自动反向后绘图")
     coverage, fpr, tpr = result.coverage, result.fpr, result.tpr
-    df_ks = pd.DataFrame({'group': coverage, 'cumgood': fpr, 'cumbad': tpr, 'ks': np.abs(tpr - fpr)})
+    df_ks = pd.DataFrame({"group": coverage, "cumgood": fpr, "cumbad": tpr, "ks": np.abs(tpr - fpr)})
 
-    need_ks = curve in ('both', 'ks')
-    need_roc = curve in ('both', 'roc')
+    need_ks = curve in ("both", "ks")
+    need_roc = curve in ("both", "roc")
 
     def _is_single_ax(obj):
-        return obj is not None and hasattr(obj, 'plot') and not hasattr(obj, '__len__')
+        return obj is not None and hasattr(obj, "plot") and not hasattr(obj, "__len__")
 
     # 获取或创建 Axes
-    if curve == 'both':
+    if curve == "both":
         if _is_single_ax(axes):
             # 传入的是单个 Axes，只用第一个子图，另建一个用于 ROC 曲线
             fig = axes.figure
             ax1 = axes
             ax2 = fig.add_subplot(122)
             return_axes = True
-        elif axes is not None and hasattr(axes, '__len__') and len(axes) >= 2:
+        elif axes is not None and hasattr(axes, "__len__") and len(axes) >= 2:
             ax1, ax2 = axes[0], axes[1]
             fig = ax1.figure
             return_axes = True
@@ -1142,7 +1260,7 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     else:
         # 单曲线模式：仅需一个 Axes
         single = axes if _is_single_ax(axes) else (ax if _is_single_ax(ax) else None)
-        if single is None and axes is not None and hasattr(axes, '__len__') and len(axes) >= 1:
+        if single is None and axes is not None and hasattr(axes, "__len__") and len(axes) >= 1:
             single = axes[0]
         if single is not None:
             target_ax = single
@@ -1151,26 +1269,31 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
         else:
             fig, target_ax = _create_subplots(figsize=figsize)
             return_axes = False
-        ax1 = target_ax if curve == 'ks' else None
-        ax2 = target_ax if curve == 'roc' else None
+        ax1 = target_ax if curve == "ks" else None
+        ax2 = target_ax if curve == "roc" else None
 
     handles1, labels1, handles2, labels2 = [], [], [], []
 
     # KS曲线
     if need_ks:
-        dfks = df_ks.loc[lambda x: x.ks == max(x.ks)].sort_values('group').iloc[0]
+        dfks = df_ks.loc[lambda x: x.ks == max(x.ks)].sort_values("group").iloc[0]
 
         ax1.plot(df_ks.group, df_ks.ks, color=colors[0], label="KS曲线")
         ax1.plot(df_ks.group, df_ks.cumgood, color=colors[1], label="累积好客户占比")
         ax1.plot(df_ks.group, df_ks.cumbad, color=colors[2], label="累积坏客户占比")
         ax1.fill_between(df_ks.group, df_ks.cumbad, df_ks.cumgood, color=colors[0], alpha=0.25)
 
-        ax1.plot([dfks['group'], dfks['group']], [0, dfks['ks']], 'r--')
-        ax1.text(dfks['group'], dfks['ks'], f"KS: {round(dfks['ks'], 4)} at: {dfks.group:.2%}",
-                 horizontalalignment='center', fontsize=fontsize)
+        ax1.plot([dfks["group"], dfks["group"]], [0, dfks["ks"]], "r--")
+        ax1.text(
+            dfks["group"],
+            dfks["ks"],
+            f"KS: {round(dfks['ks'], 4)} at: {dfks.group:.2%}",
+            horizontalalignment="center",
+            fontsize=fontsize,
+        )
 
-        ax1.set_xlabel('累计样本占比', fontsize=fontsize)
-        ax1.set_ylabel('累计坏/好样本占比', fontsize=fontsize)
+        ax1.set_xlabel("累计样本占比", fontsize=fontsize)
+        ax1.set_ylabel("累计坏/好样本占比", fontsize=fontsize)
         ax1.set_xlim((0, 1))
         ax1.set_ylim((0, 1))
         handles1, labels1 = ax1.get_legend_handles_labels()
@@ -1179,15 +1302,16 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
     if need_roc:
         ax2.plot(fpr, tpr, color=colors[0], label="ROC 曲线")
         ax2.stackplot(fpr, tpr, color=colors[0], alpha=0.25)
-        ax2.plot([0, 1], [0, 1], color=colors[1], lw=2, linestyle=':')
-        ax2.text(0.5, 0.5, f"AUC: {auc_value:.4f}", fontsize=fontsize,
-                 horizontalalignment="center", transform=ax2.transAxes)
+        ax2.plot([0, 1], [0, 1], color=colors[1], lw=2, linestyle=":")
+        ax2.text(
+            0.5, 0.5, f"AUC: {auc_value:.4f}", fontsize=fontsize, horizontalalignment="center", transform=ax2.transAxes
+        )
 
         ax2.set_xlabel("假正例率", fontsize=fontsize)
-        ax2.set_ylabel('真正例率', fontsize=fontsize)
+        ax2.set_ylabel("真正例率", fontsize=fontsize)
         ax2.set_xlim((0, 1))
         ax2.set_ylim((0, 1))
-        if curve == 'both':
+        if curve == "both":
             ax2.yaxis.tick_right()
             ax2.yaxis.set_label_position("right")
         handles2, labels2 = ax2.get_legend_handles_labels()
@@ -1197,42 +1321,57 @@ def ks_plot(score, target, title="", fontsize=14, figsize=(16, 8), save=None,
             setup_axis_style(plot_ax, colors)
 
     if not return_axes:
-        if curve == 'both':
-            title_artist = fig.suptitle(
-                title or "K-S 与 ROC 曲线", fontsize=fontsize, fontweight="bold"
-            )
+        if curve == "both":
+            title_artist = fig.suptitle(title or "K-S 与 ROC 曲线", fontsize=fontsize, fontweight="bold")
             legend_anchor = 0.945 if anchor is None else anchor
-            legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
-                                ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, legend_anchor), frameon=False)
+            legend = fig.legend(
+                handles1 + handles2,
+                labels1 + labels2,
+                loc="upper center",
+                ncol=len(labels1 + labels2),
+                bbox_to_anchor=(0.5, legend_anchor),
+                frameon=False,
+            )
         else:
-            single_ax = ax1 if curve == 'ks' else ax2
+            single_ax = ax1 if curve == "ks" else ax2
             if title:
                 single_ax.set_title(f"{title}", fontsize=fontsize)
             handles, labels = handles1 + handles2, labels1 + labels2
             if labels:
-                single_ax.legend(handles, labels, loc='best', frameon=False,
-                                 fontsize=max(fontsize - 4, 8))
+                single_ax.legend(handles, labels, loc="best", frameon=False, fontsize=max(fontsize - 4, 8))
         _tight_layout(fig)
-        if curve == 'both' and anchor is None:
+        if curve == "both" and anchor is None:
             _layout_top_center_legend(fig, legend, title=title_artist, axes=[ax1, ax2])
         save_figure(fig, save, dpi=dpi)
         return fig
     else:
-        if curve == 'both':
+        if curve == "both":
             return axes
-        single_ax = ax1 if curve == 'ks' else ax2
+        single_ax = ax1 if curve == "ks" else ax2
         if title:
             single_ax.set_title(f"{title}", fontsize=fontsize)
         handles, labels = handles1 + handles2, labels1 + labels2
         if labels:
-            single_ax.legend(handles, labels, loc='best', frameon=False,
-                             fontsize=max(fontsize - 4, 7))
+            single_ax.legend(handles, labels, loc="best", frameon=False, fontsize=max(fontsize - 4, 7))
         return single_ax
 
 
-def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
-              labels=None, desc="", anchor=None, fontsize=14, kde=False, title=None,
-              ax=None, dpi: int = 240, **kwargs):
+def hist_plot(
+    score,
+    y_true=None,
+    figsize=(15, 10),
+    bins=30,
+    save=None,
+    labels=None,
+    desc="",
+    anchor=None,
+    fontsize=14,
+    kde=False,
+    title=None,
+    ax=None,
+    dpi: int = 240,
+    **kwargs,
+):
     """
     特征值分布直方图.
 
@@ -1305,7 +1444,7 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
     if y_true is not None:
         hist_kwargs.update(palette=palette, hue_order=hue_order_final)
     else:
-        hist_kwargs.update(color=kwargs.pop('color', DEFAULT_COLORS[0]))
+        hist_kwargs.update(color=kwargs.pop("color", DEFAULT_COLORS[0]))
 
     sns.histplot(**hist_kwargs, **kwargs)
 
@@ -1327,13 +1466,24 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
         legend_anchor = 1.15 if anchor is None else anchor
         handles, legend_labels = ax.get_legend_handles_labels()
         if handles:
-            ax.legend(handles, hue_order_final[:len(handles)] if hue_order_final else legend_labels,
-                      loc='upper center', ncol=len(handles),
-                      bbox_to_anchor=(0.5, legend_anchor), frameon=False, fontsize=fontsize)
+            ax.legend(
+                handles,
+                hue_order_final[: len(handles)] if hue_order_final else legend_labels,
+                loc="upper center",
+                ncol=len(handles),
+                bbox_to_anchor=(0.5, legend_anchor),
+                frameon=False,
+                fontsize=fontsize,
+            )
         else:
-            ax.legend(hue_order,
-                      loc='upper center', ncol=target_unique,
-                      bbox_to_anchor=(0.5, legend_anchor), frameon=False, fontsize=fontsize)
+            ax.legend(
+                hue_order,
+                loc="upper center",
+                ncol=target_unique,
+                bbox_to_anchor=(0.5, legend_anchor),
+                frameon=False,
+                fontsize=fontsize,
+            )
 
     if not return_ax:
         fig.tight_layout()
@@ -1346,9 +1496,26 @@ def hist_plot(score, y_true=None, figsize=(15, 10), bins=30, save=None,
 
 
 @binning_options
-def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=None,
-             figsize=(15, 8), anchor=None, width=0.35, result=False, plot=True,
-             max_len=None, hatch=True, title=None, dpi: int = 240, bin_params=None, **kwargs):
+def psi_plot(
+    expected,
+    actual,
+    y=None,
+    labels=None,
+    desc="",
+    save=None,
+    colors=None,
+    figsize=(15, 8),
+    anchor=None,
+    width=0.35,
+    result=False,
+    plot=True,
+    max_len=None,
+    hatch=True,
+    title=None,
+    dpi: int = 240,
+    bin_params=None,
+    **kwargs,
+):
     """
     PSI稳定性分析图.
 
@@ -1393,7 +1560,7 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
     # 统一提取一维数值数组
     def _to_series(data):
         if isinstance(data, np.ndarray):
-            return pd.Series(data.ravel(), name=data.name if hasattr(data, 'name') else None)
+            return pd.Series(data.ravel(), name=data.name if hasattr(data, "name") else None)
         if isinstance(data, pd.Series):
             return data
         return data.iloc[:, 0]
@@ -1417,42 +1584,59 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
     if _has_bins(expected) and _has_bins(actual):
         # 检查是否为 psi_table 输出格式（有 '期望样本数' 列）
         is_psi_table_fmt = (
-            "期望样本数" in expected.columns and "实际样本数" in expected.columns and
-            "期望样本数" in actual.columns and "实际样本数" in actual.columns
+            "期望样本数" in expected.columns
+            and "实际样本数" in expected.columns
+            and "期望样本数" in actual.columns
+            and "实际样本数" in actual.columns
         )
 
         if is_psi_table_fmt:
             # psi_table 格式：重命名期望/实际列，再 merge
-            exp_renamed = expected.rename(columns={
-                "期望样本数": f"{labels[0]}样本数",
-                "期望占比": f"{labels[0]}样本占比",
-            })
-            act_renamed = actual.rename(columns={
-                "实际样本数": f"{labels[1]}样本数",
-                "实际占比": f"{labels[1]}样本占比",
-            })
-            cols_to_keep = ["分箱", f"{labels[0]}样本数", f"{labels[0]}样本占比",
-                           f"{labels[1]}样本数", f"{labels[1]}样本占比"]
+            exp_renamed = expected.rename(
+                columns={
+                    "期望样本数": f"{labels[0]}样本数",
+                    "期望占比": f"{labels[0]}样本占比",
+                }
+            )
+            act_renamed = actual.rename(
+                columns={
+                    "实际样本数": f"{labels[1]}样本数",
+                    "实际占比": f"{labels[1]}样本占比",
+                }
+            )
+            cols_to_keep = [
+                "分箱",
+                f"{labels[0]}样本数",
+                f"{labels[0]}样本占比",
+                f"{labels[1]}样本数",
+                f"{labels[1]}样本占比",
+            ]
             exp_cols = {c: c for c in cols_to_keep if c in exp_renamed.columns}
             act_cols = {c: c for c in cols_to_keep if c in act_renamed.columns}
-            df_psi = exp_renamed[list(exp_cols.values())].merge(
-                act_renamed[list(act_cols.values())], on="分箱", how="outer"
-            ).replace(np.nan, 0)
+            df_psi = (
+                exp_renamed[list(exp_cols.values())]
+                .merge(act_renamed[list(act_cols.values())], on="分箱", how="outer")
+                .replace(np.nan, 0)
+            )
             # psi_table 输出没有坏样本率列，设为0避免绘图报错
             for lbl in labels:
                 df_psi[f"{lbl}坏样本率"] = 0.0
         else:
             # 分箱表格式：分别重命名 '样本总数' + '样本占比' + '坏样本率' 列
-            exp_renamed = expected.rename(columns={
-                "样本总数": f"{labels[0]}样本数",
-                "样本占比": f"{labels[0]}样本占比",
-                "坏样本率": f"{labels[0]}坏样本率",
-            })
-            act_renamed = actual.rename(columns={
-                "样本总数": f"{labels[1]}样本数",
-                "样本占比": f"{labels[1]}样本占比",
-                "坏样本率": f"{labels[1]}坏样本率",
-            })
+            exp_renamed = expected.rename(
+                columns={
+                    "样本总数": f"{labels[0]}样本数",
+                    "样本占比": f"{labels[0]}样本占比",
+                    "坏样本率": f"{labels[0]}坏样本率",
+                }
+            )
+            act_renamed = actual.rename(
+                columns={
+                    "样本总数": f"{labels[1]}样本数",
+                    "样本占比": f"{labels[1]}样本占比",
+                    "坏样本率": f"{labels[1]}坏样本率",
+                }
+            )
             df_psi = exp_renamed.merge(act_renamed, on="分箱", how="outer").replace(np.nan, 0)
         df_psi[f"{labels[1]}% - {labels[0]}%"] = df_psi[f"{labels[1]}样本占比"] - df_psi[f"{labels[0]}样本占比"]
         df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(
@@ -1467,14 +1651,15 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
 
         # 创建统一 binner，避免 PSI 分布与坏样本率使用不同的分箱。
         from ..binning import OptimalBinning
-        exp_values = exp_series.rename('value').reset_index(drop=True)
-        act_values = act_series.rename('value').reset_index(drop=True)
+
+        exp_values = exp_series.rename("value").reset_index(drop=True)
+        act_values = act_series.rename("value").reset_index(drop=True)
         combined = pd.concat([exp_values, act_values], ignore_index=True)
         dummy_y = np.random.randint(0, 2, size=len(combined))
         binning_kwargs = dict(kwargs)
-        method = binning_kwargs.pop('method', 'quantile')
-        max_n_bins = binning_kwargs.pop('max_n_bins', 10)
-        min_bin_size = binning_kwargs.pop('min_bin_size', 0.01)
+        method = binning_kwargs.pop("method", "quantile")
+        max_n_bins = binning_kwargs.pop("max_n_bins", 10)
+        min_bin_size = binning_kwargs.pop("min_bin_size", 0.01)
         binner = OptimalBinning(
             method=method,
             max_n_bins=max_n_bins,
@@ -1486,32 +1671,31 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
 
         exp_frame = exp_values.to_frame()
         act_frame = act_values.to_frame()
-        exp_bins = binner.transform(exp_frame, metric='indices').values.flatten()
-        act_bins = binner.transform(act_frame, metric='indices').values.flatten()
+        exp_bins = binner.transform(exp_frame, metric="indices").values.flatten()
+        act_bins = binner.transform(act_frame, metric="indices").values.flatten()
 
         # 如果传入了 y，计算各分箱的坏样本率
         if y is not None:
-            y_combined = pd.Series(np.asarray(y).reshape(-1), name='y').reset_index(drop=True)
+            y_combined = pd.Series(np.asarray(y).reshape(-1), name="y").reset_index(drop=True)
             expected_length = len(exp_values) + len(act_values)
             if len(y_combined) != expected_length:
                 raise ValueError(
-                    f"y 长度应等于 expected 与 actual 长度之和: "
-                    f"{len(y_combined)} != {expected_length}"
+                    f"y 长度应等于 expected 与 actual 长度之和: " f"{len(y_combined)} != {expected_length}"
                 )
-            exp_y = y_combined.iloc[:len(exp_values)].to_numpy()
-            act_y = y_combined.iloc[len(exp_values):].to_numpy()
-            _bad_exp_map = pd.DataFrame({'bin': exp_bins, 'y': exp_y}).groupby('bin')['y'].mean().to_dict()
-            _bad_act_map = pd.DataFrame({'bin': act_bins, 'y': act_y}).groupby('bin')['y'].mean().to_dict()
+            exp_y = y_combined.iloc[: len(exp_values)].to_numpy()
+            act_y = y_combined.iloc[len(exp_values) :].to_numpy()
+            _bad_exp_map = pd.DataFrame({"bin": exp_bins, "y": exp_y}).groupby("bin")["y"].mean().to_dict()
+            _bad_act_map = pd.DataFrame({"bin": act_bins, "y": act_y}).groupby("bin")["y"].mean().to_dict()
         else:
             _bad_exp_map = {}
             _bad_act_map = {}
 
         unique_bins = sorted(set(exp_bins) | set(act_bins))
-        bin_table = binner.bin_tables_.get('value')
+        bin_table = binner.bin_tables_.get("value")
 
         def _bin_label(bin_idx):
-            if bin_table is not None and 0 <= int(bin_idx) < len(bin_table) and '分箱标签' in bin_table.columns:
-                return bin_table.iloc[int(bin_idx)]['分箱标签']
+            if bin_table is not None and 0 <= int(bin_idx) < len(bin_table) and "分箱标签" in bin_table.columns:
+                return bin_table.iloc[int(bin_idx)]["分箱标签"]
             return f"Bin_{bin_idx}"
 
         rows = []
@@ -1521,22 +1705,22 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
             act_count = int(np.sum(act_bins == bin_idx))
             exp_prop = max(exp_count / len(exp_bins), epsilon) if len(exp_bins) else epsilon
             act_prop = max(act_count / len(act_bins), epsilon) if len(act_bins) else epsilon
-            rows.append({
-                '分箱': _bin_label(bin_idx),
-                f"{labels[0]}样本数": exp_count,
-                f"{labels[1]}样本数": act_count,
-                f"{labels[0]}样本占比": exp_prop,
-                f"{labels[1]}样本占比": act_prop,
-                '分档PSI值': (act_prop - exp_prop) * np.log(act_prop / exp_prop),
-                '_bin_idx': bin_idx,
-            })
+            rows.append(
+                {
+                    "分箱": _bin_label(bin_idx),
+                    f"{labels[0]}样本数": exp_count,
+                    f"{labels[1]}样本数": act_count,
+                    f"{labels[0]}样本占比": exp_prop,
+                    f"{labels[1]}样本占比": act_prop,
+                    "分档PSI值": (act_prop - exp_prop) * np.log(act_prop / exp_prop),
+                    "_bin_idx": bin_idx,
+                }
+            )
         df_psi = pd.DataFrame(rows)
         # 坏样本率：优先使用 y 计算的值，否则设为 0
         for lbl, bad_map in [(labels[0], _bad_exp_map), (labels[1], _bad_act_map)]:
             if bad_map:
-                df_psi[f"{lbl}坏样本率"] = df_psi['_bin_idx'].apply(
-                    lambda b: bad_map.get(b, 0.0)
-                )
+                df_psi[f"{lbl}坏样本率"] = df_psi["_bin_idx"].apply(lambda b: bad_map.get(b, 0.0))
             else:
                 df_psi[f"{lbl}坏样本率"] = 0.0
         # 补充 result=True 需要的差值列
@@ -1546,38 +1730,50 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
         )
         df_psi["总体PSI值"] = df_psi["分档PSI值"].sum()
         df_psi["指标名称"] = desc
-        df_psi = df_psi.drop(columns=['_bin_idx'])
+        df_psi = df_psi.drop(columns=["_bin_idx"])
 
     if plot:
-        x = df_psi['分箱'].apply(
-            lambda l: l if max_len is None or len(str(l)) < max_len else f"{str(l)[:max_len]}..."
-        )
+        x = df_psi["分箱"].apply(lambda l: l if max_len is None or len(str(l)) < max_len else f"{str(l)[:max_len]}...")
         x_indexes = np.arange(len(x))
         fig, ax1 = _create_subplots(figsize=figsize)
 
-        ax1.bar(x_indexes - width / 2, df_psi[f'{labels[0]}样本占比'], width,
-                label=f'{labels[0]}样本占比', color=colors[0], hatch="/" if hatch else None,
-                edgecolor='white' if hatch else None)
-        ax1.bar(x_indexes + width / 2, df_psi[f'{labels[1]}样本占比'], width,
-                label=f'{labels[1]}样本占比', color=colors[1], hatch="\\" if hatch else None,
-                edgecolor='white' if hatch else None)
+        ax1.bar(
+            x_indexes - width / 2,
+            df_psi[f"{labels[0]}样本占比"],
+            width,
+            label=f"{labels[0]}样本占比",
+            color=colors[0],
+            hatch="/" if hatch else None,
+            edgecolor="white" if hatch else None,
+        )
+        ax1.bar(
+            x_indexes + width / 2,
+            df_psi[f"{labels[1]}样本占比"],
+            width,
+            label=f"{labels[1]}样本占比",
+            color=colors[1],
+            hatch="\\" if hatch else None,
+            edgecolor="white" if hatch else None,
+        )
 
-        ax1.set_ylabel('样本占比')
+        ax1.set_ylabel("样本占比")
         ax1.yaxis.set_major_formatter(PercentFormatter(1))
         ax1.set_xticks(x_indexes)
         ax1.set_xticklabels(x)
-        ax1.tick_params(axis='x', labelrotation=90)
+        ax1.tick_params(axis="x", labelrotation=90)
 
         ax2 = None
         if show_bad_rate:
             ax2 = ax1.twinx()
-            ax2.plot(x, df_psi[f"{labels[0]}坏样本率"], color=colors[0],
-                    label=f"{labels[0]}坏样本率", linestyle=(5, (10, 3)))
-            ax2.plot(x, df_psi[f"{labels[1]}坏样本率"], color=colors[1],
-                    label=f"{labels[1]}坏样本率", linestyle=(5, (10, 3)))
+            ax2.plot(
+                x, df_psi[f"{labels[0]}坏样本率"], color=colors[0], label=f"{labels[0]}坏样本率", linestyle=(5, (10, 3))
+            )
+            ax2.plot(
+                x, df_psi[f"{labels[1]}坏样本率"], color=colors[1], label=f"{labels[1]}坏样本率", linestyle=(5, (10, 3))
+            )
             ax2.scatter(x, df_psi[f"{labels[0]}坏样本率"], marker=".")
             ax2.scatter(x, df_psi[f"{labels[1]}坏样本率"], marker=".")
-            ax2.set_ylabel('坏样本率')
+            ax2.set_ylabel("坏样本率")
             ax2.yaxis.set_major_formatter(PercentFormatter(1))
 
         # 标题处理：优先使用 title 参数
@@ -1592,8 +1788,14 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels() if ax2 is not None else ([], [])
         legend_anchor = 0.94 if anchor is None else anchor
-        legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
-                            ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, legend_anchor), frameon=False)
+        legend = fig.legend(
+            handles1 + handles2,
+            labels1 + labels2,
+            loc="upper center",
+            ncol=len(labels1 + labels2),
+            bbox_to_anchor=(0.5, legend_anchor),
+            frameon=False,
+        )
 
         fig.tight_layout()
         if anchor is None:
@@ -1604,17 +1806,40 @@ def psi_plot(expected, actual, y=None, labels=None, desc="", save=None, colors=N
             save_figure(fig, save, dpi=dpi)
 
     if result:
-        return df_psi[["指标名称", "分箱", f"{labels[0]}样本数", f"{labels[0]}样本占比", 
-                      f"{labels[0]}坏样本率", f"{labels[1]}样本数", f"{labels[1]}样本占比", 
-                      f"{labels[1]}坏样本率", f"{labels[1]}% - {labels[0]}%", 
-                      f"ln({labels[1]}% / {labels[0]}%)", "分档PSI值", "总体PSI值"]]
+        return df_psi[
+            [
+                "指标名称",
+                "分箱",
+                f"{labels[0]}样本数",
+                f"{labels[0]}样本占比",
+                f"{labels[0]}坏样本率",
+                f"{labels[1]}样本数",
+                f"{labels[1]}样本占比",
+                f"{labels[1]}坏样本率",
+                f"{labels[1]}% - {labels[0]}%",
+                f"ln({labels[1]}% / {labels[0]}%)",
+                "分档PSI值",
+                "总体PSI值",
+            ]
+        ]
     if plot:
         return fig
 
 
-def dataframe_plot(df, row_height=0.4, fontsize=14, header_color=None,
-                  row_colors=None, edge_color='w', bbox=[0, 0, 1, 1], header_columns=0, 
-                  ax=None, save=None, dpi: int = 240, **kwargs):
+def dataframe_plot(
+    df,
+    row_height=0.4,
+    fontsize=14,
+    header_color=None,
+    row_colors=None,
+    edge_color="w",
+    bbox=[0, 0, 1, 1],
+    header_columns=0,
+    ax=None,
+    save=None,
+    dpi: int = 240,
+    **kwargs,
+):
     """
     将DataFrame转换为图像.
 
@@ -1639,32 +1864,27 @@ def dataframe_plot(df, row_height=0.4, fontsize=14, header_color=None,
     if header_color is None:
         header_color = DEFAULT_COLORS[0]
     if row_colors is None:
-        row_colors = ['#EEF1FF', 'w']
+        row_colors = ["#EEF1FF", "w"]
 
     data = df.copy()
-    for col in data.select_dtypes('datetime'):
+    for col in data.select_dtypes("datetime"):
         data[col] = data[col].dt.strftime("%Y-%m-%d")
 
-    for col in data.select_dtypes('float'):
+    for col in data.select_dtypes("float"):
         data[col] = data[col].apply(lambda x: np.nan if pd.isnull(x) else round(x, 4))
 
     cols_width = [
-        max(data[col].apply(lambda x: len(str(x).encode())).max(), 
-            len(str(col).encode())) / 8. 
-        for col in data.columns
+        max(data[col].apply(lambda x: len(str(x).encode())).max(), len(str(col).encode())) / 8.0 for col in data.columns
     ]
 
     if ax is None:
         size = (sum(cols_width), (len(data) + 1) * row_height)
         fig, ax = plt.subplots(figsize=size)
-        ax.axis('off')
+        ax.axis("off")
     else:
         fig = ax.get_figure()
 
-    mpl_table = ax.table(
-        cellText=data.values, colWidths=cols_width, bbox=bbox, 
-        colLabels=data.columns, **kwargs
-    )
+    mpl_table = ax.table(cellText=data.values, colWidths=cols_width, bbox=bbox, colLabels=data.columns, **kwargs)
 
     mpl_table.auto_set_font_size(False)
     mpl_table.set_fontsize(fontsize)
@@ -1672,7 +1892,7 @@ def dataframe_plot(df, row_height=0.4, fontsize=14, header_color=None,
     for k, cell in mpl_table._cells.items():
         cell.set_edgecolor(edge_color)
         if k[0] == 0 or k[1] < header_columns:
-            cell.set_text_props(weight='bold', color='w')
+            cell.set_text_props(weight="bold", color="w")
             cell.set_facecolor(header_color)
         else:
             cell.set_facecolor(row_colors[k[0] % len(row_colors)])
@@ -1684,10 +1904,22 @@ def dataframe_plot(df, row_height=0.4, fontsize=14, header_color=None,
     return fig
 
 
-@analysis_inputs('data', roles=('date',))
-def distribution_plot(data, date="date", target: Optional[TargetInput] = None, save=None, figsize=(10, 6),
-                    colors=None, freq="M", anchor=None, result=False, hatch=True,
-                    overdue=None, dpds=None, title=None, del_grey: bool = False,
+@analysis_inputs("data", roles=("date",))
+def distribution_plot(
+    data,
+    date="date",
+    target: Optional[TargetInput] = None,
+    save=None,
+    figsize=(10, 6),
+    colors=None,
+    freq="M",
+    anchor=None,
+    result=False,
+    hatch=True,
+    overdue=None,
+    dpds=None,
+    title=None,
+    del_grey: bool = False,
     *,
     overdue_operator: str = ">=",
     dpi: int = 240,
@@ -1734,10 +1966,12 @@ def distribution_plot(data, date="date", target: Optional[TargetInput] = None, s
     if colors is None:
         colors = DEFAULT_COLORS
 
-    df, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, default_target="target", paired=True)
+    df, targets = bind_targets(
+        data, target, overdue, dpds, del_grey, overdue_operator, default_target="target", paired=True
+    )
     target = targets.columns[0]
 
-    if 'time' not in str(df[date].dtype):
+    if "time" not in str(df[date].dtype):
         df[date] = pd.to_datetime(df[date])
 
     resample_freq = normalize_freq(freq)
@@ -1750,21 +1984,26 @@ def distribution_plot(data, date="date", target: Optional[TargetInput] = None, s
         total_counts.index = format_time_labels(total_counts.index, freq, period=False)
 
         fig, ax1 = plt.subplots(1, 1, figsize=figsize)
-        total_counts.plot(kind='bar', ax=ax1, color=colors[0],
-                         hatch="/" if hatch else None,
-                         edgecolor='white' if hatch else None,
-                         legend=False, label='样本总数')
-        ax1.tick_params(axis='x', labelrotation=-90)
+        total_counts.plot(
+            kind="bar",
+            ax=ax1,
+            color=colors[0],
+            hatch="/" if hatch else None,
+            edgecolor="white" if hatch else None,
+            legend=False,
+            label="样本总数",
+        )
+        ax1.tick_params(axis="x", labelrotation=-90)
         ax1.set(xlabel=None)
-        ax1.set_ylabel('样本数')
+        ax1.set_ylabel("样本数")
 
         if title is None:
-            title = '不同时点多逾期口径坏样本率分布'
+            title = "不同时点多逾期口径坏样本率分布"
         title_artist = fig.suptitle(title)
 
         ax2 = ax1.twinx()
         # 定义多条折线的样式
-        line_styles = ['--', '-.', ':', '-', (0, (3, 1, 1, 1))]
+        line_styles = ["--", "-.", ":", "-", (0, (3, 1, 1, 1))]
         # 多条逾期口径折线统一使用 hscredit 扩展色板（坏样本率/基线语义色打头），保持整体风格一致
         line_colors = colors[1:] if len(colors) > 1 else ([BAD_RATE_COLOR, REFERENCE_COLOR] + list(EXTENDED_COLORS))
         # 确保颜色足够
@@ -1774,30 +2013,42 @@ def distribution_plot(data, date="date", target: Optional[TargetInput] = None, s
         result_frames = []
         for i, (label, y_target) in enumerate(targets.y_map(df, "plain").items()):
             df_temp = df_indexed.copy()
-            df_temp['_bad'] = y_target.values
-            bad_rate = df_temp.resample(resample_freq)['_bad'].mean()
+            df_temp["_bad"] = y_target.values
+            bad_rate = df_temp.resample(resample_freq)["_bad"].mean()
             bad_rate.index = format_time_labels(bad_rate.index, freq, period=False)
 
             style = line_styles[i % len(line_styles)]
             color = line_colors[i % len(line_colors)]
-            bad_rate.plot(ax=ax2, color=color, style=style, linewidth=2,
-                         marker='o', markersize=4, markerfacecolor='white',
-                         label=label)
+            bad_rate.plot(
+                ax=ax2,
+                color=color,
+                style=style,
+                linewidth=2,
+                marker="o",
+                markersize=4,
+                markerfacecolor="white",
+                label=label,
+            )
 
             if result:
                 rate_df = bad_rate.reset_index()
-                rate_df.columns = ['日期', f'{label}_坏样本率']
-                result_frames.append(rate_df.set_index('日期'))
+                rate_df.columns = ["日期", f"{label}_坏样本率"]
+                result_frames.append(rate_df.set_index("日期"))
 
-        ax2.set_ylabel('坏样本率')
+        ax2.set_ylabel("坏样本率")
         ax2.yaxis.set_major_formatter(PercentFormatter(1))
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
         legend_anchor = 0.94 if anchor is None else anchor
-        legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
-                            ncol=min(len(labels1 + labels2), 6),
-                            bbox_to_anchor=(0.5, legend_anchor), frameon=False)
+        legend = fig.legend(
+            handles1 + handles2,
+            labels1 + labels2,
+            loc="upper center",
+            ncol=min(len(labels1 + labels2), 6),
+            bbox_to_anchor=(0.5, legend_anchor),
+            frameon=False,
+        )
 
         fig.tight_layout()
         if anchor is None:
@@ -1807,38 +2058,48 @@ def distribution_plot(data, date="date", target: Optional[TargetInput] = None, s
 
         if result:
             counts_df = total_counts.reset_index()
-            counts_df.columns = ['日期', '样本总数']
-            merged = counts_df.set_index('日期')
+            counts_df.columns = ["日期", "样本总数"]
+            merged = counts_df.set_index("日期")
             for rf in result_frames:
-                merged = merged.join(rf, how='left')
+                merged = merged.join(rf, how="left")
             return merged.reset_index()
 
         return fig
 
     # ---------- 单目标模式（原逻辑） ----------
-    temp = df.set_index(date).assign(
-        好样本=lambda x: (x[target] == 0).astype(int),
-        坏样本=lambda x: (x[target] == 1).astype(int),
-    ).resample(resample_freq).agg({"好样本": "sum", "坏样本": "sum"})
+    temp = (
+        df.set_index(date)
+        .assign(
+            好样本=lambda x: (x[target] == 0).astype(int),
+            坏样本=lambda x: (x[target] == 1).astype(int),
+        )
+        .resample(resample_freq)
+        .agg({"好样本": "sum", "坏样本": "sum"})
+    )
 
     temp.index = format_time_labels(temp.index, freq, period=False)
 
     fig, ax1 = plt.subplots(1, 1, figsize=figsize)
-    temp.plot(kind='bar', stacked=True, ax=ax1, color=colors[:2], 
-             hatch="/" if hatch else None, edgecolor='white' if hatch else None, legend=False)
-    ax1.tick_params(axis='x', labelrotation=-90)
+    temp.plot(
+        kind="bar",
+        stacked=True,
+        ax=ax1,
+        color=colors[:2],
+        hatch="/" if hatch else None,
+        edgecolor="white" if hatch else None,
+        legend=False,
+    )
+    ax1.tick_params(axis="x", labelrotation=-90)
     ax1.set(xlabel=None)
-    ax1.set_ylabel('样本数')
+    ax1.set_ylabel("样本数")
 
     if title is None:
-        title = '不同时点数据集样本分布情况'
+        title = "不同时点数据集样本分布情况"
     title_artist = fig.suptitle(title)
 
     ax2 = ax1.twinx()
-    (temp["坏样本"] / temp.sum(axis=1)).plot(
-        ax=ax2, color=BAD_RATE_COLOR, style="--", linewidth=2, label="坏样本率"
-    )
-    ax2.set_ylabel('坏样本率')
+    (temp["坏样本"] / temp.sum(axis=1)).plot(ax=ax2, color=BAD_RATE_COLOR, style="--", linewidth=2, label="坏样本率")
+    ax2.set_ylabel("坏样本率")
     ax2.yaxis.set_major_formatter(PercentFormatter(1))
     setup_axis_style(ax1, colors)
     setup_axis_style(ax2, colors)
@@ -1846,8 +2107,14 @@ def distribution_plot(data, date="date", target: Optional[TargetInput] = None, s
     handles1, labels1 = ax1.get_legend_handles_labels()
     handles2, labels2 = ax2.get_legend_handles_labels()
     legend_anchor = 0.94 if anchor is None else anchor
-    legend = fig.legend(handles1 + handles2, labels1 + labels2, loc='upper center',
-                        ncol=len(labels1 + labels2), bbox_to_anchor=(0.5, legend_anchor), frameon=False)
+    legend = fig.legend(
+        handles1 + handles2,
+        labels1 + labels2,
+        loc="upper center",
+        ncol=len(labels1 + labels2),
+        bbox_to_anchor=(0.5, legend_anchor),
+        frameon=False,
+    )
 
     fig.tight_layout()
     if anchor is None:
@@ -1856,17 +2123,14 @@ def distribution_plot(data, date="date", target: Optional[TargetInput] = None, s
     save_figure(fig, save, dpi=dpi)
 
     if result:
-        temp = temp.reset_index().rename(
-            columns={date: "日期", "index": "日期", 0: "好样本", 1: "坏样本"}
-        )
+        temp = temp.reset_index().rename(columns={date: "日期", "index": "日期", 0: "好样本", 1: "坏样本"})
         temp["样本总数"] = temp["坏样本"] + temp["好样本"]
         temp["样本占比"] = temp["样本总数"] / temp["样本总数"].sum()
         temp["好样本占比"] = temp["好样本"] / temp["好样本"].sum()
         temp["坏样本占比"] = temp["坏样本"] / temp["坏样本"].sum()
         temp["坏样本率"] = temp["坏样本"] / temp["样本总数"]
 
-        return temp[["日期", "样本总数", "样本占比", "好样本", "好样本占比", 
-                    "坏样本", "坏样本占比", "坏样本率"]]
+        return temp[["日期", "样本总数", "样本占比", "好样本", "好样本占比", "坏样本", "坏样本占比", "坏样本率"]]
 
     return fig
 
@@ -1880,12 +2144,12 @@ def _compute_feature_bin_stats(
     target: str,
     group: Optional[str] = None,
     group_value: Optional[Any] = None,
-    method: str = 'quantile',
+    method: str = "quantile",
     max_n_bins: int = 10,
     min_bin_size: float = 0.02,
     rules: Optional[Dict] = None,
     special_codes: Optional[List] = None,
-    **kwargs
+    **kwargs,
 ) -> pd.DataFrame:
     """计算特征分箱统计.
 
@@ -1932,7 +2196,7 @@ def _compute_feature_bin_stats(
             min_bin_size=min_bin_size,
             special_codes=special_codes,
             verbose=False,
-            **kwargs
+            **kwargs,
         )
     else:
         binner = OptimalBinning(
@@ -1941,32 +2205,29 @@ def _compute_feature_bin_stats(
             min_bin_size=min_bin_size,
             special_codes=special_codes,
             verbose=False,
-            **kwargs
+            **kwargs,
         )
 
     binner.fit(X_valid.to_frame(), y_valid)
-    bin_indices = binner.transform(X_valid.to_frame(), metric='indices').values.flatten()
+    bin_indices = binner.transform(X_valid.to_frame(), metric="indices").values.flatten()
 
     # compute_bin_stats 按实际箱号排序，因此标签也必须先按箱号建立映射；
     # 不能直接传入已经排好版的 bin_table 行序，否则 -1/-2 保留箱会使标签错位。
     bin_labels = None
     if feature in binner.bin_tables_:
         bin_table = binner.bin_tables_[feature]
-        if '分箱' in bin_table.columns and '分箱标签' in bin_table.columns:
+        if "分箱" in bin_table.columns and "分箱标签" in bin_table.columns:
             label_by_bin = {}
             for _, bin_row in bin_table.iterrows():
-                bin_id = int(bin_row['分箱'])
+                bin_id = int(bin_row["分箱"])
                 if bin_id == -1:
-                    label = '缺失值'
+                    label = "缺失值"
                 elif bin_id == -2:
-                    label = '特殊值'
+                    label = "特殊值"
                 else:
-                    label = bin_row['分箱标签']
+                    label = bin_row["分箱标签"]
                 label_by_bin[bin_id] = label
-            bin_labels = [
-                label_by_bin.get(int(bin_id), f'分箱_{int(bin_id)}')
-                for bin_id in np.unique(bin_indices)
-            ]
+            bin_labels = [label_by_bin.get(int(bin_id), f"分箱_{int(bin_id)}") for bin_id in np.unique(bin_indices)]
 
     stats_df = compute_bin_stats(bin_indices, y_valid.values, bin_labels=bin_labels, round_digits=False)
 
@@ -1976,39 +2237,41 @@ def _compute_feature_bin_stats(
     y_metric = y_valid[metric_mask]
     try:
         from ..metrics import iv as iv_metric
+
         iv_val = iv_metric(y_metric, X_metric) if len(X_metric) > 0 else 0
     except Exception:
         iv_val = 0
 
     try:
         from ..metrics import ks as ks_metric
+
         ks_val = ks_metric(y_metric, X_metric) if len(X_metric) > 0 else 0
     except Exception:
         ks_val = 0
 
-    stats_df['iv_bin'] = iv_val / len(stats_df) if len(stats_df) > 0 else 0
-    stats_df['ks_bin'] = ks_val
-    stats_df['total_count'] = len(y_valid)
-    stats_df['total_bad'] = y_valid.sum()
-    stats_df['feature'] = feature
+    stats_df["iv_bin"] = iv_val / len(stats_df) if len(stats_df) > 0 else 0
+    stats_df["ks_bin"] = ks_val
+    stats_df["total_count"] = len(y_valid)
+    stats_df["total_bad"] = y_valid.sum()
+    stats_df["feature"] = feature
     return stats_df
 
 
 def _bin_plot_legend_handles(colors: List[str]) -> List[Any]:
     """返回分箱图共享的四项标准图例。"""
     return [
-        Patch(facecolor=colors[0], edgecolor='white', label='好样本'),
-        Patch(facecolor=colors[1], edgecolor='white', label='坏样本'),
+        Patch(facecolor=colors[0], edgecolor="white", label="好样本"),
+        Patch(facecolor=colors[1], edgecolor="white", label="坏样本"),
         Line2D(
             [0],
             [0],
             color=BAD_RATE_COLOR,
             linestyle=(0, (4, 3)),
             linewidth=2.1,
-            marker='o',
+            marker="o",
             markersize=5,
-            markerfacecolor='white',
-            label='坏样本率',
+            markerfacecolor="white",
+            label="坏样本率",
         ),
         Line2D(
             [0],
@@ -2016,7 +2279,7 @@ def _bin_plot_legend_handles(colors: List[str]) -> List[Any]:
             color=REFERENCE_COLOR,
             linestyle=(0, (2, 2)),
             linewidth=1.8,
-            label='整体坏样本率',
+            label="整体坏样本率",
         ),
     ]
 
@@ -2025,7 +2288,7 @@ def _create_bin_plot_figure_legend(fig: plt.Figure, colors: List[str], anchor: f
     """创建水平居中的 Figure 级分箱图图例。"""
     return fig.legend(
         handles=_bin_plot_legend_handles(colors),
-        loc='upper center',
+        loc="upper center",
         ncol=4,
         bbox_to_anchor=(0.5, anchor),
         frameon=False,
@@ -2079,7 +2342,7 @@ def _layout_bin_panel_rows(
                     if np.isfinite(title_bbox.y1):
                         lower_header_tops.append(title_bbox.y1)
                 for artist in [*lower_axis.texts, *lower_axis.artists]:
-                    if artist.get_visible() and artist.get_gid() == 'bin-metric-summary':
+                    if artist.get_visible() and artist.get_gid() == "bin-metric-summary":
                         summary_bbox = artist.get_window_extent(renderer)
                         if np.isfinite(summary_bbox.y1):
                             lower_header_tops.append(summary_bbox.y1)
@@ -2201,7 +2464,7 @@ def _layout_bin_panel_grid(
                     if np.isfinite(title_bbox.y1):
                         lower_header_tops.append(title_bbox.y1)
                 for artist in [*lower_axis.texts, *lower_axis.artists]:
-                    if artist.get_visible() and artist.get_gid() == 'bin-metric-summary':
+                    if artist.get_visible() and artist.get_gid() == "bin-metric-summary":
                         summary_bbox = artist.get_window_extent(renderer)
                         if np.isfinite(summary_bbox.y1):
                             lower_header_tops.append(summary_bbox.y1)
@@ -2238,11 +2501,11 @@ def _layout_bin_panel_grid(
         if vertical_deficit > 0.05:
             average_height = np.mean([axis.get_window_extent(renderer).height for axis in panel_axes])
             if np.isfinite(average_height) and average_height > 0:
-                adjustments['hspace'] = fig.subplotpars.hspace + vertical_deficit / average_height
+                adjustments["hspace"] = fig.subplotpars.hspace + vertical_deficit / average_height
         if horizontal_deficit > 0.05:
             average_width = np.mean([axis.get_window_extent(renderer).width for axis in panel_axes])
             if np.isfinite(average_width) and average_width > 0:
-                adjustments['wspace'] = fig.subplotpars.wspace + horizontal_deficit / average_width
+                adjustments["wspace"] = fig.subplotpars.wspace + horizontal_deficit / average_width
         if not adjustments:
             return
         fig.subplots_adjust(**adjustments)
@@ -2260,9 +2523,9 @@ def _binning_plot_cost_per_item(method: str, rules: Optional[Dict] = None) -> fl
     if rules:
         return 12.0
     method_key = str(method).strip().lower()
-    if method_key in {'mdlp', 'best_ks', 'best_iv', 'genetic', 'or_tools', 'cp_sat'}:
+    if method_key in {"mdlp", "best_ks", "best_iv", "genetic", "or_tools", "cp_sat"}:
         return 250.0
-    if method_key in {'tree', 'cart', 'chi', 'monotonic', 'smooth', 'kernel_density', 'best_lift'}:
+    if method_key in {"tree", "cart", "chi", "monotonic", "smooth", "kernel_density", "best_lift"}:
         return 80.0
     return 12.0
 
@@ -2283,15 +2546,15 @@ def _prepare_bin_trend_panels(
     target: str,
     group: Optional[Union[str, List[str]]] = None,
     date: Optional[str] = None,
-    freq: str = 'M',
-    method: str = 'quantile',
+    freq: str = "M",
+    method: str = "quantile",
     max_n_bins: int = 10,
     min_bin_size: float = 0.02,
     rules: Optional[Dict] = None,
     special_codes: Optional[List] = None,
-    shared_bins: Optional[Union[str, bool]] = 'max_samples',
+    shared_bins: Optional[Union[str, bool]] = "max_samples",
     sort_by: Optional[str] = None,
-    sort_order: str = 'asc',
+    sort_order: str = "asc",
     max_groups: Optional[int] = None,
     show_overall: bool = True,
     n_jobs=-1,
@@ -2312,14 +2575,14 @@ def _prepare_bin_trend_panels(
         working = data.copy()
         if not pd.api.types.is_datetime64_any_dtype(working[date]):
             working[date] = pd.to_datetime(working[date])
-        working['_date_group'] = date_groups(working[date], freq)
-        dimensions.append('_date_group')
+        working["_date_group"] = date_groups(working[date], freq)
+        dimensions.append("_date_group")
 
     if dimensions:
         if working is data:
             working = data.copy()
-        working['_group_key'] = working[dimensions].astype(str).agg('_'.join, axis=1)
-        partition_data = '_group_key'
+        working["_group_key"] = working[dimensions].astype(str).agg("_".join, axis=1)
+        partition_data = "_group_key"
     else:
         partition_data = None
 
@@ -2328,9 +2591,12 @@ def _prepare_bin_trend_panels(
     if partition_data is not None:
         groups = working[partition_data].unique()
         if sort_by is not None and sort_by in working.columns:
-            full_group_order = working.groupby(partition_data)[sort_by].first().sort_values(
-                ascending=(sort_order == 'asc')
-            ).index.tolist()
+            full_group_order = (
+                working.groupby(partition_data)[sort_by]
+                .first()
+                .sort_values(ascending=(sort_order == "asc"))
+                .index.tolist()
+            )
         else:
             full_group_order = sorted(groups)
         group_order = list(full_group_order)
@@ -2347,9 +2613,9 @@ def _prepare_bin_trend_panels(
 
     # 共享切分点依赖指定参考组，先完成这一步，再并行计算所有面板统计。
     if shared_bins and partition_data is not None and effective_rules is None:
-        if str(shared_bins).lower() == 'first':
+        if str(shared_bins).lower() == "first":
             ref_group = full_group_order[0] if full_group_order else None
-        elif str(shared_bins).lower() == 'last':
+        elif str(shared_bins).lower() == "last":
             ref_group = full_group_order[-1] if full_group_order else None
         else:
             group_sizes = working.groupby(partition_data).size()
@@ -2389,7 +2655,7 @@ def _prepare_bin_trend_panels(
     )
     tasks = [
         (
-            'Overall',
+            "Overall",
             working.loc[:, [feature, target]].copy(),
             feature,
             target,
@@ -2409,7 +2675,7 @@ def _prepare_bin_trend_panels(
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
         task_labels=labels,
-        default_backend='loky',
+        default_backend="loky",
         has_parallel_children=True,
         preserve_exceptions=True,
         workload=ParallelWorkload(
@@ -2418,9 +2684,9 @@ def _prepare_bin_trend_panels(
             columns=2 if group_order else 1,
             data_bytes=data_bytes,
             cost_per_item=_binning_plot_cost_per_item(method, effective_rules),
-            capability='process_safe',
+            capability="process_safe",
             has_parallel_children=True,
-            operation='分箱趋势面板统计',
+            operation="分箱趋势面板统计",
         ),
     )
 
@@ -2441,9 +2707,9 @@ def _prepare_bin_trend_panels(
     if not panel_stats:
         raise ValueError("没有可用的分箱统计数据")
     return {
-        'feature': feature,
-        'overall_stats': overall_stats,
-        'panel_stats': panel_stats,
+        "feature": feature,
+        "overall_stats": overall_stats,
+        "panel_stats": panel_stats,
     }
 
 
@@ -2455,7 +2721,7 @@ def _render_bin_trend_panels(
     colors: Optional[List[str]] = None,
     title: Optional[str] = None,
     show_stats: bool = True,
-    orientation: str = 'vertical',
+    orientation: str = "vertical",
     dpi: int = 150,
     save: Optional[str] = None,
     anchor: Optional[float] = None,
@@ -2466,7 +2732,7 @@ def _render_bin_trend_panels(
         colors = DEFAULT_COLORS
     max_cols = _validate_plot_max_cols(max_cols)
     orientation_key = orientation.lower()
-    is_horizontal = orientation_key in ['horizontal', 'h', '横向']
+    is_horizontal = orientation_key in ["horizontal", "h", "横向"]
 
     n_panels = len(panel_stats)
     if is_horizontal:
@@ -2487,37 +2753,37 @@ def _render_bin_trend_panels(
     axes_flat = axes.flatten()
     if title is None:
         title = f"{feature} - Risk Trend Analysis"
-    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
+    fig.suptitle(title, fontsize=14, fontweight="bold", y=0.98)
 
-    summary_cols = ['指标IV值', '分档KS值', 'LIFT值']
+    summary_cols = ["指标IV值", "分档KS值", "LIFT值"]
     panel_max_len = 22 if is_horizontal else 18
     for idx, (group_name, group_df) in enumerate(panel_stats):
         ax = axes_flat[idx]
-        group_total = group_df['样本总数'].sum()
-        group_bad = group_df['坏样本数'].sum()
+        group_total = group_df["样本总数"].sum()
+        group_bad = group_df["坏样本数"].sum()
         group_bad_rate = group_bad / group_total if group_total > 0 else 0.0
         panel_title = f"{group_name}\n({int(group_bad)}/{int(group_total)}, {group_bad_rate:.1%})"
         panel_df = group_df.copy()
         if not show_stats:
-            panel_df = panel_df.drop(columns=summary_cols, errors='ignore')
+            panel_df = panel_df.drop(columns=summary_cols, errors="ignore")
         try:
             bin_plot(
                 data=panel_df,
                 ax=ax,
                 title=panel_title,
                 colors=colors,
-                orientation='horizontal' if is_horizontal else 'vertical',
+                orientation="horizontal" if is_horizontal else "vertical",
                 max_len=panel_max_len,
                 show_overall_bad_rate=True,
                 show_metric_summary=show_stats,
-                metric_summary_layout='full_width_center',
+                metric_summary_layout="full_width_center",
             )
         except Exception as exc:
-            ax.text(0.5, 0.5, f'Error: {exc}', ha='center', va='center', transform=ax.transAxes)
+            ax.text(0.5, 0.5, f"Error: {exc}", ha="center", va="center", transform=ax.transAxes)
             ax.set_title(panel_title)
 
     for idx in range(n_panels, len(axes_flat)):
-        axes_flat[idx].axis('off')
+        axes_flat[idx].axis("off")
 
     legend_anchor = 0.94 if anchor is None else anchor
     legend = _create_bin_plot_figure_legend(fig, colors, anchor=legend_anchor)
@@ -2544,29 +2810,29 @@ def _render_bin_trend_panels(
 
 
 @binning_options
-@analysis_inputs('data', roles=('date', 'group'), multi_group=True)
+@analysis_inputs("data", roles=("date", "group"), multi_group=True)
 def bin_trend_plot(
     data: pd.DataFrame,
     feature: str,
     target: str,
     group: Optional[Union[str, List[str]]] = None,
     date: Optional[str] = None,
-    freq: str = 'M',
-    method: str = 'quantile',
+    freq: str = "M",
+    method: str = "quantile",
     max_n_bins: int = 10,
     min_bin_size: float = 0.02,
     rules: Optional[Dict] = None,
     special_codes: Optional[List] = None,
-    shared_bins: Optional[Union[str, bool]] = 'max_samples',
+    shared_bins: Optional[Union[str, bool]] = "max_samples",
     sort_by: Optional[str] = None,
-    sort_order: str = 'asc',
+    sort_order: str = "asc",
     max_groups: Optional[int] = None,
     figsize: Optional[tuple] = None,
     colors: Optional[List[str]] = None,
     title: Optional[str] = None,
     show_overall: bool = True,
     show_stats: bool = True,
-    orientation: str = 'vertical',
+    orientation: str = "vertical",
     dpi: int = 150,
     save: Optional[str] = None,
     anchor: Optional[float] = None,
@@ -2574,7 +2840,8 @@ def bin_trend_plot(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
-    bin_params=None, **kwargs
+    bin_params=None,
+    **kwargs,
 ) -> plt.Figure:
     """绘制特征分箱风险趋势图.
 
@@ -2671,7 +2938,7 @@ def bin_trend_plot(
     )
     return _render_bin_trend_panels(
         feature,
-        prepared['panel_stats'],
+        prepared["panel_stats"],
         figsize=figsize,
         colors=colors,
         title=title,
@@ -2693,15 +2960,15 @@ def _prepare_bin_trend_feature_worker(task):
         return feature, None, exc
 
 
-@analysis_inputs('data', roles=('date', 'group'), multi_group=True)
+@analysis_inputs("data", roles=("date", "group"), multi_group=True)
 def batch_bin_trend_plot(
     data: pd.DataFrame,
     features: List[str],
     target: str,
     group: Optional[Union[str, List[str]]] = None,
     date: Optional[str] = None,
-    freq: str = 'M',
-    sort_by: str = 'iv',
+    freq: str = "M",
+    sort_by: str = "iv",
     max_features: int = 10,
     figsize_per_feature: Optional[tuple] = None,
     save_dir: Optional[str] = None,
@@ -2709,7 +2976,7 @@ def batch_bin_trend_plot(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
-    **kwargs
+    **kwargs,
 ) -> Dict[str, plt.Figure]:
     """批量绘制多个特征的风险趋势图.
 
@@ -2742,23 +3009,23 @@ def batch_bin_trend_plot(
     """
     max_cols = _validate_plot_max_cols(max_cols)
     options = dict(kwargs)
-    method = options.pop('method', 'quantile')
-    max_n_bins = options.pop('max_n_bins', 10)
-    min_bin_size = options.pop('min_bin_size', 0.02)
-    rules = options.pop('rules', None)
-    special_codes = options.pop('special_codes', None)
-    shared_bins = options.pop('shared_bins', 'max_samples')
-    sort_order = options.pop('sort_order', 'asc')
-    max_groups = options.pop('max_groups', None)
-    show_overall = options.pop('show_overall', True)
+    method = options.pop("method", "quantile")
+    max_n_bins = options.pop("max_n_bins", 10)
+    min_bin_size = options.pop("min_bin_size", 0.02)
+    rules = options.pop("rules", None)
+    special_codes = options.pop("special_codes", None)
+    shared_bins = options.pop("shared_bins", "max_samples")
+    sort_order = options.pop("sort_order", "asc")
+    max_groups = options.pop("max_groups", None)
+    show_overall = options.pop("show_overall", True)
 
-    colors = options.pop('colors', None)
-    title = options.pop('title', None)
-    show_stats = options.pop('show_stats', True)
-    orientation = options.pop('orientation', 'vertical')
-    dpi = options.pop('dpi', 150)
-    anchor = options.pop('anchor', None)
-    explicit_save = options.pop('save', None)
+    colors = options.pop("colors", None)
+    title = options.pop("title", None)
+    show_stats = options.pop("show_stats", True)
+    orientation = options.pop("orientation", "vertical")
+    dpi = options.pop("dpi", 150)
+    anchor = options.pop("anchor", None)
+    explicit_save = options.pop("save", None)
 
     if isinstance(group, str):
         dimension_names = [group]
@@ -2799,7 +3066,7 @@ def batch_bin_trend_plot(
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
         task_labels=list(features),
-        default_backend='loky',
+        default_backend="loky",
         has_parallel_children=True,
         preserve_exceptions=True,
         workload=ParallelWorkload(
@@ -2808,9 +3075,9 @@ def batch_bin_trend_plot(
             columns=max(1, 2 * len(tasks)),
             data_bytes=data_bytes,
             cost_per_item=_binning_plot_cost_per_item(method, rules),
-            capability='process_safe',
+            capability="process_safe",
             has_parallel_children=True,
-            operation='批量分箱趋势统计',
+            operation="批量分箱趋势统计",
         ),
     )
 
@@ -2819,12 +3086,12 @@ def batch_bin_trend_plot(
         if error is not None:
             warnings.warn(f"绘制特征 {feature} 失败: {error}")
             continue
-        overall = prepared['overall_stats']
-        iv_value = float(overall['iv_bin'].sum())
-        ks_value = float(overall['ks_bin'].max())
-        score_value = iv_value if sort_by == 'iv' else ks_value
+        overall = prepared["overall_stats"]
+        iv_value = float(overall["iv_bin"].sum())
+        ks_value = float(overall["ks_bin"].max())
+        score_value = iv_value if sort_by == "iv" else ks_value
         if not np.isfinite(score_value):
-            score_value = float('-inf')
+            score_value = float("-inf")
         scored.append((feature, prepared, score_value, input_order))
 
     # 并行完成顺序不影响展示；同分时继续遵循调用方 features 的输入顺序。
@@ -2838,7 +3105,7 @@ def batch_bin_trend_plot(
         save_path = os.path.join(save_dir, f"{feature}_trend.png") if save_dir else explicit_save
         figure = _render_bin_trend_panels(
             feature,
-            prepared['panel_stats'],
+            prepared["panel_stats"],
             figsize=figsize_per_feature,
             colors=colors,
             title=title,
@@ -2855,6 +3122,7 @@ def batch_bin_trend_plot(
 
 # ==================== 多逾期天数分箱图 ====================
 
+
 def _is_multiindex_bin_table(df: pd.DataFrame) -> bool:
     """检查是否为多级表头的分箱表（来自 feature_bin_stats）."""
     return isinstance(df.columns, pd.MultiIndex)
@@ -2864,13 +3132,13 @@ def _extract_target_names_from_bin_table(bin_table: pd.DataFrame) -> List[str]:
     """从多级表头分箱表中提取目标名称列表."""
     # 获取第一级列名（排除 '分箱详情'）
     level_0_names = bin_table.columns.get_level_values(0).unique()
-    target_names = [name for name in level_0_names if name != '分箱详情']
+    target_names = [name for name in level_0_names if name != "分箱详情"]
     return target_names
 
 
 def _get_stats_for_target(bin_table: pd.DataFrame, target_name: str) -> pd.DataFrame:
     """从多级表头分箱表中提取指定目标的统计信息.
-    
+
     :param bin_table: 多级表头分箱表
     :param target_name: 目标名称
     :return: 单目标的分箱统计表（标准格式）
@@ -2878,54 +3146,54 @@ def _get_stats_for_target(bin_table: pd.DataFrame, target_name: str) -> pd.DataF
     # 获取分箱详情列和目标列
     common_cols = []
     target_cols = []
-    
+
     for col_tuple in bin_table.columns:
-        if col_tuple[0] == '分箱详情':
+        if col_tuple[0] == "分箱详情":
             common_cols.append(col_tuple[1])
         elif col_tuple[0] == target_name:
             target_cols.append(col_tuple[1])
-    
+
     # 构建标准格式的分箱表
     stats_df = pd.DataFrame()
-    
+
     # 添加公共列（重命名以匹配标准格式）
     col_mapping = {
-        '分箱标签': '分箱',
-        '样本总数': '样本总数',
-        '样本占比': '样本占比',
-        '指标名称': '特征',
-        '指标含义': '描述'
+        "分箱标签": "分箱",
+        "样本总数": "样本总数",
+        "样本占比": "样本占比",
+        "指标名称": "特征",
+        "指标含义": "描述",
     }
-    
+
     for orig_col, std_col in col_mapping.items():
         if orig_col in common_cols:
-            stats_df[std_col] = bin_table[('分箱详情', orig_col)].values
-    
+            stats_df[std_col] = bin_table[("分箱详情", orig_col)].values
+
     # 添加目标列（重命名以匹配标准格式）
     target_col_mapping = {
         # 剔灰后的多目标表不会把样本总数/占比放在“分箱详情”
         # 公共层级；此时它们仍属于当前目标，必须一并提取，
         # 否则 bin_plot 会误判为原始数据而要求 target 参数。
-        '样本总数': '样本总数',
-        '样本占比': '样本占比',
-        '好样本数': '好样本数',
-        '坏样本数': '坏样本数',
-        '坏样本率': '坏样本率',
-        '累计好样本占比': '累计好样本占比',
-        '累计坏样本占比': '累计坏样本占比',
-        'Lift': 'LIFT值',
-        'WOE值': 'WOE值',
-        'IV值': '指标IV值'
+        "样本总数": "样本总数",
+        "样本占比": "样本占比",
+        "好样本数": "好样本数",
+        "坏样本数": "坏样本数",
+        "坏样本率": "坏样本率",
+        "累计好样本占比": "累计好样本占比",
+        "累计坏样本占比": "累计坏样本占比",
+        "Lift": "LIFT值",
+        "WOE值": "WOE值",
+        "IV值": "指标IV值",
     }
-    
+
     for orig_col, std_col in target_col_mapping.items():
         if orig_col in target_cols and std_col not in stats_df.columns:
             stats_df[std_col] = bin_table[(target_name, orig_col)].values
-    
+
     # 计算 KS 值（如果坏样本率和累计占比存在）
-    if '累计坏样本占比' in stats_df.columns and '累计好样本占比' in stats_df.columns:
-        stats_df['分档KS值'] = (stats_df['累计坏样本占比'] - stats_df['累计好样本占比']).abs()
-    
+    if "累计坏样本占比" in stats_df.columns and "累计好样本占比" in stats_df.columns:
+        stats_df["分档KS值"] = (stats_df["累计坏样本占比"] - stats_df["累计好样本占比"]).abs()
+
     return stats_df
 
 
@@ -2951,11 +3219,11 @@ def bin_overdues_plot(
     overdue: Optional[List[str]] = None,
     dpds: Optional[List[int]] = None,
     bin_table: Optional[pd.DataFrame] = None,
-    method: str = 'quantile',
+    method: str = "quantile",
     max_n_bins: int = 10,
     min_bin_size: float = 0.02,
     rules: Optional[Dict] = None,
-    shared_bins: Optional[Union[str, bool]] = 'max_samples',
+    shared_bins: Optional[Union[str, bool]] = "max_samples",
     figsize: Optional[tuple] = None,
     colors: Optional[List[str]] = None,
     title: Optional[str] = None,
@@ -2969,7 +3237,9 @@ def bin_overdues_plot(
     *,
     target: Optional[TargetInput] = None,
     overdue_operator: str = ">=",
-    dpi: int = 240, bin_params=None, **kwargs
+    dpi: int = 240,
+    bin_params=None,
+    **kwargs,
 ) -> plt.Figure:
     """绘制多个逾期天数的分箱图（横向展示）.
 
@@ -3019,9 +3289,9 @@ def bin_overdues_plot(
     >>> # 方式2：使用 feature_bin_stats 生成的分箱表
     >>> from hscredit.report.feature_analyzer import feature_bin_stats
     >>> bin_table = feature_bin_stats(
-    ...     df, 
-    ...     feature='score', 
-    ...     overdue=['MOB1', 'MOB3'], 
+    ...     df,
+    ...     feature='score',
+    ...     overdue=['MOB1', 'MOB3'],
     ...     dpds=[0, 7]
     ... )
     >>> fig = bin_overdues_plot(bin_table=bin_table)
@@ -3050,10 +3320,10 @@ def bin_overdues_plot(
             raise ValueError("分箱表中没有找到目标列（除了 '分箱详情'）")
 
         # 从分箱详情中提取特征名（使用第一个分箱行）
-        if ('分箱详情', '指标名称') in bin_table.columns:
-            feature = bin_table[('分箱详情', '指标名称')].iloc[0]
+        if ("分箱详情", "指标名称") in bin_table.columns:
+            feature = bin_table[("分箱详情", "指标名称")].iloc[0]
         else:
-            feature = 'Feature'
+            feature = "Feature"
 
         n_plots = len(target_names)
 
@@ -3079,13 +3349,13 @@ def bin_overdues_plot(
                 stats_df = _get_stats_for_target(bin_table, target_name)
 
                 if stats_df.empty:
-                    ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+                    ax.text(0.5, 0.5, "No Data", ha="center", va="center", transform=ax.transAxes)
                     ax.set_title(target_name)
                     continue
 
                 # 格式化分箱标签
-                if '分箱' in stats_df.columns:
-                    stats_df['分箱'] = stats_df['分箱'].apply(lambda x: format_bin_label(x, 35))
+                if "分箱" in stats_df.columns:
+                    stats_df["分箱"] = stats_df["分箱"].apply(lambda x: format_bin_label(x, 35))
 
                 # 使用 bin_plot 绘制单个子图
                 bin_plot(
@@ -3093,23 +3363,23 @@ def bin_overdues_plot(
                     ax=ax,
                     title=target_name,
                     colors=colors,
-                    orientation='vertical',
+                    orientation="vertical",
                     show_metric_summary=show_stats,
-                    metric_summary_layout='full_width_center',
+                    metric_summary_layout="full_width_center",
                 )
 
             except Exception as e:
-                ax.text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center', transform=ax.transAxes)
+                ax.text(0.5, 0.5, f"Error: {str(e)}", ha="center", va="center", transform=ax.transAxes)
                 ax.set_title(target_name)
 
         # 隐藏多余的子图
         for idx in range(n_plots, len(axes)):
-            axes[idx].axis('off')
+            axes[idx].axis("off")
 
         # 设置总标题
         if title is None:
             title = f"{feature} - Multi DPD Binning Analysis"
-        fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
+        fig.suptitle(title, fontsize=14, fontweight="bold", y=0.98)
 
         fig.tight_layout(rect=(0, 0, 1, 0.92))
         legend = _create_bin_plot_figure_legend(fig, colors)
@@ -3151,10 +3421,11 @@ def bin_overdues_plot(
         global_rules = None
         if shared_bins:
             from ..binning import OptimalBinning
+
             _shared = str(shared_bins).lower()
-            if _shared == 'first':
+            if _shared == "first":
                 ref_idx = 0
-            elif _shared == 'last':
+            elif _shared == "last":
                 ref_idx = len(targets) - 1
             else:  # 'max_samples' 或其他真值
                 valid_counts = []
@@ -3191,7 +3462,9 @@ def bin_overdues_plot(
     tasks = []
     labels = []
     for name, definition in zip(targets.names(), targets.labels):
-        label = f"{definition.overdue} ({targets.operator} {definition.dpd})" if definition.overdue is not None else name
+        label = (
+            f"{definition.overdue} ({targets.operator} {definition.dpd})" if definition.overdue is not None else name
+        )
         target_values = data[definition.column]
         tasks.append((label, data.loc[:, [feature]].copy(), target_values, feature, stats_options))
         labels.append(label)
@@ -3205,7 +3478,7 @@ def bin_overdues_plot(
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
         task_labels=labels,
-        default_backend='loky',
+        default_backend="loky",
         has_parallel_children=True,
         preserve_exceptions=True,
         workload=ParallelWorkload(
@@ -3214,9 +3487,9 @@ def bin_overdues_plot(
             columns=max(1, len(tasks)),
             data_bytes=data_bytes,
             cost_per_item=_binning_plot_cost_per_item(method, global_rules),
-            capability='process_safe',
+            capability="process_safe",
             has_parallel_children=True,
-            operation='多逾期分箱统计',
+            operation="多逾期分箱统计",
         ),
     )
 
@@ -3224,37 +3497,37 @@ def bin_overdues_plot(
     for idx, (label, stats_df, error) in enumerate(overdue_results):
         ax = axes[idx]
         if error is not None:
-            ax.text(0.5, 0.5, f'Error: {error}', ha='center', va='center', transform=ax.transAxes)
+            ax.text(0.5, 0.5, f"Error: {error}", ha="center", va="center", transform=ax.transAxes)
             ax.set_title(label)
             continue
         if stats_df.empty:
-            ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+            ax.text(0.5, 0.5, "No Data", ha="center", va="center", transform=ax.transAxes)
             ax.set_title(label)
             continue
         try:
             stats_df = stats_df.copy()
-            stats_df['分箱'] = stats_df['分箱'].apply(lambda value: format_bin_label(value, 35))
+            stats_df["分箱"] = stats_df["分箱"].apply(lambda value: format_bin_label(value, 35))
             bin_plot(
                 data=stats_df,
                 ax=ax,
                 title=label,
                 colors=colors,
-                orientation='vertical',
+                orientation="vertical",
                 show_metric_summary=show_stats,
-                metric_summary_layout='full_width_center',
+                metric_summary_layout="full_width_center",
             )
         except Exception as exc:
-            ax.text(0.5, 0.5, f'Error: {exc}', ha='center', va='center', transform=ax.transAxes)
+            ax.text(0.5, 0.5, f"Error: {exc}", ha="center", va="center", transform=ax.transAxes)
             ax.set_title(label)
 
     # 隐藏多余的子图
     for idx in range(n_plots, len(axes)):
-        axes[idx].axis('off')
+        axes[idx].axis("off")
 
     # 设置总标题
     if title is None:
         title = f"{feature} - Multi DPD Binning Analysis"
-    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.98)
+    fig.suptitle(title, fontsize=14, fontweight="bold", y=0.98)
 
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     legend = _create_bin_plot_figure_legend(fig, colors)
@@ -3281,9 +3554,7 @@ def _draw_2d_bin_boundaries(
     if solution.ndim != 2 or solution.size == 0:
         raise ValueError("二维分箱映射必须是非空二维矩阵")
     if expected_shape is not None and solution.shape != tuple(expected_shape):
-        raise ValueError(
-            f"二维分箱映射形状 {solution.shape} 与热力图形状 {tuple(expected_shape)} 不一致"
-        )
+        raise ValueError(f"二维分箱映射形状 {solution.shape} 与热力图形状 {tuple(expected_shape)} 不一致")
     if not 0 < inset < 0.5:
         raise ValueError("二维分箱轮廓内缩量必须大于 0 且小于 0.5")
 
@@ -3310,23 +3581,35 @@ def _draw_2d_bin_boundaries(
             bottom, top = row - 0.5, row + 0.5
             if col == 0 or display_solution[row, col - 1] != bin_id:
                 _add_side(
-                    (left, bottom), (left, top),
-                    (left + inset, bottom + inset), (left + inset, top - inset), cell,
+                    (left, bottom),
+                    (left, top),
+                    (left + inset, bottom + inset),
+                    (left + inset, top - inset),
+                    cell,
                 )
             if col == n_cols - 1 or display_solution[row, col + 1] != bin_id:
                 _add_side(
-                    (right, bottom), (right, top),
-                    (right - inset, bottom + inset), (right - inset, top - inset), cell,
+                    (right, bottom),
+                    (right, top),
+                    (right - inset, bottom + inset),
+                    (right - inset, top - inset),
+                    cell,
                 )
             if row == 0 or display_solution[row - 1, col] != bin_id:
                 _add_side(
-                    (left, bottom), (right, bottom),
-                    (left + inset, bottom + inset), (right - inset, bottom + inset), cell,
+                    (left, bottom),
+                    (right, bottom),
+                    (left + inset, bottom + inset),
+                    (right - inset, bottom + inset),
+                    cell,
                 )
             if row == n_rows - 1 or display_solution[row + 1, col] != bin_id:
                 _add_side(
-                    (left, top), (right, top),
-                    (left + inset, top - inset), (right - inset, top - inset), cell,
+                    (left, top),
+                    (right, top),
+                    (left + inset, top - inset),
+                    (right - inset, top - inset),
+                    cell,
                 )
 
         # 每条边沿切向也做了内缩；在直线接缝和凹角处补短连接段，保持轮廓连续。
@@ -3409,7 +3692,7 @@ def _cross_heatmap_cell(
     M: np.ndarray,
     base_color: str,
     *,
-    fmt: str = '.1%',
+    fmt: str = ".1%",
     annot: bool = True,
     diverging: bool = False,
     fontsize: int = 10,
@@ -3452,11 +3735,16 @@ def _cross_heatmap_cell(
         cmap = make_colormap("hscredit_cross", ["#F7F8FF", base_color])
 
     cmap = _copy.copy(cmap)
-    cmap.set_bad('#f0f0f0')
+    cmap.set_bad("#f0f0f0")
 
     im = ax.imshow(
-        np.ma.masked_invalid(A), aspect='auto', cmap=cmap, norm=norm, origin='lower',
-        extent=(-0.5, ny - 0.5, -0.5, nx - 0.5), interpolation='nearest',
+        np.ma.masked_invalid(A),
+        aspect="auto",
+        cmap=cmap,
+        norm=norm,
+        origin="lower",
+        extent=(-0.5, ny - 0.5, -0.5, nx - 0.5),
+        interpolation="nearest",
     )
 
     if annot:
@@ -3467,19 +3755,18 @@ def _cross_heatmap_cell(
                     continue
                 rgba = cmap(norm(v))
                 lum = 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2]
-                text_color = 'white' if lum < 0.55 else '#222222'
-                ax.text(c, r, format(float(v), fmt), ha='center', va='center',
-                        fontsize=fontsize, color=text_color)
+                text_color = "white" if lum < 0.55 else "#222222"
+                ax.text(c, r, format(float(v), fmt), ha="center", va="center", fontsize=fontsize, color=text_color)
 
     # 白色网格线（参照相关性图风格）
     ax.set_xticks(np.arange(-0.5, ny, 1), minor=True)
     ax.set_yticks(np.arange(-0.5, nx, 1), minor=True)
-    ax.grid(which='minor', color='white', linewidth=1.4)
-    ax.tick_params(which='minor', length=0)
+    ax.grid(which="minor", color="white", linewidth=1.4)
+    ax.tick_params(which="minor", length=0)
     ax.set_xlim(-0.5, ny - 0.5)
     ax.set_ylim(-0.5, nx - 0.5)
     setup_axis_style(ax, [axis_color])
-    ax.tick_params(axis='both', colors=axis_color)
+    ax.tick_params(axis="both", colors=axis_color)
     return im
 
 
@@ -3506,12 +3793,16 @@ def _set_cross_heat_ticklabels(
     """
     if xlabels is not None:
         ax.set_xticks(np.arange(ny))
-        ax.set_xticklabels([format_bin_label(str(lbl), max_len) for lbl in xlabels],
-                           rotation=rotation, ha='left' if x_top else 'right',
-                           fontsize=fontsize, color=axis_color)
+        ax.set_xticklabels(
+            [format_bin_label(str(lbl), max_len) for lbl in xlabels],
+            rotation=rotation,
+            ha="left" if x_top else "right",
+            fontsize=fontsize,
+            color=axis_color,
+        )
         if x_top:
-            ax.xaxis.set_ticks_position('top')
-            ax.xaxis.set_label_position('top')
+            ax.xaxis.set_ticks_position("top")
+            ax.xaxis.set_label_position("top")
     else:
         ax.set_xticks([])
 
@@ -3521,65 +3812,61 @@ def _set_cross_heat_ticklabels(
         labels = [format_bin_label(str(ylabels[nx - 1 - p]), max_len) for p in range(nx)]
         ax.set_yticklabels(labels, fontsize=fontsize, color=axis_color)
         if y_right:
-            ax.yaxis.set_ticks_position('right')
-            ax.yaxis.set_label_position('right')
+            ax.yaxis.set_ticks_position("right")
+            ax.yaxis.set_label_position("right")
     else:
         ax.set_yticks([])
 
 
 def _binned_ks_curve(bin_table: pd.DataFrame) -> pd.DataFrame:
     """按 WOE 风险方向从分箱统计重建累计好坏样本与 KS 曲线。"""
-    required = ['样本总数', '好样本数', '坏样本数', '分档WOE值']
+    required = ["样本总数", "好样本数", "坏样本数", "分档WOE值"]
     missing = [column for column in required if column not in bin_table.columns]
     if missing:
         raise ValueError(f"分箱表缺少 KS 曲线所需列: {missing}")
 
     ordered = bin_table.copy()
     for column in required:
-        ordered[column] = pd.to_numeric(ordered[column], errors='coerce')
+        ordered[column] = pd.to_numeric(ordered[column], errors="coerce")
     ordered = (
-        ordered.dropna(subset=required)
-        .sort_values('分档WOE值', ascending=False, kind='stable')
-        .reset_index(drop=True)
+        ordered.dropna(subset=required).sort_values("分档WOE值", ascending=False, kind="stable").reset_index(drop=True)
     )
     # 相同 WOE 对 transform 而言是同一评分阈值。先聚合再累计，避免箱内行序
     # 产生实际不可达到的中间阈值并高估 KS。
-    ordered = ordered.groupby('分档WOE值', sort=False, as_index=False)[
-        ['样本总数', '好样本数', '坏样本数']
-    ].sum()
-    total = float(ordered['样本总数'].sum())
-    total_good = float(ordered['好样本数'].sum())
-    total_bad = float(ordered['坏样本数'].sum())
+    ordered = ordered.groupby("分档WOE值", sort=False, as_index=False)[["样本总数", "好样本数", "坏样本数"]].sum()
+    total = float(ordered["样本总数"].sum())
+    total_good = float(ordered["好样本数"].sum())
+    total_bad = float(ordered["坏样本数"].sum())
     if total <= 0 or total_good <= 0 or total_bad <= 0:
-        return pd.DataFrame(columns=['累计样本占比', '累积好样本占比', '累积坏样本占比', 'KS值'])
+        return pd.DataFrame(columns=["累计样本占比", "累积好样本占比", "累积坏样本占比", "KS值"])
 
     curve = pd.DataFrame(
         {
-            '累计样本占比': ordered['样本总数'].cumsum() / total,
-            '累积好样本占比': ordered['好样本数'].cumsum() / total_good,
-            '累积坏样本占比': ordered['坏样本数'].cumsum() / total_bad,
+            "累计样本占比": ordered["样本总数"].cumsum() / total,
+            "累积好样本占比": ordered["好样本数"].cumsum() / total_good,
+            "累积坏样本占比": ordered["坏样本数"].cumsum() / total_bad,
         }
-    ).assign(KS值=lambda table: (table['累积坏样本占比'] - table['累积好样本占比']).abs())
+    ).assign(KS值=lambda table: (table["累积坏样本占比"] - table["累积好样本占比"]).abs())
     origin = pd.DataFrame(
         {
-            '累计样本占比': [0.0],
-            '累积好样本占比': [0.0],
-            '累积坏样本占比': [0.0],
-            'KS值': [0.0],
+            "累计样本占比": [0.0],
+            "累积好样本占比": [0.0],
+            "累积坏样本占比": [0.0],
+            "KS值": [0.0],
         }
     )
     return pd.concat([origin, curve], ignore_index=True)
 
 
 @binning_options
-@analysis_inputs('data', roles=(), dimensions=2)
+@analysis_inputs("data", roles=(), dimensions=2)
 def bin_2d_plot(
     data,
     features: Optional[List[str]] = None,
     target: Optional[Union[str, pd.Series, np.ndarray]] = None,
     *,
     binner=None,
-    method: str = 'quantile',
+    method: str = "quantile",
     max_n_bins: int = 5,
     min_bin_size: Union[float, int] = 0.02,
     figsize: Optional[tuple] = None,
@@ -3679,137 +3966,133 @@ def bin_2d_plot(
             raise ValueError("方式1需提供 target（目标列名或数组）")
         _kw = dict(kwargs)
         b2d = OptimalBinning2D(
-            method=_kw.pop('method', method),
-            max_n_bins=_kw.pop('max_n_bins', max_n_bins),
-            min_bin_size=_kw.pop('min_bin_size', min_bin_size),
+            method=_kw.pop("method", method),
+            max_n_bins=_kw.pop("max_n_bins", max_n_bins),
+            min_bin_size=_kw.pop("min_bin_size", min_bin_size),
             **_kw,
         )
         if isinstance(target, str):
             y_series = data[target]
         else:
-            y_series = pd.Series(np.asarray(target).reshape(-1), index=data.index, name='target')
+            y_series = pd.Series(np.asarray(target).reshape(-1), index=data.index, name="target")
         b2d.fit(data, y=y_series, features=list(features))
 
-    if not getattr(b2d, '_is_fitted', False):
+    if not getattr(b2d, "_is_fitted", False):
         raise NotFittedError("OptimalBinning2D 尚未拟合，请先调用 fit 方法")
 
-    feat_x = b2d.feature_x_   # 特征1（行维度）
-    feat_y = b2d.feature_y_   # 特征2（列维度）
+    feat_x = b2d.feature_x_  # 特征1（行维度）
+    feat_y = b2d.feature_y_  # 特征2（列维度）
     normal_nx = b2d.n_bins_x_
     normal_ny = b2d.n_bins_y_
-    has_missing_x = bool(getattr(b2d, '_has_missing_x_', False))
-    has_missing_y = bool(getattr(b2d, '_has_missing_y_', False))
+    has_missing_x = bool(getattr(b2d, "_has_missing_x_", False))
+    has_missing_y = bool(getattr(b2d, "_has_missing_y_", False))
     nx = normal_nx + int(has_missing_x)
     ny = normal_ny + int(has_missing_y)
     cross = b2d.cross_table_.copy()
     # cross_table_ 中 -1 表示缺失箱。二维联合图保留缺失行/列，
     # 并将其映射到普通箱之后，形成完整的笛卡尔积热力图。
-    cross = cross[(cross['特征1分箱'] >= -1) & (cross['特征2分箱'] >= -1)].copy()
+    cross = cross[(cross["特征1分箱"] >= -1) & (cross["特征2分箱"] >= -1)].copy()
     # ---------- 计算交叉指标矩阵 M[i, j]（行=特征1 bin i, 列=特征2 bin j） ----------
     # 总体口径来自最终二维表，包含特殊值；特殊值不进入矩形网格，但不能从样本占比、
     # 拒绝后坏样本率等总体分母中消失。
     final_table = b2d.get_bin_table()
-    total = float(final_table['样本总数'].sum())
-    total_bad = float(final_table['坏样本数'].sum())
+    total = float(final_table["样本总数"].sum())
+    total_bad = float(final_table["坏样本数"].sum())
     total_good = total - total_bad
     overall_bad_rate = total_bad / total if total > 0 else 0.0
 
     work = cross.copy()
-    work['_特征1绘图分箱'] = work['特征1分箱'].replace(
-        {-1: normal_nx} if has_missing_x else {}
-    ).astype(int)
-    work['_特征2绘图分箱'] = work['特征2分箱'].replace(
-        {-1: normal_ny} if has_missing_y else {}
-    ).astype(int)
+    work["_特征1绘图分箱"] = work["特征1分箱"].replace({-1: normal_nx} if has_missing_x else {}).astype(int)
+    work["_特征2绘图分箱"] = work["特征2分箱"].replace({-1: normal_ny} if has_missing_y else {}).astype(int)
     # 坏账改善 = (全量坏样本率 - 拒绝该格后剩余样本坏样本率) / 全量坏样本率
-    other_bad = total_bad - work['坏样本数']
-    other_total = total - work['样本总数']
+    other_bad = total_bad - work["坏样本数"]
+    other_total = total - work["样本总数"]
     other_bad_rate = np.where(other_total > 0, other_bad / other_total, 0.0)
-    work['坏账改善'] = np.where(
-        overall_bad_rate > 0, (overall_bad_rate - other_bad_rate) / overall_bad_rate, 0.0)
+    work["坏账改善"] = np.where(overall_bad_rate > 0, (overall_bad_rate - other_bad_rate) / overall_bad_rate, 0.0)
     # 风险拒绝比 = 坏账改善 / 当前格样本占比
-    work['风险拒绝比'] = np.where(
-        work['样本占比'] > eps, work['坏账改善'] / work['样本占比'], 0.0)
+    work["风险拒绝比"] = np.where(work["样本占比"] > eps, work["坏账改善"] / work["样本占比"], 0.0)
 
     def _matrix(col):
         M = np.full((nx, ny), np.nan)
         for _, r in work.iterrows():
-            M[int(r['_特征1绘图分箱']), int(r['_特征2绘图分箱'])] = r[col]
+            M[int(r["_特征1绘图分箱"]), int(r["_特征2绘图分箱"])] = r[col]
         return M
 
-    M_prop = _matrix('样本占比')
-    M_bad = _matrix('坏样本率')
-    M_lift = _matrix('LIFT值')
-    M_reject = _matrix('风险拒绝比')
-    M_improve = _matrix('坏账改善')
+    M_prop = _matrix("样本占比")
+    M_bad = _matrix("坏样本率")
+    M_lift = _matrix("LIFT值")
+    M_reject = _matrix("风险拒绝比")
+    M_improve = _matrix("坏账改善")
 
     # ---------- 由交叉表聚合出单变量边缘分箱表（保证与热力图行/列严格对齐） ----------
     def _marginal(bin_col, is_x_axis):
         grp = work.groupby(bin_col, sort=True).agg(
-            样本总数=('样本总数', 'sum'),
-            好样本数=('好样本数', 'sum'),
-            坏样本数=('坏样本数', 'sum'),
+            样本总数=("样本总数", "sum"),
+            好样本数=("好样本数", "sum"),
+            坏样本数=("坏样本数", "sum"),
         )
         expected_count = nx if is_x_axis else ny
         grp = grp.reindex(range(expected_count), fill_value=0)
-        grp.index.name = '分箱'
+        grp.index.name = "分箱"
         grp = grp.reset_index()
-        grp['分箱标签'] = [
-            b2d._get_grid_bin_label(bin_idx, is_x=is_x_axis)
-            for bin_idx in range(expected_count)
-        ]
-        grp['坏样本率'] = np.where(grp['样本总数'] > 0, grp['坏样本数'] / grp['样本总数'], 0.0)
-        grp['样本占比'] = grp['样本总数'] / total if total > 0 else 0.0
-        good_distr = grp['好样本数'] / total_good if total_good > 0 else 0.0
-        bad_distr = grp['坏样本数'] / total_bad if total_bad > 0 else 0.0
+        grp["分箱标签"] = [b2d._get_grid_bin_label(bin_idx, is_x=is_x_axis) for bin_idx in range(expected_count)]
+        grp["坏样本率"] = np.where(grp["样本总数"] > 0, grp["坏样本数"] / grp["样本总数"], 0.0)
+        grp["样本占比"] = grp["样本总数"] / total if total > 0 else 0.0
+        good_distr = grp["好样本数"] / total_good if total_good > 0 else 0.0
+        bad_distr = grp["坏样本数"] / total_bad if total_bad > 0 else 0.0
         woe = np.log((bad_distr + eps) / (good_distr + eps))
-        grp['分档WOE值'] = woe
-        grp['分档IV值'] = (bad_distr - good_distr) * woe
-        grp['指标IV值'] = grp['分档IV值'].sum()
-        grp['LIFT值'] = np.where(grp['坏样本率'] > 0, grp['坏样本率'] / overall_bad_rate, 0.0)
+        grp["分档WOE值"] = woe
+        grp["分档IV值"] = (bad_distr - good_distr) * woe
+        grp["指标IV值"] = grp["分档IV值"].sum()
+        grp["LIFT值"] = np.where(grp["坏样本率"] > 0, grp["坏样本率"] / overall_bad_rate, 0.0)
         return grp
 
-    marg_x = _marginal('_特征1绘图分箱', is_x_axis=True)   # 特征1
-    marg_y = _marginal('_特征2绘图分箱', is_x_axis=False)  # 特征2
-    xlabels = marg_y['分箱标签'].tolist()      # 特征2 (列, x), bin 索引 0..ny-1
-    ylabels = marg_x['分箱标签'].tolist()      # 特征1 (行, y), bin 索引 0..nx-1
+    marg_x = _marginal("_特征1绘图分箱", is_x_axis=True)  # 特征1
+    marg_y = _marginal("_特征2绘图分箱", is_x_axis=False)  # 特征2
+    xlabels = marg_y["分箱标签"].tolist()  # 特征2 (列, x), bin 索引 0..ny-1
+    ylabels = marg_x["分箱标签"].tolist()  # 特征1 (行, y), bin 索引 0..nx-1
 
     # ---------- 构建画布 ----------
     if figsize is None:
         figsize = (max(15.0, 9.0 + 0.9 * ny), max(13.0, 8.0 + 0.8 * nx))
     fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(3, 3, left=0.105, right=0.975, top=0.910, bottom=0.180,
-                          hspace=0.18, wspace=0.03)
+    gs = fig.add_gridspec(3, 3, left=0.105, right=0.975, top=0.910, bottom=0.180, hspace=0.18, wspace=0.03)
 
-    ax_ks_y = fig.add_subplot(gs[0, 0])     # 特征2 KS 曲线
-    ax_marg_y = fig.add_subplot(gs[0, 1])   # 特征2分箱图（纵向）
-    ax_reject = fig.add_subplot(gs[0, 2])   # 风险拒绝比
-    ax_prop = fig.add_subplot(gs[1, 0])     # 样本占比
-    ax_bad = fig.add_subplot(gs[1, 1])      # 坏样本率
-    ax_marg_x = fig.add_subplot(gs[1, 2])   # 特征1分箱图（横向）
-    ax_lift = fig.add_subplot(gs[2, 0])     # LIFT
+    ax_ks_y = fig.add_subplot(gs[0, 0])  # 特征2 KS 曲线
+    ax_marg_y = fig.add_subplot(gs[0, 1])  # 特征2分箱图（纵向）
+    ax_reject = fig.add_subplot(gs[0, 2])  # 风险拒绝比
+    ax_prop = fig.add_subplot(gs[1, 0])  # 样本占比
+    ax_bad = fig.add_subplot(gs[1, 1])  # 坏样本率
+    ax_marg_x = fig.add_subplot(gs[1, 2])  # 特征1分箱图（横向）
+    ax_lift = fig.add_subplot(gs[2, 0])  # LIFT
     ax_improve = fig.add_subplot(gs[2, 1])  # 坏账改善
-    ax_ks_x = fig.add_subplot(gs[2, 2])     # 特征1 KS 曲线
+    ax_ks_x = fig.add_subplot(gs[2, 2])  # 特征1 KS 曲线
 
     def _cell_title(ax, text):
-        ax.set_title(text, fontsize=fontsize + 2, color=axis_color, fontweight='semibold', pad=6)
+        ax.set_title(text, fontsize=fontsize + 2, color=axis_color, fontweight="semibold", pad=6)
 
     # ---------- 5 个交叉指标热力图 ----------
-    _cross_heatmap_cell(ax_prop, M_prop, colors[0], fmt='.1%', annot=annot,
-                        fontsize=fontsize, axis_color=axis_color)
-    _cell_title(ax_prop, '样本占比')
-    _cross_heatmap_cell(ax_bad, M_bad, BAD_RATE_COLOR, fmt='.2%', annot=annot,
-                        fontsize=fontsize, axis_color=axis_color)
-    _cell_title(ax_bad, '坏样本率')
-    _cross_heatmap_cell(ax_lift, M_lift, colors[2], fmt='.1%', annot=annot,
-                        fontsize=fontsize, axis_color=axis_color)
-    _cell_title(ax_lift, 'LIFT')
-    _cross_heatmap_cell(ax_reject, M_reject, colors[0], fmt='.1%', annot=annot,
-                        fontsize=fontsize, axis_color=axis_color)
-    _cell_title(ax_reject, '风险拒绝比')
-    _cross_heatmap_cell(ax_improve, M_improve, colors[0], fmt='.1%', annot=annot,
-                        diverging=True, fontsize=fontsize, axis_color=axis_color)
-    _cell_title(ax_improve, '坏账改善')
+    _cross_heatmap_cell(ax_prop, M_prop, colors[0], fmt=".1%", annot=annot, fontsize=fontsize, axis_color=axis_color)
+    _cell_title(ax_prop, "样本占比")
+    _cross_heatmap_cell(ax_bad, M_bad, BAD_RATE_COLOR, fmt=".2%", annot=annot, fontsize=fontsize, axis_color=axis_color)
+    _cell_title(ax_bad, "坏样本率")
+    _cross_heatmap_cell(ax_lift, M_lift, colors[2], fmt=".1%", annot=annot, fontsize=fontsize, axis_color=axis_color)
+    _cell_title(ax_lift, "LIFT")
+    _cross_heatmap_cell(
+        ax_reject, M_reject, colors[0], fmt=".1%", annot=annot, fontsize=fontsize, axis_color=axis_color
+    )
+    _cell_title(ax_reject, "风险拒绝比")
+    _cross_heatmap_cell(
+        ax_improve,
+        M_improve,
+        colors[0],
+        fmt=".1%",
+        annot=annot,
+        diverging=True,
+        fontsize=fontsize,
+        axis_color=axis_color,
+    )
+    _cell_title(ax_improve, "坏账改善")
 
     # 最终二维箱使用高区分度类别色绘制内缩轮廓，共享边界两侧保留各自箱色。
     solution = np.asarray(b2d.solution_)
@@ -3828,49 +4111,61 @@ def bin_2d_plot(
     # 坏样本率、风险拒绝比不显示刻度标签
     _set_cross_heat_ticklabels(ax_prop, nx, ny, ylabels=ylabels, axis_color=axis_color)
     _set_cross_heat_ticklabels(ax_bad, nx, ny, axis_color=axis_color)
-    _set_cross_heat_ticklabels(ax_lift, nx, ny, xlabels=xlabels, ylabels=ylabels,
-                               rotation=90, axis_color=axis_color)
-    _set_cross_heat_ticklabels(ax_improve, nx, ny, xlabels=xlabels,
-                               rotation=90, axis_color=axis_color)
+    _set_cross_heat_ticklabels(ax_lift, nx, ny, xlabels=xlabels, ylabels=ylabels, rotation=90, axis_color=axis_color)
+    _set_cross_heat_ticklabels(ax_improve, nx, ny, xlabels=xlabels, rotation=90, axis_color=axis_color)
     _set_cross_heat_ticklabels(ax_reject, nx, ny, axis_color=axis_color)
 
     # ---------- 两个单变量分箱图（复用 bin_plot，与热力图共用坐标系） ----------
     # 去坏样本率坐标轴刻度；紧凑布局下样本数刻度也隐藏
     # （分布形态由柱高、坏样本率由数值标注体现）
-    bin_plot(marg_y, ax=ax_marg_y, orientation='vertical', colors=colors,
-             show_metric_summary=False, show_rate_axis=False, title='分箱图')
+    bin_plot(
+        marg_y,
+        ax=ax_marg_y,
+        orientation="vertical",
+        colors=colors,
+        show_metric_summary=False,
+        show_rate_axis=False,
+        title="分箱图",
+    )
     ax_marg_y_rate = fig.axes[-1]
     ax_marg_y.set_xlim(-0.5, ny - 0.5)
     # bin_2d_plot 内单独覆盖标题样式，不改变 bin_plot 的默认标题颜色
-    _cell_title(ax_marg_y, '分箱图')
+    _cell_title(ax_marg_y, "分箱图")
     # 特征2分箱标签统一由底行热力图垂直展示，边缘图关闭重复标签
     for marginal_ax in (ax_marg_y, ax_marg_y_rate):
-        marginal_ax.tick_params(axis='x', bottom=False, labelbottom=False)
-    ax_marg_y.tick_params(axis='y', left=False, labelleft=False)
-    ax_marg_y.set_ylabel('')
+        marginal_ax.tick_params(axis="x", bottom=False, labelbottom=False)
+    ax_marg_y.tick_params(axis="y", left=False, labelleft=False)
+    ax_marg_y.set_ylabel("")
 
-    bin_plot(marg_x, ax=ax_marg_x, orientation='horizontal', colors=colors,
-             show_metric_summary=False, show_rate_axis=False, title='分箱图')
+    bin_plot(
+        marg_x,
+        ax=ax_marg_x,
+        orientation="horizontal",
+        colors=colors,
+        show_metric_summary=False,
+        show_rate_axis=False,
+        title="分箱图",
+    )
     ax_marg_x_rate = fig.axes[-1]
     ax_marg_x.set_ylim(-0.5, nx - 0.5)
-    _cell_title(ax_marg_x, '分箱图')
+    _cell_title(ax_marg_x, "分箱图")
     for marginal_ax in (ax_marg_x, ax_marg_x_rate):
-        marginal_ax.tick_params(axis='y', left=False, labelleft=False)
-    ax_marg_x.tick_params(axis='x', bottom=False, labelbottom=False)
-    ax_marg_x.set_xlabel('')
+        marginal_ax.tick_params(axis="y", left=False, labelleft=False)
+    ax_marg_x.tick_params(axis="x", bottom=False, labelbottom=False)
+    ax_marg_x.set_xlabel("")
 
     # ---------- 两个 KS 曲线（仅 KS 曲线，去掉 ROC；按特征方向保留单侧坐标） ----------
     def _draw_feature_ks(ax, binner_1d, feat, show_x=False, show_y=False):
         """由一维分箱统计按 WOE 风险方向绘制 KS，避免依赖训练原始数据。"""
         curve = _binned_ks_curve(binner_1d.get_bin_table(feat))
         if not curve.empty:
-            positions = curve['累计样本占比'].to_numpy(dtype=float)
-            ks_values = curve['KS值'].to_numpy(dtype=float)
-            cumulative_good = curve['累积好样本占比'].to_numpy(dtype=float)
-            cumulative_bad = curve['累积坏样本占比'].to_numpy(dtype=float)
-            ax.plot(positions, ks_values, color=colors[0], linewidth=2, label='KS曲线')
-            ax.plot(positions, cumulative_good, color=colors[1], linewidth=1.5, label='累积好客户占比')
-            ax.plot(positions, cumulative_bad, color=colors[2], linewidth=1.5, label='累积坏客户占比')
+            positions = curve["累计样本占比"].to_numpy(dtype=float)
+            ks_values = curve["KS值"].to_numpy(dtype=float)
+            cumulative_good = curve["累积好样本占比"].to_numpy(dtype=float)
+            cumulative_bad = curve["累积坏样本占比"].to_numpy(dtype=float)
+            ax.plot(positions, ks_values, color=colors[0], linewidth=2, label="KS曲线")
+            ax.plot(positions, cumulative_good, color=colors[1], linewidth=1.5, label="累积好客户占比")
+            ax.plot(positions, cumulative_bad, color=colors[2], linewidth=1.5, label="累积坏客户占比")
             ax.fill_between(positions, cumulative_bad, cumulative_good, color=colors[0], alpha=0.18)
             max_index = int(np.argmax(ks_values))
             ax.scatter([positions[max_index]], [ks_values[max_index]], color=colors[1], s=28, zorder=3)
@@ -3881,49 +4176,49 @@ def bin_2d_plot(
                 [gap_low, gap_high],
                 color=colors[0],
                 linewidth=1.2,
-                linestyle='--',
+                linestyle="--",
             )
             ax.annotate(
                 f"KS={ks_values[max_index]:.2%}",
                 xy=(positions[max_index], gap_high),
                 xytext=(0, 4),
-                textcoords='offset points',
-                ha='center',
-                va='bottom',
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
                 fontsize=max(fontsize - 2, 7),
                 color=axis_color,
             )
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
         else:
-            ax.text(0.5, 0.5, 'KS 不可用', ha='center', va='center', transform=ax.transAxes)
+            ax.text(0.5, 0.5, "KS 不可用", ha="center", va="center", transform=ax.transAxes)
         # 去图例；特征2保留纵坐标，特征1保留横坐标
         legend = ax.get_legend()
         if legend is not None:
             legend.remove()
         # 组合图只保留要求方向的数值刻度，去掉英文轴名以避免挤压相邻子图
-        ax.set_xlabel('')
-        ax.set_ylabel('')
+        ax.set_xlabel("")
+        ax.set_ylabel("")
         if not show_x:
             ax.set_xticks([])
         if not show_y:
             ax.set_yticks([])
         setup_axis_style(ax, [axis_color])
-        ax.tick_params(axis='both', colors=axis_color, labelsize=max(fontsize - 2, 7))
-        _cell_title(ax, f'{feat} KS曲线')
+        ax.tick_params(axis="both", colors=axis_color, labelsize=max(fontsize - 2, 7))
+        _cell_title(ax, f"{feat} KS曲线")
 
     _draw_feature_ks(ax_ks_y, b2d.binner_y_, feat_y, show_y=True)
     _draw_feature_ks(ax_ks_x, b2d.binner_x_, feat_x, show_x=True)
 
     # ---------- 总标题与全局轴标签 ----------
     if title is None:
-        title = f'{feat_x} × {feat_y} 二维交叉分箱分析'
-    fig.suptitle(title, fontsize=fontsize + 6, fontweight='bold', y=0.965)
-    ax_improve.set_xlabel(f'特征2：{feat_y}', fontsize=fontsize + 3, color=axis_color,
-                          fontweight='semibold', labelpad=12)
+        title = f"{feat_x} × {feat_y} 二维交叉分箱分析"
+    fig.suptitle(title, fontsize=fontsize + 6, fontweight="bold", y=0.965)
+    ax_improve.set_xlabel(
+        f"特征2：{feat_y}", fontsize=fontsize + 3, color=axis_color, fontweight="semibold", labelpad=12
+    )
     # 使用轴标签的自动布局能力，将特征名称放到刻度标签外侧，避免固定位置造成重叠
-    ax_prop.set_ylabel(f'特征1：{feat_x}', fontsize=fontsize + 3, color=axis_color,
-                       fontweight='semibold', labelpad=12)
+    ax_prop.set_ylabel(f"特征1：{feat_x}", fontsize=fontsize + 3, color=axis_color, fontweight="semibold", labelpad=12)
 
     save_figure(fig, save, dpi=dpi)
     return fig

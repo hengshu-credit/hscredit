@@ -25,7 +25,6 @@ from hscredit.core.binning import (
     UniformBinning,
 )
 
-
 DIRECT_BINNER_CLASSES = [
     UniformBinning,
     QuantileBinning,

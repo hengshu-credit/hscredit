@@ -18,7 +18,13 @@ def _group_feature_describe_worker(task):
     return group_key, feature, result
 
 
-def feature_describe(data: pd.DataFrame, feature: Optional[str] = None, percentiles: Optional[List[float]] = None, missing=None, cardinality: Optional[int] = None) -> pd.Series:
+def feature_describe(
+    data: pd.DataFrame,
+    feature: Optional[str] = None,
+    percentiles: Optional[List[float]] = None,
+    missing=None,
+    cardinality: Optional[int] = None,
+) -> pd.Series:
     """特征描述统计（数值型与类别型自动区分）。
 
     对数值型特征输出 样本数/非空数/查得率/最小值/平均值/各分位数/最大值；
@@ -85,11 +91,20 @@ def feature_describe(data: pd.DataFrame, feature: Optional[str] = None, percenti
         describe.update(quantile.to_dict())
 
         # 按固定顺序排列
-        order = ["样本数", "非空数", "查得率", "最小值", "平均值"] + [f"{int(i * 100)}%" for i in percentiles] + ["最大值"]
+        order = (
+            ["样本数", "非空数", "查得率", "最小值", "平均值"] + [f"{int(i * 100)}%" for i in percentiles] + ["最大值"]
+        )
         return pd.Series(describe, name=feature).reindex(order)
 
 
-def groupby_feature_describe(data: pd.DataFrame, by=None, n_jobs: int = -1, parallel_backend: Optional[str] = None, parallel_config: Optional[Dict[str, Any]] = None, **kwargs) -> pd.DataFrame:
+def groupby_feature_describe(
+    data: pd.DataFrame,
+    by=None,
+    n_jobs: int = -1,
+    parallel_backend: Optional[str] = None,
+    parallel_config: Optional[Dict[str, Any]] = None,
+    **kwargs,
+) -> pd.DataFrame:
     """按分组进行特征描述统计。
 
     :param data: 数据DataFrame

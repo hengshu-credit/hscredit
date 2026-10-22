@@ -357,7 +357,11 @@ def test_all_exported_concrete_selectors_support_clone_and_pickle():
     config = {"batch_size": 1}
     for name in selectors.__all__:
         selector_class = getattr(selectors, name, None)
-        if not inspect.isclass(selector_class) or selector_class is BaseFeatureSelector or not issubclass(selector_class, BaseFeatureSelector):
+        if (
+            not inspect.isclass(selector_class)
+            or selector_class is BaseFeatureSelector
+            or not issubclass(selector_class, BaseFeatureSelector)
+        ):
             continue
         try:
             selector = selector_class(
@@ -392,7 +396,9 @@ def test_boruta_preserves_default_estimator_constructor_parameter():
 def test_joint_model_selectors_do_not_schedule_identity_parallel_tasks(selector_xy):
     """真正昂贵的联合拟合保持串行时，不应为廉价标量映射创建并行任务。"""
     X, y = selector_xy
-    importance = NoIdentityParallelFeatureImportanceSelector(MeanDifferenceImportanceClassifier(), threshold=0.0, n_jobs=2).fit(X, y)
+    importance = NoIdentityParallelFeatureImportanceSelector(
+        MeanDifferenceImportanceClassifier(), threshold=0.0, n_jobs=2
+    ).fit(X, y)
     boruta = NoIdentityParallelBorutaSelector(MeanDifferenceImportanceClassifier(), max_iter=1, n_jobs=2).fit(X, y)
 
     assert importance.scores_.index.tolist() == X.columns.tolist()
@@ -759,7 +765,9 @@ def test_stepwise_candidate_estimator_receives_child_budget_and_preserves_tie_or
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])
 @pytest.mark.parametrize("selector_kind", ["sequential", "stepwise"])
-def test_nested_estimator_receives_child_budget_without_mutating_original(selector_xy, monkeypatch, backend, selector_kind):
+def test_nested_estimator_receives_child_budget_without_mutating_original(
+    selector_xy, monkeypatch, backend, selector_kind
+):
     """Pipeline 内层 n_jobs 必须收到当前轮子预算，且不回写外部模型。"""
     monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
     X, y = selector_xy
@@ -814,7 +822,9 @@ def test_nested_estimator_single_candidate_receives_full_budget(monkeypatch):
 @pytest.mark.parametrize("backend", ["threading", "loky"])
 @pytest.mark.parametrize("selector_kind", ["sequential", "stepwise"])
 @pytest.mark.parametrize("pipeline_wrapped", [False, True])
-def test_multilevel_meta_estimator_only_gives_budget_to_shallowest_parallel_layer(selector_xy, monkeypatch, backend, selector_kind, pipeline_wrapped):
+def test_multilevel_meta_estimator_only_gives_budget_to_shallowest_parallel_layer(
+    selector_xy, monkeypatch, backend, selector_kind, pipeline_wrapped
+):
     """外层候选、最浅 meta 与深层 estimator 必须按 2×2×1 收敛。"""
     monkeypatch.setattr(parallel_utils, "get_physical_cpu_count", lambda: 5)
     X, y = selector_xy

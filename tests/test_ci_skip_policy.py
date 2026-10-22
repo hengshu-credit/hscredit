@@ -6,7 +6,6 @@ import pytest
 
 from tests import conftest
 
-
 DATABASE_TEST_ENVIRONMENTS = [
     "HSCREDIT_TEST_CLICKHOUSE_HOST",
     "HSCREDIT_TEST_HIVE_HOST",

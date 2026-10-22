@@ -125,7 +125,9 @@ def test_ngboost_public_n_jobs_limits_native_training_threads(monkeypatch):
 @pytest.fixture
 def sample_data():
     """创建测试数据."""
-    X, y = make_classification(n_samples=1000, n_features=10, n_informative=6, n_redundant=2, n_classes=2, weights=[0.7, 0.3], random_state=42)
+    X, y = make_classification(
+        n_samples=1000, n_features=10, n_informative=6, n_redundant=2, n_classes=2, weights=[0.7, 0.3], random_state=42
+    )
     feature_names = [f"feature_{i}" for i in range(10)]
     X = pd.DataFrame(X, columns=feature_names)
     y = pd.Series(y, name="target")

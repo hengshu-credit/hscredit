@@ -94,7 +94,7 @@ def irr(values):
     # 定义 NPV 函数
     def _npv(rate):
         if rate <= -1:
-            return float('inf')
+            return float("inf")
         return np.sum(values / (1 + rate) ** np.arange(len(values)))
 
     # 使用二分法寻找 IRR

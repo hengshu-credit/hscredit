@@ -23,8 +23,7 @@ from typing import Union
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 
-def mse(y_true: Union[np.ndarray, pd.Series],
-        y_pred: Union[np.ndarray, pd.Series]) -> float:
+def mse(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series]) -> float:
     """计算均方误差 (Mean Squared Error).
 
     MSE = (1/n) * Σ(y_true - y_pred)²，对大误差更敏感。
@@ -46,8 +45,7 @@ def mse(y_true: Union[np.ndarray, pd.Series],
     return mean_squared_error(y_true, y_pred)
 
 
-def mae(y_true: Union[np.ndarray, pd.Series],
-        y_pred: Union[np.ndarray, pd.Series]) -> float:
+def mae(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series]) -> float:
     """计算平均绝对误差 (Mean Absolute Error).
 
     MAE = (1/n) * Σ|y_true - y_pred|，对异常值鲁棒。
@@ -69,8 +67,7 @@ def mae(y_true: Union[np.ndarray, pd.Series],
     return mean_absolute_error(y_true, y_pred)
 
 
-def rmse(y_true: Union[np.ndarray, pd.Series],
-         y_pred: Union[np.ndarray, pd.Series]) -> float:
+def rmse(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series]) -> float:
     """计算均方根误差 (Root Mean Squared Error).
 
     RMSE = sqrt(MSE)，与目标变量单位一致，便于解释。
@@ -92,8 +89,7 @@ def rmse(y_true: Union[np.ndarray, pd.Series],
     return np.sqrt(mean_squared_error(y_true, y_pred))
 
 
-def r2(y_true: Union[np.ndarray, pd.Series],
-       y_pred: Union[np.ndarray, pd.Series]) -> float:
+def r2(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series]) -> float:
     """计算决定系数 (R-squared).
 
     R² = 1 - SS_res / SS_tot，其中SS_res为残差平方和，SS_tot为总平方和。

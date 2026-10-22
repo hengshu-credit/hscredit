@@ -63,9 +63,12 @@ def _run_swap_analysis(swap_types):
 )
 def test_swap_analysis_keeps_unified_stage_output(swap_types, expected_stages):
     result = _run_swap_analysis(swap_types)
-    stages = result.summary_report_count.iloc[:, 0].astype(object).where(
-        result.summary_report_count.iloc[:, 0].notna(), None
-    ).tolist()
+    stages = (
+        result.summary_report_count.iloc[:, 0]
+        .astype(object)
+        .where(result.summary_report_count.iloc[:, 0].notna(), None)
+        .tolist()
+    )
 
     assert stages == expected_stages
     assert result.get_detail_report().iloc[:, 0].tolist() == ["in-in", "in-out", "out-in", "out-out"]

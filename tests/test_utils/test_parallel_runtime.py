@@ -362,7 +362,9 @@ def test_loky_and_implicit_default_accept_inner_thread_limit(parallel_backend, d
         ("loky", None, {"backend_kwargs": {"unknown_option": True}}),
     ],
 )
-def test_invalid_backend_configuration_raises_chinese_validation_error(parallel_backend, default_backend, parallel_config):
+def test_invalid_backend_configuration_raises_chinese_validation_error(
+    parallel_backend, default_backend, parallel_config
+):
     """无效显式/默认后端及后端参数应统一为中文公共校验异常。"""
     with pytest.raises(ValidationError, match="并行后端配置无效"):
         parallel_execute(
@@ -382,7 +384,9 @@ def test_invalid_backend_configuration_raises_chinese_validation_error(parallel_
         (13, 100, False, (13, 1)),
     ],
 )
-def test_split_parallel_budget_uses_square_root_only_for_real_nesting(available, task_count, has_parallel_children, expected):
+def test_split_parallel_budget_uses_square_root_only_for_real_nesting(
+    available, task_count, has_parallel_children, expected
+):
     """只有真实同时嵌套的任务才按平方根切分预算。"""
     assert split_parallel_budget(available, task_count, has_parallel_children) == expected
 

@@ -61,7 +61,9 @@ def _data(context) -> pd.DataFrame:
         raise SkillExecutionError(code="SCHEMA_INVALID", message="缺少 inputs.data", field="inputs.data")
     value = context.resolver.resolve(spec)
     if not isinstance(value, pd.DataFrame):
-        raise SkillExecutionError(code="SCHEMA_INVALID", message="inputs.data 必须解析为 DataFrame", field="inputs.data")
+        raise SkillExecutionError(
+            code="SCHEMA_INVALID", message="inputs.data 必须解析为 DataFrame", field="inputs.data"
+        )
     if value.empty:
         raise SkillExecutionError(code="SCHEMA_INVALID", message="inputs.data 不能为空", field="inputs.data")
     return value
@@ -108,7 +110,11 @@ def _overdue_summary(parameters: Mapping[str, Any], *, default_operator: str = "
     summary = {}
     target = parameters.get("target")
     if target is not None:
-        names = list(target) if isinstance(target, Mapping) else [target if isinstance(target, str) else getattr(target, "name", None) or "target"]
+        names = (
+            list(target)
+            if isinstance(target, Mapping)
+            else [target if isinstance(target, str) else getattr(target, "name", None) or "target"]
+        )
         summary.update(target_mode="target", target_names=names, del_grey=bool(parameters.get("del_grey", False)))
     combinations = _label_combinations(parameters, paired=paired)
     if combinations:
@@ -269,7 +275,11 @@ def _feature_efficiency_analysis(context) -> dict:
 
     import matplotlib.pyplot as plt
 
-    figures = [result.get("comparison_figure"), *result.get("trend_figures", {}).values(), *result.get("comparison_figures", {}).values()]
+    figures = [
+        result.get("comparison_figure"),
+        *result.get("trend_figures", {}).values(),
+        *result.get("comparison_figures", {}).values(),
+    ]
     for figure in figures:
         if figure is not None:
             plt.close(figure)

@@ -77,9 +77,17 @@ def test_models_notebook_compares_top_badcases_with_similar_correct_samples(monk
     """模型教程应按坏样本率阈值选取两类 Top2，并对匹配样本成对绘制 SHAP。"""
     notebook_path = Path(__file__).resolve().parents[2] / "examples" / "04_models.ipynb"
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
-    section_indexes = [index for index, cell in enumerate(notebook["cells"]) if cell.get("cell_type") == "markdown" and "Badcase" in "".join(cell.get("source", []))]
+    section_indexes = [
+        index
+        for index, cell in enumerate(notebook["cells"])
+        if cell.get("cell_type") == "markdown" and "Badcase" in "".join(cell.get("source", []))
+    ]
     assert section_indexes, "04_models.ipynb 缺少 Badcase 分析章节"
-    section_source = "\n\n".join("".join(cell.get("source", [])) for cell in notebook["cells"][section_indexes[-1] + 1 :] if cell.get("cell_type") == "code")
+    section_source = "\n\n".join(
+        "".join(cell.get("source", []))
+        for cell in notebook["cells"][section_indexes[-1] + 1 :]
+        if cell.get("cell_type") == "code"
+    )
 
     probabilities = pd.Series(
         [0.95, 0.85, 0.20, 0.10, 0.15, 0.25, 0.05, 0.12, 0.80, 0.75],
@@ -127,7 +135,12 @@ def test_models_notebook_compares_top_badcases_with_similar_correct_samples(monk
 
     assert np.isclose(namespace["badcase_threshold"], 0.45)
     assert namespace["selected_badcases"].index.tolist() == [0, 1, 6, 7]
-    assert [(pair["badcase_index"], pair["similar_correct_index"]) for pair in namespace["badcase_pairs"]] == [(0, 2), (1, 3), (6, 8), (7, 9)]
+    assert [(pair["badcase_index"], pair["similar_correct_index"]) for pair in namespace["badcase_pairs"]] == [
+        (0, 2),
+        (1, 3),
+        (6, 8),
+        (7, 9),
+    ]
     assert [call["sample"].index[0] for call in plot_calls] == [0, 2, 1, 3, 6, 8, 7, 9]
     assert all(call["background_data"].equals(X_train) for call in plot_calls)
     assert all(call["max_display"] is None for call in plot_calls)

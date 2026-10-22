@@ -22,7 +22,6 @@ from hscredit.report.mining import (
     TreeRuleExtractor,
 )
 
-
 PUBLIC_PARALLEL_CLASSES = (
     SingleFeatureRuleMiner,
     MultiFeatureRuleMiner,
@@ -92,9 +91,7 @@ def test_all_exported_batch_mining_classes_expose_parallel_configuration():
 def test_single_feature_parallel_fit_matches_serial_for_both_backends(mining_data):
     """改变 feature 调度后端不得改变特征结果、顺序或 dtype。"""
     data = mining_data[["score", "debt", "category", "target"]]
-    serial = SingleFeatureRuleMiner(
-        method="quantile", max_n_bins=4, min_samples=2, min_lift=1.0, n_jobs=1
-    ).fit(data)
+    serial = SingleFeatureRuleMiner(method="quantile", max_n_bins=4, min_samples=2, min_lift=1.0, n_jobs=1).fit(data)
 
     for backend in ("threading", "loky"):
         parallel = SingleFeatureRuleMiner(
@@ -152,9 +149,7 @@ def test_multi_label_parallel_labels_match_serial(mining_data, backend):
     )
     features = ["score", "debt"]
     serial = MultiLabelRuleMiner(n_jobs=1, **kwargs).fit(mining_data, features=features)
-    parallel = MultiLabelRuleMiner(n_jobs=2, parallel_backend=backend, **kwargs).fit(
-        mining_data, features=features
-    )
+    parallel = MultiLabelRuleMiner(n_jobs=2, parallel_backend=backend, **kwargs).fit(mining_data, features=features)
     pd.testing.assert_frame_equal(serial.get_report(), parallel.get_report())
     pd.testing.assert_frame_equal(serial.get_effectiveness_matrix(), parallel.get_effectiveness_matrix())
 
@@ -217,11 +212,7 @@ def test_tree_rule_string_normalizes_numpy_scalar_threshold():
     """NumPy 2.x 标量 repr 不得把 np 误解析成输入数据列。"""
     extractor = TreeRuleExtractor(n_jobs=1)
     expression = extractor._rule_to_string(
-        {
-            "conditions": [
-                {"feature": "score", "operator": ">", "threshold": np.float64(0.5)}
-            ]
-        }
+        {"conditions": [{"feature": "score", "operator": ">", "threshold": np.float64(0.5)}]}
     )
 
     assert expression == "(score > 0.5)"
@@ -235,9 +226,9 @@ def test_tree_analyzer_and_manual_tree_report_parallel_datasets_match_serial(min
     datasets = {"训练": train, "测试": test}
 
     serial_analyzer = DecisionTreeAnalyzer(features=["score", "debt"], n_jobs=1).fit(train)
-    parallel_analyzer = DecisionTreeAnalyzer(
-        features=["score", "debt"], n_jobs=2, parallel_backend="threading"
-    ).fit(train)
+    parallel_analyzer = DecisionTreeAnalyzer(features=["score", "debt"], n_jobs=2, parallel_backend="threading").fit(
+        train
+    )
     assert serial_analyzer.evaluate([("测试", test)], metric_type="ks") == parallel_analyzer.evaluate(
         [("测试", test)], metric_type="ks"
     )
@@ -248,9 +239,9 @@ def test_tree_analyzer_and_manual_tree_report_parallel_datasets_match_serial(min
         pd.testing.assert_frame_equal(serial_reports[name], parallel_reports[name])
 
     serial_manual = ManualTreeExtractor(max_depth=2, n_jobs=1).fit(train, features=["score", "debt"])
-    parallel_manual = ManualTreeExtractor(
-        max_depth=2, n_jobs=2, parallel_backend="loky"
-    ).fit(train, features=["score", "debt"])
+    parallel_manual = ManualTreeExtractor(max_depth=2, n_jobs=2, parallel_backend="loky").fit(
+        train, features=["score", "debt"]
+    )
     serial_manual_reports = serial_manual.report(datasets)
     parallel_manual_reports = parallel_manual.report(datasets)
     for name in datasets:
@@ -377,9 +368,7 @@ def test_sklearn_miners_clone_preserves_parallel_and_public_parameters(estimator
         (["短期", "长期"], ["MOB1", "MOB3"], 0.5, "threading", {"batch_size": 2}),
     ],
 )
-def test_multi_label_clone_and_pickle_preserve_raw_constructor_parameters(
-    labels, label_names, n_jobs, backend, config
-):
+def test_multi_label_clone_and_pickle_preserve_raw_constructor_parameters(labels, label_names, n_jobs, backend, config):
     """None、空列表和用户容器均须原样保存，clone/pickle 后保持等值。"""
     miner = MultiLabelRuleMiner(
         labels=labels,
@@ -406,9 +395,7 @@ def test_multi_label_clone_and_pickle_preserve_raw_constructor_parameters(
         (["target", "long_target"], ["短期", "长期"], {"batch_size": 2}),
     ],
 )
-def test_multi_label_successful_fit_preserves_constructor_parameter_identity(
-    mining_data, labels, label_names, config
-):
+def test_multi_label_successful_fit_preserves_constructor_parameter_identity(mining_data, labels, label_names, config):
     """成功拟合只能提交学习状态，不能用深拷贝替换调用方传入的公开参数。"""
     miner = MultiLabelRuleMiner(
         labels=labels,
@@ -556,9 +543,7 @@ def test_transactional_tree_helpers_preserve_mutable_constructor_parameter_ident
 
 def test_multi_feature_successful_refit_discards_old_cross_and_binner_caches(mining_data):
     """第二批数据拟合成功后不得保留仅属于第一批特征的交叉结果或分箱器。"""
-    first = mining_data.rename(columns={"score": "a", "debt": "b", "long_target": "c"})[
-        ["a", "b", "c", "target"]
-    ]
+    first = mining_data.rename(columns={"score": "a", "debt": "b", "long_target": "c"})[["a", "b", "c", "target"]]
     second = mining_data.rename(columns={"score": "x", "debt": "y"})[["x", "y", "target"]]
     kwargs = dict(
         method="quantile",
@@ -586,9 +571,7 @@ def test_multi_feature_successful_refit_discards_old_cross_and_binner_caches(min
 
 def test_tree_successful_refit_discards_rules_derived_from_old_model(mining_data):
     """重拟合必须使旧规则缓存失效，下一次 get_rules 只能从新模型重新提取。"""
-    first = mining_data.rename(columns={"score": "old_score", "debt": "old_debt"})[
-        ["old_score", "old_debt", "target"]
-    ]
+    first = mining_data.rename(columns={"score": "old_score", "debt": "old_debt"})[["old_score", "old_debt", "target"]]
     second = mining_data.rename(columns={"score": "x", "debt": "y"})[["x", "y", "target"]]
     kwargs = dict(algorithm="dt", max_depth=2, random_state=19, n_jobs=1)
     refitted = TreeRuleExtractor(**kwargs).fit(first)
@@ -638,9 +621,7 @@ def test_tree_cross_algorithm_refit_removes_old_optional_learned_attributes(mini
 def test_single_successful_refit_matches_fresh_instance(mining_data):
     """Single 的第二次成功拟合状态必须等同 fresh 实例。"""
     first = mining_data[["score", "debt", "target", "long_target"]]
-    second = mining_data.rename(
-        columns={"score": "x", "debt": "y", "target": "next_target"}
-    )[["x", "y", "next_target"]]
+    second = mining_data.rename(columns={"score": "x", "debt": "y", "target": "next_target"})[["x", "y", "next_target"]]
 
     single_kwargs = dict(
         target="target",
@@ -662,9 +643,7 @@ def test_single_successful_refit_matches_fresh_instance(mining_data):
 def test_multi_label_successful_refit_matches_fresh_instance(mining_data):
     """MultiLabel 动态标签重拟合后不得保留旧目标或旧规则。"""
     first = mining_data[["score", "debt", "target", "long_target"]]
-    second = mining_data.rename(
-        columns={"score": "x", "debt": "y", "target": "next_target"}
-    )[["x", "y", "next_target"]]
+    second = mining_data.rename(columns={"score": "x", "debt": "y", "target": "next_target"})[["x", "y", "next_target"]]
     labels = ["target", "long_target"]
     label_names = ["短期", "长期"]
     label_kwargs = dict(
@@ -762,9 +741,7 @@ def test_multi_label_direct_target_assignment_enables_explicit_mode(mining_data)
 def test_multi_label_failed_refit_preserves_auto_and_explicit_target_modes(mining_data):
     """失败 working 副本不能提交 target 值或自动/显式模式标记。"""
     auto_labels = ["target"]
-    auto = MultiLabelRuleMiner(labels=auto_labels, n_jobs=1).fit(
-        mining_data, features=["score"]
-    )
+    auto = MultiLabelRuleMiner(labels=auto_labels, n_jobs=1).fit(mining_data, features=["score"])
     auto_labels[:] = ["missing_label"]
     with pytest.raises(ValueError, match="missing_label"):
         auto.fit(mining_data, features=["score"])

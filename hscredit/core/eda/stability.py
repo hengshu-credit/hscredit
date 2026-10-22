@@ -128,53 +128,54 @@ def _psi_cross_feature_worker(task):
     return feature, pd.DataFrame(rows)
 
 
-def psi_analysis(base_df: pd.DataFrame,
-                current_df: pd.DataFrame,
-                feature: str,
-                max_n_bins: int = 10) -> Dict[str, Union[str, float, pd.DataFrame]]:
+def psi_analysis(
+    base_df: pd.DataFrame, current_df: pd.DataFrame, feature: str, max_n_bins: int = 10
+) -> Dict[str, Union[str, float, pd.DataFrame]]:
     """单变量PSI稳定性分析.
-    
+
     复用 hscredit.core.metrics.psi_table
-    
+
     :param base_df: 基准数据集
     :param current_df: 当前数据集
     :param feature: 特征名
     :param max_n_bins: 分箱数
     :return: PSI分析结果字典
-    
+
     **参考样例**
 
     >>> result = psi_analysis(train_df, test_df, 'age')
     >>> print(f"PSI: {result['PSI值']}, 稳定性: {result['稳定性']}")
     """
     from ..metrics import psi_table
-    
+
     # 计算PSI表
     psi_df = psi_table(base_df[feature], current_df[feature], max_n_bins=max_n_bins)
-    
+
     # 计算总PSI
-    psi_value = psi_df['PSI贡献'].sum(min_count=1)
-    
+    psi_value = psi_df["PSI贡献"].sum(min_count=1)
+
     return {
-        '特征名': feature,
-        'PSI值': round(psi_value, 4),
-        '稳定性': psi_rating(psi_value),
-        '分箱明细': psi_df,
+        "特征名": feature,
+        "PSI值": round(psi_value, 4),
+        "稳定性": psi_rating(psi_value),
+        "分箱明细": psi_df,
     }
 
 
-@analysis_inputs('df', roles=('date',))
-def batch_psi_analysis(df: pd.DataFrame,
-                      features: List[str],
-                      date: str,
-                      base_period: str,
-                      compare_periods: List[str],
-                      max_n_bins: int = 10,
-                      n_jobs=-1,
-                      parallel_backend=None,
-                      parallel_config=None) -> pd.DataFrame:
+@analysis_inputs("df", roles=("date",))
+def batch_psi_analysis(
+    df: pd.DataFrame,
+    features: List[str],
+    date: str,
+    base_period: str,
+    compare_periods: List[str],
+    max_n_bins: int = 10,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
+) -> pd.DataFrame:
     """批量PSI时间稳定性分析.
-    
+
     :param df: 输入数据
     :param features: 特征列表
     :param date: 日期列名
@@ -182,22 +183,22 @@ def batch_psi_analysis(df: pd.DataFrame,
     :param compare_periods: 对比期列表
     :param max_n_bins: 分箱数
     :return: 批量PSI结果DataFrame
-    
+
     **参考样例**
 
-    >>> psi_result = batch_psi_analysis(df, ['age', 'income'], 'apply_month', 
+    >>> psi_result = batch_psi_analysis(df, ['age', 'income'], 'apply_month',
     ...                                 '2023-01', ['2023-02', '2023-03'])
     >>> print(psi_result[['特征名', '对比期', 'PSI值', '稳定性']])
     """
     validate_dataframe(df, required_cols=[date])
-    
+
     # 准备数据
     df = df.copy()
-    df[date] = pd.to_datetime(df[date]).dt.to_period('M').astype(str)
-    
+    df[date] = pd.to_datetime(df[date]).dt.to_period("M").astype(str)
+
     # 基准期数据
     base_df = df[df[date] == base_period]
-    
+
     valid_features = [feature for feature in features if feature in df.columns]
     valid_periods = [period for period in compare_periods if bool((df[date] == period).any())]
     task_count = len(valid_periods) * len(valid_features)
@@ -234,21 +235,18 @@ def batch_psi_analysis(df: pd.DataFrame,
             capability="process_safe",
         ),
     )
-    
+
     return pd.DataFrame(results)
 
 
-@analysis_inputs('df', roles=('date',))
-def csi_analysis(df: pd.DataFrame,
-                feature: str,
-                target: str,
-                date: str,
-                base_period: str,
-                compare_period: str) -> Dict[str, Union[str, float]]:
+@analysis_inputs("df", roles=("date",))
+def csi_analysis(
+    df: pd.DataFrame, feature: str, target: str, date: str, base_period: str, compare_period: str
+) -> Dict[str, Union[str, float]]:
     """CSI特征稳定性分析.
-    
+
     复用 hscredit.core.metrics.csi
-    
+
     :param df: 输入数据
     :param feature: 特征名
     :param target: 目标变量名
@@ -256,77 +254,79 @@ def csi_analysis(df: pd.DataFrame,
     :param base_period: 基准期
     :param compare_period: 对比期
     :return: CSI分析结果
-    
+
     **参考样例**
 
     >>> result = csi_analysis(df, 'score', 'fpd15', 'apply_month', '2023-01', '2023-02')
     >>> print(f"CSI: {result['CSI值']}")
     """
     from ..metrics import csi
-    
+
     # 准备数据
     df = df.copy()
-    df[date] = pd.to_datetime(df[date]).dt.to_period('M').astype(str)
-    
+    df[date] = pd.to_datetime(df[date]).dt.to_period("M").astype(str)
+
     base_df = df[df[date] == base_period]
     compare_df = df[df[date] == compare_period]
 
     # 计算CSI（CSI 衡量特征在两个时间段的分布漂移，不依赖目标变量；
     # target 参数保留用于接口一致性与下游报告标注）
     csi_value = csi(base_df[feature], compare_df[feature])
-    
+
     return {
-        '特征名': feature,
-        '基准期': base_period,
-        '对比期': compare_period,
-        'CSI值': round(csi_value, 4),
+        "特征名": feature,
+        "基准期": base_period,
+        "对比期": compare_period,
+        "CSI值": round(csi_value, 4),
     }
 
 
-@analysis_inputs('df', roles=('date',))
-def time_psi_tracking(df: pd.DataFrame,
-                     features: List[str],
-                     date: str,
-                     freq: str = 'M',
-                     max_n_bins: int = 10,
-                     n_jobs=-1,
-                     parallel_backend=None,
-                     parallel_config=None) -> pd.DataFrame:
+@analysis_inputs("df", roles=("date",))
+def time_psi_tracking(
+    df: pd.DataFrame,
+    features: List[str],
+    date: str,
+    freq: str = "M",
+    max_n_bins: int = 10,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
+) -> pd.DataFrame:
     """PSI时序追踪分析.
-    
+
     计算每个特征在不同时间段的PSI值变化趋势
-    
+
     :param df: 输入数据
     :param features: 特征列表
     :param date: 日期列名
     :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :param max_n_bins: 分箱数
     :return: PSI时序追踪DataFrame
-    
+
     **参考样例**
 
     >>> tracking = time_psi_tracking(df, ['age', 'income'], 'apply_date')
     >>> print(tracking.pivot(index='时间周期', columns='特征名', values='PSI值'))
     """
     validate_dataframe(df, required_cols=[date])
-    
+
     # 准备数据
     df = df.copy()
     df[date] = pd.to_datetime(df[date])
-    
+
     # 创建时间周期
-    df['时间周期'] = date_groups(df[date], freq)
-    
+    df["时间周期"] = date_groups(df[date], freq)
+
     # 获取所有周期
-    periods = sorted(df['时间周期'].unique())
-    
+    periods = sorted(df["时间周期"].unique())
+
     if len(periods) < 2:
-        return pd.DataFrame({'信息': ['时间周期不足，无法计算PSI']})
-    
+        return pd.DataFrame({"信息": ["时间周期不足，无法计算PSI"]})
+
     # 以第一个周期为基准
     base_period = periods[0]
-    base_df = df[df['时间周期'] == base_period]
-    
+    base_df = df[df["时间周期"] == base_period]
+
     valid_features = [feature for feature in features if feature in df.columns]
     compare_periods = periods[1:]
     task_count = len(compare_periods) * len(valid_features)
@@ -364,37 +364,39 @@ def time_psi_tracking(df: pd.DataFrame,
         ),
     )
     results = [row for row in analyzed if row is not None]
-    
+
     return pd.DataFrame(results)
 
 
-@analysis_inputs('df', roles=('date',))
-def stability_report(df: pd.DataFrame,
-                    features: List[str],
-                    date: str,
-                    target: str = None,
-                    psi_threshold: float = 0.1,
-                    n_jobs=-1,
-                    parallel_backend=None,
-                    parallel_config=None) -> pd.DataFrame:
+@analysis_inputs("df", roles=("date",))
+def stability_report(
+    df: pd.DataFrame,
+    features: List[str],
+    date: str,
+    target: str = None,
+    psi_threshold: float = 0.1,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
+) -> pd.DataFrame:
     """综合稳定性报告.
-    
+
     包含PSI分析和时间稳定性评估
-    
+
     :param df: 输入数据
     :param features: 特征列表
     :param date: 日期列名
     :param target: 目标变量名（可选）
     :param psi_threshold: PSI阈值
     :return: 综合稳定性报告DataFrame
-    
+
     **参考样例**
 
     >>> report = stability_report(df, feature_list, 'apply_date')
     >>> print(report[['特征名', '平均PSI', '最大PSI', '不稳定期数']])
     """
     validate_dataframe(df, required_cols=[date])
-    
+
     # PSI时序追踪
     psi_tracking = time_psi_tracking(
         df,
@@ -404,43 +406,45 @@ def stability_report(df: pd.DataFrame,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
     )
-    
-    if psi_tracking.empty or '信息' in psi_tracking.columns:
-        return pd.DataFrame({'信息': ['数据不足以生成稳定性报告']})
-    
+
+    if psi_tracking.empty or "信息" in psi_tracking.columns:
+        return pd.DataFrame({"信息": ["数据不足以生成稳定性报告"]})
+
     # 汇总统计
     results = []
-    
+
     for feature in features:
-        feature_psi = psi_tracking[psi_tracking['特征名'] == feature]
-        
+        feature_psi = psi_tracking[psi_tracking["特征名"] == feature]
+
         if len(feature_psi) == 0:
             continue
-        
-        avg_psi = feature_psi['PSI值'].mean()
-        max_psi = feature_psi['PSI值'].max()
-        unstable_count = (feature_psi['PSI值'] > psi_threshold).sum()
-        
-        results.append({
-            '特征名': feature,
-            '平均PSI': round(avg_psi, 4),
-            '最大PSI': round(max_psi, 4),
-            '统计期数': len(feature_psi),
-            '不稳定期数': int(unstable_count),
-            '不稳定期占比(%)': round(unstable_count / len(feature_psi) * 100, 2),
-            '稳定性评级': psi_rating(avg_psi),
-        })
-    
-    return pd.DataFrame(results).sort_values('平均PSI', ascending=False)
+
+        avg_psi = feature_psi["PSI值"].mean()
+        max_psi = feature_psi["PSI值"].max()
+        unstable_count = (feature_psi["PSI值"] > psi_threshold).sum()
+
+        results.append(
+            {
+                "特征名": feature,
+                "平均PSI": round(avg_psi, 4),
+                "最大PSI": round(max_psi, 4),
+                "统计期数": len(feature_psi),
+                "不稳定期数": int(unstable_count),
+                "不稳定期占比(%)": round(unstable_count / len(feature_psi) * 100, 2),
+                "稳定性评级": psi_rating(avg_psi),
+            }
+        )
+
+    return pd.DataFrame(results).sort_values("平均PSI", ascending=False)
 
 
-@analysis_inputs('df', roles=('date', 'group'))
+@analysis_inputs("df", roles=("date", "group"))
 def psi_cross_analysis(
     df: pd.DataFrame,
     features: List[str],
     date: Optional[str] = None,
     group: Optional[str] = None,
-    freq: str = 'M',
+    freq: str = "M",
     max_n_bins: int = 10,
     return_matrix: bool = True,
     n_jobs=-1,
@@ -448,13 +452,13 @@ def psi_cross_analysis(
     parallel_config=None,
 ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """PSI交叉分析 - 计算两两组之间的PSI矩阵.
-    
+
     支持两种方式分组：
     1. 自动分组：指定日期列(date)和频率(freq)，按时间自动分组
     2. 手工分组：指定分组列(group)，使用已有分组
-    
+
     计算每两组之间的PSI值，返回PSI矩阵或长格式DataFrame.
-    
+
     :param df: 输入数据
     :param features: 特征列表
     :param date: 日期列名（自动分组模式）
@@ -462,14 +466,14 @@ def psi_cross_analysis(
     :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季度，默认'M'
     :param max_n_bins: PSI计算分箱数，默认10
     :param return_matrix: 是否返回矩阵格式，True返回方阵矩阵，False返回长格式
-    :return: 
+    :return:
         - return_matrix=True: 返回 {特征名: PSI矩阵DataFrame} 字典
         - return_matrix=False: 返回长格式DataFrame [特征名, 组1, 组2, PSI值, 稳定性]
-    
+
     **参考样例**
 
     >>> # 自动按月份分组
-    >>> result = psi_cross_analysis(df, ['age', 'income'], 
+    >>> result = psi_cross_analysis(df, ['age', 'income'],
     ...                             date='apply_date', freq='M')
     >>> print(result['age'])  # 查看age特征的PSI矩阵
 
@@ -477,43 +481,43 @@ def psi_cross_analysis(
     >>> result = psi_cross_analysis(df, ['score'], group='channel')
 
     >>> # 返回长格式
-    >>> result = psi_cross_analysis(df, ['age'], date='apply_date', 
+    >>> result = psi_cross_analysis(df, ['age'], date='apply_date',
     ...                             freq='M', return_matrix=False)
     """
     validate_dataframe(df)
-    
+
     # 检查参数
     if date is None and group is None:
         raise ValueError("必须指定 date（自动分组）或 group（手工分组）之一")
-    
+
     if date is not None and group is not None:
         raise ValueError("不能同时指定 date 和 group，请选择一种分组方式")
-    
+
     df = df.copy()
-    
+
     # 确定分组列
     if date is not None:
         # 自动分组模式
         if date not in df.columns:
             raise ValueError(f"日期列 '{date}' 不存在")
-        
+
         df[date] = pd.to_datetime(df[date])
-        
+
         # 根据频率创建分组
-        df['_psi_group'] = date_groups(df[date], freq)
-        
-        group = '_psi_group'
+        df["_psi_group"] = date_groups(df[date], freq)
+
+        group = "_psi_group"
     else:
         # 手工分组模式
         if group not in df.columns:
             raise ValueError(f"分组列 '{group}' 不存在")
-    
+
     # 获取所有分组
     groups = sorted(df[group].unique())
-    
+
     if len(groups) < 2:
-        return pd.DataFrame({'信息': ['分组数不足，至少需要2个组']})
-    
+        return pd.DataFrame({"信息": ["分组数不足，至少需要2个组"]})
+
     valid_features = [feature for feature in features if feature in df.columns]
     results = dict(
         parallel_execute(
@@ -536,7 +540,7 @@ def psi_cross_analysis(
             ),
         )
     )
-    
+
     # 如果只有一个特征，直接返回结果；否则返回字典
     if len(results) == 1:
         return list(results.values())[0]
@@ -547,11 +551,12 @@ def psi_cross_analysis(
 # feature_drift_report
 # ---------------------------------------------------------------------------
 
+
 def feature_drift_report(
     df_base: pd.DataFrame,
     df_target: pd.DataFrame,
     features=None,
-    method: str = 'psi',
+    method: str = "psi",
     max_n_bins: int = 10,
     n_jobs=-1,
     parallel_backend=None,
@@ -606,14 +611,15 @@ def feature_drift_report(
     )
 
     result = pd.DataFrame(rows)
-    if not result.empty and 'PSI' in result.columns:
-        result = result.sort_values('PSI', ascending=False).reset_index(drop=True)
+    if not result.empty and "PSI" in result.columns:
+        result = result.sort_values("PSI", ascending=False).reset_index(drop=True)
     return result
 
 
 # ---------------------------------------------------------------------------
 # score_drift_report
 # ---------------------------------------------------------------------------
+
 
 def score_drift_report(
     score_base: pd.Series,
@@ -652,47 +658,49 @@ def score_drift_report(
     if y_target is not None:
         y_target = pd.Series(np.asarray(y_target))
 
-    s_base = pd.to_numeric(score_base, errors='coerce').dropna()
-    s_tgt = pd.to_numeric(score_target, errors='coerce').dropna()
+    s_base = pd.to_numeric(score_base, errors="coerce").dropna()
+    s_tgt = pd.to_numeric(score_target, errors="coerce").dropna()
 
     try:
         from ..metrics import psi_table as _psi_table
+
         psi_df = _psi_table(s_base, s_tgt, max_n_bins=max_n_bins)
-        psi_val = float(psi_df['PSI贡献'].sum())
+        psi_val = float(psi_df["PSI贡献"].sum())
     except Exception:
         psi_val = np.nan
 
     def _stats(s: pd.Series) -> dict:
         return {
-            '样本数': len(s),
-            '均值': round(float(s.mean()), 4),
-            '中位数': round(float(s.median()), 4),
-            '标准差': round(float(s.std()), 4),
-            'P10': round(float(np.percentile(s, 10)), 4),
-            'P90': round(float(np.percentile(s, 90)), 4),
+            "样本数": len(s),
+            "均值": round(float(s.mean()), 4),
+            "中位数": round(float(s.median()), 4),
+            "标准差": round(float(s.std()), 4),
+            "P10": round(float(np.percentile(s, 10)), 4),
+            "P90": round(float(np.percentile(s, 90)), 4),
         }
 
     stats_base = _stats(s_base)
     stats_tgt = _stats(s_tgt)
-    stats_base['数据集'] = '基准'
-    stats_tgt['数据集'] = '目标'
+    stats_base["数据集"] = "基准"
+    stats_tgt["数据集"] = "目标"
     dist_df = pd.DataFrame([stats_base, stats_tgt])
 
     report: dict = {
-        'PSI': round(psi_val, 4) if not np.isnan(psi_val) else np.nan,
-        '偏移等级': psi_rating(psi_val) if not np.isnan(psi_val) else '未知',
-        '分布统计': dist_df,
-        '分箱明细': psi_df if not np.isnan(psi_val) else None,
+        "PSI": round(psi_val, 4) if not np.isnan(psi_val) else np.nan,
+        "偏移等级": psi_rating(psi_val) if not np.isnan(psi_val) else "未知",
+        "分布统计": dist_df,
+        "分箱明细": psi_df if not np.isnan(psi_val) else None,
     }
 
     if y_base is not None and y_target is not None:
         from ..metrics import ks as _ks, auc as _auc  # type: ignore[attr-defined]
-        yb = pd.to_numeric(y_base, errors='coerce')
-        yt = pd.to_numeric(y_target, errors='coerce')
-        mask_b = yb.notna() & pd.to_numeric(score_base, errors='coerce').notna()
-        mask_t = yt.notna() & pd.to_numeric(score_target, errors='coerce').notna()
-        s_b_aligned = pd.to_numeric(score_base, errors='coerce')[mask_b]
-        s_t_aligned = pd.to_numeric(score_target, errors='coerce')[mask_t]
+
+        yb = pd.to_numeric(y_base, errors="coerce")
+        yt = pd.to_numeric(y_target, errors="coerce")
+        mask_b = yb.notna() & pd.to_numeric(score_base, errors="coerce").notna()
+        mask_t = yt.notna() & pd.to_numeric(score_target, errors="coerce").notna()
+        s_b_aligned = pd.to_numeric(score_base, errors="coerce")[mask_b]
+        s_t_aligned = pd.to_numeric(score_target, errors="coerce")[mask_t]
         try:
             ks_base = round(float(_ks(yb[mask_b], s_b_aligned)), 4)
             ks_tgt = round(float(_ks(yt[mask_t], s_t_aligned)), 4)
@@ -700,11 +708,13 @@ def score_drift_report(
             auc_tgt = round(float(_auc(yt[mask_t], s_t_aligned)), 4)
         except Exception:
             ks_base = ks_tgt = auc_base = auc_tgt = np.nan
-        report['模型性能'] = {
-            '基准KS': ks_base, '目标KS': ks_tgt,
-            'KS变化': round(ks_tgt - ks_base, 4) if not np.isnan(ks_base) else np.nan,
-            '基准AUC': auc_base, '目标AUC': auc_tgt,
-            'AUC变化': round(auc_tgt - auc_base, 4) if not np.isnan(auc_base) else np.nan,
+        report["模型性能"] = {
+            "基准KS": ks_base,
+            "目标KS": ks_tgt,
+            "KS变化": round(ks_tgt - ks_base, 4) if not np.isnan(ks_base) else np.nan,
+            "基准AUC": auc_base,
+            "目标AUC": auc_tgt,
+            "AUC变化": round(auc_tgt - auc_base, 4) if not np.isnan(auc_base) else np.nan,
         }
 
     return report
@@ -713,25 +723,25 @@ def score_drift_report(
 def _predict_monitor_score(
     model,
     X: pd.DataFrame,
-    score_method: str = 'auto',
+    score_method: str = "auto",
     predict_kwargs: Optional[dict] = None,
 ) -> tuple:
     """按监控口径从模型生成一维评分序列."""
     predict_kwargs = predict_kwargs or {}
     score_method = score_method.lower()
-    if score_method not in {'auto', 'score', 'proba'}:
+    if score_method not in {"auto", "score", "proba"}:
         raise ValueError("score_method 必须是 'auto'/'score'/'proba' 之一")
 
-    if score_method in {'auto', 'score'} and hasattr(model, 'predict_score'):
+    if score_method in {"auto", "score"} and hasattr(model, "predict_score"):
         try:
-            return np.asarray(model.predict_score(X, **predict_kwargs)).ravel(), '评分'
+            return np.asarray(model.predict_score(X, **predict_kwargs)).ravel(), "评分"
         except TypeError:
-            return np.asarray(model.predict_score(X)).ravel(), '评分'
+            return np.asarray(model.predict_score(X)).ravel(), "评分"
         except Exception:
-            if score_method == 'score':
+            if score_method == "score":
                 raise
 
-    if not hasattr(model, 'predict_proba'):
+    if not hasattr(model, "predict_proba"):
         raise ValueError("模型需提供 predict_score 或 predict_proba 才能计算漂移监控评分")
 
     try:
@@ -743,7 +753,7 @@ def _predict_monitor_score(
         if proba.shape[1] < 2:
             raise ValueError("predict_proba 返回二维数组时至少需要包含正类概率列")
         proba = proba[:, 1]
-    return proba.ravel(), '坏账概率'
+    return proba.ravel(), "坏账概率"
 
 
 def model_drift_report(
@@ -753,7 +763,7 @@ def model_drift_report(
     y_base=None,
     y_target=None,
     features: Optional[List[str]] = None,
-    score_method: str = 'auto',
+    score_method: str = "auto",
     max_n_bins: int = 10,
     predict_kwargs: Optional[dict] = None,
     n_jobs=-1,
@@ -809,33 +819,35 @@ def model_drift_report(
     drifted_count = 0
     monitored_count = 0
     max_feature_psi = np.nan
-    if not feature_report.empty and 'PSI' in feature_report.columns:
-        psi_values = pd.to_numeric(feature_report['PSI'], errors='coerce')
+    if not feature_report.empty and "PSI" in feature_report.columns:
+        psi_values = pd.to_numeric(feature_report["PSI"], errors="coerce")
         monitored_count = int(psi_values.notna().sum())
         drifted_count = int((psi_values > 0.1).sum())
         max_feature_psi = float(psi_values.max()) if monitored_count > 0 else np.nan
 
     summary_rows = [
-        {'指标': '评分口径', '数值': score_name, '等级': ''},
-        {'指标': '评分PSI', '数值': score_report['PSI'], '等级': score_report['偏移等级']},
-        {'指标': '监控特征数', '数值': monitored_count, '等级': ''},
-        {'指标': '偏移特征数', '数值': drifted_count, '等级': ''},
+        {"指标": "评分口径", "数值": score_name, "等级": ""},
+        {"指标": "评分PSI", "数值": score_report["PSI"], "等级": score_report["偏移等级"]},
+        {"指标": "监控特征数", "数值": monitored_count, "等级": ""},
+        {"指标": "偏移特征数", "数值": drifted_count, "等级": ""},
         {
-            '指标': '最大特征PSI',
-            '数值': round(max_feature_psi, 4) if not np.isnan(max_feature_psi) else np.nan,
-            '等级': psi_rating(max_feature_psi) if not np.isnan(max_feature_psi) else '未知',
+            "指标": "最大特征PSI",
+            "数值": round(max_feature_psi, 4) if not np.isnan(max_feature_psi) else np.nan,
+            "等级": psi_rating(max_feature_psi) if not np.isnan(max_feature_psi) else "未知",
         },
     ]
 
-    if '模型性能' in score_report:
-        perf = score_report['模型性能']
-        summary_rows.extend([
-            {'指标': 'KS变化', '数值': perf.get('KS变化'), '等级': ''},
-            {'指标': 'AUC变化', '数值': perf.get('AUC变化'), '等级': ''},
-        ])
+    if "模型性能" in score_report:
+        perf = score_report["模型性能"]
+        summary_rows.extend(
+            [
+                {"指标": "KS变化", "数值": perf.get("KS变化"), "等级": ""},
+                {"指标": "AUC变化", "数值": perf.get("AUC变化"), "等级": ""},
+            ]
+        )
 
     return {
-        '评分漂移': score_report,
-        '特征漂移': feature_report,
-        '漂移摘要': pd.DataFrame(summary_rows),
+        "评分漂移": score_report,
+        "特征漂移": feature_report,
+        "漂移摘要": pd.DataFrame(summary_rows),
     }

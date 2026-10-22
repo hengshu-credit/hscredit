@@ -33,6 +33,7 @@ except ImportError:
     CATBOOST_AVAILABLE = False
     cb = None
 
+
 # 检测CatBoost版本
 def _get_catboost_version():
     """获取CatBoost版本号."""
@@ -300,9 +301,7 @@ class CatBoost(BaseRiskModel):
         # 处理评估指标
         requested_metrics = []
         if eval_metric is not None:
-            requested_metrics = (
-                list(eval_metric) if isinstance(eval_metric, (list, tuple)) else [eval_metric]
-            )
+            requested_metrics = list(eval_metric) if isinstance(eval_metric, (list, tuple)) else [eval_metric]
             if not requested_metrics:
                 raise ValueError("eval_metric 列表不能为空")
             if any(isinstance(metric, BaseMetric) for metric in requested_metrics[1:]):

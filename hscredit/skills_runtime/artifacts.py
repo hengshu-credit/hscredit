@@ -87,7 +87,12 @@ class ArtifactTransaction:
             overwrite = output.get("overwrite", False)
         self.output_dir = Path(directory).expanduser().resolve()
         self.name = str(name)
-        if not self.name or Path(self.name).name != self.name or any(c in self.name for c in '/\\') or self.name in {'.', '..'}:
+        if (
+            not self.name
+            or Path(self.name).name != self.name
+            or any(c in self.name for c in "/\\")
+            or self.name in {".", ".."}
+        ):
             raise SkillExecutionError(code="ARTIFACT_WRITE_FAILED", message="制品名称必须是非空文件名，不能包含目录")
         self.overwrite = bool(overwrite)
         self.staging_dir: Optional[Path] = None
@@ -105,25 +110,38 @@ class ArtifactTransaction:
     def __enter__(self) -> "ArtifactTransaction":
         self.output_dir.mkdir(parents=True, exist_ok=True)
         try:
-            lock = self._lock_path.open('x', encoding='utf-8')
+            lock = self._lock_path.open("x", encoding="utf-8")
         except FileExistsError as exc:
-            raise SkillExecutionError(code="ARTIFACT_WRITE_FAILED", message="同名制品正在发布，或上次中断后需检查发布锁") from exc
+            raise SkillExecutionError(
+                code="ARTIFACT_WRITE_FAILED", message="同名制品正在发布，或上次中断后需检查发布锁"
+            ) from exc
         try:
             # open('x')成功即取得所有权，不能等write/flush/close完成后才记账。
             self._owns_lock = True
             with lock:
                 identity = os.fstat(lock.fileno())
                 self._lock_identity = (identity.st_dev, identity.st_ino)
-                lock.write(json.dumps({'pid': os.getpid(), 'host': socket.gethostname(),
-                    'created_at': datetime.now(timezone.utc).isoformat(), 'owner_token': self.owner_token,
-                    'version_directory': str(self.run_dir)}, ensure_ascii=False))
+                lock.write(
+                    json.dumps(
+                        {
+                            "pid": os.getpid(),
+                            "host": socket.gethostname(),
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "owner_token": self.owner_token,
+                            "version_directory": str(self.run_dir),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
                 lock.flush()
         except BaseException:
             self._release_lock()
             raise
         if self.manifest_path.exists() and not self.overwrite:
             self._release_lock()
-            raise SkillExecutionError(code="ARTIFACT_EXISTS", message="同名制品清单已存在且未允许覆盖", field="output.overwrite")
+            raise SkillExecutionError(
+                code="ARTIFACT_EXISTS", message="同名制品清单已存在且未允许覆盖", field="output.overwrite"
+            )
         try:
             staging = Path(tempfile.mkdtemp(prefix=".hscredit-skill-", dir=self.output_dir)).resolve()
         except BaseException:
@@ -143,21 +161,21 @@ class ArtifactTransaction:
             try:
                 self._cleanup()
             except Exception as cleanup_error:
-                self._cleanup_diagnostic('制品暂存清理失败', cleanup_error)
+                self._cleanup_diagnostic("制品暂存清理失败", cleanup_error)
             finally:
                 self._release_lock()
 
     def _cleanup_diagnostic(self, stage, error):
         """次要清理错误可观测，但-Werror不能改变业务异常或已提交状态。"""
         message = f"{stage}，不改变已提交清单或原始异常: {type(error).__name__}: {error}"
-        self.cleanup_errors.append({'阶段': stage, '错误': str(error), '已提交': self.committed})
+        self.cleanup_errors.append({"阶段": stage, "错误": str(error), "已提交": self.committed})
         try:
             warnings.warn(message, RuntimeWarning, stacklevel=2)
         except RuntimeWarning:
             try:
                 logger.warning(message)
             except Exception as log_error:
-                self.cleanup_errors.append({'阶段': '清理诊断日志', '错误': str(log_error), '已提交': self.committed})
+                self.cleanup_errors.append({"阶段": "清理诊断日志", "错误": str(log_error), "已提交": self.committed})
 
     def _release_lock(self):
         if not self._owns_lock:
@@ -167,28 +185,28 @@ class ArtifactTransaction:
                 current = self._lock_path.stat()
                 if (current.st_dev, current.st_ino) != self._lock_identity:
                     self._owns_lock = False
-                    self._cleanup_diagnostic('发布锁已被替换，不删除其他任务的锁', OSError(str(self._lock_path)))
+                    self._cleanup_diagnostic("发布锁已被替换，不删除其他任务的锁", OSError(str(self._lock_path)))
                     return
             self._lock_path.unlink(missing_ok=True)
             self._owns_lock = False
         except OSError as error:
-            self._cleanup_diagnostic('释放发布锁失败', error)
+            self._cleanup_diagnostic("释放发布锁失败", error)
 
     @classmethod
     def inspect_lock(cls, directory, name):
         """只读查看发布锁，不根据PID猜测存活、不自动删除锁或版本目录。"""
-        transaction = cls({'directory': directory, 'name': name})
+        transaction = cls({"directory": directory, "name": name})
         path = transaction._lock_path
-        result = {'存在': path.exists(), '路径': str(path)}
-        if result['存在']:
+        result = {"存在": path.exists(), "路径": str(path)}
+        if result["存在"]:
             try:
-                with path.open('r', encoding='utf-8') as handle:
+                with path.open("r", encoding="utf-8") as handle:
                     content = handle.read(16385)
                 if len(content) > 16384:
-                    raise ValueError('锁文件超出诊断大小限制')
-                result['所有者'] = json.loads(content)
+                    raise ValueError("锁文件超出诊断大小限制")
+                result["所有者"] = json.loads(content)
             except (OSError, ValueError) as error:
-                result['诊断'] = str(error)
+                result["诊断"] = str(error)
         return result
 
     def stage_path(self, relative_name: str) -> Path:
@@ -250,7 +268,7 @@ class ArtifactTransaction:
         """完成目录一次改名，最后原子更新清单；异常保留旧清单。"""
         if not self._pending:
             return
-        payload = self.staging_dir / ('.bundle-' + uuid4().hex)
+        payload = self.staging_dir / (".bundle-" + uuid4().hex)
         payload.mkdir()
         entries = []
         try:
@@ -261,13 +279,20 @@ class ArtifactTransaction:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 source.replace(target)
                 digest = hashlib.sha256()
-                with target.open('rb') as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+                with target.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                         digest.update(chunk)
-                entries.append({**item, 'sha256': digest.hexdigest(), 'bytes': target.stat().st_size})
-            manifest = self.staging_dir / '.completed.json'
-            manifest.write_text(json.dumps({'状态': '完成', '协议版本': 1, '版本目录': str(self.run_dir),
-                                            '制品': entries}, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
+                entries.append({**item, "sha256": digest.hexdigest(), "bytes": target.stat().st_size})
+            manifest = self.staging_dir / ".completed.json"
+            manifest.write_text(
+                json.dumps(
+                    {"状态": "完成", "协议版本": 1, "版本目录": str(self.run_dir), "制品": entries},
+                    ensure_ascii=False,
+                    indent=2,
+                    allow_nan=False,
+                ),
+                encoding="utf-8",
+            )
             payload.replace(self.run_dir)
             manifest.replace(self.manifest_path)
             self.committed = True
@@ -277,8 +302,10 @@ class ArtifactTransaction:
                 try:
                     shutil.rmtree(self.run_dir)
                 except OSError as cleanup_error:
-                    self._cleanup_diagnostic('清理未发布版本失败', cleanup_error)
-            raise SkillExecutionError(code="ARTIFACT_WRITE_FAILED", message=f"制品整批发布失败: {exc}", cause=exc) from exc
+                    self._cleanup_diagnostic("清理未发布版本失败", cleanup_error)
+            raise SkillExecutionError(
+                code="ARTIFACT_WRITE_FAILED", message=f"制品整批发布失败: {exc}", cause=exc
+            ) from exc
 
     def _cleanup(self) -> None:
         if self.staging_dir is None:

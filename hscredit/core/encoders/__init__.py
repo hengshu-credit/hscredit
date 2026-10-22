@@ -26,14 +26,14 @@ from .gbm_encoder import GBMEncoder
 from .cardinality_encoder import CardinalityEncoder
 
 __all__ = [
-    'BaseEncoder',
-    'WOEEncoder',
-    'TargetEncoder',
-    'CountEncoder',
-    'OneHotEncoder',
-    'OrdinalEncoder',
-    'QuantileEncoder',
-    'CatBoostEncoder',
-    'GBMEncoder',
-    'CardinalityEncoder',
+    "BaseEncoder",
+    "WOEEncoder",
+    "TargetEncoder",
+    "CountEncoder",
+    "OneHotEncoder",
+    "OrdinalEncoder",
+    "QuantileEncoder",
+    "CatBoostEncoder",
+    "GBMEncoder",
+    "CardinalityEncoder",
 ]

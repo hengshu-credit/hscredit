@@ -33,12 +33,12 @@ from .manual_tree_extractor import DecisionTreeAnalyzer, ManualTreeExtractor
 from .metrics import RuleMetrics, calculate_rule_metrics
 
 __all__ = [
-    'SingleFeatureRuleMiner',
-    'MultiFeatureRuleMiner',
-    'MultiLabelRuleMiner',
-    'TreeRuleExtractor',
-    'DecisionTreeAnalyzer',
-    'ManualTreeExtractor',
-    'RuleMetrics',
-    'calculate_rule_metrics',
+    "SingleFeatureRuleMiner",
+    "MultiFeatureRuleMiner",
+    "MultiLabelRuleMiner",
+    "TreeRuleExtractor",
+    "DecisionTreeAnalyzer",
+    "ManualTreeExtractor",
+    "RuleMetrics",
+    "calculate_rule_metrics",
 ]

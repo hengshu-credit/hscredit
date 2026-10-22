@@ -226,9 +226,7 @@ class MongoPoolOptions:
             raise ValidationError("MongoDB 连接池参数 max_connecting 必须是正整数")
         for name in ("wait_queue_timeout_ms", "max_idle_time_ms"):
             current = getattr(self, name)
-            if current is not None and (
-                isinstance(current, bool) or not isinstance(current, int) or current < 0
-            ):
+            if current is not None and (isinstance(current, bool) or not isinstance(current, int) or current < 0):
                 raise ValidationError(f"MongoDB 连接池参数 {name} 必须是非负整数或 None")
 
     def to_mongo_kwargs(self) -> Dict[str, Any]:

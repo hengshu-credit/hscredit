@@ -28,7 +28,6 @@ import platform
 import matplotlib as mpl
 from typing import Dict, List, Optional
 
-
 # ============================================================
 # 配色方案
 # ============================================================
@@ -41,18 +40,26 @@ PRIMARY_COLORS = ["#2639E9", "#F76E6C", "#FE7715"]
 #   · 红系 = 副主题色 #F76E6C 融合粉色 #E0249A 或主题蓝（→玫紫/粉红/危险红），非通用 red。
 # 蓝、紫、粉、红渐变排布，同时相邻系列色差差距拉大，全程无黄/绿/棕分散色相。
 EXTENDED_COLORS = PRIMARY_COLORS + [
-    "#8892F3", "#9956A4", "#EA4585", "#5665EE", "#F0587A",
-    "#B729AB", "#3C4DEB", "#E73B72", "#832EC2", "#BC5F8F",
+    "#8892F3",
+    "#9956A4",
+    "#EA4585",
+    "#5665EE",
+    "#F0587A",
+    "#B729AB",
+    "#3C4DEB",
+    "#E73B72",
+    "#832EC2",
+    "#BC5F8F",
     "#E0249A",
 ]
 
 # 语义色：蓝系基于主题色 #2639E9，红系基于副主题色 #F76E6C 融合粉/蓝
 SEMANTIC_COLORS = {
-    "bad_rate": "#F0556F",     # 副主题红融合粉，坏样本率折线
+    "bad_rate": "#F0556F",  # 副主题红融合粉，坏样本率折线
     "overall_baseline": "#2639E9",
-    "stable": "#7884F1",       # PSI < 0.1，主题蓝叠白
-    "changing": "#9956A4",     # 0.1 <= PSI < 0.25，红融蓝→玫紫
-    "unstable": "#E73B72",     # PSI >= 0.25，红融粉危险色
+    "stable": "#7884F1",  # PSI < 0.1，主题蓝叠白
+    "changing": "#9956A4",  # 0.1 <= PSI < 0.25，红融蓝→玫紫
+    "unstable": "#E73B72",  # PSI >= 0.25，红融粉危险色
     "positive": "#2639E9",
     "negative": "#E04566",
     "neutral": "#8A8FA3",
@@ -69,14 +76,25 @@ GRADIENT_PALETTES = {
     "diverging": ["#2639E9", "#F6F7FE", "#F0556F"],
     # 蓝→紫→粉→红 分段类别色（红系由 #F76E6C 融粉/融蓝派生）
     "pink_purple": [
-        "#8892F3", "#2639E9", "#832EC2", "#B729AB",
-        "#E0249A", "#EC4983", "#F0587A", "#E43550",
+        "#8892F3",
+        "#2639E9",
+        "#832EC2",
+        "#B729AB",
+        "#E0249A",
+        "#EC4983",
+        "#F0587A",
+        "#E43550",
     ],
     # 蓝→紫→粉→红 平滑连续色阶：色相单调递进(234→351°)且相邻锚点色差拉大，蓝系叠白、红系融粉，
     # 全程无黄/绿，适合热力图/条件格式色阶；作为 Excel 条件格式 condition_color 锚点时自动取首/中/尾构成三色异色阶
     "blue_purple_red": [
-        "#A4ACF6", "#2639E9", "#8C2DBE", "#B729AB",
-        "#E0249A", "#EC4983", "#E43550",
+        "#A4ACF6",
+        "#2639E9",
+        "#8C2DBE",
+        "#B729AB",
+        "#E0249A",
+        "#EC4983",
+        "#E43550",
     ],
 }
 
@@ -146,6 +164,7 @@ def get_defaults() -> dict:
 # 中文字体自动检测
 # ============================================================
 
+
 def _detect_cjk_fonts() -> List[str]:
     """根据操作系统检测可用的中文字体列表."""
     system = platform.system()
@@ -159,6 +178,7 @@ def _detect_cjk_fonts() -> List[str]:
     available = []
     try:
         from matplotlib.font_manager import fontManager
+
         system_fonts = {f.name for f in fontManager.ttflist}
         for font in candidates:
             if font in system_fonts:

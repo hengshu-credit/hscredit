@@ -20,8 +20,14 @@ from matplotlib.figure import Figure
 from ..metrics._ranking import _binary_ranking_curve, _prepare_binary_scores
 
 from .utils import (
-    DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
-    REFERENCE_COLOR, NEUTRAL_COLOR, BAD_RATE_COLOR, get_series_colors,
+    DEFAULT_COLORS,
+    get_or_create_ax,
+    save_figure,
+    setup_axis_style,
+    REFERENCE_COLOR,
+    NEUTRAL_COLOR,
+    BAD_RATE_COLOR,
+    get_series_colors,
 )
 
 
@@ -31,9 +37,10 @@ def score_ks_plot(
     datasets: Optional[Dict[str, Tuple]] = None,
     ax=None,
     figsize=(10, 6),
-    title: str = 'KS曲线',
+    title: str = "KS曲线",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """KS曲线图，支持多数据集叠加.
 
@@ -54,7 +61,7 @@ def score_ks_plot(
     if datasets is None:
         if y_true is None or y_prob is None:
             raise ValueError("需提供 y_true/y_prob 或 datasets")
-        datasets = {'数据集': (y_true, y_prob)}
+        datasets = {"数据集": (y_true, y_prob)}
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     colors = get_series_colors(len(datasets))
@@ -66,25 +73,22 @@ def score_ks_plot(
         ks = ks_vals.max()
         ks_idx = ks_vals.argmax()
         color = colors[idx % len(colors)]
-        ax.plot(x_axis, tpr, color=color, linewidth=2,
-                label=f'{label} 坏样本（KS={ks:.4f}）')
-        ax.plot(x_axis, fpr, color=color, linewidth=1.5, linestyle='--',
-                alpha=0.7, label=f'{label} 好样本')
-        ax.vlines(x_axis[ks_idx], fpr[ks_idx], tpr[ks_idx],
-                  color=color, linewidth=1.2, linestyle=':', alpha=0.8)
+        ax.plot(x_axis, tpr, color=color, linewidth=2, label=f"{label} 坏样本（KS={ks:.4f}）")
+        ax.plot(x_axis, fpr, color=color, linewidth=1.5, linestyle="--", alpha=0.7, label=f"{label} 好样本")
+        ax.vlines(x_axis[ks_idx], fpr[ks_idx], tpr[ks_idx], color=color, linewidth=1.2, linestyle=":", alpha=0.8)
         ax.annotate(
-            f'KS={ks:.4f}',
+            f"KS={ks:.4f}",
             xy=(x_axis[ks_idx], (tpr[ks_idx] + fpr[ks_idx]) / 2),
             xytext=(x_axis[ks_idx] + 0.03, (tpr[ks_idx] + fpr[ks_idx]) / 2),
-            fontsize=9, color=color,
+            fontsize=9,
+            color=color,
         )
 
-    ax.plot([0, 1], [0, 1], color=NEUTRAL_COLOR, linestyle='--',
-            linewidth=0.8, alpha=0.4, label='随机')
-    ax.set_xlabel('覆盖率（按概率降序）', fontsize=11)
-    ax.set_ylabel('累积比例', fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight='bold')
-    ax.legend(fontsize=9, loc='upper left')
+    ax.plot([0, 1], [0, 1], color=NEUTRAL_COLOR, linestyle="--", linewidth=0.8, alpha=0.4, label="随机")
+    ax.set_xlabel("覆盖率（按概率降序）", fontsize=11)
+    ax.set_ylabel("累积比例", fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.legend(fontsize=9, loc="upper left")
     ax.xaxis.set_major_formatter(mticker.PercentFormatter(1.0))
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
     setup_axis_style(ax, hide_top_right=True)
@@ -97,10 +101,11 @@ def score_distribution_comparison_plot(
     scores: Dict[str, Union[np.ndarray, pd.Series]],
     ax=None,
     figsize=(10, 5),
-    title: str = '评分分布对比',
+    title: str = "评分分布对比",
     bins: int = 50,
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """多数据集评分分布对比图（KDE + 直方图）.
 
@@ -118,6 +123,7 @@ def score_distribution_comparison_plot(
     """
     try:
         from scipy.stats import gaussian_kde
+
         _has_scipy = True
     except ImportError:
         _has_scipy = False
@@ -129,16 +135,15 @@ def score_distribution_comparison_plot(
         arr = np.asarray(arr)
         arr = arr[~np.isnan(arr)]
         color = colors[idx % len(colors)]
-        ax.hist(arr, bins=bins, alpha=0.25, color=color, density=True,
-                label=f'{label}（n={len(arr):,}）')
+        ax.hist(arr, bins=bins, alpha=0.25, color=color, density=True, label=f"{label}（n={len(arr):,}）")
         if _has_scipy and len(arr) > 2 and np.unique(arr).size > 1:
-            kde = gaussian_kde(arr, bw_method='scott')
+            kde = gaussian_kde(arr, bw_method="scott")
             x_range = np.linspace(arr.min(), arr.max(), 300)
             ax.plot(x_range, kde(x_range), color=color, linewidth=2)
 
-    ax.set_xlabel('评分', fontsize=11)
-    ax.set_ylabel('密度', fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight='bold')
+    ax.set_xlabel("评分", fontsize=11)
+    ax.set_ylabel("密度", fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
     ax.legend(fontsize=9)
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
@@ -152,9 +157,10 @@ def score_badrate_bin_plot(
     max_n_bins: int = 10,
     ax=None,
     figsize=(12, 6),
-    title: str = '评分分箱坏率',
+    title: str = "评分分箱坏率",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """评分分箱坏率图：柱=样本量，折线=坏率.
 
@@ -181,15 +187,14 @@ def score_badrate_bin_plot(
     bin_edges = np.unique(bin_edges)
     labels_cut = pd.cut(s, bins=bin_edges, include_lowest=True)
 
-    categories = labels_cut.categories if hasattr(labels_cut, 'categories') else labels_cut.cat.categories
+    categories = labels_cut.categories if hasattr(labels_cut, "categories") else labels_cut.cat.categories
     rows = []
     for i, bl in enumerate(categories):
         m = labels_cut == bl
         n = m.sum()
         n_bad = int(y[m].sum())
         br = n_bad / n if n > 0 else 0.0
-        rows.append({'分箱': i + 1, '分箱标签': str(bl), '样本数': n,
-                     '坏样本数': n_bad, '坏样本率': br})
+        rows.append({"分箱": i + 1, "分箱标签": str(bl), "样本数": n, "坏样本数": n_bad, "坏样本率": br})
     stat_df = pd.DataFrame(rows)
 
     x = np.arange(len(stat_df))
@@ -198,26 +203,32 @@ def score_badrate_bin_plot(
     fig, ax1 = get_or_create_ax(figsize=figsize, ax=ax)
     ax2 = ax1.twinx()
 
-    ax1.bar(x, stat_df['样本数'].values, color=DEFAULT_COLORS[0], alpha=0.4,
-            label='样本数', zorder=2)
-    ax1.set_ylabel('样本数', color=DEFAULT_COLORS[0], fontsize=10)
-    ax1.tick_params(axis='y', labelcolor=DEFAULT_COLORS[0])
+    ax1.bar(x, stat_df["样本数"].values, color=DEFAULT_COLORS[0], alpha=0.4, label="样本数", zorder=2)
+    ax1.set_ylabel("样本数", color=DEFAULT_COLORS[0], fontsize=10)
+    ax1.tick_params(axis="y", labelcolor=DEFAULT_COLORS[0])
 
-    ax2.plot(x, stat_df['坏样本率'].values, color=BAD_RATE_COLOR, marker='o',
-             linewidth=2, markersize=6, label='坏样本率', zorder=3)
-    ax2.axhline(overall_br, color=REFERENCE_COLOR, linestyle='--', linewidth=1,
-                label=f'整体坏率 {overall_br:.2%}')
-    ax2.set_ylabel('坏样本率', color=BAD_RATE_COLOR, fontsize=10)
-    ax2.tick_params(axis='y', labelcolor=BAD_RATE_COLOR)
+    ax2.plot(
+        x,
+        stat_df["坏样本率"].values,
+        color=BAD_RATE_COLOR,
+        marker="o",
+        linewidth=2,
+        markersize=6,
+        label="坏样本率",
+        zorder=3,
+    )
+    ax2.axhline(overall_br, color=REFERENCE_COLOR, linestyle="--", linewidth=1, label=f"整体坏率 {overall_br:.2%}")
+    ax2.set_ylabel("坏样本率", color=BAD_RATE_COLOR, fontsize=10)
+    ax2.tick_params(axis="y", labelcolor=BAD_RATE_COLOR)
     ax2.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
 
     ax1.set_xticks(x)
-    ax1.set_xticklabels(stat_df['分箱标签'].tolist(), rotation=30, ha='right', fontsize=8)
-    ax1.set_title(title, fontsize=13, fontweight='bold')
+    ax1.set_xticklabels(stat_df["分箱标签"].tolist(), rotation=30, ha="right", fontsize=8)
+    ax1.set_title(title, fontsize=13, fontweight="bold")
 
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
-    ax1.legend(h1 + h2, l1 + l2, loc='upper right', fontsize=9)
+    ax1.legend(h1 + h2, l1 + l2, loc="upper right", fontsize=9)
     setup_axis_style(ax1, hide_top_right=False)
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
@@ -231,9 +242,10 @@ def score_lift_plot(
     datasets: Optional[Dict[str, Tuple]] = None,
     ax=None,
     figsize=(10, 6),
-    title: str = 'LIFT曲线',
+    title: str = "LIFT曲线",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """LIFT曲线图，支持多数据集叠加，标注关键点.
 
@@ -256,7 +268,7 @@ def score_lift_plot(
     if datasets is None:
         if y_true is None or y_prob is None:
             raise ValueError("需提供 y_true/y_prob 或 datasets")
-        datasets = {'数据集': (y_true, y_prob)}
+        datasets = {"数据集": (y_true, y_prob)}
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     colors = get_series_colors(len(datasets))
@@ -276,20 +288,16 @@ def score_lift_plot(
             br = yt_sorted[:n_top].mean()
             lifts.append(br / overall_br if overall_br > 0 else 0.0)
         color = colors[idx % len(colors)]
-        ax.plot(ratios, lifts, color=color, marker='o', linewidth=2,
-                markersize=5, label=label)
+        ax.plot(ratios, lifts, color=color, marker="o", linewidth=2, markersize=5, label=label)
         for r, lv in zip(ratios, lifts):
             if r in highlight:
-                ax.annotate(f'{lv:.2f}', xy=(r, lv),
-                            xytext=(r + 0.005, lv + 0.05),
-                            fontsize=8, color=color)
+                ax.annotate(f"{lv:.2f}", xy=(r, lv), xytext=(r + 0.005, lv + 0.05), fontsize=8, color=color)
 
-    ax.axhline(1.0, color=NEUTRAL_COLOR, linestyle='--', linewidth=0.8,
-               label='随机（LIFT=1）')
-    ax.set_xlabel('覆盖率', fontsize=11)
-    ax.set_ylabel('LIFT值', fontsize=11)
+    ax.axhline(1.0, color=NEUTRAL_COLOR, linestyle="--", linewidth=0.8, label="随机（LIFT=1）")
+    ax.set_xlabel("覆盖率", fontsize=11)
+    ax.set_ylabel("LIFT值", fontsize=11)
     ax.xaxis.set_major_formatter(mticker.PercentFormatter(1.0))
-    ax.set_title(title, fontsize=13, fontweight='bold')
+    ax.set_title(title, fontsize=13, fontweight="bold")
     ax.legend(fontsize=9)
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
@@ -304,9 +312,10 @@ def score_approval_badrate_curve(
     n_points: int = 100,
     ax=None,
     figsize=(10, 6),
-    title: str = '通过率 - 坏率权衡曲线',
+    title: str = "通过率 - 坏率权衡曲线",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """审批通过率 vs 坏账率曲线（策略人员必备）.
 
@@ -348,26 +357,22 @@ def score_approval_badrate_curve(
     fig, ax1 = get_or_create_ax(figsize=figsize, ax=ax)
     ax2 = ax1.twinx()
 
-    ax1.plot(approval_rates, pass_brs, color=BAD_RATE_COLOR, linewidth=2,
-             label='通过样本坏率')
-    ax1.plot(approval_rates, reject_brs, color=DEFAULT_COLORS[0], linewidth=2,
-             linestyle='--', label='拒绝样本坏率')
-    ax1.axhline(overall_br, color=REFERENCE_COLOR, linestyle=':', linewidth=1,
-                label=f'整体坏率 {overall_br:.2%}')
-    ax1.set_xlabel('通过率', fontsize=11)
-    ax1.set_ylabel('坏账率', fontsize=11)
+    ax1.plot(approval_rates, pass_brs, color=BAD_RATE_COLOR, linewidth=2, label="通过样本坏率")
+    ax1.plot(approval_rates, reject_brs, color=DEFAULT_COLORS[0], linewidth=2, linestyle="--", label="拒绝样本坏率")
+    ax1.axhline(overall_br, color=REFERENCE_COLOR, linestyle=":", linewidth=1, label=f"整体坏率 {overall_br:.2%}")
+    ax1.set_xlabel("通过率", fontsize=11)
+    ax1.set_ylabel("坏账率", fontsize=11)
     ax1.xaxis.set_major_formatter(mticker.PercentFormatter(1.0))
     ax1.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
 
-    ax2.fill_between(approval_rates, approval_rates * n, alpha=0.08,
-                     color=DEFAULT_COLORS[2], label='通过样本数')
-    ax2.set_ylabel('通过样本数', color=DEFAULT_COLORS[2], fontsize=10)
-    ax2.tick_params(axis='y', labelcolor=DEFAULT_COLORS[2])
+    ax2.fill_between(approval_rates, approval_rates * n, alpha=0.08, color=DEFAULT_COLORS[2], label="通过样本数")
+    ax2.set_ylabel("通过样本数", color=DEFAULT_COLORS[2], fontsize=10)
+    ax2.tick_params(axis="y", labelcolor=DEFAULT_COLORS[2])
 
-    ax1.set_title(title, fontsize=13, fontweight='bold')
+    ax1.set_title(title, fontsize=13, fontweight="bold")
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
-    ax1.legend(h1 + h2, l1 + l2, fontsize=9, loc='upper right')
+    ax1.legend(h1 + h2, l1 + l2, fontsize=9, loc="upper right")
     setup_axis_style(ax1, hide_top_right=False)
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
@@ -375,9 +380,9 @@ def score_approval_badrate_curve(
 
 
 __all__ = [
-    'score_ks_plot',
-    'score_distribution_comparison_plot',
-    'score_badrate_bin_plot',
-    'score_lift_plot',
-    'score_approval_badrate_curve',
+    "score_ks_plot",
+    "score_distribution_comparison_plot",
+    "score_badrate_bin_plot",
+    "score_lift_plot",
+    "score_approval_badrate_curve",
 ]

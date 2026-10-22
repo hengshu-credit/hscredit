@@ -1,4 +1,5 @@
 """固定分箱的可合并二分类充分统计，不保留逐行数据。"""
+
 from dataclasses import dataclass
 import numpy as np
 from ._binning import _binary_stats_from_counts, _validate_bin_arrays
@@ -7,6 +8,7 @@ from ._binning import _binary_stats_from_counts, _validate_bin_arrays
 @dataclass(frozen=True)
 class MetricSpec:
     """统计口径；本累加器按行计数，不将金额权重混称样本数。"""
+
     target_type: str = "binary"
     positive_label: int = 1
     grain: str = "行"
@@ -31,6 +33,7 @@ class BinStatsAccumulator:
     **参考样例**
     >>> table = BinStatsAccumulator().update([0, 1], [0, 1]).finalize()
     """
+
     def __init__(self, *, feature=None, target=None, binning_version=None, strict_identity=False):
         if not isinstance(strict_identity, bool):
             raise ValueError("strict_identity 必须为布尔值")
@@ -58,7 +61,9 @@ class BinStatsAccumulator:
         if not isinstance(other, BinStatsAccumulator) or self.spec != other.spec:
             raise ValueError("只能合并相同字段、目标和分箱版本的统计")
         if other.bin_dtype_ is not None:
-            self.bin_dtype_ = other.bin_dtype_ if self.bin_dtype_ is None else np.result_type(self.bin_dtype_, other.bin_dtype_)
+            self.bin_dtype_ = (
+                other.bin_dtype_ if self.bin_dtype_ is None else np.result_type(self.bin_dtype_, other.bin_dtype_)
+            )
         for code, (good, bad) in list(other.counts_.items()):
             old_good, old_bad = self.counts_.get(code, (0, 0))
             self.counts_[code] = (old_good + good, old_bad + bad)
@@ -72,5 +77,12 @@ class BinStatsAccumulator:
             raise ValueError("woe_clip 必须为有限正数或None")
         codes = sorted(self.counts_, key=lambda code: (2 if code == -2 else 1 if code == -1 else 0, code))
         counts = np.asarray([self.counts_[code] for code in codes], dtype=np.float64).reshape(-1, 2)
-        return _binary_stats_from_counts(np.asarray(codes, dtype=self.bin_dtype_ or np.int64), counts[:, 0], counts[:, 1],
-                                        epsilon, None, round_digits, woe_clip)
+        return _binary_stats_from_counts(
+            np.asarray(codes, dtype=self.bin_dtype_ or np.int64),
+            counts[:, 0],
+            counts[:, 1],
+            epsilon,
+            None,
+            round_digits,
+            woe_clip,
+        )

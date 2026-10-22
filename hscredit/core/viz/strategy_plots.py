@@ -24,10 +24,19 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from .utils import (
-    DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
-    STABLE_COLOR, CHANGING_COLOR, UNSTABLE_COLOR, NEUTRAL_COLOR,
-    BAD_RATE_COLOR, get_series_colors, get_psi_color,
-    make_colormap, make_risk_cmap,
+    DEFAULT_COLORS,
+    get_or_create_ax,
+    save_figure,
+    setup_axis_style,
+    STABLE_COLOR,
+    CHANGING_COLOR,
+    UNSTABLE_COLOR,
+    NEUTRAL_COLOR,
+    BAD_RATE_COLOR,
+    get_series_colors,
+    get_psi_color,
+    make_colormap,
+    make_risk_cmap,
 )
 
 
@@ -48,9 +57,10 @@ def rule_swap_plot(
     pipeline: pd.DataFrame,
     rule_categories: Optional[List[str]] = None,
     figsize: Tuple[float, float] = (15, 5),
-    title: str = '规则置换分析',
+    title: str = "规则置换分析",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """绘制规则置换分析三联图.
 
@@ -73,59 +83,63 @@ def rule_swap_plot(
     >>> res = rule_swap_analysis(data, score='score', rules_in=[r], reference_data=hist, target='FPD')
     >>> rule_swap_plot(res['swap_pipeline'], title='策略置换分析')
     """
-    required = {'规则分类', '样本总数', '坏样本率', 'LIFT值', '通过率(绝对值)'}
+    required = {"规则分类", "样本总数", "坏样本率", "LIFT值", "通过率(绝对值)"}
     missing = sorted(required.difference(pipeline.columns))
     if missing:
         raise ValueError(f"pipeline 缺少必要列: {missing}")
     if rule_categories is None:
-        rule_categories = ['OUT-OUT拒绝', 'IN-OUT置出', 'OUT-IN置入']
+        rule_categories = ["OUT-OUT拒绝", "IN-OUT置出", "OUT-IN置入"]
 
-    rule_rows = pipeline[pipeline['规则分类'].isin(rule_categories)].copy()
+    rule_rows = pipeline[pipeline["规则分类"].isin(rule_categories)].copy()
     fig, axes = plt.subplots(1, 3, figsize=figsize)
 
     if rule_rows.empty:
-        axes[0].text(0.5, 0.5, '无规则命中数据', ha='center', va='center', transform=axes[0].transAxes)
-        axes[1].text(0.5, 0.5, '无LIFT数据', ha='center', va='center', transform=axes[1].transAxes)
+        axes[0].text(0.5, 0.5, "无规则命中数据", ha="center", va="center", transform=axes[0].transAxes)
+        axes[1].text(0.5, 0.5, "无LIFT数据", ha="center", va="center", transform=axes[1].transAxes)
     else:
         positions = np.arange(len(rule_rows))
-        label_col = '规则集' if '规则集' in rule_rows.columns else '指标名称' if '指标名称' in rule_rows.columns else None
+        label_col = (
+            "规则集" if "规则集" in rule_rows.columns else "指标名称" if "指标名称" in rule_rows.columns else None
+        )
         if label_col is None:
-            labels = rule_rows['规则分类'].astype(str).tolist()
+            labels = rule_rows["规则分类"].astype(str).tolist()
         else:
             labels = [
                 str(label) if pd.notna(label) and str(label).strip() else str(category)
-                for label, category in zip(rule_rows[label_col], rule_rows['规则分类'])
+                for label, category in zip(rule_rows[label_col], rule_rows["规则分类"])
             ]
-        bars = axes[0].bar(positions, rule_rows['样本总数'], color=DEFAULT_COLORS[0], alpha=0.8)
+        bars = axes[0].bar(positions, rule_rows["样本总数"], color=DEFAULT_COLORS[0], alpha=0.8)
         axes[0].set_xticks(positions)
-        axes[0].set_xticklabels(labels, rotation=30, ha='right', fontsize=8)
-        axes[0].set_ylabel('样本总数')
-        axes[0].set_title('各规则命中样本数')
-        for bar, rate in zip(bars, rule_rows['坏样本率']):
-            axes[0].text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f'{rate:.2%}', ha='center', va='bottom', fontsize=8)
+        axes[0].set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+        axes[0].set_ylabel("样本总数")
+        axes[0].set_title("各规则命中样本数")
+        for bar, rate in zip(bars, rule_rows["坏样本率"]):
+            axes[0].text(
+                bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{rate:.2%}", ha="center", va="bottom", fontsize=8
+            )
 
-        lift_values = pd.to_numeric(rule_rows['LIFT值'], errors='coerce').fillna(0).to_numpy()
+        lift_values = pd.to_numeric(rule_rows["LIFT值"], errors="coerce").fillna(0).to_numpy()
         lift_colors = [STABLE_COLOR if value < 1 else BAD_RATE_COLOR for value in lift_values]
         axes[1].bar(positions, lift_values, color=lift_colors, alpha=0.8)
-        axes[1].axhline(1, color=NEUTRAL_COLOR, linestyle='--', linewidth=1, label='LIFT=1')
+        axes[1].axhline(1, color=NEUTRAL_COLOR, linestyle="--", linewidth=1, label="LIFT=1")
         axes[1].set_xticks(positions)
-        axes[1].set_xticklabels(labels, rotation=30, ha='right', fontsize=8)
-        axes[1].set_ylabel('LIFT值')
-        axes[1].set_title('各规则 LIFT 值')
+        axes[1].set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+        axes[1].set_ylabel("LIFT值")
+        axes[1].set_title("各规则 LIFT 值")
         axes[1].legend(fontsize=8)
 
     positions = np.arange(len(pipeline))
-    pass_rates = pd.to_numeric(pipeline['通过率(绝对值)'], errors='coerce').fillna(0)
-    axes[2].plot(positions, pass_rates, marker='o', color=DEFAULT_COLORS[0], linewidth=2)
+    pass_rates = pd.to_numeric(pipeline["通过率(绝对值)"], errors="coerce").fillna(0)
+    axes[2].plot(positions, pass_rates, marker="o", color=DEFAULT_COLORS[0], linewidth=2)
     axes[2].set_xticks(positions)
-    axes[2].set_xticklabels(pipeline['规则分类'].astype(str).tolist(), rotation=45, ha='right', fontsize=8)
-    axes[2].set_ylabel('通过率 (%)')
-    axes[2].set_title('策略调整后通过率变化')
+    axes[2].set_xticklabels(pipeline["规则分类"].astype(str).tolist(), rotation=45, ha="right", fontsize=8)
+    axes[2].set_ylabel("通过率 (%)")
+    axes[2].set_title("策略调整后通过率变化")
 
     for ax in axes:
         setup_axis_style(ax, hide_top_right=True)
-        ax.grid(True, alpha=0.3, axis='y')
-    fig.suptitle(title, fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis="y")
+    fig.suptitle(title, fontsize=14, fontweight="bold")
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
     return fig
@@ -133,14 +147,15 @@ def rule_swap_plot(
 
 def strategy_simulation_plot(
     simulation: pd.DataFrame,
-    threshold_col: str = '评分阈值',
-    approval_col: str = '通过率(%)',
-    bad_rate_col: str = '通过人群坏率(%)',
+    threshold_col: str = "评分阈值",
+    approval_col: str = "通过率(%)",
+    bad_rate_col: str = "通过人群坏率(%)",
     ax=None,
     figsize: Tuple[float, float] = (10, 5),
-    title: str = '评分阈值策略仿真',
+    title: str = "评分阈值策略仿真",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """绘制候选评分阈值的通过率与坏率双轴图.
 
@@ -175,45 +190,46 @@ def strategy_simulation_plot(
     fig, ax1 = get_or_create_ax(figsize=figsize, ax=ax)
     ax2 = ax1.twinx()
     positions = np.arange(len(simulation))
-    approvals = pd.to_numeric(simulation[approval_col], errors='coerce').fillna(0)
-    bad_rates = pd.to_numeric(simulation[bad_rate_col], errors='coerce').fillna(0)
+    approvals = pd.to_numeric(simulation[approval_col], errors="coerce").fillna(0)
+    bad_rates = pd.to_numeric(simulation[bad_rate_col], errors="coerce").fillna(0)
 
-    ax1.bar(positions, approvals, color=DEFAULT_COLORS[0], alpha=0.55, label='通过率')
-    ax2.plot(positions, bad_rates, color=BAD_RATE_COLOR, marker='o', linewidth=2, label='通过人群坏率')
+    ax1.bar(positions, approvals, color=DEFAULT_COLORS[0], alpha=0.55, label="通过率")
+    ax2.plot(positions, bad_rates, color=BAD_RATE_COLOR, marker="o", linewidth=2, label="通过人群坏率")
     ax1.set_xticks(positions)
     ax1.set_xticklabels(simulation[threshold_col].astype(str).tolist())
-    ax1.set_xlabel('评分阈值')
-    ax1.set_ylabel('通过率 (%)', color=DEFAULT_COLORS[0])
-    ax2.set_ylabel('通过人群坏率 (%)', color=BAD_RATE_COLOR)
-    ax1.tick_params(axis='y', labelcolor=DEFAULT_COLORS[0])
-    ax2.tick_params(axis='y', labelcolor=BAD_RATE_COLOR)
-    ax1.set_title(title, fontsize=13, fontweight='bold')
+    ax1.set_xlabel("评分阈值")
+    ax1.set_ylabel("通过率 (%)", color=DEFAULT_COLORS[0])
+    ax2.set_ylabel("通过人群坏率 (%)", color=BAD_RATE_COLOR)
+    ax1.tick_params(axis="y", labelcolor=DEFAULT_COLORS[0])
+    ax2.tick_params(axis="y", labelcolor=BAD_RATE_COLOR)
+    ax1.set_title(title, fontsize=13, fontweight="bold")
 
     handles1, labels1 = ax1.get_legend_handles_labels()
     handles2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(handles1 + handles2, labels1 + labels2, fontsize=9, loc='best')
+    ax1.legend(handles1 + handles2, labels1 + labels2, fontsize=9, loc="best")
     setup_axis_style(ax1, hide_top_right=False)
     setup_axis_style(ax2, hide_top_right=False)
-    ax1.grid(True, alpha=0.3, axis='y')
+    ax1.grid(True, alpha=0.3, axis="y")
     ax2.grid(False)
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
     return fig
 
 
-@analysis_inputs('df', roles=('date',))
+@analysis_inputs("df", roles=("date",))
 def feature_trend_by_time(
     df: pd.DataFrame,
     feature: str,
     date: str,
     target: Optional[str] = None,
-    stat: str = 'mean',
-    freq: str = 'M',
+    stat: str = "mean",
+    freq: str = "M",
     ax=None,
     figsize=(12, 5),
     title: Optional[str] = None,
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """特征随时间的统计趋势图，检测特征偏移.
 
@@ -235,23 +251,23 @@ def feature_trend_by_time(
     """
     df = df.copy()
     df[date] = pd.to_datetime(df[date])
-    df['_period'] = date_groups(df[date], freq)
-    periods = sorted(df['_period'].unique())
-    base_vals = df[df['_period'] == periods[0]][feature].dropna().values if periods else np.array([])
+    df["_period"] = date_groups(df[date], freq)
+    periods = sorted(df["_period"].unique())
+    base_vals = df[df["_period"] == periods[0]][feature].dropna().values if periods else np.array([])
 
     values = []
     for p in periods:
-        sub = df[df['_period'] == p]
+        sub = df[df["_period"] == p]
         col = sub[feature].dropna()
-        if stat == 'mean':
+        if stat == "mean":
             values.append(float(col.mean()) if len(col) > 0 else np.nan)
-        elif stat == 'median':
+        elif stat == "median":
             values.append(float(col.median()) if len(col) > 0 else np.nan)
-        elif stat == 'badrate':
+        elif stat == "badrate":
             if target is None:
                 raise ValueError("stat='badrate' 时需传入 target")
             values.append(float(sub[target].mean()) if len(sub) > 0 else np.nan)
-        elif stat == 'psi':
+        elif stat == "psi":
             values.append(_quick_psi(base_vals, col.values))
         else:
             values.append(float(col.mean()) if len(col) > 0 else np.nan)
@@ -261,21 +277,21 @@ def feature_trend_by_time(
     clean = [(i, v) for i, v in enumerate(values) if not np.isnan(v)]
     if clean:
         xi, vi = zip(*clean)
-        ax.plot(xi, vi, color=DEFAULT_COLORS[0], marker='o', linewidth=2, markersize=5)
+        ax.plot(xi, vi, color=DEFAULT_COLORS[0], marker="o", linewidth=2, markersize=5)
         ax.fill_between(xi, vi, alpha=0.1, color=DEFAULT_COLORS[0])
 
-    if stat == 'badrate':
+    if stat == "badrate":
         ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
-    if stat == 'psi':
-        ax.axhline(0.10, color=CHANGING_COLOR, linestyle='--', lw=0.8, alpha=0.7, label='PSI=0.10')
-        ax.axhline(0.25, color=UNSTABLE_COLOR, linestyle='--', lw=0.8, alpha=0.7, label='PSI=0.25')
+    if stat == "psi":
+        ax.axhline(0.10, color=CHANGING_COLOR, linestyle="--", lw=0.8, alpha=0.7, label="PSI=0.10")
+        ax.axhline(0.25, color=UNSTABLE_COLOR, linestyle="--", lw=0.8, alpha=0.7, label="PSI=0.25")
         ax.legend(fontsize=8)
 
     ax.set_xticks(x)
-    ax.set_xticklabels(periods, rotation=30, ha='right', fontsize=9)
-    stat_label = {'mean': '均值', 'median': '中位数', 'badrate': '坏率', 'psi': 'PSI'}.get(stat, stat)
+    ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=9)
+    stat_label = {"mean": "均值", "median": "中位数", "badrate": "坏率", "psi": "PSI"}.get(stat, stat)
     ax.set_ylabel(stat_label, fontsize=11)
-    ax.set_title(title or f'{feature} {stat_label}趋势', fontsize=12, fontweight='bold')
+    ax.set_title(title or f"{feature} {stat_label}趋势", fontsize=12, fontweight="bold")
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
@@ -289,9 +305,10 @@ def feature_drift_comparison(
     top_n: int = 20,
     ax=None,
     figsize=(12, 8),
-    title: str = '特征分布偏移（PSI）',
+    title: str = "特征分布偏移（PSI）",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """多特征偏移瀑布图：颜色标注偏移等级.
 
@@ -323,7 +340,7 @@ def feature_drift_comparison(
 
     if not psi_vals:
         fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-        ax.text(0.5, 0.5, '无可用特征', ha='center', va='center', transform=ax.transAxes)
+        ax.text(0.5, 0.5, "无可用特征", ha="center", va="center", transform=ax.transAxes)
         return fig
 
     psi_series = pd.Series(psi_vals).sort_values(ascending=False).head(top_n)
@@ -333,26 +350,26 @@ def feature_drift_comparison(
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     y_pos = np.arange(len(feats))
-    bars = ax.barh(y_pos, vals, color=bar_colors, edgecolor='white', height=0.7)
+    bars = ax.barh(y_pos, vals, color=bar_colors, edgecolor="white", height=0.7)
     ax.set_yticks(y_pos)
     ax.set_yticklabels(feats, fontsize=9)
     ax.invert_yaxis()
-    ax.axvline(0.10, color=CHANGING_COLOR, linestyle='--', lw=1, alpha=0.7)
-    ax.axvline(0.25, color=UNSTABLE_COLOR, linestyle='--', lw=1, alpha=0.7)
+    ax.axvline(0.10, color=CHANGING_COLOR, linestyle="--", lw=1, alpha=0.7)
+    ax.axvline(0.25, color=UNSTABLE_COLOR, linestyle="--", lw=1, alpha=0.7)
 
     for bar, v in zip(bars, vals):
-        ax.text(v + max(vals) * 0.01, bar.get_y() + bar.get_height() / 2,
-                f'{v:.4f}', va='center', fontsize=8)
+        ax.text(v + max(vals) * 0.01, bar.get_y() + bar.get_height() / 2, f"{v:.4f}", va="center", fontsize=8)
 
     import matplotlib.patches as mpatches
+
     patches = [
-        mpatches.Patch(color=STABLE_COLOR, label='稳定（PSI<0.10）'),
-        mpatches.Patch(color=CHANGING_COLOR, label='略变（0.10-0.25）'),
-        mpatches.Patch(color=UNSTABLE_COLOR, label='不稳定（>0.25）'),
+        mpatches.Patch(color=STABLE_COLOR, label="稳定（PSI<0.10）"),
+        mpatches.Patch(color=CHANGING_COLOR, label="略变（0.10-0.25）"),
+        mpatches.Patch(color=UNSTABLE_COLOR, label="不稳定（>0.25）"),
     ]
-    ax.legend(handles=patches, fontsize=9, loc='lower right')
-    ax.set_xlabel('PSI值', fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight='bold')
+    ax.legend(handles=patches, fontsize=9, loc="lower right")
+    ax.set_xlabel("PSI值", fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
@@ -364,12 +381,13 @@ def feature_effectiveness_by_segment(
     feature: str,
     target: str,
     segment_col: str,
-    metric: str = 'iv',
+    metric: str = "iv",
     ax=None,
     figsize=(10, 6),
     title: Optional[str] = None,
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """特征在不同客群下的有效性对比柱状图.
 
@@ -398,14 +416,17 @@ def feature_effectiveness_by_segment(
             values.append(0.0)
             continue
         try:
-            if metric == 'iv':
+            if metric == "iv":
                 from ..metrics.feature import iv as _iv
+
                 values.append(_iv(y, x))
-            elif metric == 'ks':
+            elif metric == "ks":
                 from ..metrics.classification import ks as _ks
+
                 values.append(_ks(y, x))
-            elif metric == 'auc':
+            elif metric == "auc":
                 from ..metrics.classification import auc as _auc
+
                 values.append(_auc(y, x))
             else:
                 values.append(0.0)
@@ -414,35 +435,35 @@ def feature_effectiveness_by_segment(
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     x_pos = np.arange(len(segments))
-    bars = ax.bar(x_pos, values, color=DEFAULT_COLORS[0], alpha=0.8, edgecolor='white')
+    bars = ax.bar(x_pos, values, color=DEFAULT_COLORS[0], alpha=0.8, edgecolor="white")
     ax.set_xticks(x_pos)
-    ax.set_xticklabels([str(s) for s in segments], rotation=30, ha='right', fontsize=9)
+    ax.set_xticklabels([str(s) for s in segments], rotation=30, ha="right", fontsize=9)
     vmax = max(values) if values else 1.0
     for bar, v in zip(bars, values):
-        ax.text(bar.get_x() + bar.get_width() / 2, v + vmax * 0.01,
-                f'{v:.4f}', ha='center', va='bottom', fontsize=8)
+        ax.text(bar.get_x() + bar.get_width() / 2, v + vmax * 0.01, f"{v:.4f}", ha="center", va="bottom", fontsize=8)
     ax.set_ylabel(metric.upper(), fontsize=11)
-    ax.set_title(title or f'{feature} {metric.upper()}（各{segment_col}客群）',
-                 fontsize=12, fontweight='bold')
+    ax.set_title(title or f"{feature} {metric.upper()}（各{segment_col}客群）", fontsize=12, fontweight="bold")
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
     return fig
 
 
-@analysis_inputs('df', roles=())
+@analysis_inputs("df", roles=())
 def feature_cross_heatmap(
     df: pd.DataFrame,
     x1: str = None,
     x2: str = None,
     target: str = None,
-    stat: str = 'badrate',
+    stat: str = "badrate",
     max_n_bins: int = 5,
     ax=None,
     figsize=(10, 8),
     title: Optional[str] = None,
     save: Optional[str] = None,
-    features=None, dpi: int = 240, **kwargs,
+    features=None,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """两特征交叉分析热力图：行=feature_x，列=feature_y，格=坏率/样本数/LIFT.
 
@@ -469,35 +490,39 @@ def feature_cross_heatmap(
     def _bin(series, nbins):
         if pd.api.types.is_numeric_dtype(series):
             try:
-                return pd.qcut(series, q=nbins, duplicates='drop').astype(str)
+                return pd.qcut(series, q=nbins, duplicates="drop").astype(str)
             except Exception:
-                return pd.cut(series, bins=nbins, duplicates='drop').astype(str)
+                return pd.cut(series, bins=nbins, duplicates="drop").astype(str)
         return series.astype(str)
 
-    df['_bx'] = _bin(df[feature_x], max_n_bins)
-    df['_by'] = _bin(df[feature_y], max_n_bins)
+    df["_bx"] = _bin(df[feature_x], max_n_bins)
+    df["_by"] = _bin(df[feature_y], max_n_bins)
 
-    if stat == 'count':
-        matrix = df.groupby(['_bx', '_by'])[target].count().unstack().fillna(0)
-        fmt, cmap, cbar_label = '{:.0f}', make_colormap("hscredit_cross_count", ["#F7F8FF", DEFAULT_COLORS[0]]), '样本数'
-    elif stat == 'lift':
-        br_mat = df.groupby(['_bx', '_by'])[target].mean().unstack().fillna(overall_br)
+    if stat == "count":
+        matrix = df.groupby(["_bx", "_by"])[target].count().unstack().fillna(0)
+        fmt, cmap, cbar_label = (
+            "{:.0f}",
+            make_colormap("hscredit_cross_count", ["#F7F8FF", DEFAULT_COLORS[0]]),
+            "样本数",
+        )
+    elif stat == "lift":
+        br_mat = df.groupby(["_bx", "_by"])[target].mean().unstack().fillna(overall_br)
         matrix = br_mat / overall_br if overall_br > 0 else br_mat
-        fmt, cmap, cbar_label = '{:.2f}', make_risk_cmap("hscredit_cross_lift"), 'LIFT值'
+        fmt, cmap, cbar_label = "{:.2f}", make_risk_cmap("hscredit_cross_lift"), "LIFT值"
     else:
-        matrix = df.groupby(['_bx', '_by'])[target].mean().unstack().fillna(overall_br)
-        fmt, cmap, cbar_label = '{:.2%}', make_risk_cmap("hscredit_cross_badrate"), '坏率'
+        matrix = df.groupby(["_bx", "_by"])[target].mean().unstack().fillna(overall_br)
+        fmt, cmap, cbar_label = "{:.2%}", make_risk_cmap("hscredit_cross_badrate"), "坏率"
 
     data = matrix.values
     row_labels = matrix.index.tolist()
     col_labels = matrix.columns.tolist()
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    im = ax.imshow(data, cmap=cmap, aspect='auto')
+    im = ax.imshow(data, cmap=cmap, aspect="auto")
     fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02, label=cbar_label)
     ax.set_xticks(np.arange(len(col_labels)))
     ax.set_yticks(np.arange(len(row_labels)))
-    ax.set_xticklabels([str(c) for c in col_labels], rotation=30, ha='right', fontsize=8)
+    ax.set_xticklabels([str(c) for c in col_labels], rotation=30, ha="right", fontsize=8)
     ax.set_yticklabels([str(r) for r in row_labels], fontsize=8)
     ax.set_xlabel(feature_y, fontsize=11)
     ax.set_ylabel(feature_x, fontsize=11)
@@ -505,10 +530,9 @@ def feature_cross_heatmap(
     for i in range(len(row_labels)):
         for j in range(len(col_labels)):
             v = data[i, j]
-            color = 'white' if v > vmax * 0.6 else 'black'
-            ax.text(j, i, fmt.format(v), ha='center', va='center', fontsize=7, color=color)
-    ax.set_title(title or f'{feature_x} × {feature_y} 交叉（{cbar_label}）',
-                 fontsize=12, fontweight='bold')
+            color = "white" if v > vmax * 0.6 else "black"
+            ax.text(j, i, fmt.format(v), ha="center", va="center", fontsize=7, color=color)
+    ax.set_title(title or f"{feature_x} × {feature_y} 交叉（{cbar_label}）", fontsize=12, fontweight="bold")
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
     return fig
@@ -521,9 +545,10 @@ def population_drift_monitor(
     target: Optional[str] = None,
     top_n_drift: int = 5,
     figsize=(14, 10),
-    title: str = '客群偏移监控',
+    title: str = "客群偏移监控",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """多期客群偏移监控大图（PSI热力图 + 趋势折线）.
 
@@ -548,27 +573,25 @@ def population_drift_monitor(
     for df_i, lbl in zip(df_list, labels):
         for feat in features:
             if feat in base.columns and feat in df_i.columns:
-                psi_matrix.loc[feat, lbl] = _quick_psi(
-                    base[feat].dropna().values, df_i[feat].dropna().values)
+                psi_matrix.loc[feat, lbl] = _quick_psi(base[feat].dropna().values, df_i[feat].dropna().values)
 
     top_feats = psi_matrix.iloc[:, -1].sort_values(ascending=False).head(top_n_drift).index.tolist()
 
-    fig, (ax_heat, ax_trend) = plt.subplots(2, 1, figsize=figsize,
-                                             gridspec_kw={'height_ratios': [1, 1.5]})
+    fig, (ax_heat, ax_trend) = plt.subplots(2, 1, figsize=figsize, gridspec_kw={"height_ratios": [1, 1.5]})
     cmap = make_risk_cmap("hscredit_population_psi")
     data = psi_matrix.values.astype(float)
-    im = ax_heat.imshow(data, cmap=cmap, vmin=0, vmax=0.5, aspect='auto')
-    fig.colorbar(im, ax=ax_heat, fraction=0.02, pad=0.01, label='PSI')
+    im = ax_heat.imshow(data, cmap=cmap, vmin=0, vmax=0.5, aspect="auto")
+    fig.colorbar(im, ax=ax_heat, fraction=0.02, pad=0.01, label="PSI")
     ax_heat.set_xticks(np.arange(n_periods))
     ax_heat.set_yticks(np.arange(len(features)))
-    ax_heat.set_xticklabels(labels, rotation=30, ha='right', fontsize=9)
+    ax_heat.set_xticklabels(labels, rotation=30, ha="right", fontsize=9)
     ax_heat.set_yticklabels(features, fontsize=8)
     for i in range(len(features)):
         for j in range(n_periods):
             v = data[i, j]
-            c = 'white' if v > 0.2 else 'black'
-            ax_heat.text(j, i, f'{v:.2f}', ha='center', va='center', fontsize=7, color=c)
-    ax_heat.set_title('PSI热力图', fontsize=12, fontweight='bold')
+            c = "white" if v > 0.2 else "black"
+            ax_heat.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=7, color=c)
+    ax_heat.set_title("PSI热力图", fontsize=12, fontweight="bold")
 
     colors = get_series_colors(len(top_feats))
     x = np.arange(n_periods)
@@ -576,16 +599,15 @@ def population_drift_monitor(
         means = [float(df_i[feat].mean()) if feat in df_i.columns else np.nan for df_i in df_list]
         base_mean = means[0] if means[0] and not np.isnan(means[0]) else 1.0
         norm = [m / base_mean if base_mean else m for m in means]
-        ax_trend.plot(x, norm, marker='o', lw=2,
-                      color=colors[ci % len(colors)], label=feat, markersize=5)
-    ax_trend.axhline(1.0, color=NEUTRAL_COLOR, linestyle='--', lw=0.8, alpha=0.6)
+        ax_trend.plot(x, norm, marker="o", lw=2, color=colors[ci % len(colors)], label=feat, markersize=5)
+    ax_trend.axhline(1.0, color=NEUTRAL_COLOR, linestyle="--", lw=0.8, alpha=0.6)
     ax_trend.set_xticks(x)
-    ax_trend.set_xticklabels(labels, rotation=30, ha='right', fontsize=9)
-    ax_trend.set_ylabel('相对基准期均值', fontsize=10)
-    ax_trend.set_title(f'偏移Top{top_n_drift}特征均值趋势', fontsize=12, fontweight='bold')
+    ax_trend.set_xticklabels(labels, rotation=30, ha="right", fontsize=9)
+    ax_trend.set_ylabel("相对基准期均值", fontsize=10)
+    ax_trend.set_title(f"偏移Top{top_n_drift}特征均值趋势", fontsize=12, fontweight="bold")
     ax_trend.legend(fontsize=8)
     setup_axis_style(ax_trend, hide_top_right=True)
-    fig.suptitle(title, fontsize=14, fontweight='bold')
+    fig.suptitle(title, fontsize=14, fontweight="bold")
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
     return fig
@@ -599,9 +621,10 @@ def segment_scorecard_comparison(
     metrics: List[str] = None,
     ax=None,
     figsize=(14, 6),
-    title: str = '分客群评分效果对比',
+    title: str = "分客群评分效果对比",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """按客群分组的评分指标对比柱状图.
 
@@ -624,7 +647,7 @@ def segment_scorecard_comparison(
     >>> fig = segment_scorecard_comparison(df, 'score', 'fpd30', 'channel')
     """
     if metrics is None:
-        metrics = ['KS', 'AUC', 'LIFT@10%']
+        metrics = ["KS", "AUC", "LIFT@10%"]
     segments = sorted(df[segment_col].dropna().unique())
     results = {m: [] for m in metrics}
     for seg in segments:
@@ -637,15 +660,18 @@ def segment_scorecard_comparison(
         for m in metrics:
             try:
                 ml = m.lower()
-                if ml == 'ks':
+                if ml == "ks":
                     from ..metrics.classification import ks as _ks
+
                     results[m].append(_ks(y, s))
-                elif ml == 'auc':
+                elif ml == "auc":
                     from ..metrics.classification import auc as _auc
+
                     results[m].append(_auc(y, s))
-                elif 'lift' in ml:
-                    ratio = float(ml.split('@')[1].replace('%', '')) / 100 if '@' in ml else 0.10
+                elif "lift" in ml:
+                    ratio = float(ml.split("@")[1].replace("%", "")) / 100 if "@" in ml else 0.10
                     from ..metrics.finance import lift_at
+
                     results[m].append(lift_at(y, s, ratios=ratio))
                 else:
                     results[m].append(0.0)
@@ -670,31 +696,30 @@ def segment_scorecard_comparison(
         cur_ax = axes[mi]
         vals = results[m]
         vmax = max(vals) if vals else 1.0
-        bars = cur_ax.bar(x, vals, width=0.6,
-                          color=[colors[i % len(colors)] for i in range(len(segments))],
-                          alpha=0.85)
+        bars = cur_ax.bar(x, vals, width=0.6, color=[colors[i % len(colors)] for i in range(len(segments))], alpha=0.85)
         for bar, v in zip(bars, vals):
-            cur_ax.text(bar.get_x() + bar.get_width() / 2, v + vmax * 0.01,
-                        f'{v:.3f}', ha='center', va='bottom', fontsize=8)
+            cur_ax.text(
+                bar.get_x() + bar.get_width() / 2, v + vmax * 0.01, f"{v:.3f}", ha="center", va="bottom", fontsize=8
+            )
         cur_ax.set_xticks(x)
-        cur_ax.set_xticklabels(seg_labels, rotation=30, ha='right', fontsize=9)
+        cur_ax.set_xticklabels(seg_labels, rotation=30, ha="right", fontsize=9)
         cur_ax.set_ylabel(m, fontsize=11)
-        cur_ax.set_title(m, fontsize=12, fontweight='bold')
+        cur_ax.set_title(m, fontsize=12, fontweight="bold")
         setup_axis_style(cur_ax, hide_top_right=True)
 
-    fig.suptitle(title, fontsize=13, fontweight='bold')
+    fig.suptitle(title, fontsize=13, fontweight="bold")
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
     return fig
 
 
 __all__ = [
-    'rule_swap_plot',
-    'strategy_simulation_plot',
-    'feature_trend_by_time',
-    'feature_drift_comparison',
-    'feature_effectiveness_by_segment',
-    'feature_cross_heatmap',
-    'population_drift_monitor',
-    'segment_scorecard_comparison',
+    "rule_swap_plot",
+    "strategy_simulation_plot",
+    "feature_trend_by_time",
+    "feature_drift_comparison",
+    "feature_effectiveness_by_segment",
+    "feature_cross_heatmap",
+    "population_drift_monitor",
+    "segment_scorecard_comparison",
 ]

@@ -4,6 +4,7 @@
 2. max_n_bins 硬性限制
 3. 分箱标签 左闭右开 [a, b)
 """
+
 import numpy as np
 import pandas as pd
 import pytest

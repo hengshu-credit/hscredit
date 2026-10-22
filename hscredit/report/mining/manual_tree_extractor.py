@@ -163,10 +163,10 @@ def _lift_local(y_true, y_score, n_bins=10):
     :param n_bins: 取最高分样本的比例分母，默认 10 即 top 10%
     :return: LIFT 值
     """
-    df = pd.DataFrame({'y': y_true, 's': y_score}).sort_values('s', ascending=False)
+    df = pd.DataFrame({"y": y_true, "s": y_score}).sort_values("s", ascending=False)
     top_n = max(1, int(len(df) * n_bins / 100))
-    top_bad_rate = df.head(top_n)['y'].mean()
-    overall_bad_rate = df['y'].mean()
+    top_bad_rate = df.head(top_n)["y"].mean()
+    overall_bad_rate = df["y"].mean()
     return float(top_bad_rate / overall_bad_rate) if overall_bad_rate > 0 else 0.0
 
 
@@ -178,16 +178,17 @@ def _lift_table_local(y_true, y_score, n_bins=10):
     :param n_bins: 分箱数，默认 10
     :return: 含 LIFT 值的 DataFrame
     """
-    df = pd.DataFrame({'y': y_true, 's': y_score})
-    df['bin'] = pd.qcut(df['s'], n_bins, labels=False, duplicates='drop')
-    result = df.groupby('bin').agg(y=('y', 'mean'), count=('y', 'count'))
-    result['lift'] = result['y'] / df['y'].mean()
+    df = pd.DataFrame({"y": y_true, "s": y_score})
+    df["bin"] = pd.qcut(df["s"], n_bins, labels=False, duplicates="drop")
+    result = df.groupby("bin").agg(y=("y", "mean"), count=("y", "count"))
+    result["lift"] = result["y"] / df["y"].mean()
     return result.reset_index()
 
 
 # ============================================================================
 # 决策树工具函数
 # ============================================================================
+
 
 def _impute_features(data: pd.DataFrame, feature_list: List[str], missing: Optional[float]) -> pd.DataFrame:
     """按 missing 填充特征缺失值；missing 为 None 时原样返回。
@@ -267,9 +268,7 @@ def _resolve_fit_data(
                 arr = arr.reshape(-1, 1)
             inferred = selected if selected is not None else [f"feature_{i}" for i in range(arr.shape[1])]
             if len(inferred) != arr.shape[1]:
-                raise InputValidationError(
-                    "ndarray 输入无法按字段名选择子集；features 数量必须与特征列数一致"
-                )
+                raise InputValidationError("ndarray 输入无法按字段名选择子集；features 数量必须与特征列数一致")
             data = pd.DataFrame(arr, columns=inferred)
         y_arr = np.asarray(y.values if isinstance(y, pd.Series) else y).ravel()
         if len(y_arr) != len(data):
@@ -300,9 +299,7 @@ def _resolve_fit_data(
     return data, feats
 
 
-def _rule_generator(
-    clf, feature_name_list: List[str], missing: Optional[float] = None
-) -> pd.DataFrame:
+def _rule_generator(clf, feature_name_list: List[str], missing: Optional[float] = None) -> pd.DataFrame:
     """从训练好的决策树（或模拟树对象）提取规则 DataFrame。
 
     遍历每个非根节点，根据其父节点路径构建分裂条件。
@@ -392,17 +389,11 @@ def _rule_generator(
 
         # 按特征聚合：同一特征的多个条件取交集
         rule_df = pd.DataFrame(edges, columns=["feature_name", "operator", "threshold"])
-        grouped = rule_df.groupby(["feature_name", "operator"], observed=True).agg(
-            {"threshold": ["max", "min"]}
-        )
+        grouped = rule_df.groupby(["feature_name", "operator"], observed=True).agg({"threshold": ["max", "min"]})
         final_rule = []
         for idx in grouped.index:
             feat = idx[0]
-            thres = (
-                grouped.loc[idx, ("threshold", "min")]
-                if idx[1] == "<="
-                else grouped.loc[idx, ("threshold", "max")]
-            )
+            thres = grouped.loc[idx, ("threshold", "min")] if idx[1] == "<=" else grouped.loc[idx, ("threshold", "max")]
             final_rule.append([feat, idx[1], thres, nan_follows_feat.get(feat, False)])
         return father_path, final_rule
 
@@ -489,6 +480,7 @@ def _export_dot_data(
 # ============================================================================
 # 树结构节点操作
 # ============================================================================
+
 
 def _add_nodes_to_tree(
     node: int,
@@ -623,9 +615,7 @@ def _delete_nodes(
     if missing_go_to_left is None:
         missing_go_to_left = [0] * len(feature)
 
-    def _del_children_iter(
-        start_node: int, left_list: List[int], right_list: List[int]
-    ) -> Tuple[List[int], List[int]]:
+    def _del_children_iter(start_node: int, left_list: List[int], right_list: List[int]) -> Tuple[List[int], List[int]]:
         """递归删除子树：将左右子节点指针置为 -1。"""
         left_list = list(left_list)
         right_list = list(right_list)
@@ -903,9 +893,7 @@ class _SimTree:
         self.value = value
         self.impurity = impurity
         # 缺失值路由方向，缺省按 0（缺失走右，与 pandas eval 行为一致）
-        self.missing_go_to_left = (
-            list(missing_go_to_left) if missing_go_to_left is not None else [0] * len(feature)
-        )
+        self.missing_go_to_left = list(missing_go_to_left) if missing_go_to_left is not None else [0] * len(feature)
 
 
 # ============================================================================
@@ -1057,7 +1045,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     # 训练
     # -------------------------------------------------------------------------
 
-    @analysis_inputs('X', roles=())
+    @analysis_inputs("X", roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -1240,10 +1228,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             raise ValueError(f"不支持的指标类型: {metric_type}，可选值: auc/ks/lift/top")
 
         datasets = [("训练集", self._data)] + list(test_data_list)
-        tasks = [
-            (self, name, data, metric_type, top_rate)
-            for name, data in datasets
-        ]
+        tasks = [(self, name, data, metric_type, top_rate) for name, data in datasets]
         return self._parallel_execute(
             _tree_metric_dataset_worker,
             tasks,
@@ -1480,8 +1465,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         data = datasets if datasets is not None else self._data
         if data is None:
             raise InputValidationError(
-                "get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，"
-                "或先通过 fit() 提供训练数据"
+                "get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，" "或先通过 fit() 提供训练数据"
             )
         return self.report(
             data,
@@ -1662,9 +1646,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         if "_data" in payload:
             instance._data = payload["_data"]
         instance.__tree_info_cache = None
-        instance._df_rules = _rule_generator(
-            instance.clf, instance.features_, missing=instance.missing
-        )
+        instance._df_rules = _rule_generator(instance.clf, instance.features_, missing=instance.missing)
         return instance
 
     # -------------------------------------------------------------------------
@@ -1679,12 +1661,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     def __repr__(self) -> str:
         if self._is_fitted:
             n_leaves = int(self._df_rules["if_leaf"].sum()) if self._df_rules is not None else 0
-            return (
-                f"DecisionTreeAnalyzer(target='{self.target}', "
-                f"features={self.features_}, "
-                f"leaves={n_leaves})"
-            )
+            return f"DecisionTreeAnalyzer(target='{self.target}', " f"features={self.features_}, " f"leaves={n_leaves})"
         return "DecisionTreeAnalyzer(not fitted)"
+
 
 # ============================================================================
 # ManualTreeExtractor：人工干预决策树节点分裂
@@ -1841,7 +1820,7 @@ class ManualTreeExtractor(ParallelizableMixin):
     # fit / 自动建树
     # -------------------------------------------------------------------------
 
-    @analysis_inputs('X', roles=())
+    @analysis_inputs("X", roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -1954,12 +1933,8 @@ class ManualTreeExtractor(ParallelizableMixin):
             "criterion": "gini",
             "splitter": "best",
             "max_depth": max_depth if max_depth is not None else self.max_depth,
-            "min_samples_split": (
-                min_samples_split if min_samples_split is not None else self.min_samples_split
-            ),
-            "min_samples_leaf": (
-                min_samples_leaf if min_samples_leaf is not None else self.min_samples_leaf
-            ),
+            "min_samples_split": (min_samples_split if min_samples_split is not None else self.min_samples_split),
+            "min_samples_leaf": (min_samples_leaf if min_samples_leaf is not None else self.min_samples_leaf),
             "random_state": self.random_state,
             "class_weight": None,
             "ccp_alpha": 0.0,
@@ -1992,9 +1967,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         self._tree_info.n_node_samples = list(tree.n_node_samples)
         self._tree_info.value = [list(v) for v in tree.value]
         self._tree_info.impurity = list(tree.impurity)
-        self._tree_info.missing_go_to_left = list(
-            getattr(tree, "missing_go_to_left", [0] * len(tree.feature))
-        )
+        self._tree_info.missing_go_to_left = list(getattr(tree, "missing_go_to_left", [0] * len(tree.feature)))
 
     # -------------------------------------------------------------------------
     # 树操作：人工分裂 / 删除节点
@@ -2354,8 +2327,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         data = datasets if datasets is not None else self._data
         if data is None:
             raise InputValidationError(
-                "get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，"
-                "或先通过 fit() 提供训练数据"
+                "get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，" "或先通过 fit() 提供训练数据"
             )
         return self.report(
             data,

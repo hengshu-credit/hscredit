@@ -55,8 +55,17 @@ AGG_MAP: Dict[str, Tuple[str, str]] = {
 
 # 合法的 OOXML subtotal 取值（聚合扩展时校验）
 _VALID_SUBTOTALS = {
-    "sum", "count", "average", "max", "min", "product",
-    "countNums", "stdDev", "stdDevp", "var", "varp",
+    "sum",
+    "count",
+    "average",
+    "max",
+    "min",
+    "product",
+    "countNums",
+    "stdDev",
+    "stdDevp",
+    "var",
+    "varp",
 }
 
 
@@ -77,9 +86,7 @@ def register_aggregation(key: str, subtotal: str, prefix: Optional[str] = None) 
     >>> _pivot.register_aggregation('总和', 'sum')
     """
     if subtotal not in _VALID_SUBTOTALS:
-        raise ValueError(
-            "subtotal 须为 Excel 原生汇总之一: {}".format(", ".join(sorted(_VALID_SUBTOTALS)))
-        )
+        raise ValueError("subtotal 须为 Excel 原生汇总之一: {}".format(", ".join(sorted(_VALID_SUBTOTALS))))
     if prefix is None:
         # 复用已有同 subtotal 的中文前缀
         for _sub, _pre in AGG_MAP.values():
@@ -114,21 +121,21 @@ SHOW_AS_MAP: Dict[str, Tuple[str, bool, Optional[str]]] = {
 
 # 常见数字格式 -> Excel 内置 numFmtId（无需注入 styles.xml）
 BUILTIN_NUM_FMTS: Dict[str, int] = {
-    "0": 1, "0.00": 2, "#,##0": 3, "#,##0.00": 4,
-    "0%": 9, "0.00%": 10, "0.00e+00": 11,
-    "#,##0;-#,##0": 37, "#,##0.00;-#,##0.00": 39,
+    "0": 1,
+    "0.00": 2,
+    "#,##0": 3,
+    "#,##0.00": 4,
+    "0%": 9,
+    "0.00%": 10,
+    "0.00e+00": 11,
+    "#,##0;-#,##0": 37,
+    "#,##0.00;-#,##0.00": 39,
 }
 
 
 def _esc(text: Any) -> str:
     """XML 文本/属性转义。"""
-    return (
-        str(text)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 def _as_list(value: Any) -> List[Any]:
@@ -220,24 +227,24 @@ def normalize_values(values: Any, data: pd.DataFrame) -> List[Dict[str, Any]]:
             skey = str(show_as_raw).lower() if not isinstance(show_as_raw, str) else show_as_raw
             skey = skey if skey in SHOW_AS_MAP else str(show_as_raw).lower()
             if skey not in SHOW_AS_MAP:
-                raise ValueError(
-                    "不支持的占比方式 '{}'，可选: {}".format(show_as_raw, ", ".join(sorted(SHOW_AS_MAP)))
-                )
+                raise ValueError("不支持的占比方式 '{}'，可选: {}".format(show_as_raw, ", ".join(sorted(SHOW_AS_MAP))))
             show_as, show_as_ext, default_fmt = SHOW_AS_MAP[skey]
             if show_as == "normal":
                 show_as = None
             if number_format is None:
                 number_format = default_fmt
 
-        result.append({
-            "col": col,
-            "agg": key,
-            "subtotal": subtotal,
-            "name": conf["name"] or "{}:{}".format(prefix, col),
-            "show_as": show_as,
-            "show_as_ext": show_as_ext,
-            "number_format": number_format,
-        })
+        result.append(
+            {
+                "col": col,
+                "agg": key,
+                "subtotal": subtotal,
+                "name": conf["name"] or "{}:{}".format(prefix, col),
+                "show_as": show_as,
+                "show_as_ext": show_as_ext,
+                "number_format": number_format,
+            }
+        )
     return result
 
 
@@ -295,8 +302,13 @@ def compute_buckets(series: pd.Series, start: float, interval: float) -> Dict[st
             return n_labels - 1
         return 1 + int((fv - start) // interval)
 
-    return {"labels": labels, "start": float(start), "end": float(end),
-            "interval": float(interval), "bucket_of": bucket_of}
+    return {
+        "labels": labels,
+        "start": float(start),
+        "end": float(end),
+        "interval": float(interval),
+        "bucket_of": bucket_of,
+    }
 
 
 def build_pivot_spec(
@@ -345,8 +357,8 @@ def build_pivot_spec(
 
     # 每个字段的共享项 / 分桶信息
     field_infos: List[Dict[str, Any]] = []
-    shared_lookup: Dict[Any, Dict[Any, int]] = {}   # 离散标签字段：值 -> 共享项索引
-    bucket_lookup: Dict[Any, Any] = {}              # 分组字段：值 -> 桶索引
+    shared_lookup: Dict[Any, Dict[Any, int]] = {}  # 离散标签字段：值 -> 共享项索引
+    bucket_lookup: Dict[Any, Any] = {}  # 分组字段：值 -> 桶索引
     for col in all_columns:
         info: Dict[str, Any] = {"name": col, "is_label": col in label_cols}
         if col in label_cols and col in grouped_set:
@@ -354,19 +366,21 @@ def build_pivot_spec(
             g = groups[col]
             bucket = compute_buckets(data[col], float(g["start"]), float(g["interval"]))
             non_null = data[col].dropna()
-            info.update({
-                "is_grouped": True,
-                "shared": bucket["labels"],          # 分桶标签（pivotField items 用）
-                "group_start": bucket["start"],
-                "group_end": bucket["end"],
-                "group_interval": bucket["interval"],
-                "min": float(non_null.min()) if len(non_null) else 0.0,
-                "max": float(non_null.max()) if len(non_null) else 0.0,
-                "all_integer": bool(
-                    len(non_null) and np.all(np.equal(np.mod(non_null.to_numpy(dtype=float), 1), 0))
-                ),
-                "has_missing": bool(data[col].isna().any()),
-            })
+            info.update(
+                {
+                    "is_grouped": True,
+                    "shared": bucket["labels"],  # 分桶标签（pivotField items 用）
+                    "group_start": bucket["start"],
+                    "group_end": bucket["end"],
+                    "group_interval": bucket["interval"],
+                    "min": float(non_null.min()) if len(non_null) else 0.0,
+                    "max": float(non_null.max()) if len(non_null) else 0.0,
+                    "all_integer": bool(
+                        len(non_null) and np.all(np.equal(np.mod(non_null.to_numpy(dtype=float), 1), 0))
+                    ),
+                    "has_missing": bool(data[col].isna().any()),
+                }
+            )
             bucket_lookup[col] = bucket["bucket_of"]
         elif col in label_cols:
             shared, has_missing = _shared_items(data[col])
@@ -495,13 +509,16 @@ def render_cache_definition_xml(spec: Dict[str, Any], rid_records: str) -> str:
             labels = info["shared"]
             group_items = "".join('<s v="{}"/>'.format(_esc(lab)) for lab in labels)
             field_group = (
-                '<fieldGroup>'
+                "<fieldGroup>"
                 '<rangePr autoStart="0" autoEnd="0" startNum="{s}" endNum="{e}" groupInterval="{i}"/>'
                 '<groupItems count="{n}">{items}</groupItems>'
-                '</fieldGroup>'
+                "</fieldGroup>"
             ).format(
-                s=_fmt_num(info["group_start"]), e=_fmt_num(info["group_end"]),
-                i=_fmt_num(info["group_interval"]), n=len(labels), items=group_items,
+                s=_fmt_num(info["group_start"]),
+                e=_fmt_num(info["group_end"]),
+                i=_fmt_num(info["group_interval"]),
+                n=len(labels),
+                items=group_items,
             )
             shared_xml = "<sharedItems{}/>{}".format(num_attrs, field_group)
         elif info["is_label"]:
@@ -531,9 +548,7 @@ def render_cache_definition_xml(spec: Dict[str, Any], rid_records: str) -> str:
             if info.get("has_missing"):
                 attrs = ' containsBlank="1"' + attrs
             shared_xml = "<sharedItems{}/>".format(attrs)
-        fields_xml.append(
-            '<cacheField name="{}" numFmtId="0">{}</cacheField>'.format(name, shared_xml)
-        )
+        fields_xml.append('<cacheField name="{}" numFmtId="0">{}</cacheField>'.format(name, shared_xml))
 
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
@@ -542,13 +557,18 @@ def render_cache_definition_xml(spec: Dict[str, Any], rid_records: str) -> str:
         'minRefreshableVersion="3" recordCount="{rc}">'
         '<cacheSource type="worksheet">'
         '<worksheetSource ref="{ref}" sheet="{sheet}"/>'
-        '</cacheSource>'
+        "</cacheSource>"
         '<cacheFields count="{fc}">{fields}</cacheFields>'
-        '</pivotCacheDefinition>'
+        "</pivotCacheDefinition>"
     ).format(
-        ns=NS_MAIN, nsr=NS_REL, rid=rid_records, rc=len(spec["records"]),
-        ref=_esc(spec["source_ref"]), sheet=_esc(spec["source_sheet"]),
-        fc=len(spec["field_infos"]), fields="".join(fields_xml),
+        ns=NS_MAIN,
+        nsr=NS_REL,
+        rid=rid_records,
+        rc=len(spec["records"]),
+        ref=_esc(spec["source_ref"]),
+        sheet=_esc(spec["source_sheet"]),
+        fc=len(spec["field_infos"]),
+        fields="".join(fields_xml),
     )
 
 
@@ -614,7 +634,7 @@ def build_theme_tablestyle(name: str, header_dxf_id: int, stripe_dxf_id: int) ->
         '<tableStyleElement type="headerRow" dxfId="{h}"/>'
         '<tableStyleElement type="firstRowStripe" dxfId="{s}"/>'
         '<tableStyleElement type="totalRow" dxfId="{h}"/>'
-        '</tableStyle>'
+        "</tableStyle>"
     ).format(name=_esc(name), h=header_dxf_id, s=stripe_dxf_id)
 
 
@@ -635,8 +655,7 @@ def resolve_theme_pivot_style_name(styles_xml: str, theme_color: str, stripe_col
             (
                 element
                 for element in style
-                if element.tag.rsplit("}", 1)[-1] == "tableStyleElement"
-                and element.attrib.get("type") == element_type
+                if element.tag.rsplit("}", 1)[-1] == "tableStyleElement" and element.attrib.get("type") == element_type
             ),
             None,
         )
@@ -694,24 +713,19 @@ def apply_pivot_styles(
 
     # 1) 自定义 numFmts（须为 styleSheet 首个子元素）
     if custom_numfmts:
-        add = "".join(
-            '<numFmt numFmtId="{}" formatCode="{}"/>'.format(fid, _esc(code))
-            for fid, code in custom_numfmts
-        )
+        add = "".join('<numFmt numFmtId="{}" formatCode="{}"/>'.format(fid, _esc(code)) for fid, code in custom_numfmts)
         m = _re.search(r'<numFmts count="(\d+)">', styles_xml)
         m_self = _re.search(r'<numFmts count="(\d+)"\s*/>', styles_xml)
         if m_self:
             cnt = int(m_self.group(1)) + len(custom_numfmts)
-            styles_xml = styles_xml.replace(
-                m_self.group(0), '<numFmts count="{}">{}</numFmts>'.format(cnt, add), 1
-            )
+            styles_xml = styles_xml.replace(m_self.group(0), '<numFmts count="{}">{}</numFmts>'.format(cnt, add), 1)
         elif m:
             cnt = int(m.group(1)) + len(custom_numfmts)
             styles_xml = styles_xml.replace(m.group(0), '<numFmts count="{}">'.format(cnt), 1)
             styles_xml = styles_xml.replace("</numFmts>", add + "</numFmts>", 1)
         else:
             block = '<numFmts count="{}">{}</numFmts>'.format(len(custom_numfmts), add)
-            styles_xml = _re.sub(r'(<styleSheet\b[^>]*>)', r'\1' + block, styles_xml, count=1)
+            styles_xml = _re.sub(r"(<styleSheet\b[^>]*>)", r"\1" + block, styles_xml, count=1)
 
     if not want_theme:
         return styles_xml
@@ -722,9 +736,7 @@ def apply_pivot_styles(
         stripe_color,
     )
     existing_theme_style = _re.search(
-        r'<(?:[\w.-]+:)?tableStyle\b[^>]*\bname="{}"'.format(
-            _re.escape(theme_style_name)
-        ),
+        r'<(?:[\w.-]+:)?tableStyle\b[^>]*\bname="{}"'.format(_re.escape(theme_style_name)),
         styles_xml,
     )
     if existing_theme_style:
@@ -738,7 +750,8 @@ def apply_pivot_styles(
         base = int(m_self.group(1))
         styles_xml = styles_xml.replace(
             m_self.group(0),
-            '<dxfs count="{}">{}</dxfs>'.format(base + len(dxfs), "".join(dxfs)), 1,
+            '<dxfs count="{}">{}</dxfs>'.format(base + len(dxfs), "".join(dxfs)),
+            1,
         )
     elif m:
         base = int(m.group(1))
@@ -749,32 +762,36 @@ def apply_pivot_styles(
         block = '<dxfs count="{}">{}</dxfs>'.format(len(dxfs), "".join(dxfs))
         # dxfs 位于 cellStyles 之后、tableStyles 之前；简单插入到 tableStyles 之前或末尾
         if "<tableStyles" in styles_xml:
-            styles_xml = _re.sub(r'(<tableStyles)', block + r'\1', styles_xml, count=1)
+            styles_xml = _re.sub(r"(<tableStyles)", block + r"\1", styles_xml, count=1)
         else:
             styles_xml = styles_xml.replace("</styleSheet>", block + "</styleSheet>", 1)
     header_id, stripe_id = base, base + 1
 
     # 3) tableStyles：追加自定义 pivot 样式
     tablestyle = build_theme_tablestyle(theme_style_name, header_id, stripe_id)
-    m_self = _re.search(r'<tableStyles ([^>]*?)\s*/>', styles_xml)
-    m = _re.search(r'<tableStyles ([^>]*?)>', styles_xml)
+    m_self = _re.search(r"<tableStyles ([^>]*?)\s*/>", styles_xml)
+    m = _re.search(r"<tableStyles ([^>]*?)>", styles_xml)
     if m_self:
         attrs = m_self.group(1)
         cnt_m = _re.search(r'count="(\d+)"', attrs)
         cnt = (int(cnt_m.group(1)) if cnt_m else 0) + 1
         attrs2 = _re.sub(r'count="\d+"', 'count="{}"'.format(cnt), attrs) if cnt_m else 'count="1" ' + attrs
         styles_xml = styles_xml.replace(
-            m_self.group(0), '<tableStyles {}>{}</tableStyles>'.format(attrs2, tablestyle), 1,
+            m_self.group(0),
+            "<tableStyles {}>{}</tableStyles>".format(attrs2, tablestyle),
+            1,
         )
     elif m:
         attrs = m.group(1)
         cnt_m = _re.search(r'count="(\d+)"', attrs)
         cnt = (int(cnt_m.group(1)) if cnt_m else 0) + 1
         attrs2 = _re.sub(r'count="\d+"', 'count="{}"'.format(cnt), attrs) if cnt_m else 'count="1" ' + attrs
-        styles_xml = styles_xml.replace(m.group(0), '<tableStyles {}>'.format(attrs2), 1)
+        styles_xml = styles_xml.replace(m.group(0), "<tableStyles {}>".format(attrs2), 1)
         styles_xml = styles_xml.replace("</tableStyles>", tablestyle + "</tableStyles>", 1)
     else:
-        block = '<tableStyles count="1" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16">{}</tableStyles>'.format(tablestyle)
+        block = '<tableStyles count="1" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16">{}</tableStyles>'.format(
+            tablestyle
+        )
         styles_xml = styles_xml.replace("</styleSheet>", block + "</styleSheet>", 1)
 
     return styles_xml
@@ -797,10 +814,7 @@ def _axis_items_xml(combos: List[Tuple[int, ...]], grand: bool) -> Tuple[str, in
                 r += 1
             else:
                 break
-        xs = "".join(
-            "<x/>" if combo[k] == 0 else '<x v="{}"/>'.format(combo[k])
-            for k in range(r, len(combo))
-        )
+        xs = "".join("<x/>" if combo[k] == 0 else '<x v="{}"/>'.format(combo[k]) for k in range(r, len(combo)))
         attr = ' r="{}"'.format(r) if r else ""
         out.append("<i{}>{}</i>".format(attr, xs))
         prev = combo
@@ -1017,7 +1031,9 @@ def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, 
     location_xml = (
         '<location ref="{ref}" firstHeaderRow="{fhr}" firstDataRow="{fdr}" firstDataCol="{fdc}"{page}/>'
     ).format(
-        ref=layout["ref"], fhr=layout["first_header_row"], fdr=layout["first_data_row"],
+        ref=layout["ref"],
+        fhr=layout["first_header_row"],
+        fdr=layout["first_data_row"],
         fdc=layout["first_data_col"],
         page=' rowPageCount="{}" colPageCount="1"'.format(len(page_idx)) if page_idx else "",
     )
@@ -1034,22 +1050,28 @@ def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, 
         'dataCaption="值" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" '
         'itemPrintTitles="1" createdVersion="6" indent="0" compact="0" compactData="0" '
         'outline="1" outlineData="1" gridDropZones="0" multipleFieldFilters="0"{rgt}{cgt}>'
-        '{location}'
+        "{location}"
         '<pivotFields count="{nf}">{pivot_fields}</pivotFields>'
-        '{row_fields}{row_items}{col_fields}{col_items}{page_fields}{data_fields}'
+        "{row_fields}{row_items}{col_fields}{col_items}{page_fields}{data_fields}"
         '<pivotTableStyleInfo name="{style}" showRowHeaders="1" showColHeaders="1" '
         'showRowStripes="{stripes}" showColStripes="0" showLastColumn="1"/>'
-        '</pivotTableDefinition>'
+        "</pivotTableDefinition>"
     ).format(
-        ns=NS_MAIN, name=_esc(spec["name"]), cid=spec["cache_id"],
+        ns=NS_MAIN,
+        name=_esc(spec["name"]),
+        cid=spec["cache_id"],
         apply_num=apply_num,
         rgt="" if spec["show_row_totals"] else ' rowGrandTotals="0"',
         cgt="" if spec["show_col_totals"] else ' colGrandTotals="0"',
         location=location_xml,
-        nf=n_fields, pivot_fields="".join(pivot_fields_xml),
-        row_fields=row_fields_xml, row_items=row_items_xml,
-        col_fields=col_fields_xml, col_items=col_items_xml,
-        page_fields=page_fields_xml, data_fields=data_fields_xml,
+        nf=n_fields,
+        pivot_fields="".join(pivot_fields_xml),
+        row_fields=row_fields_xml,
+        row_items=row_items_xml,
+        col_fields=col_fields_xml,
+        col_items=col_items_xml,
+        page_fields=page_fields_xml,
+        data_fields=data_fields_xml,
         style=spec.get("style", "PivotStyleLight16"),
         stripes=show_stripes,
     )

@@ -57,7 +57,11 @@ def build_model_explanation(model, config: Dict[str, Any]) -> Dict[str, Any]:
         result = explainer.explain(config["data"], max_samples=config["max_samples"])
         representatives = explainer.select_representative_samples(result).head(config["representative_count"])
         return {
-            "元信息": {**dict(result.metadata), "背景数据": dict(result.background_summary), "数据指纹": result.dataset_fingerprint},
+            "元信息": {
+                **dict(result.metadata),
+                "背景数据": dict(result.background_summary),
+                "数据指纹": result.dataset_fingerprint,
+            },
             "全局解释": explainer.get_global_report(result),
             "相关性": explainer.get_correlation_report(result, kind="shap_shap"),
             "特征聚类": explainer.get_feature_clusters(result),
@@ -73,7 +77,10 @@ def build_model_explanation(model, config: Dict[str, Any]) -> Dict[str, Any]:
                 random_state=config["random_state"],
             ),
             "代表样本": representatives,
-            "样本解释": {sample_id: explainer.get_sample_report(result, sample_id=sample_id) for sample_id in representatives["样本索引"]},
+            "样本解释": {
+                sample_id: explainer.get_sample_report(result, sample_id=sample_id)
+                for sample_id in representatives["样本索引"]
+            },
             "原因码": explainer.get_reason_codes(result, risk_direction=config["risk_direction"]),
             "解释结果": result,
             "解释器": explainer,

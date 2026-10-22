@@ -12,8 +12,14 @@ from sklearn.utils.validation import check_is_fitted
 from ....utils.serialization import ArtifactSerializableMixin
 from ..base import _evaluate_binary_predictions
 from .._contracts import (
-    align_model_features, extract_target, positive_class_index, positive_probability,
-    record_feature_schema, split_sample_params, take_rows, validate_labels,
+    align_model_features,
+    extract_target,
+    positive_class_index,
+    positive_probability,
+    record_feature_schema,
+    split_sample_params,
+    take_rows,
+    validate_labels,
 )
 from .._lifecycle import record_training
 from .base import BaseCalibrator

@@ -41,8 +41,12 @@ import numpy as np
 import pandas as pd
 
 from .utils import (
-    DEFAULT_COLORS, save_figure, setup_axis_style,
-    STABLE_COLOR, CHANGING_COLOR, UNSTABLE_COLOR,
+    DEFAULT_COLORS,
+    save_figure,
+    setup_axis_style,
+    STABLE_COLOR,
+    CHANGING_COLOR,
+    UNSTABLE_COLOR,
     make_risk_cmap,
 )
 
@@ -122,9 +126,17 @@ def _extract_tree_from_mte(mte) -> Dict[str, Any]:
     manual_nodes = mte._manual_split_nodes
 
     return _build_tree_data(
-        children_left, children_right, feature, threshold,
-        n_samples, values, impurity, feat_names, n_classes,
-        total_samples, manual_nodes
+        children_left,
+        children_right,
+        feature,
+        threshold,
+        n_samples,
+        values,
+        impurity,
+        feat_names,
+        n_classes,
+        total_samples,
+        manual_nodes,
     )
 
 
@@ -140,24 +152,28 @@ def _extract_tree_from_sklearn(clf, feature_names: Optional[List[str]] = None) -
     impurity = list(tree.impurity)
     feat_names = list(feature_names) if feature_names is not None else []
     n_features_in_ = (
-        getattr(clf, "n_features_in_", None)
-        or getattr(tree, "n_features_in_", None)
-        or getattr(tree, "n_features", 0)
+        getattr(clf, "n_features_in_", None) or getattr(tree, "n_features_in_", None) or getattr(tree, "n_features", 0)
     )
     if not feat_names:
         feat_names = [f"特征[{i}]" for i in range(n_features_in_)]
-    n_classes = _normalize_n_classes(
-        getattr(clf, "n_classes_", getattr(tree, "n_classes", 2))
-    )
+    n_classes = _normalize_n_classes(getattr(clf, "n_classes_", getattr(tree, "n_classes", 2)))
     # 全部样本总数 = 根节点(node 0)样本数；样本占比 = 节点样本数 / 根节点样本数，
     # 故根节点占比为 100%，同层子节点占比之和为 100%。
     total_samples = n_samples[0] if n_samples and n_samples[0] > 0 else 1
     manual_nodes = set()
 
     return _build_tree_data(
-        children_left, children_right, feature, threshold,
-        n_samples, values, impurity, feat_names, n_classes,
-        total_samples, manual_nodes
+        children_left,
+        children_right,
+        feature,
+        threshold,
+        n_samples,
+        values,
+        impurity,
+        feat_names,
+        n_classes,
+        total_samples,
+        manual_nodes,
     )
 
 
@@ -329,19 +345,23 @@ def _build_tree_data(
         left_child = children_left[node_id] if node_id < len(children_left) else -1
         right_child = children_right[node_id] if node_id < len(children_right) else -1
         if left_child != -1:
-            edges.append({
-                "source": node_id,
-                "target": left_child,
-                "label": "<=",
-                "label_pos": 0.5,
-            })
+            edges.append(
+                {
+                    "source": node_id,
+                    "target": left_child,
+                    "label": "<=",
+                    "label_pos": 0.5,
+                }
+            )
         if right_child != -1:
-            edges.append({
-                "source": node_id,
-                "target": right_child,
-                "label": ">",
-                "label_pos": 0.5,
-            })
+            edges.append(
+                {
+                    "source": node_id,
+                    "target": right_child,
+                    "label": ">",
+                    "label_pos": 0.5,
+                }
+            )
 
     return {
         "nodes": nodes,
@@ -427,8 +447,7 @@ def _build_gradient_stops(
     return stops
 
 
-def _measure_text_width(text: str, fontsize: float, fontweight: str = "normal",
-                        use_tex: bool = False) -> float:
+def _measure_text_width(text: str, fontsize: float, fontweight: str = "normal", use_tex: bool = False) -> float:
     """测量文本在数据坐标系下的宽度（inch）。
 
     基于 matplotlib text 渲染器测量，使用当前 figure 的 dpi，
@@ -447,8 +466,7 @@ def _measure_text_width(text: str, fontsize: float, fontweight: str = "normal",
     # 不指定 fontfamily，使用当前 rcParams 默认字体（与实际渲染时一致），
     # 否则测量字体（如不含中文字形的 sans-serif）与渲染字体不一致会导致宽度严重低估，
     # 是节点文字溢出/与徽章重叠的根本原因
-    t = ax_tmp.text(0, 0, text, fontsize=fontsize, fontweight=fontweight,
-                    ha='left', va='center')
+    t = ax_tmp.text(0, 0, text, fontsize=fontsize, fontweight=fontweight, ha="left", va="center")
     renderer = fig_tmp.canvas.get_renderer()
     bb = t.get_window_extent(renderer)
     fig_tmp.clf()
@@ -501,7 +519,7 @@ def _wrap_condition_text(text: str, max_width: float, fontsize: float) -> List[s
                     if _measure_text_width(word[:i] + "-", fontsize, use_tex=True) > max_width:
                         break
                 # 放能放下的部分，剩余的继续
-                prefix = word[:max(1, i - 1)]
+                prefix = word[: max(1, i - 1)]
                 current = prefix
             else:
                 current = word
@@ -537,9 +555,7 @@ def _compute_fill_color(bad_rate, stops):
     return f"#{stops[-1][1][0]:02X}{stops[-1][1][1]:02X}{stops[-1][1][2]:02X}"
 
 
-def _compute_manual_branch_flags(
-    nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
-) -> Dict[int, bool]:
+def _compute_manual_branch_flags(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> Dict[int, bool]:
     """计算每个节点是否位于人工修改节点（is_manual）及其后续子树范围内。
 
     用于决定连接线/边框颜色：从某个人工修改节点开始，其自身及所有后续
@@ -782,7 +798,7 @@ def plot_tree_matplotlib(
     # 第一步：测量全树每个节点标题内容（分裂条件 / "叶子节点"）的单行宽度，
     # 取全树最大值作为统一节点宽度的依据（含上限），保证所有节点等宽、整齐排列
     title_font_size = FONT_TITLE
-    node_id_to_idx: Dict[int, int] = {}   # 节点ID到nodes列表索引的映射
+    node_id_to_idx: Dict[int, int] = {}  # 节点ID到nodes列表索引的映射
     max_content_w = 0.0
 
     for idx, node in enumerate(nodes):
@@ -799,7 +815,7 @@ def plot_tree_matplotlib(
     # 第三步：基于统一宽度对应的可用文本区域，对每个分裂节点的条件文本换行
     # （仅当条件文本宽度超过上限对应的可用宽度时才会真正换行为多行）
     available_w = uniform_node_w - TITLE_PAD_LEFT - TITLE_PAD_RIGHT
-    cond_lines: List[List[str]] = []      # 每个节点换行后的行列表
+    cond_lines: List[List[str]] = []  # 每个节点换行后的行列表
     for idx, node in enumerate(nodes):
         if node["is_leaf"]:
             cond_lines.append([])
@@ -875,11 +891,16 @@ def plot_tree_matplotlib(
             linewidth=1.2,
         )
         ax.text(
-            mid_x, mid_y,
+            mid_x,
+            mid_y,
             f" {_tex_label(label_text)} ",
-            ha="center", va="center",
-            fontsize=label_fontsize, fontweight="bold", color=edge_color,
-            bbox=bbox_props, zorder=3,
+            ha="center",
+            va="center",
+            fontsize=label_fontsize,
+            fontweight="bold",
+            color=edge_color,
+            bbox=bbox_props,
+            zorder=3,
         )
 
     # ============================================================
@@ -948,10 +969,14 @@ def plot_tree_matplotlib(
         circle = plt.Circle((badge_x, badge_y_center), BADGE_R, color=badge_bg, zorder=4)
         ax.add_patch(circle)
         ax.text(
-            badge_x, badge_y_center,
+            badge_x,
+            badge_y_center,
             f"{nid}",
-            ha="center", va="center",
-            fontsize=FONT_TITLE - 1, fontweight="bold", color=title_bg_color,
+            ha="center",
+            va="center",
+            fontsize=FONT_TITLE - 1,
+            fontweight="bold",
+            color=title_bg_color,
             zorder=5,
         )
 
@@ -960,7 +985,7 @@ def plot_tree_matplotlib(
         cond_text_left = x - node_w / 2 + TITLE_PAD_LEFT
         cond_text_right = x + node_w / 2 - TITLE_PAD_RIGHT
         cond_text_center_x = (cond_text_left + cond_text_right) / 2
-        
+
         if is_leaf:
             title_lines = ["叶子节点"]
         else:
@@ -969,10 +994,14 @@ def plot_tree_matplotlib(
         if len(title_lines) == 1:
             # 单行：居中
             ax.text(
-                cond_text_center_x, badge_y_center,
+                cond_text_center_x,
+                badge_y_center,
                 _tex_label(title_lines[0]),
-                ha="center", va="center",
-                fontsize=FONT_TITLE, fontweight="bold", color="#FFFFFF",
+                ha="center",
+                va="center",
+                fontsize=FONT_TITLE,
+                fontweight="bold",
+                color="#FFFFFF",
                 zorder=5,
             )
         else:
@@ -982,10 +1011,14 @@ def plot_tree_matplotlib(
             for li, line_text in enumerate(title_lines):
                 line_y = top_y - li * line_h
                 ax.text(
-                    cond_text_center_x, line_y,
+                    cond_text_center_x,
+                    line_y,
                     _tex_label(line_text),
-                    ha="center", va="center",
-                    fontsize=FONT_TITLE, fontweight="bold", color="#FFFFFF",
+                    ha="center",
+                    va="center",
+                    fontsize=FONT_TITLE,
+                    fontweight="bold",
+                    color="#FFFFFF",
                     zorder=5,
                 )
 
@@ -1009,15 +1042,23 @@ def plot_tree_matplotlib(
         for i, (label, value) in enumerate(rows):
             ry = content_top - row_step * (i + 0.5)
             ax.text(
-                label_col_x, ry, label,
-                ha="right", va="center",
-                fontsize=FONT_BODY, color="#1D2129",
+                label_col_x,
+                ry,
+                label,
+                ha="right",
+                va="center",
+                fontsize=FONT_BODY,
+                color="#1D2129",
                 zorder=4,
             )
             ax.text(
-                value_col_x, ry, value,
-                ha="left", va="center",
-                fontsize=FONT_BODY, color="#1D2129",
+                value_col_x,
+                ry,
+                value,
+                ha="left",
+                va="center",
+                fontsize=FONT_BODY,
+                color="#1D2129",
                 zorder=4,
             )
 
@@ -1056,9 +1097,14 @@ def plot_tree_matplotlib(
     # 标题：用 figure 级别坐标绘制，与数据坐标轴的缩放彼此独立
     if title:
         fig.text(
-            0.5, axes_h_frac + (1 - axes_h_frac) * 0.45,
-            title, ha="center", va="center",
-            fontsize=18, fontweight="bold", color=_COLOR_TEXT_DARK,
+            0.5,
+            axes_h_frac + (1 - axes_h_frac) * 0.45,
+            title,
+            ha="center",
+            va="center",
+            fontsize=18,
+            fontweight="bold",
+            color=_COLOR_TEXT_DARK,
         )
 
     if save:
@@ -1116,10 +1162,7 @@ def plot_tree_pyecharts(
         from pyecharts import options as opts
         from pyecharts.charts import Graph
     except ImportError:
-        raise ImportError(
-            "需要安装 pyecharts: pip install pyecharts\n"
-            "pyecharts 用于生成交互式 HTML 决策树图"
-        )
+        raise ImportError("需要安装 pyecharts: pip install pyecharts\n" "pyecharts 用于生成交互式 HTML 决策树图")
 
     # 画布尺寸：显式 width/height（CSS）优先；否则由 figsize×dpi 换算像素；
     # 二者都未给出时回退到默认 1400×900 px（与 :func:`plot_tree_matplotlib` 的
@@ -1139,12 +1182,11 @@ def plot_tree_pyecharts(
     min_br = min(all_br)
     max_br = max(all_br)
     gradient_stops = _build_gradient_stops(min_br, max_br, center_br=tree_data["overall_bad_rate"])
-    node_fill_colors: Dict[int, str] = {
-        n["node_id"]: _compute_fill_color(n["bad_rate"], gradient_stops) for n in nodes
-    }
+    node_fill_colors: Dict[int, str] = {n["node_id"]: _compute_fill_color(n["bad_rate"], gradient_stops) for n in nodes}
 
     if not nodes:
         from pyecharts.charts import Bar
+
         bar = Bar()
         bar.set_global_opts(title_opts=opts.TitleOpts(title="树为空或未拟合"))
         return bar
@@ -1171,7 +1213,7 @@ def plot_tree_pyecharts(
 
         # AntV 风格颜色
         if is_manual:
-            border_color = _COLOR_SECONDARY   # #F76E6C
+            border_color = _COLOR_SECONDARY  # #F76E6C
         elif is_leaf:
             if bad_rate < 0.1:
                 border_color = _COLOR_SUCCESS
@@ -1277,7 +1319,10 @@ def plot_tree_pyecharts(
 
     # 构建 Graph（标题可有可无）
     base_opts = opts.InitOpts(
-        width=width, height=height, page_title=page_title, renderer="canvas",
+        width=width,
+        height=height,
+        page_title=page_title,
+        renderer="canvas",
     )
     if title:
         graph = Graph(base_opts)
@@ -1300,18 +1345,28 @@ def plot_tree_pyecharts(
                 subtitle_textstyle_opts=opts.TextStyleOpts(font_size=11, color="#86909C"),
             ),
             tooltip_opts=opts.TooltipOpts(
-                trigger_on="mousemove", background_color="#FFFFFF", border_color="#E8ECFF",
+                trigger_on="mousemove",
+                background_color="#FFFFFF",
+                border_color="#E8ECFF",
                 textstyle_opts=opts.TextStyleOpts(color="#1D2129"),
             ),
             legend_opts=opts.LegendOpts(
-                is_show=True, pos_left="right", pos_top="top", orient="vertical",
+                is_show=True,
+                pos_left="right",
+                pos_top="top",
+                orient="vertical",
                 textstyle_opts=opts.TextStyleOpts(color="#4B5563", font_size=10),
             ),
             toolbox_opts=opts.ToolboxOpts(
-                is_show=True, pos_left="right", pos_bottom="bottom",
+                is_show=True,
+                pos_left="right",
+                pos_bottom="bottom",
                 feature=opts.ToolBoxFeatureOpts(
                     save_as_image=opts.ToolBoxFeatureSaveAsImageOpts(
-                        is_show=True, type_="png", name="决策树", pixel_ratio=2,
+                        is_show=True,
+                        type_="png",
+                        name="决策树",
+                        pixel_ratio=2,
                     ),
                     data_zoom=opts.ToolBoxFeatureDataZoomOpts(is_show=True),
                     restore=opts.ToolBoxFeatureRestoreOpts(is_show=True),
@@ -1334,18 +1389,28 @@ def plot_tree_pyecharts(
         graph.set_colors([_COLOR_PRIMARY, _COLOR_SECONDARY, _COLOR_ACCENT, _COLOR_WARNING, _COLOR_DANGER])
         graph.set_global_opts(
             tooltip_opts=opts.TooltipOpts(
-                trigger_on="mousemove", background_color="#FFFFFF", border_color="#E8ECFF",
+                trigger_on="mousemove",
+                background_color="#FFFFFF",
+                border_color="#E8ECFF",
                 textstyle_opts=opts.TextStyleOpts(color="#1D2129"),
             ),
             legend_opts=opts.LegendOpts(
-                is_show=True, pos_left="right", pos_top="top", orient="vertical",
+                is_show=True,
+                pos_left="right",
+                pos_top="top",
+                orient="vertical",
                 textstyle_opts=opts.TextStyleOpts(color="#4B5563", font_size=10),
             ),
             toolbox_opts=opts.ToolboxOpts(
-                is_show=True, pos_left="right", pos_bottom="bottom",
+                is_show=True,
+                pos_left="right",
+                pos_bottom="bottom",
                 feature=opts.ToolBoxFeatureOpts(
                     save_as_image=opts.ToolBoxFeatureSaveAsImageOpts(
-                        is_show=True, type_="png", name="决策树", pixel_ratio=2,
+                        is_show=True,
+                        type_="png",
+                        name="决策树",
+                        pixel_ratio=2,
                     ),
                     data_zoom=opts.ToolBoxFeatureDataZoomOpts(is_show=True),
                     restore=opts.ToolBoxFeatureRestoreOpts(is_show=True),
@@ -1428,9 +1493,7 @@ def plot_tree_graphviz(
     min_br = min(all_br)
     max_br = max(all_br)
     gradient_stops = _build_gradient_stops(min_br, max_br, center_br=tree_data["overall_bad_rate"])
-    node_fill_colors: Dict[int, str] = {
-        n["node_id"]: _compute_fill_color(n["bad_rate"], gradient_stops) for n in nodes
-    }
+    node_fill_colors: Dict[int, str] = {n["node_id"]: _compute_fill_color(n["bad_rate"], gradient_stops) for n in nodes}
     # 每个节点是否位于人工修改节点（is_manual）及其后续子树范围内，用于连接线配色
     manual_branch = _compute_manual_branch_flags(nodes, edges)
 
@@ -1476,14 +1539,16 @@ def plot_tree_graphviz(
     # dpi 控制位图分辨率，二者共同决定输出像素尺寸
     size_attr = f' size="{figsize[0]},{figsize[1]}"' if figsize else ""
     dot_lines: List[str] = []
-    dot_lines.append('digraph Tree {')
-    dot_lines.append(f'    // {title}')
-    dot_lines.append(f'    graph [ranksep=0.6, nodesep=0.35, splines=line, bgcolor="#FAFBFF", pad=0.5, dpi={dpi}{size_attr}, concentrate=false];')
+    dot_lines.append("digraph Tree {")
+    dot_lines.append(f"    // {title}")
+    dot_lines.append(
+        f'    graph [ranksep=0.6, nodesep=0.35, splines=line, bgcolor="#FAFBFF", pad=0.5, dpi={dpi}{size_attr}, concentrate=false];'
+    )
     # shape=plaintext：完全由 HTML-like label 自行定义节点外观，避免节点自身的
     # 形状尺寸算法与 label 内嵌套表格的尺寸算法相互干扰（二者叠加会把徽章单元格
     # 异常拉宽），卡片边框改为在 label 的最外层 <TABLE> 上通过 BORDER/COLOR 绘制
-    dot_lines.append('    node [shape=plaintext, fontname=helvetica, margin=0];')
-    dot_lines.append('    edge [fontname=helvetica, arrowsize=0, penwidth=1.5, arrowhead=none];')
+    dot_lines.append("    node [shape=plaintext, fontname=helvetica, margin=0];")
+    dot_lines.append("    edge [fontname=helvetica, arrowsize=0, penwidth=1.5, arrowhead=none];")
 
     for node in nodes:
         nid = node["node_id"]
@@ -1519,10 +1584,10 @@ def plot_tree_graphviz(
             ("LIFT指标", f'{node["lift"]:.2f}'),
         ]
         rows_html = "".join(
-            f'<TR>'
+            f"<TR>"
             f'<TD ALIGN="RIGHT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#1D2129">{label}</FONT></TD>'
             f'<TD ALIGN="LEFT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="Arial" COLOR="#1D2129">{value}</FONT></TD>'
-            f'</TR>'
+            f"</TR>"
             for label, value in metric_rows
         )
 
@@ -1544,33 +1609,30 @@ def plot_tree_graphviz(
             # 渲染同样文字更窄，若不强制铺满，标题/内容会缩在左侧、右侧留大片空白
             f'<TR><TD WIDTH="{uniform_w_pt}" BGCOLOR="{theme_color}" CELLPADDING="5">'
             f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0" WIDTH="{uniform_w_pt - 10}">'
-            f'<TR>'
+            f"<TR>"
             f'<TD WIDTH="{badge_w_pt}" HEIGHT="{badge_w_pt}" FIXEDSIZE="TRUE" ALIGN="CENTER" VALIGN="MIDDLE" BGCOLOR="{badge_bg}" STYLE="ROUNDED">'
             f'<FONT POINT-SIZE="{badge_font_pt}" FACE="Arial" COLOR="{theme_color}"><B>{nid}</B></FONT>'
-            f'</TD>'
+            f"</TD>"
             f'<TD ALIGN="LEFT" VALIGN="MIDDLE" BGCOLOR="{theme_color}">'
             f'<FONT POINT-SIZE="{TITLE_FONT_PT}" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#FFFFFF"><B>&#160;&#160;{title_html_by_id[nid]}</B></FONT>'
-            f'</TD>'
+            f"</TD>"
             # filler 单元格：主题色，吸收标题栏多余宽度，使徽章保持固定圆形尺寸
             f'<TD BGCOLOR="{theme_color}"></TD>'
-            f'</TR>'
-            f'</TABLE>'
-            f'</TD></TR>'
+            f"</TR>"
+            f"</TABLE>"
+            f"</TD></TR>"
             # 内容区：渐变色背景 + 无表头两列指标表格。同样显式设置 WIDTH=uniform_w_pt
             # 并 ALIGN=CENTER，使背景铺满整张卡片、指标表格在卡片内水平居中（与
             # plot_tree_matplotlib 的居中两列布局一致）
             f'<TR><TD WIDTH="{uniform_w_pt}" ALIGN="CENTER" BGCOLOR="{fill_color}">'
             f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">'
-            f'{rows_html}'
-            f'</TABLE>'
-            f'</TD></TR>'
-            f'</TABLE>'
+            f"{rows_html}"
+            f"</TABLE>"
+            f"</TD></TR>"
+            f"</TABLE>"
         )
 
-        dot_lines.append(
-            f'    {nid} [label=<{label_html}>, '
-            f'tooltip="{node["title"]} | {node["condition"]}"] ;'
-        )
+        dot_lines.append(f"    {nid} [label=<{label_html}>, " f'tooltip="{node["title"]} | {node["condition"]}"] ;')
 
     # 添加边（直线 + 无箭头 + 所有边显示分支标签；连接线统一为主题色，
     # 人工修改节点及其后续子树范围内的连接线统一换为副主题色）
@@ -1671,9 +1733,7 @@ class DecisionTreeViz:
         **kwargs,
     ):
         if backend not in self.SUPPORTED_BACKENDS:
-            raise ValueError(
-                f"不支持的后端 '{backend}'，可选: {self.SUPPORTED_BACKENDS}"
-            )
+            raise ValueError(f"不支持的后端 '{backend}'，可选: {self.SUPPORTED_BACKENDS}")
         self.backend = backend
         self.feature_names = feature_names
         self.title = title
@@ -1751,7 +1811,6 @@ class DecisionTreeViz:
         return self.plot(self._last_tree_obj, save=path)
 
 
-
 # ============================================================================
 # 便捷函数
 # ============================================================================
@@ -1815,7 +1874,7 @@ def tree_leaf_comparison_plot(
     evaluations: Dict[str, pd.DataFrame],
     overall_bad_rate: float,
     figsize: Optional[Tuple[float, float]] = None,
-    title: str = '叶节点效果对比',
+    title: str = "叶节点效果对比",
     save: Optional[str] = None,
     **kwargs,
 ):
@@ -1830,7 +1889,7 @@ def tree_leaf_comparison_plot(
     """
     if not evaluations:
         raise ValueError("evaluations 不能为空")
-    required = {'节点编号', '坏样本率', 'LIFT值'}
+    required = {"节点编号", "坏样本率", "LIFT值"}
     for name, table in evaluations.items():
         missing = sorted(required.difference(table.columns))
         if missing:
@@ -1842,25 +1901,34 @@ def tree_leaf_comparison_plot(
     fig, axes = plt.subplots(1, n_plots, figsize=figsize, squeeze=False)
 
     for ax, (name, table) in zip(axes[0], evaluations.items()):
-        plot_data = table.sort_values('坏样本率', ascending=False).reset_index(drop=True)
+        plot_data = table.sort_values("坏样本率", ascending=False).reset_index(drop=True)
         positions = np.arange(len(plot_data))
-        bad_rates = pd.to_numeric(plot_data['坏样本率'], errors='coerce').fillna(0).to_numpy()
+        bad_rates = pd.to_numeric(plot_data["坏样本率"], errors="coerce").fillna(0).to_numpy()
         colors = make_risk_cmap("hscredit_tree_leaf")(np.linspace(0.15, 0.85, max(len(plot_data), 1)))
-        bars = ax.bar(positions, bad_rates, color=colors[:len(plot_data)], alpha=0.85)
-        ax.axhline(overall_bad_rate, color=DEFAULT_COLORS[0], linestyle='--', label=f'总体坏样本率 {overall_bad_rate:.2%}')
+        bars = ax.bar(positions, bad_rates, color=colors[: len(plot_data)], alpha=0.85)
+        ax.axhline(
+            overall_bad_rate, color=DEFAULT_COLORS[0], linestyle="--", label=f"总体坏样本率 {overall_bad_rate:.2%}"
+        )
         ax.set_xticks(positions)
-        ax.set_xticklabels([f'N{int(node)}' for node in plot_data['节点编号']], rotation=45)
-        ax.set_xlabel('节点编号')
-        ax.set_ylabel('坏样本率')
+        ax.set_xticklabels([f"N{int(node)}" for node in plot_data["节点编号"]], rotation=45)
+        ax.set_xlabel("节点编号")
+        ax.set_ylabel("坏样本率")
         ax.set_title(name)
-        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f'{value:.0%}'))
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f"{value:.0%}"))
         ax.legend(fontsize=8)
-        for bar, lift in zip(bars, plot_data['LIFT值']):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005, f'LIFT:{lift:.2f}', ha='center', va='bottom', fontsize=8)
+        for bar, lift in zip(bars, plot_data["LIFT值"]):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.005,
+                f"LIFT:{lift:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
         setup_axis_style(ax, hide_top_right=True)
-        ax.grid(True, alpha=0.3, axis='y')
+        ax.grid(True, alpha=0.3, axis="y")
 
-    fig.suptitle(title, fontsize=14, fontweight='bold')
+    fig.suptitle(title, fontsize=14, fontweight="bold")
     fig.tight_layout()
     save_figure(fig, save)
     return fig

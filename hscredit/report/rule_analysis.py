@@ -177,9 +177,7 @@ def _swap_risk_source(mask, out_in_mask, fallback_mask=None):
     """根据报告行包含的原子客群标记风险来源。"""
     predicted_count = int((mask & out_in_mask).sum())
     observed_count = int((mask & ~out_in_mask).sum())
-    has_fallback = (
-        fallback_mask is not None and bool((mask & out_in_mask & fallback_mask).any())
-    )
+    has_fallback = fallback_mask is not None and bool((mask & out_in_mask & fallback_mask).any())
     predicted_label = "评分预测(含评分缺失回退)" if has_fallback else "评分预测"
     if predicted_count and observed_count:
         return f"实际表现+{predicted_label}"
@@ -216,21 +214,15 @@ def _build_swap_stages(
     """按基础拒绝、置出、置入顺序构建互斥阶段样本。"""
     all_mask = pd.Series(True, index=data.index)
 
-    base_masks = _evaluate_swap_rule_masks(
-        rules_base, data, mode, n_jobs, parallel_backend, parallel_config
-    )
+    base_masks = _evaluate_swap_rule_masks(rules_base, data, mode, n_jobs, parallel_backend, parallel_config)
     out_out = _expand_swap_masks(base_masks, data.index)
     s1 = all_mask & ~out_out
 
-    out_masks = _evaluate_swap_rule_masks(
-        rules_out, data.loc[s1], mode, n_jobs, parallel_backend, parallel_config
-    )
+    out_masks = _evaluate_swap_rule_masks(rules_out, data.loc[s1], mode, n_jobs, parallel_backend, parallel_config)
     in_out = _expand_swap_masks(out_masks, data.index)
     s2 = s1 & ~in_out
 
-    in_masks = _evaluate_swap_rule_masks(
-        rules_in, data.loc[s2], mode, n_jobs, parallel_backend, parallel_config
-    )
+    in_masks = _evaluate_swap_rule_masks(rules_in, data.loc[s2], mode, n_jobs, parallel_backend, parallel_config)
     out_in = _expand_swap_masks(in_masks, data.index)
     in_in = s2 & ~out_in
 
@@ -279,11 +271,7 @@ def _merge_swap_target_pipelines(
 
     for target_name, pipeline in pipelines.items():
         pipeline = pipeline.reset_index(drop=True)
-        metrics = [
-            column
-            for column in pipeline.columns
-            if column not in shared and column != "目标标签"
-        ]
+        metrics = [column for column in pipeline.columns if column not in shared and column != "目标标签"]
         target_table = pipeline[metrics].copy()
         target_table.columns = pd.MultiIndex.from_tuples([(target_name, column) for column in metrics])
         pieces.append(target_table)
@@ -330,7 +318,7 @@ def _resolve_bin_table(
     优先级：bin_table > reference_data > data 自动生成
     """
     if isinstance(score, str):
-        score_map = {'_default': score}
+        score_map = {"_default": score}
     else:
         score_map = score
 
@@ -388,21 +376,27 @@ def _resolve_bin_table(
         raise ValueError("从 reference_data 计算分箱表时，必须传入 target 或 (overdue + dpds) 参数")
 
     extra_params = dict(bin_params) if bin_params else {}
-    merged_params = {**extra_params, 'method': method, 'max_n_bins': max_n_bins,
-                      'min_bin_size': min_bin_size, 'missing_separate': missing_separate}
+    merged_params = {
+        **extra_params,
+        "method": method,
+        "max_n_bins": max_n_bins,
+        "min_bin_size": min_bin_size,
+        "missing_separate": missing_separate,
+    }
     merged_params.setdefault("n_jobs", -1)
     merged_params.setdefault("parallel_backend", parallel_backend)
     merged_params.setdefault("parallel_config", parallel_config)
 
     reference_data, target = bind_targets(
-        reference_data, target, overdue, dpds,
-        merged_params.get("del_grey", False), merged_params.get("overdue_operator", ">")
+        reference_data,
+        target,
+        overdue,
+        dpds,
+        merged_params.get("del_grey", False),
+        merged_params.get("overdue_operator", ">"),
     )
     overdue, dpds = None, None
-    tasks = [
-        (name, col, reference_data, target, overdue, dpds, merged_params)
-        for name, col in score_map.items()
-    ]
+    tasks = [(name, col, reference_data, target, overdue, dpds, merged_params) for name, col in score_map.items()]
     has_parallel_children = _binning_has_parallel_children(method, merged_params)
     return dict(
         parallel_execute(
@@ -459,7 +453,9 @@ def _build_swap_pipeline(
         target_name = target or "目标标签"
         target_series = {target_name: pd.Series(y, index=data.index, dtype=float)}
     else:
-        target_series = _resolve_target_series(data, target, overdue, dpds, del_grey=del_grey, overdue_operator=overdue_operator)
+        target_series = _resolve_target_series(
+            data, target, overdue, dpds, del_grey=del_grey, overdue_operator=overdue_operator
+        )
 
     if len(target_series) > 1:
         pipelines = {}
@@ -488,7 +484,8 @@ def _build_swap_pipeline(
                 n_jobs=n_jobs,
                 parallel_backend=parallel_backend,
                 parallel_config=parallel_config,
-                del_grey=del_grey, overdue_operator=overdue_operator,
+                del_grey=del_grey,
+                overdue_operator=overdue_operator,
             )
             pipelines[target_name] = pipeline
             result = result.copy()
@@ -508,10 +505,7 @@ def _build_swap_pipeline(
     n_total = len(data)
     all_mask = pd.Series(True, index=data.index)
 
-    score_tasks = [
-        (name, data, score_map[name], table, target_name)
-        for name, table in bin_table_result.items()
-    ]
+    score_tasks = [(name, data, score_map[name], table, target_name) for name, table in bin_table_result.items()]
     score_bad_probs = dict(
         parallel_execute(
             _swap_score_prediction_call,
@@ -533,9 +527,7 @@ def _build_swap_pipeline(
     if not score_bad_probs:
         raise ValueError("未解析到任何评分分箱表，无法预测 OUT-IN 风险")
     prediction_fallback_mask = pd.Series(False, index=data.index)
-    active_weights = score_weights or {
-        name: 1.0 / len(score_bad_probs) for name in score_bad_probs
-    }
+    active_weights = score_weights or {name: 1.0 / len(score_bad_probs) for name in score_bad_probs}
     for name, probability in score_bad_probs.items():
         if active_weights.get(name, 0.0) > 0:
             fallback = probability.attrs.get("风险回退掩码")
@@ -680,9 +672,7 @@ def _build_swap_pipeline(
                     "原始坏样本总额": row_raw_bad_amount,
                     "调整后坏样本总额": row_adjusted_bad_amount,
                     "原始坏样本率(金额)": row_raw_bad_amount / row_amount if row_amount else 0.0,
-                    "调整后坏样本率(金额)": (
-                        row_adjusted_bad_amount / row_amount if row_amount else 0.0
-                    ),
+                    "调整后坏样本率(金额)": (row_adjusted_bad_amount / row_amount if row_amount else 0.0),
                 }
             )
         rows.append(row)
@@ -713,20 +703,14 @@ def _build_swap_pipeline(
         append_row(rule_class, "合计", hit, parent, remaining, "阶段合计")
 
     if rules_base:
-        append_rejection_stage(
-            "OUT-OUT拒绝", rules_base, stages.base_masks, all_mask, stages.s1
-        )
+        append_rejection_stage("OUT-OUT拒绝", rules_base, stages.base_masks, all_mask, stages.s1)
         append_row("剩余样本", "", stages.s1, stages.s1, stages.s1, "状态")
 
     if rules_out:
-        append_rejection_stage(
-            "IN-OUT置出", rules_out, stages.out_masks, stages.s1, stages.s2
-        )
+        append_rejection_stage("IN-OUT置出", rules_out, stages.out_masks, stages.s1, stages.s2)
 
     if rules_out or rules_in:
-        append_row(
-            "total通过样本", "", stages.s2, stages.s2, stages.s2, "状态"
-        )
+        append_row("total通过样本", "", stages.s2, stages.s2, stages.s2, "状态")
 
     if rules_out or rules_in:
         in_in_before = stages.s2 if rules_in else stages.in_in
@@ -777,14 +761,10 @@ def _build_swap_pipeline(
     pipeline_df["好样本占比"] = 1.0 - pipeline_df["坏样本率"]
     pipeline_df["坏样本占比"] = pipeline_df["坏样本率"]
     pipeline_df["坏账改善"] = pipeline_df["坏样本率"].apply(
-        lambda value: (full_bad_rate - value) / full_bad_rate
-        if full_bad_rate > 0
-        else 0.0
+        lambda value: (full_bad_rate - value) / full_bad_rate if full_bad_rate > 0 else 0.0
     )
     pipeline_df["风险拒绝比"] = pipeline_df.apply(
-        lambda row: row["坏账改善"] / row["样本占比"]
-        if row["样本占比"] > 0
-        else 0.0,
+        lambda row: row["坏账改善"] / row["样本占比"] if row["样本占比"] > 0 else 0.0,
         axis=1,
     )
 
@@ -792,24 +772,14 @@ def _build_swap_pipeline(
     after_mask = stages.s2
     pass_rate_before = production_rate(before_mask)
     pass_rate_after = production_rate(after_mask)
-    bad_rate_before = (
-        float(adjusted_risk.loc[before_mask].mean()) if before_mask.any() else 0.0
-    )
-    bad_rate_after = (
-        float(adjusted_risk.loc[after_mask].mean()) if after_mask.any() else 0.0
-    )
+    bad_rate_before = float(adjusted_risk.loc[before_mask].mean()) if before_mask.any() else 0.0
+    bad_rate_after = float(adjusted_risk.loc[after_mask].mean()) if after_mask.any() else 0.0
     raw_bad_before = float(raw_risk.loc[before_mask].sum())
     raw_bad_after = float(raw_risk.loc[after_mask].sum())
     effective_uplift_before = (
-        float(adjusted_risk.loc[before_mask].sum()) / raw_bad_before
-        if raw_bad_before > 0
-        else 1.0
+        float(adjusted_risk.loc[before_mask].sum()) / raw_bad_before if raw_bad_before > 0 else 1.0
     )
-    effective_uplift_after = (
-        float(adjusted_risk.loc[after_mask].sum()) / raw_bad_after
-        if raw_bad_after > 0
-        else 1.0
-    )
+    effective_uplift_after = float(adjusted_risk.loc[after_mask].sum()) / raw_bad_after if raw_bad_after > 0 else 1.0
     swap_result = pd.DataFrame(
         [
             {
@@ -896,7 +866,7 @@ def _make_swap_row(
     n_total_full: int,
     n_bad_full: float,
     full_bad_rate: float,
-    rule_detail: str = '',
+    rule_detail: str = "",
     amount_values: Optional[str] = None,
     amount: Optional[str] = None,
     data: Optional[pd.DataFrame] = None,
@@ -941,13 +911,13 @@ def _make_swap_row(
         bad_rate = bad_amt / amt_total if amt_total > 0 else 0.0
 
         row = {
-            '规则分类': rule_class,
-            '指标名称': rule_name,
-            '规则详情': rule_detail,
-            '样本总数': int(round(amt_total)),
-            '好样本数': int(round(good_amt)),
-            '坏样本数': int(round(bad_amt)),
-            '坏样本率': bad_rate,
+            "规则分类": rule_class,
+            "指标名称": rule_name,
+            "规则详情": rule_detail,
+            "样本总数": int(round(amt_total)),
+            "好样本数": int(round(good_amt)),
+            "坏样本数": int(round(bad_amt)),
+            "坏样本率": bad_rate,
         }
     else:
         # 订单口径
@@ -957,19 +927,19 @@ def _make_swap_row(
             n_good = max(0.0, n_samples - n_bad)
 
         row = {
-            '规则分类': rule_class,
-            '指标名称': rule_name,
-            '规则详情': rule_detail,
-            '样本总数': n_samples,
-            '好样本数': n_good,
-            '坏样本数': n_bad,
-            '坏样本率': bad_rate,
+            "规则分类": rule_class,
+            "指标名称": rule_name,
+            "规则详情": rule_detail,
+            "样本总数": n_samples,
+            "好样本数": n_good,
+            "坏样本数": n_bad,
+            "坏样本率": bad_rate,
         }
 
     return row
 
 
-@analysis_inputs('datasets', roles=('amount',))
+@analysis_inputs("datasets", roles=("amount",))
 def ruleset_analysis(
     datasets: pd.DataFrame,
     rules: List[Rule],
@@ -1018,7 +988,9 @@ def ruleset_analysis(
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
-    datasets, target = bind_targets(datasets, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
+    datasets, target = bind_targets(
+        datasets, target, overdue, dpds, del_grey, overdue_operator, default_target="target"
+    )
     overdue, dpds = None, None
     datasets = datasets.copy()
 
@@ -1042,7 +1014,8 @@ def ruleset_analysis(
         n_jobs=report_plan.child_workers,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
-        del_grey=del_grey, overdue_operator=overdue_operator,
+        del_grey=del_grey,
+        overdue_operator=overdue_operator,
         **kwargs,
     )
     table_total = _configured_rule_report(
@@ -1100,13 +1073,13 @@ def ruleset_analysis(
     return report
 
 
-@analysis_inputs('df', roles=())
+@analysis_inputs("df", roles=())
 def multi_label_rule_analysis(
     df: pd.DataFrame,
     features: List[str],
     labels: Dict[str, str],
     miner_params: Optional[dict] = None,
-    output_path: str = 'rule_analysis.xlsx',
+    output_path: str = "rule_analysis.xlsx",
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict] = None,
@@ -1146,9 +1119,9 @@ def multi_label_rule_analysis(
     )
     if miner_params:
         params.update(miner_params)
-    params.setdefault('n_jobs', n_jobs)
-    params.setdefault('parallel_backend', parallel_backend)
-    params.setdefault('parallel_config', parallel_config)
+    params.setdefault("n_jobs", n_jobs)
+    params.setdefault("parallel_backend", parallel_backend)
+    params.setdefault("parallel_config", parallel_config)
 
     miner = MultiLabelRuleMiner(**params)
     miner.fit(df, features=features)
@@ -1157,17 +1130,21 @@ def multi_label_rule_analysis(
     matrix = miner.get_effectiveness_matrix()
 
     if len(all_rules) > 0:
-        category_stats = all_rules.groupby('规则类型').agg(
-            规则条数=('规则', 'count'),
-            平均覆盖率=('覆盖率', 'mean'),
-        ).reset_index()
+        category_stats = (
+            all_rules.groupby("规则类型")
+            .agg(
+                规则条数=("规则", "count"),
+                平均覆盖率=("覆盖率", "mean"),
+            )
+            .reset_index()
+        )
     else:
-        category_stats = pd.DataFrame(columns=['规则类型', '规则条数', '平均覆盖率'])
+        category_stats = pd.DataFrame(columns=["规则类型", "规则条数", "平均覆盖率"])
 
-    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        all_rules.to_excel(writer, sheet_name='规则汇总', index=False)
-        matrix.to_excel(writer, sheet_name='有效性矩阵', index=False)
-        category_stats.to_excel(writer, sheet_name='规则分类统计', index=False)
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        all_rules.to_excel(writer, sheet_name="规则汇总", index=False)
+        matrix.to_excel(writer, sheet_name="有效性矩阵", index=False)
+        category_stats.to_excel(writer, sheet_name="规则分类统计", index=False)
 
     return output_path
 
@@ -1220,7 +1197,7 @@ def _merge_label_tables(tables: List[pd.DataFrame], label_names: List[str]) -> p
 
 
 @binning_options(keep_config=True)
-@analysis_inputs('data', roles=('amount',), shared_frames=('reference_data',))
+@analysis_inputs("data", roles=("amount",), shared_frames=("reference_data",))
 def rule_swap_analysis(
     data: pd.DataFrame,
     score: Union[str, Dict[str, str]],
@@ -1239,12 +1216,12 @@ def rule_swap_analysis(
     reverse_order: bool = False,
     out_in_amount_fill: Optional[float] = None,
     out_in_amount_col: Optional[str] = None,
-    method: str = 'quantile',
+    method: str = "quantile",
     max_n_bins: int = 10,
     min_bin_size: float = 0.05,
     missing_separate: bool = True,
     bin_params: Optional[dict] = None,
-    rule_analysis_mode: str = 'independent',
+    rule_analysis_mode: str = "independent",
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict] = None,
@@ -1355,7 +1332,9 @@ def rule_swap_analysis(
         # 标签先绑定到原始行，索引归一化不能改变 callable 的作用数据。
         effective_operator = overdue_operator or (bin_params or {}).get("overdue_operator", ">")
         effective_grey = (bin_params or {}).get("del_grey", False) if del_grey is None else del_grey
-        data, actual_targets = bind_targets(data, target, overdue, dpds, effective_grey, effective_operator, allow_missing=True)
+        data, actual_targets = bind_targets(
+            data, target, overdue, dpds, effective_grey, effective_operator, allow_missing=True
+        )
         data = data.reset_index(drop=True)
     else:
         actual_targets = None
@@ -1406,19 +1385,21 @@ def rule_swap_analysis(
     # ── 第二步：解析与计算分箱表 ─────────────────────────────────────────
     resolved_bin_params = dict(bin_params) if bin_params else {}
     if del_grey is None:
-        del_grey = bool(resolved_bin_params.get('del_grey', False))
+        del_grey = bool(resolved_bin_params.get("del_grey", False))
     else:
         del_grey = bool(del_grey)
-        resolved_bin_params['del_grey'] = del_grey
-    overdue_operator = resolved_bin_params.get("overdue_operator", ">") if overdue_operator is None else overdue_operator
+        resolved_bin_params["del_grey"] = del_grey
+    overdue_operator = (
+        resolved_bin_params.get("overdue_operator", ">") if overdue_operator is None else overdue_operator
+    )
     validate_overdue_operator(overdue_operator)
     if overdue is not None:
         del_grey = del_grey and overdue_operator in (">", ">=")
     resolved_bin_params["overdue_operator"] = overdue_operator
     resolved_bin_params["del_grey"] = del_grey
-    resolved_bin_params.setdefault('n_jobs', n_jobs)
-    resolved_bin_params.setdefault('parallel_backend', parallel_backend)
-    resolved_bin_params.setdefault('parallel_config', parallel_config)
+    resolved_bin_params.setdefault("n_jobs", n_jobs)
+    resolved_bin_params.setdefault("parallel_backend", parallel_backend)
+    resolved_bin_params.setdefault("parallel_config", parallel_config)
     bin_table_result = _resolve_bin_table(
         reference_data=reference_data,
         bin_table=bin_table,
@@ -1438,7 +1419,14 @@ def rule_swap_analysis(
     )
 
     # ── 第三步半：解析分析样本的实际表现标签 ──────────────────────────────
-    y = _resolve_target_series(data, actual_targets if actual_targets is not None else target, None if actual_targets is not None else overdue, None if actual_targets is not None else dpds, del_grey=del_grey, overdue_operator=overdue_operator)
+    y = _resolve_target_series(
+        data,
+        actual_targets if actual_targets is not None else target,
+        None if actual_targets is not None else overdue,
+        None if actual_targets is not None else dpds,
+        del_grey=del_grey,
+        overdue_operator=overdue_operator,
+    )
     for table in bin_table_result.values():
         _validate_swap_bin_labels(table)
     if len(y) > 1:
@@ -1470,13 +1458,14 @@ def rule_swap_analysis(
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
-        del_grey=del_grey, overdue_operator=overdue_operator,
+        del_grey=del_grey,
+        overdue_operator=overdue_operator,
     )
 
     # ── 返回结果 ────────────────────────────────────────────────────────────
     return {
-        'swap_pipeline': swap_pipeline,
-        'swap_result': swap_result,
+        "swap_pipeline": swap_pipeline,
+        "swap_result": swap_result,
     }
 
 
@@ -1496,14 +1485,12 @@ def _store_splits_from_labels(tbl: pd.DataFrame) -> None:
     import re
 
     # 找出分箱标签：列中找 → MultiIndex列中找 → MultiIndex行索引中找
-    if '分箱标签' in tbl.columns:
-        labels = tbl['分箱标签'].tolist()
+    if "分箱标签" in tbl.columns:
+        labels = tbl["分箱标签"].tolist()
     elif isinstance(tbl.columns, pd.MultiIndex):
         detail_group = _get_detail_group_name(tbl)
         bin_label_col = next(
-            (c for c in tbl.columns
-             if isinstance(c, tuple) and c[0] == detail_group and c[1] == '分箱标签'),
-            None
+            (c for c in tbl.columns if isinstance(c, tuple) and c[0] == detail_group and c[1] == "分箱标签"), None
         )
         labels = tbl[bin_label_col].tolist() if bin_label_col else []
     elif isinstance(tbl.index, pd.MultiIndex):
@@ -1514,13 +1501,13 @@ def _store_splits_from_labels(tbl: pd.DataFrame) -> None:
 
     splits = []
     for lbl in labels:
-        if lbl in ('missing', 'special', '合计'):
+        if lbl in ("missing", "special", "合计"):
             continue
         # 格式: [x, y) 或 [x, +inf)
-        m = re.search(r', *(.+?)\)', str(lbl))
+        m = re.search(r", *(.+?)\)", str(lbl))
         if m:
             val_str = m.group(1).strip()
-            if val_str.lower() == '+inf' or val_str == '∞':
+            if val_str.lower() == "+inf" or val_str == "∞":
                 continue  # +inf 不是有效切分点
             try:
                 val = float(val_str)
@@ -1530,12 +1517,12 @@ def _store_splits_from_labels(tbl: pd.DataFrame) -> None:
                 continue
 
     splits = sorted(set(splits))
-    object.__setattr__(tbl, '_splits', np.array(splits) if splits else np.array([]))
+    object.__setattr__(tbl, "_splits", np.array(splits) if splits else np.array([]))
 
 
 def _normalize_bin_table(
     tbl: pd.DataFrame,
-    label: str = '_default',
+    label: str = "_default",
 ) -> pd.DataFrame:
     """标准化分箱表，确保列结构统一，并提取切分点存储到属性中。
 
@@ -1560,9 +1547,13 @@ def _normalize_bin_table(
 
         # 提取各标签下的坏样本率列，构建统一结构
         # 保留 '分箱详情' 公共列 + 各标签的坏样本率
-        available_merge = [c for c in tbl.columns
-                          if isinstance(c, tuple) and c[0] == detail_group
-                          and c[1] in ['指标名称', '指标含义', '分箱标签', '样本总数', '样本占比']]
+        available_merge = [
+            c
+            for c in tbl.columns
+            if isinstance(c, tuple)
+            and c[0] == detail_group
+            and c[1] in ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]
+        ]
         non_merge = [c for c in tbl.columns if c not in available_merge]
 
         # 构建新的列结构
@@ -1575,13 +1566,13 @@ def _normalize_bin_table(
 
     else:
         # 单层列：检查必要列
-        if '分箱标签' not in tbl.columns and '分箱' not in tbl.columns:
+        if "分箱标签" not in tbl.columns and "分箱" not in tbl.columns:
             # 生成分箱标签
-            tbl['分箱标签'] = [f'箱{i + 1}' for i in range(len(tbl))]
+            tbl["分箱标签"] = [f"箱{i + 1}" for i in range(len(tbl))]
 
         # 添加分箱别名（兼容旧代码）
-        if '分箱标签' in tbl.columns and '分箱' not in tbl.columns:
-            tbl['分箱'] = tbl['分箱标签']
+        if "分箱标签" in tbl.columns and "分箱" not in tbl.columns:
+            tbl["分箱"] = tbl["分箱标签"]
 
         return tbl
 
@@ -1602,9 +1593,7 @@ def _normalize_rules_input(
         return [rules]
     if isinstance(rules, list):
         return rules
-    raise TypeError(
-        f"规则参数类型错误，期望 Rule 或 List[Rule]，实际为 {type(rules).__name__}"
-    )
+    raise TypeError(f"规则参数类型错误，期望 Rule 或 List[Rule]，实际为 {type(rules).__name__}")
 
 
 def _validate_rules(
@@ -1650,8 +1639,7 @@ def _validate_rules(
         missing = required_cols - set(data.columns)
         if missing:
             raise FeatureNotFoundError(
-                f"data 中缺少规则所需的列：{sorted(missing)}，"
-                f"请检查规则表达式是否引用了不存在的字段"
+                f"data 中缺少规则所需的列：{sorted(missing)}，" f"请检查规则表达式是否引用了不存在的字段"
             )
 
     return rules_in, rules_out, rules_base
@@ -1699,8 +1687,7 @@ def _normalize_score_weights(
         raw_weights = {name: float(w) for name, w in zip(score_names, score_weights)}
     else:
         raise TypeError(
-            f"score_weights 参数类型错误，期望 float / Dict / List，"
-            f"实际为 {type(score_weights).__name__}"
+            f"score_weights 参数类型错误，期望 float / Dict / List，" f"实际为 {type(score_weights).__name__}"
         )
 
     # 归一化：w_normalized = w / sum(all_weights)，使 sum = 1
@@ -1828,9 +1815,7 @@ def _compute_predicted_bad_prob(
     all_labels = _extract_swap_bin_labels(df_bin)
     all_bad_rates = pd.to_numeric(df_bin[single_bad_col], errors="coerce")
     invalid_rates = all_bad_rates.dropna()[
-        (~np.isfinite(all_bad_rates.dropna()))
-        | (all_bad_rates.dropna() < 0)
-        | (all_bad_rates.dropna() > 1)
+        (~np.isfinite(all_bad_rates.dropna())) | (all_bad_rates.dropna() < 0) | (all_bad_rates.dropna() > 1)
     ]
     if not invalid_rates.empty:
         raise ValueError("分箱表坏样本率必须为 0 到 1 之间的有限数值")
@@ -1886,9 +1871,7 @@ def _compute_predicted_bad_prob(
 
     unmapped = scores.notna() & prob.isna()
     if unmapped.any():
-        raise ValueError(
-            f"评分列 '{score_col}' 有 {int(unmapped.sum())} 条非缺失评分无法映射到分箱区间"
-        )
+        raise ValueError(f"评分列 '{score_col}' 有 {int(unmapped.sum())} 条非缺失评分无法映射到分箱区间")
     if prob.isna().any():
         raise ValueError("分箱表缺少可用于评分缺失或未映射值的总体坏样本率")
     prob.attrs["风险回退掩码"] = fallback_used

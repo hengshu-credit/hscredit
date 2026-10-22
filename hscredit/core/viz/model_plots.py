@@ -19,7 +19,6 @@ from matplotlib.transforms import ScaledTranslation
 from .utils import DEFAULT_COLORS, setup_axis_style, save_figure, _create_subplots, _tight_layout
 from .style import EXTENDED_COLORS, GRADIENT_PALETTES, PRIMARY_COLORS
 
-
 PredictionMethod = Union[str, Callable[[Union[np.ndarray, pd.DataFrame]], Any]]
 
 
@@ -76,9 +75,7 @@ def _resolve_prediction_function(
         result = np.asarray(predictor(model_input))
         if result.ndim == 2:
             if not 0 <= class_index < result.shape[1]:
-                raise ValueError(
-                    f"class_index={class_index} 超出预测结果列范围，预测结果共有 {result.shape[1]} 列"
-                )
+                raise ValueError(f"class_index={class_index} 超出预测结果列范围，预测结果共有 {result.shape[1]} 列")
             result = result[:, class_index]
         if result.ndim != 1:
             raise ValueError(f"预测方法必须返回一维结果或二维类别结果，当前形状为 {result.shape}")
@@ -258,7 +255,8 @@ def plot_model_feature_importance(
     show: bool = True,
     importance_source: str = "raw",
     shap_by_label: bool = True,
-    hatch: bool = True, *,
+    hatch: bool = True,
+    *,
     dpi: int = 240,
 ):
     """绘制模型的 SHAP 特征重要性综合看板。
@@ -378,7 +376,10 @@ def plot_model_feature_importance(
             label_codes, label_values = pd.factorize(y_values, sort=True)
             if np.any(label_codes < 0):
                 raise ValueError("按标签展示 SHAP 重要性时 y 不能包含缺失值")
-            label_importances = [(label, np.mean(np.abs(shap_values[label_codes == code]), axis=0)) for code, label in enumerate(label_values)]
+            label_importances = [
+                (label, np.mean(np.abs(shap_values[label_codes == code]), axis=0))
+                for code, label in enumerate(label_values)
+            ]
             importance_axis_label = "各标签平均 |SHAP 值|"
             panel_title = "分标签平均 |SHAP| 重要性与 SHAP 分布"
         else:
@@ -416,7 +417,9 @@ def plot_model_feature_importance(
             fontsize=plt.rcParams["axes.titlesize"],
             fontweight=plt.rcParams["axes.titleweight"],
         )
-        dependence_axes = [fig.add_subplot(right_grid[i // right_columns + 1, i % right_columns]) for i in range(n_right)]
+        dependence_axes = [
+            fig.add_subplot(right_grid[i // right_columns + 1, i % right_columns]) for i in range(n_right)
+        ]
     else:
         main_ax = fig.add_subplot(111)
         right_title_ax = None
@@ -591,7 +594,8 @@ def plot_model_sample_shap(
     title: Optional[str] = None,
     save: Optional[str] = None,
     random_state: Optional[int] = 42,
-    show: bool = True, *,
+    show: bool = True,
+    *,
     dpi: int = 240,
 ):
     """绘制单样本 SHAP 力图与瀑布图组合图。
@@ -630,7 +634,9 @@ def plot_model_sample_shap(
     ...     show=False,
     ... )
     """
-    background_values = background_data.to_numpy() if isinstance(background_data, pd.DataFrame) else np.asarray(background_data)
+    background_values = (
+        background_data.to_numpy() if isinstance(background_data, pd.DataFrame) else np.asarray(background_data)
+    )
     if background_values.ndim != 2:
         raise ValueError(f"background_data 必须是二维背景数据，当前维度为 {background_values.ndim}")
     if background_values.shape[0] == 0 or background_values.shape[1] == 0:
@@ -655,7 +661,9 @@ def plot_model_sample_shap(
         elif sample_values.ndim != 2:
             raise ValueError(f"sample 必须是单个一维或单行二维样本，当前维度为 {sample_values.ndim}")
         if sample_values.shape[1] != len(names):
-            raise ValueError(f"sample 特征数量 {sample_values.shape[1]} 与 background_data 特征数量 {len(names)} 不一致")
+            raise ValueError(
+                f"sample 特征数量 {sample_values.shape[1]} 与 background_data 特征数量 {len(names)} 不一致"
+            )
         sample_frame = pd.DataFrame(sample_values, columns=names)
 
     if len(sample_frame) != 1:
@@ -737,7 +745,14 @@ def plot_model_sample_shap(
 
     sample_values = sample_frame.iloc[0].to_numpy()
     display_values = np.asarray(
-        [round(float(value), int(value_precision)) if isinstance(value, Real) and not isinstance(value, (bool, np.bool_)) and np.isfinite(value) else value for value in sample_values],
+        [
+            (
+                round(float(value), int(value_precision))
+                if isinstance(value, Real) and not isinstance(value, (bool, np.bool_)) and np.isfinite(value)
+                else value
+            )
+            for value in sample_values
+        ],
         dtype=object,
     )
     single_explanation = shap.Explanation(
@@ -757,8 +772,7 @@ def plot_model_sample_shap(
     for name in names:
         name_text = str(name)
         wrapped_name = "\n".join(
-            name_text[index : index + force_line_length]
-            for index in range(0, len(name_text), force_line_length)
+            name_text[index : index + force_line_length] for index in range(0, len(name_text), force_line_length)
         )
         if len(name_text) > force_line_length:
             wrapped_name += "\n"
@@ -845,14 +859,23 @@ def plot_model_sample_shap(
         displayed_contributions = list(selected_values[0][contribution_order[:individual_count]])
         displayed_contributions.append(float(np.sum(selected_values[0][contribution_order[individual_count:]])))
         displayed_contributions = np.asarray(displayed_contributions)
-    ordered_text_values = [value for value in displayed_contributions if value >= 0] + [value for value in displayed_contributions if value < 0]
+    ordered_text_values = [value for value in displayed_contributions if value >= 0] + [
+        value for value in displayed_contributions if value < 0
+    ]
     for text_artist, contribution in zip(waterfall_ax.texts, ordered_text_values):
         sign = "+" if contribution >= 0 else "−"
         text_artist.set_text(f"{sign}{abs(float(contribution)):.{int(value_precision)}f}")
     waterfall_ax.set_title("SHAP 瀑布图")
     waterfall_ticks = waterfall_ax.get_yticks()
-    waterfall_labels = [re.sub(r"(\d+) other features", r"其他 \1 个特征", tick.get_text()) for tick in waterfall_ax.get_yticklabels()]
-    formatted_feature_values = {name: f"{float(value):.{int(value_precision)}f}" if isinstance(value, Real) and np.isfinite(value) else str(value) for name, value in zip(names, display_values)}
+    waterfall_labels = [
+        re.sub(r"(\d+) other features", r"其他 \1 个特征", tick.get_text()) for tick in waterfall_ax.get_yticklabels()
+    ]
+    formatted_feature_values = {
+        name: (
+            f"{float(value):.{int(value_precision)}f}" if isinstance(value, Real) and np.isfinite(value) else str(value)
+        )
+        for name, value in zip(names, display_values)
+    }
     for index, label in enumerate(waterfall_labels):
         feature_name = next((name for name in names if label.strip().endswith(f"= {name}")), None)
         if feature_name is not None:
@@ -930,22 +953,11 @@ def plot_model_sample_shap(
         )
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
-    visible_tick_boxes = [
-        tick.get_window_extent(renderer)
-        for tick in force_ax.get_xticklabels()
-        if tick.get_visible()
-    ]
-    native_top_texts = [
-        text_artist
-        for text_artist in force_ax.texts
-        if " = " not in text_artist.get_text()
-    ]
+    visible_tick_boxes = [tick.get_window_extent(renderer) for tick in force_ax.get_xticklabels() if tick.get_visible()]
+    native_top_texts = [text_artist for text_artist in force_ax.texts if " = " not in text_artist.get_text()]
     if visible_tick_boxes and native_top_texts:
         tick_top = max(box.y1 for box in visible_tick_boxes)
-        annotation_bottom = min(
-            text_artist.get_window_extent(renderer).y0
-            for text_artist in native_top_texts
-        )
+        annotation_bottom = min(text_artist.get_window_extent(renderer).y0 for text_artist in native_top_texts)
         annotation_shift = max(0.0, tick_top + 10.0 - annotation_bottom)
         if annotation_shift > 0:
             offset = ScaledTranslation(
@@ -961,12 +973,19 @@ def plot_model_sample_shap(
     return fig
 
 
-def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, ax=None, *,
+def plot_weights(
+    summary,
+    save=None,
+    figsize=(15, 8),
+    fontsize=14,
+    colors=None,
+    ax=None,
+    *,
     dpi: int = 240,
 ):
     """
     逻辑回归模型系数误差图.
-    
+
     展示逻辑回归模型各特征的系数估计值及其95%置信区间，
     用于评估特征的显著性及系数的稳定性。
 
@@ -991,15 +1010,15 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
 
         >>> from hscredit.core.models import LogisticRegression
         >>> from hscredit.core.viz import plot_weights
-        >>> 
+        >>>
         >>> # 训练模型
         >>> model = LogisticRegression(calculate_stats=True)
         >>> model.fit(X_train, y_train)
-        >>> 
+        >>>
         >>> # 方式1：传入 summary DataFrame
         >>> summary = model.summary()
         >>> fig = plot_weights(summary)
-        >>> 
+        >>>
         >>> # 方式2：直接传入模型对象
         >>> fig = plot_weights(model)
 
@@ -1039,58 +1058,55 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
     # 处理输入参数
     if colors is None:
         colors = DEFAULT_COLORS
-    
+
     # 支持两种输入：DataFrame 或 LogisticRegression 对象
     # 注意：必须先判断 DataFrame —— import hscredit 会为 DataFrame 注册 .summary() 扩展方法，
     # 若先用 hasattr(summary, 'summary') 判断，传入的系数 DataFrame 会被误当作模型对象，
     # 错误调用 df.summary()（describe 风格）而丢失 'Coef.' 列。
     if isinstance(summary, pd.DataFrame):
         summary_df = summary.copy()
-    elif hasattr(summary, 'summary') and callable(getattr(summary, 'summary')):
+    elif hasattr(summary, "summary") and callable(getattr(summary, "summary")):
         # LogisticRegression 等模型对象
         summary_df = summary.summary()
     else:
         summary_df = summary.copy()
-    
+
     # 检查必要的列是否存在
-    required_cols = ['Coef.']
+    required_cols = ["Coef."]
     for col in required_cols:
         if col not in summary_df.columns:
             raise ValueError(f"summary DataFrame 必须包含 '{col}' 列")
-    
+
     # 检查置信区间列（兼容不同的列名格式）
     # hscredit: "[0.025", "0.975]"
     # scorecardpipeline: "[ 0.025", "0.975 ]"
     ci_lower_col = None
     ci_upper_col = None
-    
+
     for col in summary_df.columns:
-        if '0.025' in col:
+        if "0.025" in col:
             ci_lower_col = col
-        if '0.975' in col:
+        if "0.975" in col:
             ci_upper_col = col
-    
+
     if ci_lower_col is None or ci_upper_col is None:
         # 如果没有置信区间列，尝试使用 Std.Err 计算
-        if 'Std.Err' in summary_df.columns:
-            summary_df['ci_lower'] = summary_df['Coef.'] - 1.96 * summary_df['Std.Err']
-            summary_df['ci_upper'] = summary_df['Coef.'] + 1.96 * summary_df['Std.Err']
-            ci_lower_col = 'ci_lower'
-            ci_upper_col = 'ci_upper'
+        if "Std.Err" in summary_df.columns:
+            summary_df["ci_lower"] = summary_df["Coef."] - 1.96 * summary_df["Std.Err"]
+            summary_df["ci_upper"] = summary_df["Coef."] + 1.96 * summary_df["Std.Err"]
+            ci_lower_col = "ci_lower"
+            ci_upper_col = "ci_upper"
         else:
-            raise ValueError(
-                "summary DataFrame 必须包含置信区间列（如 '[0.025' 和 '0.975]'）"
-                "或标准误差列 'Std.Err'"
-            )
-    
+            raise ValueError("summary DataFrame 必须包含置信区间列（如 '[0.025' 和 '0.975]'）" "或标准误差列 'Std.Err'")
+
     # 准备数据
-    x = summary_df['Coef.']
+    x = summary_df["Coef."]
     y = summary_df.index
-    
+
     # 计算误差线
-    lower_error = summary_df['Coef.'] - summary_df[ci_lower_col]
-    upper_error = summary_df[ci_upper_col] - summary_df['Coef.']
-    
+    lower_error = summary_df["Coef."] - summary_df[ci_lower_col]
+    upper_error = summary_df[ci_upper_col] - summary_df["Coef."]
+
     # 获取或创建 Axes
     if ax is not None:
         return_ax = True
@@ -1098,27 +1114,28 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
     else:
         return_ax = False
         fig, ax = _create_subplots(1, 1, figsize=figsize)
-    
+
     # 绘制误差图
     ax.errorbar(
-        x, y, 
-        xerr=[lower_error, upper_error], 
-        fmt="o", 
-        ecolor=colors[0], 
-        elinewidth=2, 
-        capthick=2, 
-        capsize=4, 
-        ms=6, 
-        mfc=colors[0], 
-        mec=colors[0]
+        x,
+        y,
+        xerr=[lower_error, upper_error],
+        fmt="o",
+        ecolor=colors[0],
+        elinewidth=2,
+        capthick=2,
+        capsize=4,
+        ms=6,
+        mfc=colors[0],
+        mec=colors[0],
     )
-    
+
     # 添加垂直参考线
-    ax.axvline(0, color=colors[0], linestyle='--', alpha=0.5)
+    ax.axvline(0, color=colors[0], linestyle="--", alpha=0.5)
 
     # 统一坐标轴样式：主题色边框（隐藏上/右）+ 主题色刻度，与 bin_plot 参考样式一致
     setup_axis_style(ax, colors, hide_top_right=True)
-    ax.tick_params(axis='both', colors=colors[0])
+    ax.tick_params(axis="both", colors=colors[0])
 
     # 设置标题和标签
     ax.set_title("逻辑回归系数分析 - 权重图\n", fontsize=fontsize, fontweight="bold")
@@ -1126,7 +1143,7 @@ def plot_weights(summary, save=None, figsize=(15, 8), fontsize=14, colors=None, 
     ax.set_ylabel("特征变量", fontsize=fontsize, weight="bold", color=colors[0])
 
     # 设置网格
-    ax.grid(True, axis='x', alpha=0.3, linestyle='--')
+    ax.grid(True, axis="x", alpha=0.3, linestyle="--")
 
     if not return_ax:
         # 自动调整布局

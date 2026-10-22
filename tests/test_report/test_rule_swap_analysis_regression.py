@@ -44,10 +44,7 @@ def _swap_case():
 
 def _row(pipeline, rule_class, rule_name=""):
     """按规则分类和名称提取唯一报告行。"""
-    matched = pipeline[
-        (pipeline["规则分类"] == rule_class)
-        & (pipeline["指标名称"].fillna("") == rule_name)
-    ]
+    matched = pipeline[(pipeline["规则分类"] == rule_class) & (pipeline["指标名称"].fillna("") == rule_name)]
     assert len(matched) == 1
     return matched.iloc[0]
 

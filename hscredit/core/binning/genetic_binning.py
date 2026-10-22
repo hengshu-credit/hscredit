@@ -122,7 +122,9 @@ class GeneticBinning(BaseBinning):
         if objective not in ["iv", "ks", "gini"]:
             raise ValueError("objective必须是'iv', 'ks'或'gini'")
 
-    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "GeneticBinning":
+    def fit(
+        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+    ) -> "GeneticBinning":
         """拟合遗传算法分箱。
 
         对每个特征以遗传算法（选择/交叉/变异/精英保留）在候选切分点中搜索使 ``objective``
@@ -411,7 +413,9 @@ class GeneticBinning(BaseBinning):
         gini = 2 * (0.5 - area)
         return gini
 
-    def _selection(self, population: List[np.ndarray], fitness_scores: List[float], rng: np.random.RandomState) -> List[np.ndarray]:
+    def _selection(
+        self, population: List[np.ndarray], fitness_scores: List[float], rng: np.random.RandomState
+    ) -> List[np.ndarray]:
         """选择操作（锦标赛选择）."""
         selected = []
         tournament_size = 3
@@ -447,7 +451,9 @@ class GeneticBinning(BaseBinning):
 
         return offspring[: len(population)]
 
-    def _mutation(self, population: List[np.ndarray], candidates: np.ndarray, rng: np.random.RandomState) -> List[np.ndarray]:
+    def _mutation(
+        self, population: List[np.ndarray], candidates: np.ndarray, rng: np.random.RandomState
+    ) -> List[np.ndarray]:
         """变异操作."""
         mutated = []
 
@@ -461,7 +467,9 @@ class GeneticBinning(BaseBinning):
 
         return mutated
 
-    def _elitism(self, population: List[np.ndarray], best_individual: np.ndarray, fitness_scores: List[float]) -> List[np.ndarray]:
+    def _elitism(
+        self, population: List[np.ndarray], best_individual: np.ndarray, fitness_scores: List[float]
+    ) -> List[np.ndarray]:
         """精英保留."""
         n_elites = int(self.elitism_rate * self.population_size)
 
@@ -517,7 +525,10 @@ class GeneticBinning(BaseBinning):
 
             # 更新统计
             merged_count = cat_stats.iloc[merge_idx]["count"] + cat_stats.iloc[merge_idx + 1]["count"]
-            merged_bad = cat_stats.iloc[merge_idx]["mean"] * cat_stats.iloc[merge_idx]["count"] + cat_stats.iloc[merge_idx + 1]["mean"] * cat_stats.iloc[merge_idx + 1]["count"]
+            merged_bad = (
+                cat_stats.iloc[merge_idx]["mean"] * cat_stats.iloc[merge_idx]["count"]
+                + cat_stats.iloc[merge_idx + 1]["mean"] * cat_stats.iloc[merge_idx + 1]["count"]
+            )
             merged_rate = merged_bad / merged_count
 
             cat_stats = cat_stats.drop([cat1, cat2])
@@ -570,7 +581,9 @@ class GeneticBinning(BaseBinning):
                 bins[mask] = 0
             return bins
 
-    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(
+        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
+    ) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。

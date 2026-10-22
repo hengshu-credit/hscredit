@@ -221,6 +221,7 @@ def test_invalid_loaded_label_policy_cannot_enable_passthrough():
 
 def test_identity_dependent_decimal_nan_json_is_explicitly_rejected():
     from decimal import Decimal
+
     frame = pd.DataFrame({"x": pd.Series([Decimal("NaN"), Decimal("NaN"), "x"], dtype=object)})
     encoder = CountEncoder(n_jobs=1).fit(frame)
     assert encoder.transform(frame).x.tolist() == [1, 1, 1]

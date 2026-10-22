@@ -39,9 +39,7 @@ def _number_stored_as_text_ignored_cells(filename, sheet_name):
     with zipfile.ZipFile(filename) as zf:
         workbook_root = ET.fromstring(zf.read("xl/workbook.xml"))
         sheet = next(
-            node
-            for node in workbook_root.findall(f".//{{{spreadsheet_ns}}}sheet")
-            if node.attrib["name"] == sheet_name
+            node for node in workbook_root.findall(f".//{{{spreadsheet_ns}}}sheet") if node.attrib["name"] == sheet_name
         )
         relationship_id = sheet.attrib[f"{{{document_rel_ns}}}id"]
 
@@ -57,9 +55,7 @@ def _number_stored_as_text_ignored_cells(filename, sheet_name):
         worksheet_root = ET.fromstring(zf.read(target))
 
     ignored_cells = set()
-    for ignored_error in worksheet_root.findall(
-        f"{{{spreadsheet_ns}}}ignoredErrors/{{{spreadsheet_ns}}}ignoredError"
-    ):
+    for ignored_error in worksheet_root.findall(f"{{{spreadsheet_ns}}}ignoredErrors/{{{spreadsheet_ns}}}ignoredError"):
         if ignored_error.attrib.get("numberStoredAsText") != "1":
             continue
         for ref in ignored_error.attrib["sqref"].split():
@@ -76,29 +72,30 @@ def _number_stored_as_text_ignored_cells(filename, sheet_name):
 
 class TestExcelWriter:
     """测试ExcelWriter类"""
-    
+
     def setup_method(self):
         """每个测试方法前的设置"""
         self.temp_dir = tempfile.mkdtemp()
         self.test_file = os.path.join(self.temp_dir, "test.xlsx")
-    
+
     def teardown_method(self):
         """每个测试方法后的清理"""
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
-    
+
     def test_init_uses_runtime_default_font(self, monkeypatch):
         """默认构造应在运行时读取字体初始化结果."""
         monkeypatch.setattr(fonts, "_default_font_name", "Alimama FangYuanTi VF")
 
-        writer = ExcelWriter(theme_color='3f1dba')
+        writer = ExcelWriter(theme_color="3f1dba")
 
-        assert writer.theme_color == '3f1dba'
+        assert writer.theme_color == "3f1dba"
         assert writer.fontsize == 10
-        assert writer.font == '阿里妈妈方圆体 VF Medium'
+        assert writer.font == "阿里妈妈方圆体 VF Medium"
         content_style = next(style for style in writer.name_styles if style.name == "content")
-        assert content_style.font.name == '阿里妈妈方圆体 VF Medium'
+        assert content_style.font.name == "阿里妈妈方圆体 VF Medium"
 
     def test_init_explicit_font_overrides_runtime_default(self, monkeypatch):
         """显式字体参数应优先于自动初始化结果."""
@@ -190,24 +187,24 @@ class TestExcelWriter:
         assert loaded["Font"]["B2"].font.name == "阿里妈妈方圆体 VF Medium"
         assert loaded["Font"]["B3"].font.name == "阿里妈妈方圆体 VF Medium"
         loaded.close()
-    
+
     def test_get_sheet_by_name(self):
         """测试获取或创建sheet"""
         writer = ExcelWriter()
-        
+
         # 创建新sheet
         ws1 = writer.get_sheet_by_name("Sheet1")
         assert ws1.title == "Sheet1"
-        
+
         # 获取已有sheet
         ws2 = writer.get_sheet_by_name("Sheet1")
         assert ws2 is ws1
-    
+
     def test_insert_value(self):
         """测试插入值"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
+
         # 插入普通值
         end_row, end_col = writer.insert_value2sheet(ws, "B2", value="测试内容")
         assert ws["B2"].value == "测试内容"
@@ -279,67 +276,57 @@ class TestExcelWriter:
         root = ET.fromstring(target_xml)
         ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
         adjusted_col = next(
-            col for col in root.findall("x:cols/x:col", ns)
+            col
+            for col in root.findall("x:cols/x:col", ns)
             if col.attrib.get("min") == "7" and col.attrib.get("max") == "7"
         )
         assert adjusted_col.attrib.get("style") == "1"
         assert 'r="G3"' not in target_xml
-    
+
     def test_insert_value_with_merge(self):
         """测试合并单元格插入"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
-        end_row, end_col = writer.insert_value2sheet(
-            ws, "B2",
-            value="合并单元格",
-            end_space="D2"
-        )
-        
+
+        end_row, end_col = writer.insert_value2sheet(ws, "B2", value="合并单元格", end_space="D2")
+
         assert ws["B2"].value == "合并单元格"
         assert end_row == 3
         #  end_col 是开区间，B2到D2是3列(B,C,D)，所以end_col=5
         assert end_col in [4, 5]  # 允许实现差异
-    
+
     def test_insert_dataframe(self):
         """测试插入DataFrame"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
-        df = pd.DataFrame({
-            'A': [1, 2, 3],
-            'B': [4, 5, 6],
-            'C': [7, 8, 9]
-        })
-        
+
+        df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
+
         end_row, end_col = writer.insert_df2sheet(ws, df, "B2")
-        
+
         # 检查header
-        assert ws["B2"].value == 'A'
-        assert ws["C2"].value == 'B'
-        assert ws["D2"].value == 'C'
-        
+        assert ws["B2"].value == "A"
+        assert ws["C2"].value == "B"
+        assert ws["D2"].value == "C"
+
         # 检查数据
         assert ws["B3"].value == 1
         assert ws["C3"].value == 4
         assert ws["D3"].value == 7
-    
+
     def test_insert_dataframe_with_index(self):
         """测试插入带索引的DataFrame"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
-        df = pd.DataFrame({
-            'A': [1, 2, 3],
-            'B': [4, 5, 6]
-        }, index=['X', 'Y', 'Z'])
-        
+
+        df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]}, index=["X", "Y", "Z"])
+
         end_row, end_col = writer.insert_df2sheet(ws, df, "B2", index=True)
-        
+
         # 检查索引
-        assert ws["B3"].value == 'X'
-        assert ws["B4"].value == 'Y'
-        assert ws["B5"].value == 'Z'
+        assert ws["B3"].value == "X"
+        assert ws["B4"].value == "Y"
+        assert ws["B5"].value == "Z"
 
     def test_insert_dataframe_multi_header_merge_levels(self):
         """测试多层表头可选择仅合并指定层级。"""
@@ -348,11 +335,13 @@ class TestExcelWriter:
 
         df = pd.DataFrame(
             [[0.1, 0.2, 0.3]],
-            columns=pd.MultiIndex.from_tuples([
-                ("坏样本率", "拒绝"),
-                ("坏样本率", "拒绝"),
-                ("LIFT值", "拒绝"),
-            ]),
+            columns=pd.MultiIndex.from_tuples(
+                [
+                    ("坏样本率", "拒绝"),
+                    ("坏样本率", "拒绝"),
+                    ("LIFT值", "拒绝"),
+                ]
+            ),
         )
 
         writer.insert_df2sheet(ws, df, "B2", merge_header=[0])
@@ -396,12 +385,14 @@ class TestExcelWriter:
         df = pd.DataFrame(
             [[10, 8, 2, 0.2]],
             index=pd.Index(["训练集"], name="数据集"),
-            columns=pd.MultiIndex.from_tuples([
-                ("统计详情", "样本总数"),
-                ("好样本数", "MOB1@7"),
-                ("坏样本数", "MOB1@7"),
-                ("坏样本率", "MOB1@7"),
-            ]),
+            columns=pd.MultiIndex.from_tuples(
+                [
+                    ("统计详情", "样本总数"),
+                    ("好样本数", "MOB1@7"),
+                    ("坏样本数", "MOB1@7"),
+                    ("坏样本率", "MOB1@7"),
+                ]
+            ),
         )
 
         writer.insert_df2sheet(ws, df, "B2", index=True)
@@ -439,10 +430,12 @@ class TestExcelWriter:
 
         df = pd.DataFrame(
             [[0.1, 0.2]],
-            columns=pd.MultiIndex.from_tuples([
-                ("坏样本率", "拒绝"),
-                ("坏样本率", "拒绝"),
-            ]),
+            columns=pd.MultiIndex.from_tuples(
+                [
+                    ("坏样本率", "拒绝"),
+                    ("坏样本率", "拒绝"),
+                ]
+            ),
         )
 
         writer.insert_df2sheet(ws, df, "B2", merge_header=False)
@@ -457,76 +450,69 @@ class TestExcelWriter:
         """测试插入DataFrame并合并相同值"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
-        df = pd.DataFrame({
-            'Category': ['A', 'A', 'B', 'B'],
-            'Value': [1, 2, 3, 4]
-        })
-        
-        end_row, end_col = writer.insert_df2sheet(
-            ws, df, "B2",
-            merge_column='Category',
-            merge=True
-        )
-        
+
+        df = pd.DataFrame({"Category": ["A", "A", "B", "B"], "Value": [1, 2, 3, 4]})
+
+        end_row, end_col = writer.insert_df2sheet(ws, df, "B2", merge_column="Category", merge=True)
+
         # 检查合并后的值
-        assert ws["B3"].value == 'A'
-        assert ws["B5"].value == 'B'
-    
+        assert ws["B3"].value == "A"
+        assert ws["B5"].value == "B"
+
     def test_insert_hyperlink(self):
         """测试插入超链接"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
+
         writer.insert_value2sheet(ws, "B2", value="点击跳转")
         writer.insert_hyperlink2sheet(ws, "B2", target_space="B10")
-        
+
         assert ws["B2"].hyperlink is not None
-    
+
     def test_set_number_format(self):
         """测试设置数字格式"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
+
         ws["B2"] = 0.123456
         writer.set_number_format(ws, "B2", "0.00%")
-        
+
         assert ws["B2"].number_format == "0.00%"
-    
+
     def test_set_column_width(self):
         """测试设置列宽"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
-        writer.set_column_width(ws, 'B', 20)
-        
-        assert ws.column_dimensions['B'].width == 20
-    
+
+        writer.set_column_width(ws, "B", 20)
+
+        assert ws.column_dimensions["B"].width == 20
+
     def test_set_freeze_panes(self):
         """测试设置冻结窗格"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
+
         writer.set_freeze_panes(ws, "B2")
-        
+
         assert ws.freeze_panes == "B2"
-    
+
     def test_save_and_load(self):
         """测试保存和加载"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
-        df = pd.DataFrame({'A': [1, 2], 'B': [3, 4]})
+
+        df = pd.DataFrame({"A": [1, 2], "B": [3, 4]})
         writer.insert_df2sheet(ws, df, "B2")
         writer.save(self.test_file)
-        
+
         # 重新加载验证
         loaded_wb = load_workbook(self.test_file)
-        loaded_ws = loaded_wb['Test']
-        
-        assert loaded_ws["B2"].value == 'A'
+        loaded_ws = loaded_wb["Test"]
+
+        assert loaded_ws["B2"].value == "A"
         assert loaded_ws["B3"].value == 1
-    
+
     def test_append_mode(self):
         """测试追加模式"""
         # 第一次写入
@@ -534,17 +520,17 @@ class TestExcelWriter:
         ws1 = writer1.get_sheet_by_name("Sheet1")
         writer1.insert_value2sheet(ws1, "B2", value="第一次")
         writer1.save(self.test_file)
-        
+
         # 追加写入
-        writer2 = ExcelWriter(mode='append')
+        writer2 = ExcelWriter(mode="append")
         ws2 = writer2.get_sheet_by_name("Sheet2")
         writer2.insert_value2sheet(ws2, "B2", value="第二次")
         writer2.save(self.test_file)
-        
+
         # 验证两个sheet都存在
         loaded_wb = load_workbook(self.test_file)
-        assert 'Sheet1' in loaded_wb.sheetnames
-        assert 'Sheet2' in loaded_wb.sheetnames
+        assert "Sheet1" in loaded_wb.sheetnames
+        assert "Sheet2" in loaded_wb.sheetnames
 
     def test_insert_picture_row_span_uses_ceil(self, monkeypatch):
         """测试图片占用行数使用向上取整，避免覆盖下方内容"""
@@ -571,17 +557,20 @@ class TestExcelChart:
     def setup_method(self):
         self.temp_dir = tempfile.mkdtemp()
         self.test_file = os.path.join(self.temp_dir, "chart.xlsx")
-        self.bin_table = pd.DataFrame({
-            "分箱": [0, 1, 2, 3],
-            "分箱标签": ["(-inf, 580]", "(580, 620]", "(620, 660]", "(660, inf]"],
-            "样本总数": [120, 200, 180, 100],
-            "好样本数": [80, 160, 165, 96],
-            "坏样本数": [40, 40, 15, 4],
-            "坏样本率": [0.333, 0.20, 0.083, 0.04],
-        })
+        self.bin_table = pd.DataFrame(
+            {
+                "分箱": [0, 1, 2, 3],
+                "分箱标签": ["(-inf, 580]", "(580, 620]", "(620, 660]", "(660, inf]"],
+                "样本总数": [120, 200, 180, 100],
+                "好样本数": [80, 160, 165, 96],
+                "坏样本数": [40, 40, 15, 4],
+                "坏样本率": [0.333, 0.20, 0.083, 0.04],
+            }
+        )
 
     def teardown_method(self):
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
@@ -673,6 +662,7 @@ class TestExcelChart:
 
         import zipfile
         import xml.dom.minidom as minidom
+
         with zipfile.ZipFile(self.test_file) as z:
             for n in z.namelist():
                 if n.endswith(".xml") or n.endswith(".rels"):
@@ -683,6 +673,7 @@ class TestExcelChart:
 
 def column_letter_to_index(letter):
     from openpyxl.utils import column_index_from_string
+
     return column_index_from_string(letter)
 
 
@@ -692,19 +683,26 @@ class TestSparkline:
     def setup_method(self):
         self.temp_dir = tempfile.mkdtemp()
         self.test_file = os.path.join(self.temp_dir, "spark.xlsx")
-        self.df = pd.DataFrame({
-            "指标": ["A", "B", "C"],
-            "m1": [3, 5, 2], "m2": [5, 4, 6], "m3": [2, 7, 3],
-            "m4": [6, 3, 8], "m5": [4, 6, 5],
-        })
+        self.df = pd.DataFrame(
+            {
+                "指标": ["A", "B", "C"],
+                "m1": [3, 5, 2],
+                "m2": [5, 4, 6],
+                "m3": [2, 7, 3],
+                "m4": [6, 3, 8],
+                "m5": [4, 6, 5],
+            }
+        )
 
     def teardown_method(self):
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
     def _read_sheet_xml(self, path):
         import zipfile
+
         with zipfile.ZipFile(path) as z:
             for n in z.namelist():
                 if n.startswith("xl/worksheets/sheet") and n.endswith(".xml"):
@@ -745,9 +743,7 @@ class TestSparkline:
         """测试单次调用批量生成同组迷你图"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        writer.add_sparkline(
-            ws, ["I3", "I4", "I5"], ["C3:G3", "C4:G4", "C5:G5"], type="line"
-        )
+        writer.add_sparkline(ws, ["I3", "I4", "I5"], ["C3:G3", "C4:G4", "C5:G5"], type="line")
         assert len(writer._sparkline_specs) == 1
         assert len(writer._sparkline_specs[0]["sparklines"]) == 3
 
@@ -768,124 +764,122 @@ class TestSparkline:
 
 class TestDataframe2Excel:
     """测试dataframe2excel便捷函数"""
-    
+
     def setup_method(self):
         """每个测试方法前的设置"""
         self.temp_dir = tempfile.mkdtemp()
         self.test_file = os.path.join(self.temp_dir, "test.xlsx")
-    
+
     def teardown_method(self):
         """每个测试方法后的清理"""
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
-    
+
     def test_basic_write(self):
         """测试基本写入"""
-        df = pd.DataFrame({
-            'A': [1, 2, 3],
-            'B': [4, 5, 6]
-        })
-        
+        df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
+
         end_row, end_col = dataframe2excel(df, self.test_file)
-        
+
         assert os.path.exists(self.test_file)
         assert end_row > 0
         assert end_col > 0
 
-    @pytest.mark.parametrize('speed', ['normal', 'fast'])
+    @pytest.mark.parametrize("speed", ["normal", "fast"])
     def test_decimal_none_preserves_float_precision(self, speed):
         """decimal=None 时不得主动截断 DataFrame 浮点值。"""
         value = 1.234567890123
 
-        dataframe2excel(pd.DataFrame({'值': [value]}), self.test_file, decimal=None, speed=speed)
+        dataframe2excel(pd.DataFrame({"值": [value]}), self.test_file, decimal=None, speed=speed)
 
         loaded_wb = load_workbook(self.test_file, data_only=False)
-        assert loaded_wb.active['B3'].value == value
+        assert loaded_wb.active["B3"].value == value
 
-    @pytest.mark.parametrize('speed', ['normal', 'fast'])
+    @pytest.mark.parametrize("speed", ["normal", "fast"])
     def test_decimal_controls_float_precision(self, speed):
         """decimal 应与 ScoreCard 一样表示保留的小数位数。"""
-        dataframe2excel(pd.DataFrame({'值': [1.2356]}), self.test_file, decimal=2, speed=speed)
+        dataframe2excel(pd.DataFrame({"值": [1.2356]}), self.test_file, decimal=2, speed=speed)
 
         loaded_wb = load_workbook(self.test_file, data_only=False)
-        assert loaded_wb.active['B3'].value == 1.24
+        assert loaded_wb.active["B3"].value == 1.24
 
-    @pytest.mark.parametrize('decimal', [-1, True, 1.5, '2'])
+    @pytest.mark.parametrize("decimal", [-1, True, 1.5, "2"])
     def test_invalid_decimal_raises_chinese_value_error(self, decimal):
         """非法 decimal 不得静默写出精度不明确的文件。"""
-        with pytest.raises(ValueError, match='decimal 必须是大于等于 0 的整数或 None'):
-            dataframe2excel(pd.DataFrame({'值': [1.2345]}), self.test_file, decimal=decimal)
+        with pytest.raises(ValueError, match="decimal 必须是大于等于 0 的整数或 None"):
+            dataframe2excel(pd.DataFrame({"值": [1.2345]}), self.test_file, decimal=decimal)
 
     def test_dataframe2excel_speed_defaults_to_auto_and_replaces_fast(self):
         """公开 API 应只保留默认 auto 的 speed 参数。"""
         function_params = inspect.signature(dataframe2excel).parameters
         method_params = inspect.signature(ExcelWriter.insert_df2sheet).parameters
 
-        assert function_params['speed'].default == 'auto'
-        assert method_params['speed'].default == 'auto'
-        assert 'fast' not in function_params
-        assert 'fast' not in method_params
+        assert function_params["speed"].default == "auto"
+        assert method_params["speed"].default == "auto"
+        assert "fast" not in function_params
+        assert "fast" not in method_params
 
     @pytest.mark.parametrize(
-        'rows, cols, index, expected',
+        "rows, cols, index, expected",
         [
-            (499, 1, False, 'normal'),
-            (500, 1, False, 'fast'),
-            (1, 49, False, 'normal'),
-            (1, 50, False, 'fast'),
-            (399, 25, False, 'normal'),
-            (400, 25, False, 'fast'),
-            (1, 49, True, 'fast'),
+            (499, 1, False, "normal"),
+            (500, 1, False, "fast"),
+            (1, 49, False, "normal"),
+            (1, 50, False, "fast"),
+            (399, 25, False, "normal"),
+            (400, 25, False, "fast"),
+            (1, 49, True, "fast"),
         ],
     )
     def test_auto_speed_uses_rows_effective_columns_and_cells(self, rows, cols, index, expected):
         """auto 应在三个公开边界上选择确定的写入路径。"""
         data = pd.DataFrame(np.zeros((rows, cols)))
 
-        assert ExcelWriter._resolve_write_speed(data, 'auto', index=index) == expected
+        assert ExcelWriter._resolve_write_speed(data, "auto", index=index) == expected
 
     def test_explicit_speed_overrides_auto_and_normalizes_text(self):
         """显式 normal/fast 必须覆盖大小判断，并兼容空格和大小写。"""
         small = pd.DataFrame([[1]])
         large = pd.DataFrame(np.zeros((500, 50)))
 
-        assert ExcelWriter._resolve_write_speed(small, ' FAST ') == 'fast'
-        assert ExcelWriter._resolve_write_speed(large, 'NORMAL') == 'normal'
+        assert ExcelWriter._resolve_write_speed(small, " FAST ") == "fast"
+        assert ExcelWriter._resolve_write_speed(large, "NORMAL") == "normal"
 
-    @pytest.mark.parametrize('speed', [None, True, 1, 'turbo'])
+    @pytest.mark.parametrize("speed", [None, True, 1, "turbo"])
     def test_invalid_speed_raises_chinese_value_error(self, speed):
         """未知速度不能静默回退到任意路径。"""
         with pytest.raises(ValueError, match="speed 必须是 'auto'、'normal' 或 'fast'"):
-            dataframe2excel(pd.DataFrame({'值': [1]}), self.test_file, speed=speed)
+            dataframe2excel(pd.DataFrame({"值": [1]}), self.test_file, speed=speed)
 
     def test_default_auto_speed_writes_small_and_large_tables(self):
         """默认 auto 选择的普通和快速路径都应写出正确内容。"""
-        small_file = os.path.join(self.temp_dir, 'auto-small.xlsx')
-        large_file = os.path.join(self.temp_dir, 'auto-large.xlsx')
+        small_file = os.path.join(self.temp_dir, "auto-small.xlsx")
+        large_file = os.path.join(self.temp_dir, "auto-large.xlsx")
         small = pd.DataFrame(np.zeros((10, 10)))
         large = pd.DataFrame(np.zeros((500, 2)))
 
         dataframe2excel(small, small_file)
         dataframe2excel(large, large_file)
 
-        assert load_workbook(small_file).active['B3'].value == 0
-        assert load_workbook(large_file).active['B3'].value == 0
+        assert load_workbook(small_file).active["B3"].value == 0
+        assert load_workbook(large_file).active["B3"].value == 0
 
     def test_fast_mode_preserves_values_order_styles_and_coordinates(self):
         """快速模式不得改变值、行列顺序、样式或返回坐标。"""
         df = pd.DataFrame(
-            {'编号': ['001', '002'], '数值': [1.23456, 2.34567]},
-            index=pd.Index(['甲', '乙'], name='样本'),
+            {"编号": ["001", "002"], "数值": [1.23456, 2.34567]},
+            index=pd.Index(["甲", "乙"], name="样本"),
         )
-        normal_file = os.path.join(self.temp_dir, 'normal.xlsx')
-        fast_file = os.path.join(self.temp_dir, 'fast.xlsx')
+        normal_file = os.path.join(self.temp_dir, "normal.xlsx")
+        fast_file = os.path.join(self.temp_dir, "fast.xlsx")
 
-        normal_end = dataframe2excel(df, normal_file, sheet_name='S', index=True, fill=True, speed='normal')
-        fast_end = dataframe2excel(df, fast_file, sheet_name='S', index=True, fill=True, speed='fast')
+        normal_end = dataframe2excel(df, normal_file, sheet_name="S", index=True, fill=True, speed="normal")
+        fast_end = dataframe2excel(df, fast_file, sheet_name="S", index=True, fill=True, speed="fast")
 
-        normal_ws = load_workbook(normal_file, data_only=False)['S']
-        fast_ws = load_workbook(fast_file, data_only=False)['S']
+        normal_ws = load_workbook(normal_file, data_only=False)["S"]
+        fast_ws = load_workbook(fast_file, data_only=False)["S"]
         assert fast_end == normal_end
         for row in range(2, normal_end[0]):
             for col in range(2, normal_end[1]):
@@ -893,25 +887,25 @@ class TestDataframe2Excel:
                 fast_cell = fast_ws.cell(row=row, column=col)
                 assert fast_cell.value == normal_cell.value
                 assert fast_cell._style == normal_cell._style
-        assert fast_ws['C3'].value == '001'
-        assert fast_ws['C3'].number_format == '@'
+        assert fast_ws["C3"].value == "001"
+        assert fast_ws["C3"].number_format == "@"
 
     def test_fast_mode_preserves_multiindex_headers_and_merges(self):
         """快速模式必须保留多层列名、索引顺序和合并范围。"""
-        columns = pd.MultiIndex.from_tuples([('统计', '金额'), ('统计', '数量'), ('标签', '等级')])
+        columns = pd.MultiIndex.from_tuples([("统计", "金额"), ("统计", "数量"), ("标签", "等级")])
         index = pd.MultiIndex.from_tuples(
-            [('甲组', 1), ('甲组', 2), ('乙组', 1)],
-            names=['客群', '序号'],
+            [("甲组", 1), ("甲组", 2), ("乙组", 1)],
+            names=["客群", "序号"],
         )
-        df = pd.DataFrame([[10.5, 2, 'A'], [20.5, 3, 'B'], [30.5, 4, 'C']], columns=columns, index=index)
-        normal_file = os.path.join(self.temp_dir, 'multi-normal.xlsx')
-        fast_file = os.path.join(self.temp_dir, 'multi-fast.xlsx')
+        df = pd.DataFrame([[10.5, 2, "A"], [20.5, 3, "B"], [30.5, 4, "C"]], columns=columns, index=index)
+        normal_file = os.path.join(self.temp_dir, "multi-normal.xlsx")
+        fast_file = os.path.join(self.temp_dir, "multi-fast.xlsx")
 
-        normal_end = dataframe2excel(df, normal_file, sheet_name='S', index=True, fill=True, speed='normal')
-        fast_end = dataframe2excel(df, fast_file, sheet_name='S', index=True, fill=True, speed='fast')
+        normal_end = dataframe2excel(df, normal_file, sheet_name="S", index=True, fill=True, speed="normal")
+        fast_end = dataframe2excel(df, fast_file, sheet_name="S", index=True, fill=True, speed="fast")
 
-        normal_ws = load_workbook(normal_file, data_only=False)['S']
-        fast_ws = load_workbook(fast_file, data_only=False)['S']
+        normal_ws = load_workbook(normal_file, data_only=False)["S"]
+        fast_ws = load_workbook(fast_file, data_only=False)["S"]
         assert fast_end == normal_end
         assert sorted(map(str, fast_ws.merged_cells.ranges)) == sorted(map(str, normal_ws.merged_cells.ranges))
         for row in range(2, normal_end[0]):
@@ -921,15 +915,15 @@ class TestDataframe2Excel:
                 assert fast_cell.value == normal_cell.value
                 assert fast_cell._style == normal_cell._style
 
-    @pytest.mark.parametrize('fill', [False, True])
+    @pytest.mark.parametrize("fill", [False, True])
     def test_fast_mode_preserves_fill_style_variants(self, fill):
         """快速路径不能弱化边框模式或填充模式。"""
-        df = pd.DataFrame({'A': [1, 2, 3], 'B': ['x', 'y', 'z']})
-        normal_file = os.path.join(self.temp_dir, f'fill-{fill}-normal.xlsx')
-        fast_file = os.path.join(self.temp_dir, f'fill-{fill}-fast.xlsx')
+        df = pd.DataFrame({"A": [1, 2, 3], "B": ["x", "y", "z"]})
+        normal_file = os.path.join(self.temp_dir, f"fill-{fill}-normal.xlsx")
+        fast_file = os.path.join(self.temp_dir, f"fill-{fill}-fast.xlsx")
 
-        normal_end = dataframe2excel(df, normal_file, fill=fill, speed='normal')
-        fast_end = dataframe2excel(df, fast_file, fill=fill, speed='fast')
+        normal_end = dataframe2excel(df, normal_file, fill=fill, speed="normal")
+        fast_end = dataframe2excel(df, fast_file, fill=fill, speed="fast")
 
         normal_ws = load_workbook(normal_file).active
         fast_ws = load_workbook(fast_file).active
@@ -947,18 +941,18 @@ class TestDataframe2Excel:
             calls.append(col_letter)
             return original(writer, worksheet, col_letter)
 
-        monkeypatch.setattr(ExcelWriter, '_get_column_cells_data', counted)
+        monkeypatch.setattr(ExcelWriter, "_get_column_cells_data", counted)
         writer = ExcelWriter()
-        ws = writer.get_sheet_by_name('S')
+        ws = writer.get_sheet_by_name("S")
 
         dataframe2excel(
-            pd.DataFrame({'A': range(20), 'B': range(20)}),
+            pd.DataFrame({"A": range(20), "B": range(20)}),
             writer,
             sheet_name=ws,
             auto_width=True,
         )
 
-        assert calls == ['B', 'C']
+        assert calls == ["B", "C"]
 
     def test_fast_auto_width_avoids_column_style_snapshots(self, monkeypatch):
         """快速模式应在写入时累计宽度，不能再次扫描和复制整列样式。"""
@@ -969,57 +963,57 @@ class TestDataframe2Excel:
             calls.append(col_letter)
             return original(writer, worksheet, col_letter)
 
-        monkeypatch.setattr(ExcelWriter, '_get_column_cells_data', counted)
+        monkeypatch.setattr(ExcelWriter, "_get_column_cells_data", counted)
         writer = ExcelWriter()
-        ws = writer.get_sheet_by_name('S')
+        ws = writer.get_sheet_by_name("S")
 
         dataframe2excel(
-            pd.DataFrame({'中文列': ['短', '较长内容'], 'number': [1.2, 345.6]}),
+            pd.DataFrame({"中文列": ["短", "较长内容"], "number": [1.2, 345.6]}),
             writer,
             sheet_name=ws,
             auto_width=True,
-            speed='fast',
+            speed="fast",
         )
 
         assert calls == []
-        assert ws.column_dimensions['B'].width >= 8
-        assert ws.column_dimensions['C'].width >= 8
+        assert ws.column_dimensions["B"].width >= 8
+        assert ws.column_dimensions["C"].width >= 8
 
     def test_fast_mode_preserves_formats_alignment_filter_and_width(self):
         """快速模式必须保留外层格式、对齐、筛选和自动列宽。"""
-        df = pd.DataFrame({
-            '特征': ['短名', '较长的中文特征名'],
-            '占比': [0.12345, 0.54321],
-            '金额': [1234.5, 6789.0],
-            '指标': [-0.2, 0.8],
-        })
-        normal_file = os.path.join(self.temp_dir, 'formats-normal.xlsx')
-        fast_file = os.path.join(self.temp_dir, 'formats-fast.xlsx')
+        df = pd.DataFrame(
+            {
+                "特征": ["短名", "较长的中文特征名"],
+                "占比": [0.12345, 0.54321],
+                "金额": [1234.5, 6789.0],
+                "指标": [-0.2, 0.8],
+            }
+        )
+        normal_file = os.path.join(self.temp_dir, "formats-normal.xlsx")
+        fast_file = os.path.join(self.temp_dir, "formats-fast.xlsx")
         params = dict(
-            sheet_name='S',
-            percent_cols=['占比'],
-            custom_cols=['金额'],
-            custom_format='#,##0.00',
-            condition_cols=['指标'],
-            color_cols=['占比'],
-            left_cols=['特征'],
-            right_cols=['金额'],
+            sheet_name="S",
+            percent_cols=["占比"],
+            custom_cols=["金额"],
+            custom_format="#,##0.00",
+            condition_cols=["指标"],
+            color_cols=["占比"],
+            left_cols=["特征"],
+            right_cols=["金额"],
             auto_filter=True,
             auto_width=True,
         )
 
-        normal_end = dataframe2excel(df, normal_file, speed='normal', **params)
-        fast_end = dataframe2excel(df, fast_file, speed='fast', **params)
+        normal_end = dataframe2excel(df, normal_file, speed="normal", **params)
+        fast_end = dataframe2excel(df, fast_file, speed="fast", **params)
 
-        normal_ws = load_workbook(normal_file, data_only=False)['S']
-        fast_ws = load_workbook(fast_file, data_only=False)['S']
+        normal_ws = load_workbook(normal_file, data_only=False)["S"]
+        fast_ws = load_workbook(fast_file, data_only=False)["S"]
         assert fast_end == normal_end
         assert fast_ws.auto_filter.ref == normal_ws.auto_filter.ref
         for col in range(2, normal_end[1]):
             letter = normal_ws.cell(row=2, column=col).column_letter
-            assert fast_ws.column_dimensions[letter].width == pytest.approx(
-                normal_ws.column_dimensions[letter].width
-            )
+            assert fast_ws.column_dimensions[letter].width == pytest.approx(normal_ws.column_dimensions[letter].width)
         for row in range(2, normal_end[0]):
             for col in range(2, normal_end[1]):
                 normal_cell = normal_ws.cell(row=row, column=col)
@@ -1036,55 +1030,39 @@ class TestDataframe2Excel:
             for key, rules in fast_ws.conditional_formatting._cf_rules.items()
         ]
         assert fast_rules == normal_rules
-    
+
     def test_write_with_title(self):
         """测试带标题写入"""
-        df = pd.DataFrame({'A': [1, 2], 'B': [3, 4]})
-        
-        dataframe2excel(
-            df, self.test_file,
-            title="测试标题",
-            sheet_name="测试Sheet"
-        )
-        
+        df = pd.DataFrame({"A": [1, 2], "B": [3, 4]})
+
+        dataframe2excel(df, self.test_file, title="测试标题", sheet_name="测试Sheet")
+
         loaded_wb = load_workbook(self.test_file)
-        ws = loaded_wb['测试Sheet']
-        
+        ws = loaded_wb["测试Sheet"]
+
         assert ws["B2"].value == "测试标题"
-    
+
     def test_write_with_percent_format(self):
         """测试百分比格式"""
-        df = pd.DataFrame({
-            'feature': ['A', 'B'],
-            'rate': [0.05, 0.10]
-        })
-        
-        dataframe2excel(
-            df, self.test_file,
-            percent_cols=['rate']
-        )
-        
+        df = pd.DataFrame({"feature": ["A", "B"], "rate": [0.05, 0.10]})
+
+        dataframe2excel(df, self.test_file, percent_cols=["rate"])
+
         loaded_wb = load_workbook(self.test_file)
         ws = loaded_wb.active
-        
+
         # 检查数字格式
         assert ws["C3"].number_format == "0.00%"
-    
+
     def test_write_with_condition_format(self):
         """测试条件格式"""
-        df = pd.DataFrame({
-            'feature': ['A', 'B', 'C'],
-            'value': [1, 2, 3]
-        })
-        
-        dataframe2excel(
-            df, self.test_file,
-            condition_cols=['value']
-        )
-        
+        df = pd.DataFrame({"feature": ["A", "B", "C"], "value": [1, 2, 3]})
+
+        dataframe2excel(df, self.test_file, condition_cols=["value"])
+
         loaded_wb = load_workbook(self.test_file)
         ws = loaded_wb.active
-        
+
         # 检查条件格式是否存在
         assert len(ws.conditional_formatting._cf_rules) > 0
 
@@ -1183,53 +1161,44 @@ class TestDataframe2Excel:
 
         data_bar_colors, _ = _conditional_format_colors(worksheet)
         assert data_bar_colors == ["00112233"]
-    
+
     def test_write_with_custom_format(self):
         """测试自定义格式"""
-        df = pd.DataFrame({
-            'amount': [1000, 2000, 3000]
-        })
-        
-        dataframe2excel(
-            df, self.test_file,
-            custom_cols=['amount'],
-            custom_format='#,##0'
-        )
-        
+        df = pd.DataFrame({"amount": [1000, 2000, 3000]})
+
+        dataframe2excel(df, self.test_file, custom_cols=["amount"], custom_format="#,##0")
+
         loaded_wb = load_workbook(self.test_file)
         ws = loaded_wb.active
-        
+
         assert ws["B3"].number_format == "#,##0"
 
     def test_auto_filter_persisted_with_file_path(self):
         """回归：传入文件路径且 auto_filter=True 时筛选应写入文件（修复保存顺序bug）"""
-        df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
-        dataframe2excel(df, self.test_file, sheet_name='S', auto_filter=True)
+        df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
+        dataframe2excel(df, self.test_file, sheet_name="S", auto_filter=True)
 
         loaded_wb = load_workbook(self.test_file)
-        ws = loaded_wb['S']
+        ws = loaded_wb["S"]
         assert ws.auto_filter.ref is not None
 
     def test_row_format_does_not_overflow_extra_column(self):
         """回归：按行设置格式不应越界到数据右侧的空白列（修复off-by-one）"""
-        df = pd.DataFrame({'A': [0.1, 0.2], 'B': [0.3, 0.4]}, index=['r1', 'r2'])
-        dataframe2excel(
-            df, self.test_file, sheet_name='S',
-            index=True, percent_rows=['r1'], start_col=2, start_row=2
-        )
+        df = pd.DataFrame({"A": [0.1, 0.2], "B": [0.3, 0.4]}, index=["r1", "r2"])
+        dataframe2excel(df, self.test_file, sheet_name="S", index=True, percent_rows=["r1"], start_col=2, start_row=2)
         loaded_wb = load_workbook(self.test_file)
-        ws = loaded_wb['S']
+        ws = loaded_wb["S"]
         # 数据列为 C、D；E 列为空白，不应被设置为百分比格式
-        assert ws['C3'].number_format == '0.00%'
-        assert ws['D3'].number_format == '0.00%'
-        assert ws['E3'].number_format != '0.00%'
+        assert ws["C3"].number_format == "0.00%"
+        assert ws["D3"].number_format == "0.00%"
+        assert ws["E3"].number_format != "0.00%"
 
     def test_write_with_figures_keeps_gap_before_header(self, monkeypatch):
         """测试插图后表头会自动下移，避免被图片覆盖"""
 
         def fake_insert_pic2sheet(self, worksheet, fig, insert_space, figsize=(600, 250)):
             if isinstance(insert_space, str):
-                row = int(''.join(ch for ch in insert_space if ch.isdigit()))
+                row = int("".join(ch for ch in insert_space if ch.isdigit()))
                 col = 2
             else:
                 row, col = insert_space
@@ -1239,7 +1208,7 @@ class TestDataframe2Excel:
 
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        df = pd.DataFrame({'A': [1, 2], 'B': [3, 4]})
+        df = pd.DataFrame({"A": [1, 2], "B": [3, 4]})
 
         dataframe2excel(df, writer, sheet_name=ws, figures=["dummy.png"], start_row=2)
 
@@ -1249,38 +1218,38 @@ class TestDataframe2Excel:
 
 class TestUtilityFunctions:
     """测试工具函数"""
-    
+
     def test_check_contain_chinese(self):
         """测试中文检测"""
         result, eng_cnt, chi_cnt = ExcelWriter.check_contain_chinese("测试test")
-        
+
         assert len(result) == 6
         assert eng_cnt == 4
         assert chi_cnt == 2
-    
+
     def test_calc_continuous_cnt(self):
         """测试连续计数"""
-        list_ = ['A', 'A', 'A', 'B', 'B', 'C']
-        
+        list_ = ["A", "A", "A", "B", "B", "C"]
+
         item, start, length = ExcelWriter.calc_continuous_cnt(list_, 0)
-        assert item == 'A' and start == 0 and length == 3
-        
+        assert item == "A" and start == 0 and length == 3
+
         item, start, length = ExcelWriter.calc_continuous_cnt(list_, 3)
-        assert item == 'B' and start == 3 and length == 2
-        
+        assert item == "B" and start == 3 and length == 2
+
         item, start, length = ExcelWriter.calc_continuous_cnt(list_, 5)
-        assert item == 'C' and start == 5 and length == 1
-    
+        assert item == "C" and start == 5 and length == 1
+
     def test_get_cell_space(self):
         """测试位置格式转换"""
         # 字符串转元组
         result = ExcelWriter.get_cell_space("B3")
         assert result == (2, 3)
-        
+
         # 元组转字符串
         result = ExcelWriter.get_cell_space((2, 2))
         assert result == "B2"
-    
+
     def test_calculate_rgba_color(self):
         """测试颜色计算"""
         result = ExcelWriter.calculate_rgba_color("FFFFFF", 0.5)
@@ -1293,54 +1262,48 @@ class TestUtilityFunctions:
 
 class TestMultiLevelIndex:
     """测试多层索引"""
-    
+
     def setup_method(self):
         self.temp_dir = tempfile.mkdtemp()
         self.test_file = os.path.join(self.temp_dir, "test.xlsx")
-    
+
     def teardown_method(self):
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
-    
+
     def test_multi_level_columns(self):
         """测试多层列名"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
+
         # 创建多层列名
-        columns = pd.MultiIndex.from_product([['Group1', 'Group2'], ['A', 'B']])
-        df = pd.DataFrame(
-            np.random.rand(3, 4),
-            columns=columns
-        )
-        
+        columns = pd.MultiIndex.from_product([["Group1", "Group2"], ["A", "B"]])
+        df = pd.DataFrame(np.random.rand(3, 4), columns=columns)
+
         writer.insert_df2sheet(ws, df, "B2")
-        
+
         # 验证多层表头
-        assert ws["B2"].value == 'Group1'
-        assert ws["D2"].value == 'Group2'
-        assert ws["B3"].value == 'A'
-        assert ws["C3"].value == 'B'
-    
+        assert ws["B2"].value == "Group1"
+        assert ws["D2"].value == "Group2"
+        assert ws["B3"].value == "A"
+        assert ws["C3"].value == "B"
+
     def test_multi_level_index(self):
         """测试多层索引"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
-        
+
         # 创建多层索引
-        index = pd.MultiIndex.from_product([['X', 'Y'], [1, 2]])
-        df = pd.DataFrame(
-            np.random.rand(4, 2),
-            index=index,
-            columns=['A', 'B']
-        )
-        
+        index = pd.MultiIndex.from_product([["X", "Y"], [1, 2]])
+        df = pd.DataFrame(np.random.rand(4, 2), index=index, columns=["A", "B"])
+
         writer.insert_df2sheet(ws, df, "B2", index=True, merge_index=True)
 
         # 验证多层索引 - 合并单元格后可能无法直接读取值
         # 检查起始位置的值即可
-        assert ws["B3"].value == 'X' or str(ws["B3"]).startswith("<MergedCell")
+        assert ws["B3"].value == "X" or str(ws["B3"]).startswith("<MergedCell")
 
 
 class TestMoveSheet:
@@ -1382,31 +1345,37 @@ class TestPivotTable:
     def setup_method(self):
         self.temp_dir = tempfile.mkdtemp()
         self.test_file = os.path.join(self.temp_dir, "pivot.xlsx")
-        self.df = pd.DataFrame({
-            "商品类别": ["数码", "服饰", "数码", "服饰", "数码", "食品"],
-            "区域": ["华东", "华东", "华南", "华南", "华北", "华东"],
-            "放款金额": [100, 200, 300, 400, 500, 600],
-            "笔数": [1, 2, 3, 4, 5, 6],
-        })
+        self.df = pd.DataFrame(
+            {
+                "商品类别": ["数码", "服饰", "数码", "服饰", "数码", "食品"],
+                "区域": ["华东", "华东", "华南", "华南", "华北", "华东"],
+                "放款金额": [100, 200, 300, 400, 500, 600],
+                "笔数": [1, 2, 3, 4, 5, 6],
+            }
+        )
 
     def teardown_method(self):
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
     def _pivot_parts(self, path):
         import zipfile
+
         with zipfile.ZipFile(path) as z:
             return z.namelist()
 
     def _read(self, path, part):
         import zipfile
+
         with zipfile.ZipFile(path) as z:
             return z.read(part).decode("utf-8")
 
     def _assert_all_xml_wellformed(self, path):
         import zipfile
         import xml.dom.minidom as minidom
+
         with zipfile.ZipFile(path) as z:
             for n in z.namelist():
                 if n.endswith(".xml") or n.endswith(".rels"):
@@ -1485,12 +1454,8 @@ class TestPivotTable:
         assert "xl/pivotTables/pivotTable2.xml" in parts
         assert "xl/pivotCache/pivotCacheDefinition1.xml" in parts
         assert "xl/pivotCache/pivotCacheDefinition2.xml" in parts
-        assert 'name="数据透视表1"' in self._read(
-            self.test_file, "xl/pivotTables/pivotTable1.xml"
-        )
-        assert 'name="数据透视表2"' in self._read(
-            self.test_file, "xl/pivotTables/pivotTable2.xml"
-        )
+        assert 'name="数据透视表1"' in self._read(self.test_file, "xl/pivotTables/pivotTable1.xml")
+        assert 'name="数据透视表2"' in self._read(self.test_file, "xl/pivotTables/pivotTable2.xml")
         workbook_xml = self._read(self.test_file, "xl/workbook.xml")
         assert len(re.findall(r"<pivotCache\b", workbook_xml)) == 2
         styles_xml = self._read(self.test_file, "xl/styles.xml")
@@ -1686,8 +1651,12 @@ class TestPivotTable:
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("透视表")
         writer.insert_pivot_table2sheet(
-            ws, self.df, "B2",
-            rows="商品类别", columns="区域", values=[("放款金额", "sum"), ("笔数", "sum")],
+            ws,
+            self.df,
+            "B2",
+            rows="商品类别",
+            columns="区域",
+            values=[("放款金额", "sum"), ("笔数", "sum")],
         )
         writer.save(self.test_file)
 
@@ -1706,9 +1675,7 @@ class TestPivotTable:
         """工作表 -> pivotTable、workbook -> pivotCache 关系完整"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("透视表")
-        writer.insert_pivot_table2sheet(
-            ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")]
-        )
+        writer.insert_pivot_table2sheet(ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")])
         writer.save(self.test_file)
 
         # workbook 声明 pivotCaches
@@ -1730,9 +1697,7 @@ class TestPivotTable:
         """缓存记录数与源数据行数一致"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("透视表")
-        writer.insert_pivot_table2sheet(
-            ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")]
-        )
+        writer.insert_pivot_table2sheet(ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")])
         writer.save(self.test_file)
         rec = self._read(self.test_file, "xl/pivotCache/pivotCacheRecords1.xml")
         assert 'count="{}"'.format(len(self.df)) in rec
@@ -1741,9 +1706,7 @@ class TestPivotTable:
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("透视表")
         with pytest.raises(ValueError):
-            writer.insert_pivot_table2sheet(
-                ws, self.df, "B2", rows="商品类别", values=[("放款金额", "median")]
-            )
+            writer.insert_pivot_table2sheet(ws, self.df, "B2", rows="商品类别", values=[("放款金额", "median")])
 
     def test_pivot_theme_style_and_number_formats_injected(self):
         """数据透视表主题样式应适配 writer.theme_color，自定义数字格式应写入 styles.xml。"""
@@ -1841,9 +1804,7 @@ class TestPivotTable:
         """数据透视图在 chart XML 注入 pivotSource，且文件合法"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("透视分析")
-        writer.insert_pivot_table2sheet(
-            ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")]
-        )
+        writer.insert_pivot_table2sheet(ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")])
         writer.insert_pivot_chart2sheet(ws, "H2", chart_type="bar", title="各类别放款金额")
         writer.save(self.test_file)
 
@@ -1851,6 +1812,7 @@ class TestPivotTable:
         load_workbook(self.test_file)
 
         import zipfile
+
         with zipfile.ZipFile(self.test_file) as z:
             charts = [n for n in z.namelist() if n.startswith("xl/charts/chart") and n.endswith(".xml")]
             assert charts

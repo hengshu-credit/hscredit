@@ -62,9 +62,9 @@ class GBMEncoder(BaseEncoder):
     :param return_df: 是否返回DataFrame，默认为True
     :param model_params: 额外的模型参数，用于覆盖默认参数，默认为None
     :param task: 任务类型，'classification' 或 'regression'，默认为'classification'
-    
+
     **说明**
-    
+
     默认设置 drop_origin=True，即只保留GBM生成的特征（叶子节点、概率等），
     删除原始特征。这样可以避免原始类别特征对下游模型（如LR）造成影响。
 
@@ -148,7 +148,7 @@ class GBMEncoder(BaseEncoder):
     def __init__(
         self,
         features: Optional[List[str]] = None,
-        model_type: Literal['xgboost', 'lightgbm', 'catboost'] = 'xgboost',
+        model_type: Literal["xgboost", "lightgbm", "catboost"] = "xgboost",
         n_estimators: int = 100,
         max_depth: int = 5,
         learning_rate: float = 0.1,
@@ -156,14 +156,14 @@ class GBMEncoder(BaseEncoder):
         colsample_bytree: float = 0.8,
         min_child_samples: int = 20,
         random_state: Optional[int] = None,
-        output_type: Literal['leaves', 'onehot', 'probability', 'embedding'] = 'leaves',
+        output_type: Literal["leaves", "onehot", "probability", "embedding"] = "leaves",
         drop_origin: bool = True,
-        handle_unknown: str = 'value',
-        handle_missing: str = 'value',
+        handle_unknown: str = "value",
+        handle_missing: str = "value",
         drop_invariant: bool = False,
         return_df: bool = True,
         model_params: Optional[Dict[str, Any]] = None,
-        task: Literal['classification', 'regression'] = 'classification',
+        task: Literal["classification", "regression"] = "classification",
         target: Optional[str] = None,
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
@@ -263,26 +263,28 @@ class GBMEncoder(BaseEncoder):
         self._compute_missing_stats(X_train)
 
         # 处理类别特征（CatBoost自动处理，其他需要编码）
-        if self.model_type in ['xgboost', 'lightgbm']:
+        if self.model_type in ["xgboost", "lightgbm"]:
             X_train = self._preprocess_categorical(X_train, fit=True)
 
         # 根据模型类型训练
-        if self.model_type == 'xgboost':
+        if self.model_type == "xgboost":
             self._fit_xgboost(X_train, y)
-        elif self.model_type == 'lightgbm':
+        elif self.model_type == "lightgbm":
             self._fit_lightgbm(X_train, y)
-        elif self.model_type == 'catboost':
+        elif self.model_type == "catboost":
             self._fit_catboost(X_train, y)
         else:
             raise ValueError(f"不支持的模型类型: {self.model_type}")
 
         # 生成特征名
         self._generate_feature_names()
-        if self.output_type == 'onehot':
-            fitted_input = self._preprocess_catboost_missing(X_train) if self.model_type == 'catboost' else X_train
+        if self.output_type == "onehot":
+            fitted_input = self._preprocess_catboost_missing(X_train) if self.model_type == "catboost" else X_train
             leaves = self._transform_to_leaves(fitted_input)
             self.leaf_categories_ = {i: np.unique(leaves.iloc[:, i]).tolist() for i in range(leaves.shape[1])}
-            self.feature_names_ = [f'gbm_tree{i}_leaf{leaf}' for i, categories in self.leaf_categories_.items() for leaf in categories]
+            self.feature_names_ = [
+                f"gbm_tree{i}_leaf{leaf}" for i, categories in self.leaf_categories_.items() for leaf in categories
+            ]
 
     def _compute_missing_stats(self, X: pd.DataFrame):
         """计算缺失值统计信息。
@@ -298,18 +300,16 @@ class GBMEncoder(BaseEncoder):
 
             if missing_count > 0:
                 self.missing_stats_[col] = {
-                    'missing_count': int(missing_count),
-                    'missing_ratio': float(missing_ratio),
-                    'total_samples': total_samples
+                    "missing_count": int(missing_count),
+                    "missing_ratio": float(missing_ratio),
+                    "total_samples": total_samples,
                 }
 
         if self.missing_stats_:
             total_features_with_missing = len(self.missing_stats_)
             logger.warning("%s 个特征存在缺失值，GBM将自动处理", total_features_with_missing)
 
-    def _preprocess_categorical(
-        self, X: pd.DataFrame, fit: bool = True
-    ) -> pd.DataFrame:
+    def _preprocess_categorical(self, X: pd.DataFrame, fit: bool = True) -> pd.DataFrame:
         """预处理类别特征。
 
         对于非CatBoost模型，需要将类别特征转换为数值。
@@ -322,7 +322,7 @@ class GBMEncoder(BaseEncoder):
         X = X.copy()
 
         # 识别类别特征
-        cat_cols = X.select_dtypes(include=['object', 'category']).columns
+        cat_cols = X.select_dtypes(include=["object", "category"]).columns
 
         if len(cat_cols) == 0:
             return X
@@ -341,7 +341,7 @@ class GBMEncoder(BaseEncoder):
                 # 映射类别值，缺失值保持为np.nan
                 X[col] = X[col].map(self.mapping_[col])
                 # 转换为数值类型，缺失值会变成nan
-                X[col] = pd.to_numeric(X[col], errors='coerce')
+                X[col] = pd.to_numeric(X[col], errors="coerce")
 
         return X
 
@@ -356,16 +356,25 @@ class GBMEncoder(BaseEncoder):
         X = X.copy()
 
         # 识别类别特征
-        cat_cols = X.select_dtypes(include=['object', 'category']).columns
+        cat_cols = X.select_dtypes(include=["object", "category"]).columns
 
         for col in cat_cols:
-            if getattr(self, '_catboost_category_protocol_', 1) == 1:
+            if getattr(self, "_catboost_category_protocol_", 1) == 1:
                 # 旧完整模型按旧词典预测；新的类型化词典只能通过重新拟合建立。
-                X[col] = X[col].astype(object).fillna('__MISSING__').astype(str)
+                X[col] = X[col].astype(object).fillna("__MISSING__").astype(str)
                 continue
             # CatBoost需要字符串；以类型记录编码，真实'__MISSING__'不与缺失混淆。
             import json
-            X[col] = X[col].astype(object).map(lambda value: json.dumps(pack(MISSING if pd.isna(value) else value), ensure_ascii=False, sort_keys=True))
+
+            X[col] = (
+                X[col]
+                .astype(object)
+                .map(
+                    lambda value: json.dumps(
+                        pack(MISSING if pd.isna(value) else value), ensure_ascii=False, sort_keys=True
+                    )
+                )
+            )
 
         return X
 
@@ -387,31 +396,31 @@ class GBMEncoder(BaseEncoder):
 
         # 基础参数
         params = {
-            'n_estimators': self.n_estimators,
-            'max_depth': self.max_depth,
-            'learning_rate': self.learning_rate,
-            'subsample': self.subsample,
-            'colsample_bytree': self.colsample_bytree,
-            'min_child_weight': self.min_child_samples,
-            'random_state': self.random_state,
-            'seed_per_iteration': True,
+            "n_estimators": self.n_estimators,
+            "max_depth": self.max_depth,
+            "learning_rate": self.learning_rate,
+            "subsample": self.subsample,
+            "colsample_bytree": self.colsample_bytree,
+            "min_child_weight": self.min_child_samples,
+            "random_state": self.random_state,
+            "seed_per_iteration": True,
         }
 
         # 添加任务相关参数
-        if self.task == 'classification':
+        if self.task == "classification":
             if len(self.classes_) == 2:
-                params['objective'] = 'binary:logistic'
-                params['eval_metric'] = 'logloss'
+                params["objective"] = "binary:logistic"
+                params["eval_metric"] = "logloss"
             else:
-                params['objective'] = 'multi:softprob'
-                params['num_class'] = len(self.classes_)
-                params['eval_metric'] = 'mlogloss'
+                params["objective"] = "multi:softprob"
+                params["num_class"] = len(self.classes_)
+                params["eval_metric"] = "mlogloss"
         else:
-            params['objective'] = 'reg:squarederror'
+            params["objective"] = "reg:squarederror"
 
         # 合并用户自定义参数
         params.update(self.model_params or {})
-        params['n_jobs'] = self._resolve_model_workers('n_jobs')
+        params["n_jobs"] = self._resolve_model_workers("n_jobs")
 
         # 使用 hscredit 的 XGBoost
         self.model_ = XGBoost(**params)
@@ -430,29 +439,29 @@ class GBMEncoder(BaseEncoder):
 
         # 基础参数
         params = {
-            'n_estimators': self.n_estimators,
-            'max_depth': self.max_depth,
-            'learning_rate': self.learning_rate,
-            'subsample': self.subsample,
-            'colsample_bytree': self.colsample_bytree,
-            'min_child_samples': self.min_child_samples,
-            'random_state': self.random_state,
-            'verbose': False,
+            "n_estimators": self.n_estimators,
+            "max_depth": self.max_depth,
+            "learning_rate": self.learning_rate,
+            "subsample": self.subsample,
+            "colsample_bytree": self.colsample_bytree,
+            "min_child_samples": self.min_child_samples,
+            "random_state": self.random_state,
+            "verbose": False,
         }
 
         # 添加任务相关参数
-        if self.task == 'classification':
+        if self.task == "classification":
             if len(self.classes_) == 2:
-                params['objective'] = 'binary'
+                params["objective"] = "binary"
             else:
-                params['objective'] = 'multiclass'
-                params['num_class'] = len(self.classes_)
+                params["objective"] = "multiclass"
+                params["num_class"] = len(self.classes_)
         else:
-            params['objective'] = 'regression'
+            params["objective"] = "regression"
 
         # 合并用户自定义参数
         params.update(self.model_params or {})
-        params['n_jobs'] = self._resolve_model_workers('n_jobs')
+        params["n_jobs"] = self._resolve_model_workers("n_jobs")
 
         # 使用 hscredit 的 LightGBM
         self.model_ = LightGBM(**params)
@@ -473,34 +482,34 @@ class GBMEncoder(BaseEncoder):
         X_cb = X.copy()
 
         # 识别类别特征
-        cat_features = X_cb.select_dtypes(include=['object', 'category']).columns.tolist()
+        cat_features = X_cb.select_dtypes(include=["object", "category"]).columns.tolist()
 
         # CatBoost要求类别特征中的缺失值必须是字符串
         X_cb = self._preprocess_catboost_missing(X_cb)
 
         # 基础参数 (CatBoost使用不同的参数名)
         params = {
-            'iterations': self.n_estimators,
-            'depth': self.max_depth,
-            'learning_rate': self.learning_rate,
-            'subsample': self.subsample,
-            'min_data_in_leaf': self.min_child_samples,
-            'random_state': self.random_state,
-            'verbose': False,
+            "iterations": self.n_estimators,
+            "depth": self.max_depth,
+            "learning_rate": self.learning_rate,
+            "subsample": self.subsample,
+            "min_data_in_leaf": self.min_child_samples,
+            "random_state": self.random_state,
+            "verbose": False,
         }
 
         # 添加任务相关参数
-        if self.task == 'classification':
+        if self.task == "classification":
             if len(self.classes_) == 2:
-                params['objective'] = 'Logloss'
+                params["objective"] = "Logloss"
             else:
-                params['objective'] = 'MultiClass'
+                params["objective"] = "MultiClass"
         else:
-            params['objective'] = 'RMSE'
+            params["objective"] = "RMSE"
 
         # 合并用户自定义参数
         params.update(self.model_params or {})
-        params['thread_count'] = self._resolve_model_workers('thread_count')
+        params["thread_count"] = self._resolve_model_workers("thread_count")
 
         # 使用 hscredit 的 CatBoost
         self.model_ = CatBoost(**params)
@@ -521,20 +530,20 @@ class GBMEncoder(BaseEncoder):
         X_encode = X_transformed[self.cols_].copy()
 
         # 预处理类别特征
-        if self.model_type in ['xgboost', 'lightgbm']:
+        if self.model_type in ["xgboost", "lightgbm"]:
             X_encode = self._preprocess_categorical(X_encode, fit=False)
-        elif self.model_type == 'catboost':
+        elif self.model_type == "catboost":
             # CatBoost需要将类别特征的缺失值转换为字符串
             X_encode = self._preprocess_catboost_missing(X_encode)
 
         # 根据输出类型转换
-        if self.output_type == 'leaves':
+        if self.output_type == "leaves":
             features = self._transform_to_leaves(X_encode)
-        elif self.output_type == 'onehot':
+        elif self.output_type == "onehot":
             features = self._transform_to_onehot(X_encode)
-        elif self.output_type == 'probability':
+        elif self.output_type == "probability":
             features = self._transform_to_probability(X_encode)
-        elif self.output_type == 'embedding':
+        elif self.output_type == "embedding":
             features = self._transform_to_embedding(X_encode)
         else:
             raise ValueError(f"不支持的输出类型: {self.output_type}")
@@ -562,11 +571,11 @@ class GBMEncoder(BaseEncoder):
         :param X: 输入数据
         :return: 叶子节点索引DataFrame
         """
-        if self.model_type == 'xgboost':
+        if self.model_type == "xgboost":
             return self._get_xgboost_leaves(X)
-        elif self.model_type == 'lightgbm':
+        elif self.model_type == "lightgbm":
             return self._get_lightgbm_leaves(X)
-        elif self.model_type == 'catboost':
+        elif self.model_type == "catboost":
             return self._get_catboost_leaves(X)
 
     def _get_xgboost_leaves(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -579,7 +588,7 @@ class GBMEncoder(BaseEncoder):
         leaf_indices = self.model_.get_leaf_indices(X)
 
         # 转换为DataFrame
-        columns = [f'gbm_tree_{i}' for i in range(leaf_indices.shape[1])]
+        columns = [f"gbm_tree_{i}" for i in range(leaf_indices.shape[1])]
         return pd.DataFrame(leaf_indices, index=X.index, columns=columns)
 
     def _get_lightgbm_leaves(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -592,7 +601,7 @@ class GBMEncoder(BaseEncoder):
         leaf_indices = self.model_.get_leaf_indices(X)
 
         # 转换为DataFrame
-        columns = [f'gbm_tree_{i}' for i in range(leaf_indices.shape[1])]
+        columns = [f"gbm_tree_{i}" for i in range(leaf_indices.shape[1])]
         return pd.DataFrame(leaf_indices, index=X.index, columns=columns)
 
     def _get_catboost_leaves(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -605,7 +614,7 @@ class GBMEncoder(BaseEncoder):
         leaf_indices = self.model_.get_leaf_indices(X)
 
         # 转换为DataFrame
-        columns = [f'gbm_tree_{i}' for i in range(leaf_indices.shape[1])]
+        columns = [f"gbm_tree_{i}" for i in range(leaf_indices.shape[1])]
         return pd.DataFrame(leaf_indices, index=X.index, columns=columns)
 
     def _transform_to_onehot(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -627,11 +636,8 @@ class GBMEncoder(BaseEncoder):
             unique_leaves = self.leaf_categories_[tree_idx]
 
             for leaf in unique_leaves:
-                col_name = f'gbm_tree{tree_idx}_leaf{leaf}'
-                onehot_dfs.append(pd.DataFrame(
-                    {col_name: (tree_col == leaf).astype(int)},
-                    index=X.index
-                ))
+                col_name = f"gbm_tree{tree_idx}_leaf{leaf}"
+                onehot_dfs.append(pd.DataFrame({col_name: (tree_col == leaf).astype(int)}, index=X.index))
 
         if onehot_dfs:
             return pd.concat(onehot_dfs, axis=1)
@@ -644,23 +650,20 @@ class GBMEncoder(BaseEncoder):
         :param X: 输入数据
         :return: 概率DataFrame
         """
-        if self.task == 'classification':
+        if self.task == "classification":
             proba = self.model_.predict_proba(X)
 
             if proba.shape[1] == 2:
                 # 二分类，只返回正类概率
-                return pd.DataFrame(
-                    {'gbm_proba': proba[:, 1]},
-                    index=X.index
-                )
+                return pd.DataFrame({"gbm_proba": proba[:, 1]}, index=X.index)
             else:
                 # 多分类
-                columns = [f'gbm_proba_class_{i}' for i in range(proba.shape[1])]
+                columns = [f"gbm_proba_class_{i}" for i in range(proba.shape[1])]
                 return pd.DataFrame(proba, index=X.index, columns=columns)
         else:
             # 回归任务
             pred = self.model_.predict(X)
-            return pd.DataFrame({'gbm_prediction': pred}, index=X.index)
+            return pd.DataFrame({"gbm_prediction": pred}, index=X.index)
 
     def _transform_to_embedding(self, X: pd.DataFrame) -> pd.DataFrame:
         """转换为树路径embedding。
@@ -679,18 +682,18 @@ class GBMEncoder(BaseEncoder):
 
     def _generate_feature_names(self):
         """生成编码后的特征名列表。"""
-        if self.output_type == 'leaves':
-            self.feature_names_ = [f'gbm_tree_{i}' for i in range(self.n_trees_)]
-        elif self.output_type == 'probability':
-            if self.task == 'classification':
+        if self.output_type == "leaves":
+            self.feature_names_ = [f"gbm_tree_{i}" for i in range(self.n_trees_)]
+        elif self.output_type == "probability":
+            if self.task == "classification":
                 if len(self.classes_) == 2:
-                    self.feature_names_ = ['gbm_proba']
+                    self.feature_names_ = ["gbm_proba"]
                 else:
-                    self.feature_names_ = [f'gbm_proba_class_{i}' for i in range(len(self.classes_))]
+                    self.feature_names_ = [f"gbm_proba_class_{i}" for i in range(len(self.classes_))]
             else:
-                self.feature_names_ = ['gbm_prediction']
-        elif self.output_type == 'embedding':
-            self.feature_names_ = [f'gbm_emb_{i}' for i in range(self.n_trees_)]
+                self.feature_names_ = ["gbm_prediction"]
+        elif self.output_type == "embedding":
+            self.feature_names_ = [f"gbm_emb_{i}" for i in range(self.n_trees_)]
         # onehot的特征名在转换时动态生成
 
     def get_model(self) -> Any:
@@ -726,10 +729,9 @@ class GBMEncoder(BaseEncoder):
         # 使用 hscredit 模型类的 get_feature_importances 方法
         importance_series = self.model_.get_feature_importances()
 
-        return pd.DataFrame({
-            'feature': importance_series.index,
-            'importance': importance_series.values
-        }).sort_values('importance', ascending=False)
+        return pd.DataFrame({"feature": importance_series.index, "importance": importance_series.values}).sort_values(
+            "importance", ascending=False
+        )
 
     def get_missing_stats(self) -> pd.DataFrame:
         """获取缺失值统计信息。
@@ -737,17 +739,15 @@ class GBMEncoder(BaseEncoder):
         :return: 缺失值统计DataFrame，包含'feature'、'missing_count'、'missing_ratio'三列
         """
         if not self.missing_stats_:
-            return pd.DataFrame(columns=['feature', 'missing_count', 'missing_ratio'])
+            return pd.DataFrame(columns=["feature", "missing_count", "missing_ratio"])
 
         stats = []
         for col, info in self.missing_stats_.items():
-            stats.append({
-                'feature': col,
-                'missing_count': info['missing_count'],
-                'missing_ratio': info['missing_ratio']
-            })
+            stats.append(
+                {"feature": col, "missing_count": info["missing_count"], "missing_ratio": info["missing_ratio"]}
+            )
 
-        return pd.DataFrame(stats).sort_values('missing_ratio', ascending=False)
+        return pd.DataFrame(stats).sort_values("missing_ratio", ascending=False)
 
     def plot_tree(self, tree_idx: int = 0, **kwargs):
         """绘制树结构。
@@ -761,6 +761,7 @@ class GBMEncoder(BaseEncoder):
 
         try:
             import matplotlib.pyplot as plt
+
             # 使用 hscredit 模型类的 plot_tree 方法
             self.model_.plot_tree(tree_idx, **kwargs)
             plt.show()

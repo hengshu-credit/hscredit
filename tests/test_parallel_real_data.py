@@ -20,7 +20,6 @@ from hscredit.report import (
 )
 from hscredit.report.mining import SingleFeatureRuleMiner
 
-
 WORKBOOK = Path(__file__).resolve().parents[1] / "examples" / "hscredit_yyp.xlsx"
 pytestmark = [
     pytest.mark.integration,
@@ -51,9 +50,9 @@ def yyp_data():
 def yyp_model(yyp_data):
     """固定样本顺序和随机种子的真实数据模型。"""
     train = yyp_data.iloc[:650]
-    return LogisticRegression(
-        solver="liblinear", random_state=20260805, max_iter=500
-    ).fit(train[FEATURES], train[TARGET])
+    return LogisticRegression(solver="liblinear", random_state=20260805, max_iter=500).fit(
+        train[FEATURES], train[TARGET]
+    )
 
 
 def _assert_frame_exact(left, right):
@@ -92,9 +91,7 @@ def test_real_binner_exact_across_backends(yyp_data, backend):
     columns = FEATURES + [CATEGORY]
     kwargs = dict(max_n_bins=5, min_n_bins=2, random_state=20260805)
     serial = QuantileBinning(n_jobs=1, **kwargs).fit(yyp_data[columns], yyp_data[TARGET])
-    parallel = QuantileBinning(n_jobs=2, parallel_backend=backend, **kwargs).fit(
-        yyp_data[columns], yyp_data[TARGET]
-    )
+    parallel = QuantileBinning(n_jobs=2, parallel_backend=backend, **kwargs).fit(yyp_data[columns], yyp_data[TARGET])
 
     assert list(serial.splits_) == list(parallel.splits_) == columns
     _assert_nested_value_exact(serial.splits_, parallel.splits_)
@@ -108,9 +105,7 @@ def test_real_binner_exact_across_backends(yyp_data, backend):
 def test_real_selector_exact_across_backends(yyp_data, backend):
     """高维入口的特征顺序、IV 得分和筛选输出完全一致。"""
     serial = IVSelector(threshold=0.0, n_jobs=1).fit(yyp_data[FEATURES], yyp_data[TARGET])
-    parallel = IVSelector(threshold=0.0, n_jobs=2, parallel_backend=backend).fit(
-        yyp_data[FEATURES], yyp_data[TARGET]
-    )
+    parallel = IVSelector(threshold=0.0, n_jobs=2, parallel_backend=backend).fit(yyp_data[FEATURES], yyp_data[TARGET])
 
     assert serial.selected_features_ == parallel.selected_features_
     pd.testing.assert_series_equal(serial.scores_, parallel.scores_, check_exact=True, check_dtype=True)
@@ -122,9 +117,9 @@ def test_real_encoder_exact_across_backends(yyp_data, backend):
     """真实商品类别的映射、列顺序、dtype 与编码值完全一致。"""
     inputs = yyp_data[[CATEGORY, FEATURES[0]]]
     serial = WOEEncoder(features=[CATEGORY], regularization=1.0, n_jobs=1).fit(inputs, yyp_data[TARGET])
-    parallel = WOEEncoder(
-        features=[CATEGORY], regularization=1.0, n_jobs=2, parallel_backend=backend
-    ).fit(inputs, yyp_data[TARGET])
+    parallel = WOEEncoder(features=[CATEGORY], regularization=1.0, n_jobs=2, parallel_backend=backend).fit(
+        inputs, yyp_data[TARGET]
+    )
 
     _assert_nested_value_exact(serial.export_mapping(), parallel.export_mapping())
     _assert_frame_exact(serial.transform(inputs), parallel.transform(inputs))
@@ -148,9 +143,7 @@ def test_real_rule_analysis_exact_across_backends(yyp_data, backend):
         amount=AMOUNT,
     )
     serial = ruleset_analysis(rules=_real_rules(), n_jobs=1, **common)
-    parallel = ruleset_analysis(
-        rules=_real_rules(), n_jobs=2, parallel_backend=backend, **common
-    )
+    parallel = ruleset_analysis(rules=_real_rules(), n_jobs=2, parallel_backend=backend, **common)
     _assert_frame_exact(serial, parallel)
 
     # API 约定 date 与 group 互斥，因此分别覆盖月份和商品类别两种分组。
@@ -178,10 +171,7 @@ def test_real_rule_analysis_exact_across_backends(yyp_data, backend):
 
 
 def _normalized_mined_rules(miner):
-    return [
-        (rule.expr, rule.name, rule.description, rule.weight)
-        for rule in miner.get_rules()
-    ]
+    return [(rule.expr, rule.name, rule.description, rule.weight) for rule in miner.get_rules()]
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -217,9 +207,7 @@ def test_real_feature_report_exact_across_backends(yyp_data, backend):
         random_state=20260805,
     )
     serial_tables, serial_summary = feature_binning_summary(n_jobs=1, **kwargs)
-    parallel_tables, parallel_summary = feature_binning_summary(
-        n_jobs=2, parallel_backend=backend, **kwargs
-    )
+    parallel_tables, parallel_summary = feature_binning_summary(n_jobs=2, parallel_backend=backend, **kwargs)
 
     assert list(serial_tables) == list(parallel_tables)
     for feature in serial_tables:

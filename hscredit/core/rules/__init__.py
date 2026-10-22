@@ -21,15 +21,15 @@ from .artifact import RuleArtifact
 from .accumulator import RuleAccumulator
 
 __all__ = [
-    'Rule',
-    'RuleFlow',
-    'RuleArtifact',
-    'RuleAccumulator',
-    'get_columns_from_query',
-    'optimize_expr',
-    'beautify_expr',
-    'get_expr_variables',
-    'RuleState',
-    'RuleStateError',
-    'RuleUnAppliedError',
+    "Rule",
+    "RuleFlow",
+    "RuleArtifact",
+    "RuleAccumulator",
+    "get_columns_from_query",
+    "optimize_expr",
+    "beautify_expr",
+    "get_expr_variables",
+    "RuleState",
+    "RuleStateError",
+    "RuleUnAppliedError",
 ]

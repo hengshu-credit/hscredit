@@ -5,7 +5,6 @@ import time
 
 import pytest
 
-
 jupyter_client = pytest.importorskip("jupyter_client")
 pytest.importorskip("ipykernel")
 

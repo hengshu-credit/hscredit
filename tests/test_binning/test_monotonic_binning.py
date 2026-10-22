@@ -15,9 +15,9 @@ from hscredit.core.binning import MonotonicBinning
 
 # 读取测试数据
 df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit_yyp.xlsx")
-df['target'] = df['FPD'].astype(int)
-X = df[['青云24']].copy()
-y = df['target'].copy()
+df["target"] = df["FPD"].astype(int)
+X = df[["青云24"]].copy()
+y = df["target"].copy()
 
 print("=" * 60)
 print("MonotonicBinning 单调性约束分箱测试")
@@ -25,49 +25,49 @@ print("=" * 60)
 
 # 测试递增
 print("\n1. 测试递增约束 (monotonic='ascending'):")
-binner = MonotonicBinning(monotonic='ascending', max_n_bins=5, verbose=True)
+binner = MonotonicBinning(monotonic="ascending", max_n_bins=5, verbose=True)
 binner.fit(X, y)
 
-table = binner.get_bin_table('青云24')
+table = binner.get_bin_table("青云24")
 print("\n分箱统计表:")
 print(table)
 
-bad_rates = table[table['分箱标签'] != 'missing']['坏样本率'].tolist()
+bad_rates = table[table["分箱标签"] != "missing"]["坏样本率"].tolist()
 print(f"\n坏样本率: {[round(r, 4) for r in bad_rates]}")
-is_asc = all(bad_rates[i] <= bad_rates[i+1] + 1e-10 for i in range(len(bad_rates)-1))
+is_asc = all(bad_rates[i] <= bad_rates[i + 1] + 1e-10 for i in range(len(bad_rates) - 1))
 print(f"是否递增: {is_asc}")
 print(f"✓ 测试通过" if is_asc else "✗ 测试失败")
 
 # 测试递减
 print("\n2. 测试递减约束 (monotonic='descending'):")
-binner2 = MonotonicBinning(monotonic='descending', max_n_bins=5, verbose=True)
+binner2 = MonotonicBinning(monotonic="descending", max_n_bins=5, verbose=True)
 binner2.fit(X, y)
 
-table2 = binner2.get_bin_table('青云24')
+table2 = binner2.get_bin_table("青云24")
 print("\n分箱统计表:")
 print(table2)
 
-bad_rates2 = table2[table2['分箱标签'] != 'missing']['坏样本率'].tolist()
+bad_rates2 = table2[table2["分箱标签"] != "missing"]["坏样本率"].tolist()
 print(f"\n坏样本率: {[round(r, 4) for r in bad_rates2]}")
-is_desc = all(bad_rates2[i] >= bad_rates2[i+1] - 1e-10 for i in range(len(bad_rates2)-1))
+is_desc = all(bad_rates2[i] >= bad_rates2[i + 1] - 1e-10 for i in range(len(bad_rates2) - 1))
 print(f"是否递减: {is_desc}")
 print(f"✓ 测试通过" if is_desc else "✗ 测试失败")
 
 # 测试自动检测
 print("\n3. 测试自动检测 (monotonic='auto'):")
-binner3 = MonotonicBinning(monotonic='auto', max_n_bins=5, verbose=True)
+binner3 = MonotonicBinning(monotonic="auto", max_n_bins=5, verbose=True)
 binner3.fit(X, y)
 
-table3 = binner3.get_bin_table('青云24')
+table3 = binner3.get_bin_table("青云24")
 print("\n分箱统计表:")
 print(table3)
 
-bad_rates3 = table3[table3['分箱标签'] != 'missing']['坏样本率'].tolist()
+bad_rates3 = table3[table3["分箱标签"] != "missing"]["坏样本率"].tolist()
 print(f"\n坏样本率: {[round(r, 4) for r in bad_rates3]}")
 
 # 检查单调性
-is_asc3 = all(bad_rates3[i] <= bad_rates3[i+1] + 1e-10 for i in range(len(bad_rates3)-1))
-is_desc3 = all(bad_rates3[i] >= bad_rates3[i+1] - 1e-10 for i in range(len(bad_rates3)-1))
+is_asc3 = all(bad_rates3[i] <= bad_rates3[i + 1] + 1e-10 for i in range(len(bad_rates3) - 1))
+is_desc3 = all(bad_rates3[i] >= bad_rates3[i + 1] - 1e-10 for i in range(len(bad_rates3) - 1))
 print(f"是否递增: {is_asc3}")
 print(f"是否递减: {is_desc3}")
 print(f"是否单调: {is_asc3 or is_desc3}")

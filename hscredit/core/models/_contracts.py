@@ -182,6 +182,7 @@ class ExtraParamsMixin:
     def __setstate__(self, state):
         super().__setstate__(state)
         from ._lifecycle import restore_model_defaults
+
         restore_model_defaults(self)
 
     def get_params(self, deep=True):
@@ -224,6 +225,7 @@ class InferenceExportMixin:
     def __setstate__(self, state):
         super().__setstate__(state)
         from ._lifecycle import restore_model_defaults
+
         restore_model_defaults(self)
 
     def save_inference(self, path, *, engine="cloudpickle", **kwargs):

@@ -14,18 +14,30 @@ def test_chinese_and_non_identifier_columns():
     assert out["加倍"].tolist() == [8, 12]
 
 
-@pytest.mark.parametrize("expression", [
-    "__import__('math').sqrt(4)", "np.__dict__", "收入.__class__", "np.load('file')",
-    "(lambda: 1)()", "[x for x in 收入]", "getattr(np, 'load')('x')", "收入[0]",
-    "np.maximum(收入, 0, 收入)", "np.clip(收入, 0, 1, out=收入)",
-])
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "__import__('math').sqrt(4)",
+        "np.__dict__",
+        "收入.__class__",
+        "np.load('file')",
+        "(lambda: 1)()",
+        "[x for x in 收入]",
+        "getattr(np, 'load')('x')",
+        "收入[0]",
+        "np.maximum(收入, 0, 收入)",
+        "np.clip(收入, 0, 1, out=收入)",
+    ],
+)
 def test_untrusted_expression_cannot_execute_python(expression):
     with pytest.raises(ValueError):
         NumExprDerive([("z", expression)]).fit_transform(pd.DataFrame({"收入": [1, 2]}))
 
 
 def test_trusted_python_is_explicit_opt_in():
-    result = NumExprDerive([("z", "__import__('math').sqrt(4)")], trusted_python=True).fit_transform(pd.DataFrame({"x": [1, 2]}))
+    result = NumExprDerive([("z", "__import__('math').sqrt(4)")], trusted_python=True).fit_transform(
+        pd.DataFrame({"x": [1, 2]})
+    )
     assert result.z.tolist() == [2, 2]
 
 

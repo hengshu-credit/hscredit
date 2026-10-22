@@ -155,9 +155,7 @@ def test_multilabel_legend_sits_between_title_and_content_without_axis_clipping(
     assert len(fig.legends) == 1
     legend = fig.legends[0]
     assert not legend.get_frame_on()
-    assert [text.get_text() for text in legend.get_texts()] == [
-        "MOB1_7+", "MOB1_30+", "MOB3_7+", "MOB3_30+"
-    ]
+    assert [text.get_text() for text in legend.get_texts()] == ["MOB1_7+", "MOB1_30+", "MOB3_7+", "MOB3_30+"]
 
     rate_axes = [ax for ax in fig.axes if ax.get_ylabel().endswith("坏样本率")]
     count_ax = next(ax for ax in fig.axes if ax.get_ylabel() == "样本数")
@@ -181,9 +179,7 @@ def test_multilabel_legend_sits_between_title_and_content_without_axis_clipping(
         np.testing.assert_allclose([rate_box.x0, rate_box.x1], [count_box.x0, count_box.x1], atol=0.5)
 
     line = rate_axes[0].lines[0]
-    line_x = rate_axes[0].transData.transform(
-        np.column_stack([line.get_xdata(), line.get_ydata()])
-    )[:, 0]
+    line_x = rate_axes[0].transData.transform(np.column_stack([line.get_xdata(), line.get_ydata()]))[:, 0]
     bar_centers = np.array([patch.get_x() + patch.get_width() / 2 for patch in count_ax.patches])
     bar_x = count_ax.transData.transform(np.column_stack([bar_centers, np.zeros_like(bar_centers)]))[:, 0]
     np.testing.assert_allclose(line_x, bar_x, atol=0.5)
@@ -227,10 +223,30 @@ def test_multilabel_axes_keep_distinct_series_visually_separated():
         {
             "日期": dates,
             "MOB1": [
-                0, 2, 8, 16, 35, 50,
-                0, 0, 5, 10, 20, 40,
-                1, 9, 18, 32, 45, 60,
-                0, 3, 12, 28, 38, 70,
+                0,
+                2,
+                8,
+                16,
+                35,
+                50,
+                0,
+                0,
+                5,
+                10,
+                20,
+                40,
+                1,
+                9,
+                18,
+                32,
+                45,
+                60,
+                0,
+                3,
+                12,
+                28,
+                38,
+                70,
             ],
         }
     )
@@ -356,11 +372,7 @@ def test_short_custom_palette_is_extended_with_unique_hscredit_colors():
         show_sample_count=False,
     )
 
-    line_colors = [
-        to_hex(line.get_color()).lower()
-        for ax in fig.axes
-        for line in ax.lines
-    ]
+    line_colors = [to_hex(line.get_color()).lower() for ax in fig.axes for line in ax.lines]
     assert line_colors[:2] == ["#112233", "#445566"]
     assert len(set(line_colors)) == 4
     plt.close(fig)

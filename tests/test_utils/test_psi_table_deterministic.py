@@ -13,4 +13,3 @@ def test_psi_table_supervised_methods_are_deterministic():
 
     assert first["分箱"].astype(str).tolist() == second["分箱"].astype(str).tolist()
     np.testing.assert_allclose(first["PSI贡献"].to_numpy(), second["PSI贡献"].to_numpy())
-

@@ -71,7 +71,9 @@ def test_mdlp_prefix_recursion_and_force_match_legacy(seed, discrete):
     old = LegacyScanMDLP(max_n_bins=5, n_jobs=1)
     np.testing.assert_array_equal(new._mdlp_split_v3(x, y), old._mdlp_split_v3(x, y))
     candidates = new._find_all_candidates_v3(x, y)
-    np.testing.assert_array_equal(new._force_additional_splits_v3(x, y, [], candidates), old._force_additional_splits_v3(x, y, [], candidates))
+    np.testing.assert_array_equal(
+        new._force_additional_splits_v3(x, y, [], candidates), old._force_additional_splits_v3(x, y, [], candidates)
+    )
 
 
 @pytest.mark.parametrize("target", [np.zeros(30), np.ones(30), np.tile([0.0, 1.0], 15)])

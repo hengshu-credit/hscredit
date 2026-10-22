@@ -102,9 +102,7 @@ def test_main_executes_nested_notebook_from_examples_root(tmp_path: Path) -> Non
     path = notebook_dir / "run.ipynb"
     _write_notebook(path, "from pathlib import Path\nPath('root-marker.txt').write_text('ok')")
 
-    exit_code = main(
-        ["--examples-dir", str(examples_dir), "--pattern", "nested/*.ipynb", "--timeout", "10"]
-    )
+    exit_code = main(["--examples-dir", str(examples_dir), "--pattern", "nested/*.ipynb", "--timeout", "10"])
 
     assert exit_code == 0
     assert (examples_dir / "root-marker.txt").read_text(encoding="utf-8") == "ok"

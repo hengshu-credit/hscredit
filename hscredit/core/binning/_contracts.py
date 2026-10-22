@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple,
 import numpy as np
 import pandas as pd
 
-
 MISSING_BIN = -1
 SPECIAL_BIN = -2
 UNKNOWN_BIN = -3
@@ -88,7 +87,10 @@ def _expand_fixed_value(feature: str, value: FixedFeatureValue, expected_length:
         raise ValueError(f"特征 '{feature}' 的 user_splits_fixed 必须是布尔值或布尔序列")
     resolved = list(value)
     if len(resolved) != expected_length:
-        raise ValueError(f"特征 '{feature}' 的 user_splits_fixed 长度必须等于有效用户节点数 " f"{expected_length}，实际为 {len(resolved)}")
+        raise ValueError(
+            f"特征 '{feature}' 的 user_splits_fixed 长度必须等于有效用户节点数 "
+            f"{expected_length}，实际为 {len(resolved)}"
+        )
     if not all(isinstance(item, (bool, np.bool_)) for item in resolved):
         raise ValueError(f"特征 '{feature}' 的 user_splits_fixed 只能包含布尔值")
     return [bool(item) for item in resolved]

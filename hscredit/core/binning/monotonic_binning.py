@@ -1133,7 +1133,8 @@ class MonotonicBinning(BaseBinning):
         feature: str,
         metric: str = "bad_rate",
         figsize: Tuple[int, int] = (10, 6),
-        save: Optional[str] = None, *,
+        save: Optional[str] = None,
+        *,
         dpi: int = 240,
     ):
         """绘制分箱结果可视化.

@@ -62,9 +62,13 @@ def test_grey_filtered_2d_tables_keep_target_specific_denominators():
 
 
 def test_binning_skips_an_unusable_all_grey_first_target():
-    data = _data().drop(columns="MOB1").assign(
-        MOB1=[0.0, 4.0, 0.0, 4.0, 0.0, 4.0],
-        MOB2=[1.0, 2.0, 1.0, 2.0, 1.0, 2.0],
+    data = (
+        _data()
+        .drop(columns="MOB1")
+        .assign(
+            MOB1=[0.0, 4.0, 0.0, 4.0, 0.0, 4.0],
+            MOB2=[1.0, 2.0, 1.0, 2.0, 1.0, 2.0],
+        )
     )
     table = feature_bin_stats(
         data,

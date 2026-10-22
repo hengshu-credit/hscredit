@@ -103,7 +103,8 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
 
     assert any(
         "模型菜单" in error
-        and "经典模型、Boosting、规则器、评分卡、概率校准、模型可解释性、损失函数与评估指标、评估指标、超参数调优" in error
+        and "经典模型、Boosting、规则器、评分卡、概率校准、模型可解释性、损失函数与评估指标、评估指标、超参数调优"
+        in error
         for error in errors
     )
 

@@ -286,7 +286,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     # 公共接口
     # -------------------------------------------------------------------------
 
-    @analysis_inputs('X', roles=(), dimensions=2)
+    @analysis_inputs("X", roles=(), dimensions=2)
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -475,7 +475,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             input_features = np.asarray(input_features, dtype=object)
             if not np.array_equal(input_features, self.feature_names_in_):
                 raise ValueError(
-                    f"input_features 必须与拟合时特征一致，期望 " f"{self.feature_names_in_.tolist()}，实际 {input_features.tolist()}"
+                    f"input_features 必须与拟合时特征一致，期望 "
+                    f"{self.feature_names_in_.tolist()}，实际 {input_features.tolist()}"
                 )
         return np.asarray([self.feature_name_], dtype=object)
 
@@ -628,7 +629,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 }
             if feature not in (self.feature_x_, self.feature_y_):
                 raise HSCreditError(
-                    f"特征 '{feature}' 未找到，可用: " f"['{self.feature_x_}', '{self.feature_y_}', '{self.feature_name_}']"
+                    f"特征 '{feature}' 未找到，可用: "
+                    f"['{self.feature_x_}', '{self.feature_y_}', '{self.feature_name_}']"
                 )
             binner_inst = self.binner_x_ if feature == self.feature_x_ else self.binner_y_
             return _stats_for(binner_inst, feature)
@@ -1066,11 +1068,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             raise ValueError("retain_training_data 必须是布尔值")
         value = self.min_bin_size
         valid_count = isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_)) and value > 0
-        valid_ratio = (
-            isinstance(value, (float, np.floating))
-            and np.isfinite(value)
-            and 0 < float(value) < 1
-        )
+        valid_ratio = isinstance(value, (float, np.floating)) and np.isfinite(value) and 0 < float(value) < 1
         if value is not None and not (valid_count or valid_ratio):
             raise ValueError("min_bin_size 必须是 (0, 1) 内的有限浮点占比，或正整数样本数")
 
@@ -1390,11 +1388,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             return sorted(pairs)
 
         def normal_ids(matrix: np.ndarray) -> set:
-            return {
-                int(bin_id)
-                for bin_id in np.unique(matrix[: self.n_bins_x_, : self.n_bins_y_])
-                if int(bin_id) >= 0
-            }
+            return {int(bin_id) for bin_id in np.unique(matrix[: self.n_bins_x_, : self.n_bins_y_]) if int(bin_id) >= 0}
 
         def active_ids(matrix: np.ndarray) -> set:
             return {int(bin_id) for bin_id in np.unique(matrix) if int(bin_id) >= 0}
@@ -1456,9 +1450,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
             if len(active_ids(solution)) == len(represented_groups):
                 counts = region_counts(solution)
-                remaining_small = {
-                    k for k in normal_ids(solution) if total > 0 and sum(counts[k]) < min_count
-                }
+                remaining_small = {k for k in normal_ids(solution) if total > 0 and sum(counts[k]) < min_count}
                 if len(active_ids(solution)) > max_bins or remaining_small:
                     raise ValueError("二维分箱在保持缺失值独立语义时无法同时满足最大分箱数和最小样本量约束")
 
@@ -1495,14 +1487,15 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 solution[solution == remove] = keep
 
             if self.verbose and len(active_ids(solution)) <= 1:
-                warnings.warn("单调性硬约束将二维分箱合并为单一分箱，" "请考虑放宽单调性约束（monotonic_x/monotonic_y）或调整预分箱粒度")
+                warnings.warn(
+                    "单调性硬约束将二维分箱合并为单一分箱，"
+                    "请考虑放宽单调性约束（monotonic_x/monotonic_y）或调整预分箱粒度"
+                )
 
         final_counts = region_counts(solution)
         if len(final_counts) > max_bins:
             raise ValueError(f"二维分箱结果为 {len(final_counts)} 箱，超过 max_n_bins_2d={max_bins}")
-        remaining_small = {
-            k for k in normal_ids(solution) if total > 0 and sum(final_counts[k]) < min_count
-        }
+        remaining_small = {k for k in normal_ids(solution) if total > 0 and sum(final_counts[k]) < min_count}
         if remaining_small:
             raise ValueError(f"二维分箱无法满足 min_bin_size，仍有 {len(remaining_small)} 个普通分箱样本量不足")
 
@@ -1673,7 +1666,11 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 "分箱标签",
                 "样本总数",
                 "样本占比",
-                *[column for column in table.columns if column not in {"指标名称", "指标含义", "分箱", "分箱标签", "样本总数", "样本占比"}],
+                *[
+                    column
+                    for column in table.columns
+                    if column not in {"指标名称", "指标含义", "分箱", "分箱标签", "样本总数", "样本占比"}
+                ],
             ]
         ]
         joint_iv = float(table["分档IV值"].sum())

@@ -39,13 +39,13 @@ def test_string_auc_preserves_legacy_automatic_direction():
 def test_auc_direction_binding_and_weight_match_raw_ranking(score_direction, sample_weight):
     y, p = [0, 0, 1, 1], [0.8, 0.2, 0.3, 0.1]
     raw = roc_auc_score(y, p, sample_weight=sample_weight)
-    expected = max(raw, 1 - raw) if score_direction == "auto" else (
-        raw if score_direction == "higher_risk" else 1 - raw
+    expected = (
+        max(raw, 1 - raw) if score_direction == "auto" else (raw if score_direction == "higher_risk" else 1 - raw)
     )
     metric = TuningObjective.get("auc", score_direction=score_direction)
-    assert TuningObjective.auc(
-        y, p, score_direction=score_direction, sample_weight=sample_weight
-    ) == pytest.approx(expected)
+    assert TuningObjective.auc(y, p, score_direction=score_direction, sample_weight=sample_weight) == pytest.approx(
+        expected
+    )
     assert metric(y, p, sample_weight=sample_weight) == pytest.approx(expected)
     assert Metric(metric)(y, p, sample_weight=sample_weight) == pytest.approx(expected)
     assert Metric(AUCMetric())(y, p, sample_weight=sample_weight) == pytest.approx(raw)

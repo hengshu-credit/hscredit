@@ -28,7 +28,6 @@ from .parallel import (
     validate_parallel_config,
 )
 
-
 _THREAD_SAFE_CALLABLES = (
     np.all,
     np.any,

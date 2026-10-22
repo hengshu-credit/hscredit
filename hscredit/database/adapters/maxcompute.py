@@ -215,11 +215,7 @@ class MaxComputeAdapter(DBAPIAdapter):
         if options.get("transactional") and key_columns:
             quoted_keys = ", ".join(self.quote_identifier(str(column)) for column in key_columns)
             definitions.append(f"PRIMARY KEY ({quoted_keys})")
-        ddl = (
-            f"CREATE TABLE {self.quote_qualified_name(table_name)} (\n  "
-            + ",\n  ".join(definitions)
-            + "\n)"
-        )
+        ddl = f"CREATE TABLE {self.quote_qualified_name(table_name)} (\n  " + ",\n  ".join(definitions) + "\n)"
         table_comment = options.get("table_comment") or options.get("comment")
         if table_comment is not None:
             ddl += f"\nCOMMENT {self._quote_literal(table_comment)}"

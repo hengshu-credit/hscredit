@@ -28,7 +28,14 @@ def plotted():
 
 @pytest.mark.parametrize(
     "method_name",
-    ["plot_decision", "plot_heatmap", "plot_correlation", "plot_feature_clustering", "plot_importance_overview", "plot_explanation_overview"],
+    [
+        "plot_decision",
+        "plot_heatmap",
+        "plot_correlation",
+        "plot_feature_clustering",
+        "plot_importance_overview",
+        "plot_explanation_overview",
+    ],
 )
 def test_new_plots_return_figures_without_showing(method_name, plotted, monkeypatch):
     explainer, result = plotted

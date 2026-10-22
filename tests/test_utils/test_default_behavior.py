@@ -12,16 +12,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from hscredit.core.binning import (
-    UniformBinning, QuantileBinning, TreeBinning
-)
+from hscredit.core.binning import UniformBinning, QuantileBinning, TreeBinning
 
 # 加载测试数据
 df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit_yyp.xlsx")
-df['target'] = df['FPD'].astype(int)
+df["target"] = df["FPD"].astype(int)
 
-X = df[['青云24']].copy()
-y = df['target'].copy()
+X = df[["青云24"]].copy()
+y = df["target"].copy()
 
 print("=" * 80)
 print("验证 force_numerical 默认行为")
@@ -36,9 +34,9 @@ try:
     print(f"  特征类型: {binner.feature_types_}")
     print(f"  切分点: {binner.splits_}")
     print(f"  分箱数: {binner.n_bins_}")
-    
+
     # 检查是否正确识别为数值型
-    if binner.feature_types_['青云24'] == 'numerical':
+    if binner.feature_types_["青云24"] == "numerical":
         print("  ✓ 正确识别为数值型")
     else:
         print("  ⚠ 被识别为类别型")
@@ -54,8 +52,8 @@ try:
     print(f"  特征类型: {binner.feature_types_}")
     print(f"  切分点: {binner.splits_}")
     print(f"  分箱数: {binner.n_bins_}")
-    
-    if binner.feature_types_['青云24'] == 'numerical':
+
+    if binner.feature_types_["青云24"] == "numerical":
         print("  ✓ 正确识别为数值型")
     else:
         print("  ⚠ 被识别为类别型")
@@ -71,8 +69,8 @@ try:
     print(f"  特征类型: {binner.feature_types_}")
     print(f"  切分点: {binner.splits_}")
     print(f"  分箱数: {binner.n_bins_}")
-    
-    if binner.feature_types_['青云24'] == 'numerical':
+
+    if binner.feature_types_["青云24"] == "numerical":
         print("  ✓ 正确识别为数值型")
     else:
         print("  ⚠ 被识别为类别型")
@@ -86,15 +84,15 @@ try:
     binner = UniformBinning(max_n_bins=5, force_numerical=True)
     binner.fit(X, y)
     print(f"  UniformBinning: {binner.feature_types_}")
-    
+
     binner2 = QuantileBinning(max_n_bins=5, force_numerical=True)
     binner2.fit(X, y)
     print(f"  QuantileBinning: {binner2.feature_types_}")
-    
+
     binner3 = TreeBinning(max_depth=5, max_n_bins=5, force_numerical=True)
     binner3.fit(X, y)
     print(f"  TreeBinning: {binner3.feature_types_}")
-    
+
     print("  ✓ 显式设置 force_numerical=True 工作正常")
 except Exception as e:
     print(f"  ✗ 失败: {e}")
@@ -104,14 +102,14 @@ print("\n5. 测试类别型特征检测")
 print("-" * 60)
 try:
     # 创建一个类别型特征
-    X_cat = pd.DataFrame({'category': ['A', 'B', 'C', 'A', 'B', 'C'] * 100})
+    X_cat = pd.DataFrame({"category": ["A", "B", "C", "A", "B", "C"] * 100})
     y_cat = pd.Series([0, 1, 0, 1, 0, 1] * 100)
-    
+
     binner = UniformBinning(max_n_bins=5)
     binner.fit(X_cat, y_cat)
     print(f"  类别型特征检测结果: {binner.feature_types_}")
-    
-    if binner.feature_types_['category'] == 'categorical':
+
+    if binner.feature_types_["category"] == "categorical":
         print("  ✓ 正确识别类别型特征")
     else:
         print("  ⚠ 类别型特征未被正确识别")

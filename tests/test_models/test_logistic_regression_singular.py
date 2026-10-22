@@ -3,6 +3,7 @@
 
 import sys
 import os
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 hscredit_pkg = os.path.dirname(script_dir)
 sys.path.insert(0, hscredit_pkg)
@@ -21,15 +22,16 @@ try:
     np.random.seed(42)
     X = np.random.randn(100, 3)
     y = np.random.randint(0, 2, 100)
-    
-    model = LogisticRegression(penalty='l2', C=1.0, max_iter=100, random_state=42)
+
+    model = LogisticRegression(penalty="l2", C=1.0, max_iter=100, random_state=42)
     model.fit(X, y)
-    
+
     print(f"✓ 正常数据训练成功")
     print(f"  系数: {model.coef_}")
     print(f"  VIF: {model.vif_}")
 except Exception as e:
     import traceback
+
     print(f"✗ 失败: {e}")
     traceback.print_exc()
 
@@ -41,15 +43,16 @@ try:
     # 添加完全相关的列
     X = np.column_stack([X, X[:, 0]])  # 第4列与第1列完全相同
     y = np.random.randint(0, 2, 100)
-    
-    model = LogisticRegression(penalty='l2', C=1.0, max_iter=100, random_state=42)
+
+    model = LogisticRegression(penalty="l2", C=1.0, max_iter=100, random_state=42)
     model.fit(X, y)
-    
+
     print(f"✓ 奇异矩阵处理成功")
     print(f"  系数: {model.coef_}")
     print(f"  VIF: {model.vif_}")
 except Exception as e:
     import traceback
+
     print(f"✗ 失败: {e}")
     traceback.print_exc()
 
@@ -61,15 +64,16 @@ try:
     # 添加高度相关的列
     X = np.column_stack([X, X[:, 0] + np.random.randn(100) * 0.01])  # 与第1列高度相关
     y = np.random.randint(0, 2, 100)
-    
-    model = LogisticRegression(penalty='l2', C=1.0, max_iter=100, random_state=42)
+
+    model = LogisticRegression(penalty="l2", C=1.0, max_iter=100, random_state=42)
     model.fit(X, y)
-    
+
     print(f"✓ 高度相关特征处理成功")
     print(f"  系数: {model.coef_}")
     print(f"  VIF: {model.vif_}")
 except Exception as e:
     import traceback
+
     print(f"✗ 失败: {e}")
     traceback.print_exc()
 
@@ -81,15 +85,16 @@ try:
     # 添加常数列
     X = np.column_stack([X, np.ones(100)])
     y = np.random.randint(0, 2, 100)
-    
-    model = LogisticRegression(penalty='l2', C=1.0, max_iter=100, random_state=42)
+
+    model = LogisticRegression(penalty="l2", C=1.0, max_iter=100, random_state=42)
     model.fit(X, y)
-    
+
     print(f"✓ 常数特征处理成功")
     print(f"  系数: {model.coef_}")
     print(f"  VIF: {model.vif_}")
 except Exception as e:
     import traceback
+
     print(f"✗ 失败: {e}")
     traceback.print_exc()
 

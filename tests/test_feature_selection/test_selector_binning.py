@@ -217,9 +217,7 @@ def test_corr_include_participates_but_force_drop_skips_pre_binning():
     assert binner.fit_columns == [["强制保留", "普通字段"]]
     assert binner.transform_columns == [["强制保留", "普通字段"]]
     assert selector.selected_features_ == ["强制保留"]
-    assert selector.dropped_.loc[
-        selector.dropped_["特征"] == "普通字段", "相关特征"
-    ].tolist() == ["强制保留"]
+    assert selector.dropped_.loc[selector.dropped_["特征"] == "普通字段", "相关特征"].tolist() == ["强制保留"]
 
 
 def test_all_forced_fields_skip_binner_and_finish_with_complete_metadata():
@@ -265,12 +263,7 @@ def test_corr_selector_uses_default_best_iv_binner_and_same_bin_tables(corr_xy):
     assert binner.method == "best_iv"
     assert binner.max_n_bins == 5
     assert binner.min_bin_size == 0.01
-    expected = pd.Series(
-        {
-            column: binner.bin_tables_[column]["指标IV值"].iloc[0]
-            for column in X.columns
-        }
-    )
+    expected = pd.Series({column: binner.bin_tables_[column]["指标IV值"].iloc[0] for column in X.columns})
     pd.testing.assert_series_equal(
         selector.scores_.sort_index(),
         expected.sort_index(),

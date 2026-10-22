@@ -15,7 +15,6 @@ from joblib import cpu_count as joblib_cpu_count
 
 from ..exceptions import ParallelExecutionError, ValidationError
 
-
 NJobs = Optional[Union[int, float]]
 Task = TypeVar("Task")
 Result = TypeVar("Result")
@@ -133,7 +132,9 @@ class ParallelBudget:
         object.__setattr__(self, "available", _validate_integer(self.available, "available", 1))
         object.__setattr__(self, "depth", _validate_integer(self.depth, "depth", 0))
         if self.memory_budget_bytes is not None:
-            object.__setattr__(self, "memory_budget_bytes", _validate_integer(self.memory_budget_bytes, "memory_budget_bytes", 1))
+            object.__setattr__(
+                self, "memory_budget_bytes", _validate_integer(self.memory_budget_bytes, "memory_budget_bytes", 1)
+            )
 
 
 @dataclass(frozen=True)
@@ -161,7 +162,12 @@ class ParallelWorkload:
         object.__setattr__(self, "data_bytes", _validate_integer(self.data_bytes, "data_bytes", 0))
         for name in ("working_bytes_per_task", "result_bytes_per_task", "output_rows_per_task"):
             object.__setattr__(self, name, _validate_integer(getattr(self, name), name, 0))
-        if isinstance(self.cost_per_item, (bool, np.bool_)) or not isinstance(self.cost_per_item, numbers.Real) or not math.isfinite(float(self.cost_per_item)) or float(self.cost_per_item) <= 0:
+        if (
+            isinstance(self.cost_per_item, (bool, np.bool_))
+            or not isinstance(self.cost_per_item, numbers.Real)
+            or not math.isfinite(float(self.cost_per_item))
+            or float(self.cost_per_item) <= 0
+        ):
             raise ValidationError("cost_per_item 必须为有限正数")
         object.__setattr__(self, "cost_per_item", float(self.cost_per_item))
         if self.capability not in _PARALLEL_CAPABILITIES:
@@ -293,7 +299,9 @@ def resolve_n_jobs(
     return max(1, workers)
 
 
-def validate_parallel_config(parallel_backend: Optional[str], parallel_config: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+def validate_parallel_config(
+    parallel_backend: Optional[str], parallel_config: Optional[Mapping[str, Any]]
+) -> Dict[str, Any]:
     """校验 joblib 并行配置并返回独立的配置字典。
 
     工作数和后端由公共参数统一管理，不能在 ``parallel_config`` 中重复声明。
@@ -368,18 +376,12 @@ def plan_parallel_execution(
 
     backend = parallel_backend or default_backend
     if backend is None:
-        if workload.capability == "thread_safe" or (
-            workload.capability == "process_safe" and workload.releases_gil
-        ):
+        if workload.capability == "thread_safe" or (workload.capability == "process_safe" and workload.releases_gil):
             backend = "threading"
         elif workload.capability == "process_safe":
             backend = "loky"
 
-    adaptive = (
-        bool(config.get("adaptive", True))
-        and parallel_backend is None
-        and n_jobs == -1
-    )
+    adaptive = bool(config.get("adaptive", True)) and parallel_backend is None and n_jobs == -1
     estimated_work = workload.estimated_work
     if workload.capability in {"serial_only", "vectorized"}:
         workers = 1
@@ -409,15 +411,19 @@ def plan_parallel_execution(
     inflight = config.get("max_inflight_tasks")
     if inflight is not None:
         workers = min(workers, inflight)
+
     def estimate_peak(count):
         # 未声明中间量时，保守计入每 worker 一份输入大小的临时空间；
         # 进程后端再计入独立输入。调用方仍应明确提供额外模型/矩阵大小。
         working = workload.working_bytes_per_task or workload.data_bytes
         copied_input = workload.data_bytes if backend in {"loky", "multiprocessing"} and count > 1 else 0
-        retained_tasks = workload.task_count if config.get("result_retention", "list") == "list" else min(
-            workload.task_count, inflight or max(1, 2 * count)
+        retained_tasks = (
+            workload.task_count
+            if config.get("result_retention", "list") == "list"
+            else min(workload.task_count, inflight or max(1, 2 * count))
         )
         return workload.data_bytes + count * (working + copied_input) + retained_tasks * workload.result_bytes_per_task
+
     memory_budget = config.get("memory_budget_bytes")
     if memory_budget is not None:
         if adaptive:
@@ -428,7 +434,10 @@ def plan_parallel_execution(
                 f"{workload.operation}预计峰值内存 {estimate_peak(workers)} 字节超过 memory_budget_bytes={memory_budget}；"
                 "请降低并行度、使用迭代结果或显式提高预算"
             )
-    if config.get("max_output_rows") is not None and workload.output_rows_per_task * workload.task_count > config["max_output_rows"]:
+    if (
+        config.get("max_output_rows") is not None
+        and workload.output_rows_per_task * workload.task_count > config["max_output_rows"]
+    ):
         raise ValidationError("预计输出行数超过 max_output_rows")
     total_budget = int(available_budget or requested_workers)
     if workload.has_parallel_children:
@@ -503,7 +512,9 @@ def _raise_parallel_execution_error(
     """按调用策略恢复原始异常或统一的中文并行错误。"""
     if preserve_exceptions:
         raise error.original_exception
-    raise ParallelExecutionError(f"并行任务 '{error.label}' 执行失败: {error.original_exception}") from error.original_exception
+    raise ParallelExecutionError(
+        f"并行任务 '{error.label}' 执行失败: {error.original_exception}"
+    ) from error.original_exception
 
 
 def _current_parallel_budget() -> ParallelBudget:
@@ -638,21 +649,41 @@ def _infer_legacy_workload(
     )
 
 
-def _bounded_parallel_execute(function, tasks, *, config, n_jobs, parallel_backend, task_labels,
-                              default_backend, has_parallel_children, workload, preserve_exceptions):
+def _bounded_parallel_execute(
+    function,
+    tasks,
+    *,
+    config,
+    n_jobs,
+    parallel_backend,
+    task_labels,
+    default_backend,
+    has_parallel_children,
+    workload,
+    preserve_exceptions,
+):
     """有界窗口：消费完当前窗口后才提交下一窗口，避免慢消费者积压结果。"""
     if workload is None:
         if not isinstance(tasks, Sequence):
             raise ValidationError("有界迭代执行生成器时必须提供 workload，不能预先展开全部任务")
-        workload = _infer_legacy_workload(tasks, default_backend=default_backend,
-                                          has_parallel_children=has_parallel_children)
+        workload = _infer_legacy_workload(
+            tasks, default_backend=default_backend, has_parallel_children=has_parallel_children
+        )
     active = _ACTIVE_BUDGET.get()
-    plan = plan_parallel_execution(n_jobs, workload, parallel_backend=parallel_backend,
-                                   parallel_config=config, default_backend=default_backend,
-                                   available_budget=active.available if active else None)
+    plan = plan_parallel_execution(
+        n_jobs,
+        workload,
+        parallel_backend=parallel_backend,
+        parallel_config=config,
+        default_backend=default_backend,
+        available_budget=active.available if active else None,
+    )
     window = config.get("max_inflight_tasks", max(1, 2 * plan.workers))
-    child_config = {key: value for key, value in config.items()
-                    if key not in {"max_inflight_tasks", "result_retention", "max_output_rows"}}
+    child_config = {
+        key: value
+        for key, value in config.items()
+        if key not in {"max_inflight_tasks", "result_retention", "max_output_rows"}
+    }
     # 单次调用仍使用 joblib 的有界提交；窗口边界另外约束尚未消费的结果。
     child_config["pre_dispatch"] = window
     child_config["batch_size"] = 1
@@ -669,9 +700,15 @@ def _bounded_parallel_execute(function, tasks, *, config, n_jobs, parallel_backe
             if len(names) != size:
                 raise ValidationError("task_labels 的数量必须与 tasks 一致")
             results = parallel_execute(
-                function, batch, n_jobs=n_jobs, parallel_backend=parallel_backend,
-                parallel_config=child_config, task_labels=names, default_backend=default_backend,
-                has_parallel_children=has_parallel_children, workload=replace(workload, task_count=size),
+                function,
+                batch,
+                n_jobs=n_jobs,
+                parallel_backend=parallel_backend,
+                parallel_config=child_config,
+                task_labels=names,
+                default_backend=default_backend,
+                has_parallel_children=has_parallel_children,
+                workload=replace(workload, task_count=size),
                 preserve_exceptions=preserve_exceptions,
             )
             consumed += size
@@ -728,13 +765,21 @@ def parallel_execute(
     config = validate_parallel_config(parallel_backend, parallel_config)
     current_budget = _current_parallel_budget()
     if current_budget.memory_budget_bytes is not None:
-        config["memory_budget_bytes"] = min(config.get("memory_budget_bytes", current_budget.memory_budget_bytes),
-                                              current_budget.memory_budget_bytes)
+        config["memory_budget_bytes"] = min(
+            config.get("memory_budget_bytes", current_budget.memory_budget_bytes), current_budget.memory_budget_bytes
+        )
     if config.get("result_retention") == "iterator" or "max_inflight_tasks" in config or "max_output_rows" in config:
         return _bounded_parallel_execute(
-            function, tasks, config=config, n_jobs=n_jobs, parallel_backend=parallel_backend,
-            task_labels=task_labels, default_backend=default_backend, has_parallel_children=has_parallel_children,
-            workload=workload, preserve_exceptions=preserve_exceptions,
+            function,
+            tasks,
+            config=config,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            task_labels=task_labels,
+            default_backend=default_backend,
+            has_parallel_children=has_parallel_children,
+            workload=workload,
+            preserve_exceptions=preserve_exceptions,
         )
     if workload is None:
         # 旧调用没有提供规模元数据，只能展开一次以获得确定任务数。

@@ -24,10 +24,10 @@ def test_probability_scorecard_trains_fresh_hscredit_logistic_regression():
     )
     model = LogisticRegression(max_iter=500)
 
-    card = ProbabilityScoreCard(model=model, method='standard').fit(X, y)
+    card = ProbabilityScoreCard(model=model, method="standard").fit(X, y)
 
     assert card.model_ is model
-    assert hasattr(model, 'coef_')
+    assert hasattr(model, "coef_")
     assert np.all(np.isfinite(card.predict(X)))
 
 
@@ -37,7 +37,7 @@ def test_probability_scorecard_proba_only_scoring_report_and_roundtrip(tmp_path)
 
     card = ProbabilityScoreCard(
         model=None,
-        method='standard',
+        method="standard",
         base_odds=0.05,
         base_score=600,
         pdo=20,
@@ -51,9 +51,9 @@ def test_probability_scorecard_proba_only_scoring_report_and_roundtrip(tmp_path)
     assert scores[0] > scores[-1]
 
     report = card.report(scores=scores, y=y, max_n_bins=3)
-    assert {'评分区间', '样本数', '坏样本率', 'KS'}.issubset(report.columns)
+    assert {"评分区间", "样本数", "坏样本率", "KS"}.issubset(report.columns)
 
-    path = tmp_path / 'probability_scorecard.pkl'
+    path = tmp_path / "probability_scorecard.pkl"
     card.save(str(path))
     loaded = ProbabilityScoreCard.load(str(path))
     np.testing.assert_allclose(loaded.predict_score(proba=proba), scores)
@@ -66,7 +66,7 @@ def test_probability_scorecard_report_keeps_single_bin_for_constant_scores():
     report = card.report(scores=np.array([600.0, 600.0, 600.0]), y=np.array([0, 1, 0]), max_n_bins=5)
 
     assert len(report) == 1
-    assert report.loc[0, '评分区间'] == '[600.00, 600.00]'
-    assert report.loc[0, '样本数'] == 3
-    assert report.loc[0, '坏样本率'] == '33.33%'
-    assert report.loc[0, 'KS'] == 0.0
+    assert report.loc[0, "评分区间"] == "[600.00, 600.00]"
+    assert report.loc[0, "样本数"] == 3
+    assert report.loc[0, "坏样本率"] == "33.33%"
+    assert report.loc[0, "KS"] == 0.0

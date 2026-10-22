@@ -694,7 +694,8 @@ class Database:
             except Exception as exc:
                 result.failed_batch = batch_index
                 raise DatabaseWriteError(
-                    f"读取或校验目标表 {table_name!r} 的第 {batch_index} 批输入失败", result=result,
+                    f"读取或校验目标表 {table_name!r} 的第 {batch_index} 批输入失败",
+                    result=result,
                 ) from exc
             result.rows_received += len(batch)
             try:
@@ -789,24 +790,38 @@ class Database:
         """
         self._ensure_open()
         capabilities = getattr(self.adapter, "capabilities", None)
-        if getattr(self.adapter, "database_type", None) != "mysql" or not getattr(capabilities, "atomic_replace", False):
+        if getattr(self.adapter, "database_type", None) != "mysql" or not getattr(
+            capabilities, "atomic_replace", False
+        ):
             raise DatabaseCapabilityError("当前后端不支持经验证的暂存表原子替换；不会退回清空或删除重建")
         if not isinstance(keep_backup, bool):
             raise ValidationError("keep_backup 必须为布尔值")
-        result = WriteResult(mode="o", completed=False, rows_inserted=0, rows_updated=0,
-                             rows_skipped=0, target_published=False, rows_published=0, phase="preparing")
+        result = WriteResult(
+            mode="o",
+            completed=False,
+            rows_inserted=0,
+            rows_updated=0,
+            rows_skipped=0,
+            target_published=False,
+            rows_published=0,
+            phase="preparing",
+        )
         session = None
 
         def update_receipt():
             if session is None:
                 return
             result.target_published = session.target_published
-            result.details.update({"publication_attempted": session.publish_attempted,
-                                   "staging_created": session.staging_created,
-                                   "staging_creation_unknown": session.staging_creation_unknown,
-                                   "staging_commit_unknown": session.staging_commit_unknown,
-                                   "cleanup_error_types": [type(error).__name__ for error in session.cleanup_errors],
-                                   "automatic_retry": False})
+            result.details.update(
+                {
+                    "publication_attempted": session.publish_attempted,
+                    "staging_created": session.staging_created,
+                    "staging_creation_unknown": session.staging_creation_unknown,
+                    "staging_commit_unknown": session.staging_commit_unknown,
+                    "cleanup_error_types": [type(error).__name__ for error in session.cleanup_errors],
+                    "automatic_retry": False,
+                }
+            )
             if result.target_published is True:
                 result.rows_inserted = result.rows_published = result.rows_staged
                 result.batches_committed = 1
@@ -845,21 +860,31 @@ class Database:
                 result.phase = "published_cleanup_warning"
                 result.consistency = "目标已发布，但资源或备份清理未全部完成；不要重放数据"
             else:
-                result.consistency = "全部数据确认写入暂存后，通过一次多表RENAME发布；旧表备份" + ("保留" if keep_backup else "已清理")
+                result.consistency = "全部数据确认写入暂存后，通过一次多表RENAME发布；旧表备份" + (
+                    "保留" if keep_backup else "已清理"
+                )
             return result
         except BaseException as exc:
             update_receipt()
             result.failed_batch = 0 if result.phase == "preparing" else result.batches_staged + 1
             result.completed = False
             cleanup_error = session.cleanup_errors[0] if session is not None and session.cleanup_errors else None
-            if isinstance(exc, (KeyboardInterrupt, SystemExit, DatabaseCapabilityError, ValidationError, InputValidationError)):
+            if isinstance(
+                exc, (KeyboardInterrupt, SystemExit, DatabaseCapabilityError, ValidationError, InputValidationError)
+            ):
                 exc.result = result
                 if cleanup_error is not None:
                     exc.cleanup_errors = tuple(session.cleanup_errors)
                 raise
-            raise database_error_from(DatabaseWriteError, f"原子替换失败（阶段={result.phase}）；请按发布收据核查，不要自动重试",
-                                      cause=exc, result=result, sql=getattr(exc, "sql", None),
-                                      params=getattr(exc, "params", None), cleanup_error=cleanup_error)
+            raise database_error_from(
+                DatabaseWriteError,
+                f"原子替换失败（阶段={result.phase}）；请按发布收据核查，不要自动重试",
+                cause=exc,
+                result=result,
+                sql=getattr(exc, "sql", None),
+                params=getattr(exc, "params", None),
+                cleanup_error=cleanup_error,
+            )
 
     def close(self) -> None:
         """关闭连接池或原生客户端；重复调用不产生副作用。

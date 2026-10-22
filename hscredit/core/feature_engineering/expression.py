@@ -11,17 +11,54 @@ import pandas as pd
 from pandas import DataFrame
 from sklearn.base import BaseEstimator, TransformerMixin
 
-
-_FUNCTIONS = {name: getattr(np, name) for name in (
-    "where", "sin", "cos", "tan", "abs", "exp", "log", "sqrt", "power", "floor", "ceil",
-    "round", "minimum", "maximum", "clip", "isnan", "isfinite", "mean", "sum", "std", "var", "median",
-)}
-_BINARY = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
-           ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod,
-           ast.Pow: operator.pow, ast.BitAnd: operator.and_, ast.BitOr: operator.or_, ast.BitXor: operator.xor}
+_FUNCTIONS = {
+    name: getattr(np, name)
+    for name in (
+        "where",
+        "sin",
+        "cos",
+        "tan",
+        "abs",
+        "exp",
+        "log",
+        "sqrt",
+        "power",
+        "floor",
+        "ceil",
+        "round",
+        "minimum",
+        "maximum",
+        "clip",
+        "isnan",
+        "isfinite",
+        "mean",
+        "sum",
+        "std",
+        "var",
+        "median",
+    )
+}
+_BINARY = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.BitAnd: operator.and_,
+    ast.BitOr: operator.or_,
+    ast.BitXor: operator.xor,
+}
 _UNARY = {ast.UAdd: operator.pos, ast.USub: operator.neg, ast.Invert: operator.invert, ast.Not: np.logical_not}
-_COMPARE = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt,
-            ast.LtE: operator.le, ast.Gt: operator.gt, ast.GtE: operator.ge}
+_COMPARE = {
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+}
 _MAX_ARGS = {name: 1 for name in _FUNCTIONS}
 _MAX_ARGS.update(where=3, power=2, round=2, minimum=2, maximum=2, clip=3)
 _KEYWORDS = {"axis", "keepdims", "decimals", "ddof", "a_min", "a_max"}
@@ -38,22 +75,47 @@ def _parse_expression(expression):
     nodes = list(ast.walk(tree))
     if len(nodes) > 256:
         raise ValueError("衍生表达式过于复杂")
-    allowed = (ast.Expression, ast.Constant, ast.Name, ast.Load, ast.BinOp, ast.UnaryOp,
-               ast.BoolOp, ast.And, ast.Or, ast.Compare, ast.Call, ast.Attribute, ast.keyword,
-               *_BINARY, *_UNARY, *_COMPARE)
+    allowed = (
+        ast.Expression,
+        ast.Constant,
+        ast.Name,
+        ast.Load,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.BoolOp,
+        ast.And,
+        ast.Or,
+        ast.Compare,
+        ast.Call,
+        ast.Attribute,
+        ast.keyword,
+        *_BINARY,
+        *_UNARY,
+        *_COMPARE,
+    )
     for node in nodes:
         if not isinstance(node, allowed):
             raise ValueError(f"衍生表达式不允许语法: {type(node).__name__}")
         if isinstance(node, ast.Name) and node.id.startswith("__"):
             raise ValueError("衍生表达式不允许访问内部名称")
         if isinstance(node, ast.Attribute):
-            if not isinstance(node.value, ast.Name) or node.value.id != "np" or node.attr not in {*_FUNCTIONS, "nan", "inf"}:
+            if (
+                not isinstance(node.value, ast.Name)
+                or node.value.id != "np"
+                or node.attr not in {*_FUNCTIONS, "nan", "inf"}
+            ):
                 raise ValueError("衍生表达式不允许任意属性访问")
         if isinstance(node, ast.Call):
-            name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else None
+            name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr if isinstance(node.func, ast.Attribute) else None
+            )
             if name not in {*_FUNCTIONS, "col"}:
                 raise ValueError("衍生表达式仅允许白名单函数")
-            if len(node.args) > _MAX_ARGS.get(name, 1) or any(keyword.arg not in _KEYWORDS for keyword in node.keywords):
+            if len(node.args) > _MAX_ARGS.get(name, 1) or any(
+                keyword.arg not in _KEYWORDS for keyword in node.keywords
+            ):
                 raise ValueError("衍生表达式的函数参数不受支持；禁止参数展开和原地输出")
     return tree.body
 
@@ -72,7 +134,9 @@ def _evaluate_expression(node, context):
             return getattr(np, node.attr)
         raise ValueError("函数名称只能用于调用")
     if isinstance(node, ast.BinOp):
-        return _BINARY[type(node.op)](_evaluate_expression(node.left, context), _evaluate_expression(node.right, context))
+        return _BINARY[type(node.op)](
+            _evaluate_expression(node.left, context), _evaluate_expression(node.right, context)
+        )
     if isinstance(node, ast.UnaryOp):
         return _UNARY[type(node.op)](_evaluate_expression(node.operand, context))
     if isinstance(node, ast.BoolOp):
@@ -92,7 +156,12 @@ def _evaluate_expression(node, context):
     if isinstance(node, ast.Call):
         name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
         if name == "col":
-            if len(node.args) != 1 or node.keywords or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
+            if (
+                len(node.args) != 1
+                or node.keywords
+                or not isinstance(node.args[0], ast.Constant)
+                or not isinstance(node.args[0].value, str)
+            ):
                 raise ValueError("col 必须接收一个常量字段名字符串")
             column = node.args[0].value
             if column not in context:
@@ -219,7 +288,7 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         """
         import re
 
-        pattern = re.compile(r'(?<![\w.])where\s*\(')
+        pattern = re.compile(r"(?<![\w.])where\s*\(")
         result = expr
         while True:
             m = pattern.search(result)
@@ -230,9 +299,9 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             depth = 0
             end = m.end()
             while end < len(result):
-                if result[end] == '(':
+                if result[end] == "(":
                     depth += 1
-                elif result[end] == ')':
+                elif result[end] == ")":
                     if depth == 0:
                         end += 1
                         break
@@ -241,34 +310,34 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             else:
                 break
 
-            full_call = result[m.start():end]
-            inner = full_call[len(m.group(0)):-1]
+            full_call = result[m.start() : end]
+            inner = full_call[len(m.group(0)) : -1]
 
             # Split by top-level comma (respecting nested parentheses)
             args = []
             depth = 0
-            current = ''
+            current = ""
             for ch in inner:
-                if ch == '(':
+                if ch == "(":
                     depth += 1
                     current += ch
-                elif ch == ')':
+                elif ch == ")":
                     depth -= 1
                     current += ch
-                elif ch == ',' and depth == 0:
+                elif ch == "," and depth == 0:
                     args.append(current.strip())
-                    current = ''
+                    current = ""
                 else:
                     current += ch
             if current.strip():
                 args.append(current.strip())
 
             if len(args) < 3:
-                result = result[:m.start()] + full_call + result[end:]
+                result = result[: m.start()] + full_call + result[end:]
                 break
 
-            np_where = f'np.where({args[0]}, {args[1]}, {args[2]})'
-            result = result[:m.start()] + np_where + result[end:]
+            np_where = f"np.where({args[0]}, {args[1]}, {args[2]})"
+            result = result[: m.start()] + np_where + result[end:]
 
         return result
 
@@ -339,7 +408,11 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             else:
                 tree = _parse_expression(expr)
                 # 保持常见 ndarray 表达式的 numexpr 路径；扩展语法走同一安全 AST。
-                if any(isinstance(node, (ast.Attribute, ast.BoolOp)) or (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "col") for node in ast.walk(tree)):
+                if any(
+                    isinstance(node, (ast.Attribute, ast.BoolOp))
+                    or (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "col")
+                    for node in ast.walk(tree)
+                ):
                     X_derived[:, i] = _evaluate_expression(tree, context)
                 else:
                     X_derived[:, i] = ne.evaluate(expr, local_dict=context, global_dict={})

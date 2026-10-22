@@ -68,7 +68,10 @@ def test_categorical_rules_import():
     print("=" * 80)
 
     # 手动定义分箱规则
-    rules = {"city": [["北京", "上海"], ["广州", "深圳"], ["杭州", "南京"], [np.nan]], "gender": [["M"], ["F"], [np.nan]]}
+    rules = {
+        "city": [["北京", "上海"], ["广州", "深圳"], ["杭州", "南京"], [np.nan]],
+        "gender": [["M"], ["F"], [np.nan]],
+    }
 
     print(f"\n导入的分箱规则:")
     for feature, rule in rules.items():
@@ -82,7 +85,10 @@ def test_categorical_rules_import():
 
     # 创建测试数据
     df = pd.DataFrame(
-        {"city": ["北京", "上海", "广州", "深圳", "杭州", "南京", np.nan], "gender": ["M", "F", "M", "F", "M", np.nan, np.nan]}
+        {
+            "city": ["北京", "上海", "广州", "深圳", "杭州", "南京", np.nan],
+            "gender": ["M", "F", "M", "F", "M", np.nan, np.nan],
+        }
     )
 
     # 应用分箱

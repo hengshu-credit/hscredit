@@ -201,12 +201,17 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self.__dict__.setdefault("_target_in_fit_", bool(getattr(self, "target", None)))
         if legacy_target_mode and getattr(self, "target", None) is not None:
             self.passthrough_target = True
-            warnings.warn("旧编码器制品沿用目标透传；用于纯特征Pipeline前请设置 passthrough_target=False 并重新训练下游模型", FutureWarning)
+            warnings.warn(
+                "旧编码器制品沿用目标透传；用于纯特征Pipeline前请设置 passthrough_target=False 并重新训练下游模型",
+                FutureWarning,
+            )
         if type(self).__name__ == "WOEEncoder":
             self.__dict__.setdefault("_legacy_string_keys_", True)
         if type(self).__name__ == "CountEncoder":
             self.__dict__.setdefault("infrequent_categories_", {})
-            self.__dict__.setdefault("_legacy_other_routing_", any("__OTHER__" in mapping for mapping in self.mapping_.values()))
+            self.__dict__.setdefault(
+                "_legacy_other_routing_", any("__OTHER__" in mapping for mapping in self.mapping_.values())
+            )
         for mapping in getattr(self, "mapping_", {}).values():
             if not isinstance(mapping, dict):
                 continue
@@ -321,7 +326,12 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 rows=len(X),
                 columns=len(columns),
                 data_bytes=int(X.loc[:, self.cols_ or []].memory_usage(deep=True).sum()),
-                cost_per_item=(10.0 if self.__class__.__name__ in {"WOEEncoder", "TargetEncoder", "CatBoostEncoder", "QuantileEncoder", "GBMEncoder"} else 3.0),
+                cost_per_item=(
+                    10.0
+                    if self.__class__.__name__
+                    in {"WOEEncoder", "TargetEncoder", "CatBoostEncoder", "QuantileEncoder", "GBMEncoder"}
+                    else 3.0
+                ),
                 capability="process_safe",
                 has_parallel_children=has_parallel_children,
                 auto_max_workers=8,
@@ -353,7 +363,9 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """只读并行转换各列，并按学习列顺序恢复索引、dtype 与列布局。"""
         contexts = contexts or {}
         columns = list(self.cols_ or [])
-        tasks = ((ordinal, column, self, X[column].copy(), y, contexts.get(column)) for ordinal, column in enumerate(columns))
+        tasks = (
+            (ordinal, column, self, X[column].copy(), y, contexts.get(column)) for ordinal, column in enumerate(columns)
+        )
         results = self._parallel_execute(
             _transform_encoder_column_worker,
             tasks,
@@ -459,6 +471,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 X_transformed[target_col] = np.asarray(original[target_col])
             else:
                 from scipy import sparse
+
                 if sparse.issparse(X_transformed):
                     try:
                         labels = np.asarray(original[target_col], dtype=float).reshape(-1, 1)
@@ -485,7 +498,9 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             columns.append(self.target)
         return np.asarray(columns, dtype=object)
 
-    def fit_transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None, *, groups=None) -> Union[pd.DataFrame, np.ndarray]:
+    def fit_transform(
+        self, X: pd.DataFrame, y: Optional[pd.Series] = None, *, groups=None
+    ) -> Union[pd.DataFrame, np.ndarray]:
         """拟合并转换数据。
 
         支持两种API风格:
@@ -535,7 +550,13 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                     raise ValueError("折外编码切分位置越界或重复")
             if np.intersect1d(train, valid).size or covered[valid].any():
                 raise ValueError("折外编码训练/验证位置重叠或验证位置重复")
-            fold = clone(self).set_params(training_mode="in_sample", return_df=True, drop_invariant=False, features=columns, passthrough_target=False)
+            fold = clone(self).set_params(
+                training_mode="in_sample",
+                return_df=True,
+                drop_invariant=False,
+                features=columns,
+                passthrough_target=False,
+            )
             fold.fit(features.iloc[train], target.iloc[train])
             transformed = fold.transform(features.iloc[valid])
             output.iloc[valid, output.columns.get_indexer(columns)] = transformed[columns].to_numpy()
@@ -546,6 +567,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self.oof_coverage_ = covered
         if not covered.all():
             import warnings
+
             warnings.warn("部分行未被折外验证集覆盖（例如时间切分的起始窗口），编码结果保留 NaN", UserWarning)
         return self._finalize_output(output, original)
 
@@ -735,13 +757,20 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                     else:
                         raise
             return {
-                "format": "hscredit-encoder-mapping", "version": 2,
-                "encoder_type": type(self).__name__, "parameters": parameters,
-                "mapping_": pack(self.mapping_), "cols_": pack(self.cols_),
+                "format": "hscredit-encoder-mapping",
+                "version": 2,
+                "encoder_type": type(self).__name__,
+                "parameters": parameters,
+                "mapping_": pack(self.mapping_),
+                "cols_": pack(self.cols_),
                 "extra_state": pack(self._export_extra_state()),
-                "schema": pack({"feature_names_in_": getattr(self, "feature_names_in_", None),
-                                "_dropped_cols": self._dropped_cols,
-                                "_target_in_fit_": getattr(self, "_target_in_fit_", False)}),
+                "schema": pack(
+                    {
+                        "feature_names_in_": getattr(self, "feature_names_in_", None),
+                        "_dropped_cols": self._dropped_cols,
+                        "_target_in_fit_": getattr(self, "_target_in_fit_", False),
+                    }
+                ),
                 "omitted_refit_parameters": omitted,
             }
         return {
@@ -783,7 +812,10 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             candidate.cols_ = unpack(mapping["cols_"])
             if not isinstance(candidate.mapping_, dict) or not isinstance(candidate.cols_, list):
                 raise ValueError("编码映射状态结构无效")
-            if any(column not in candidate.mapping_ or not isinstance(candidate.mapping_[column], dict) for column in candidate.cols_):
+            if any(
+                column not in candidate.mapping_ or not isinstance(candidate.mapping_[column], dict)
+                for column in candidate.cols_
+            ):
                 raise ValueError("编码映射缺少已学习字段状态")
             candidate._import_extra_state(unpack(mapping["extra_state"]))
             schema = unpack(mapping["schema"])
@@ -794,7 +826,9 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 candidate.n_features_in_ = len(candidate.feature_names_in_)
             candidate._is_fitted = True
             if mapping.get("omitted_refit_parameters"):
-                warnings.warn("此推理映射未保存自定义cv切分器；重拟合前请显式配置cv，完整训练对象请使用save_artifact", UserWarning)
+                warnings.warn(
+                    "此推理映射未保存自定义cv切分器；重拟合前请显式配置cv，完整训练对象请使用save_artifact", UserWarning
+                )
             self.__dict__.clear()
             self.__dict__.update(candidate.__dict__)
             return self
@@ -908,7 +942,9 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def _map_with_typed_float_nan(cls, values: pd.Series, mapping: Dict) -> pd.Series:
         """按 typed NaN 桶修正 pandas map，避免依赖 NaN 对象身份。"""
         result = values.map(mapping)
-        typed_lookup = {bucket: value for key, value in mapping.items() if (bucket := cls._float_nan_bucket(key)) is not None}
+        typed_lookup = {
+            bucket: value for key, value in mapping.items() if (bucket := cls._float_nan_bucket(key)) is not None
+        }
         if not typed_lookup:
             return result
 

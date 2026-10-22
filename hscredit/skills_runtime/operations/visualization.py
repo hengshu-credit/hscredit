@@ -99,6 +99,4 @@ def _plot_handler(function):
 def register_visualization_operations(registry) -> None:
     """登记 hsbin 的四个分箱绘图操作。"""
     for name, function in _PLOTS.items():
-        registry.register(
-            OperationSpec("hsbin", name, _plot_handler(function), extras=("skills",))
-        )
+        registry.register(OperationSpec("hsbin", name, _plot_handler(function), extras=("skills",)))

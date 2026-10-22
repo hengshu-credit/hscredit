@@ -61,6 +61,7 @@ class MySQLAdapter(DBAPIAdapter):
         if self.database_type != "mysql":
             raise DatabaseCapabilityError("MySQL协议兼容后端不等于MySQL原子DDL，当前后端不支持此入口")
         from .mysql_atomic import MySQLAtomicReplaceSession
+
         return MySQLAtomicReplaceSession(self, table_name)
 
     def create_cursor(self, connection: Any, *, stream: bool = False) -> Any:
@@ -252,8 +253,7 @@ class MySQLAdapter(DBAPIAdapter):
 
         schema, table = self._schema_and_table(table_name)
         rows = self.query(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s LIMIT 1",
+            "SELECT 1 FROM information_schema.tables " "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s LIMIT 1",
             params=(schema, table),
             result="rows",
         )

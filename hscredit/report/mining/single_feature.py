@@ -37,12 +37,12 @@ def _single_feature_worker(task):
 
 class SingleFeatureRuleMiner(BaseRuleMiner):
     """单特征规则挖掘器.
-    
+
     对数据各特征的不同阈值进行效度分布分析，挖掘高区分度的单特征规则。
-    
+
     代码风格参考hscredit的binning模块，fit方法兼容scorecardpipeline风格。
     支持hscredit中所有分箱方法。
-    
+
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
     :param features: 参与挖掘的字段名或字段名列表，默认None（使用全部候选字段）
@@ -71,7 +71,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     :param random_state: 随机种子，默认None
     :param verbose: 是否输出详细信息，默认False
     :param binning_kwargs: 分箱方法的其他参数，通过**kwargs传入
-    
+
     **参考样例**
 
     >>> miner = SingleFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=20)  # 等频分箱：每箱样本数大致相等
@@ -83,14 +83,14 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     >>> miner.fit(df)
     >>> feature_rules = miner.analyze_feature('age', max_n_bins=10)  # 分析单个特征的规则分布
     """
-    
+
     VALID_METHODS = OptimalBinning.VALID_METHODS
-    
+
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         exclude_cols: Optional[List[str]] = None,
-        method: str = 'mdlp',
+        method: str = "mdlp",
         max_n_bins: int = 10,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
@@ -109,7 +109,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         parallel_config: Optional[Dict[str, Any]] = None,
         features: FeatureNames = None,
         feature_map: Optional[Dict[str, str]] = None,
-        **binning_kwargs
+        **binning_kwargs,
     ):
         super().__init__(
             target=target,
@@ -120,7 +120,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
             features=features,
             feature_map=feature_map,
         )
-        
+
         # 仅校验不归一化：sklearn clone 要求构造参数按对象原样保存，
         # 大小写/空白归一化推迟到 fit 时统一进行
         OptimalBinning.validate_method(method)
@@ -139,24 +139,24 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         self.random_state = random_state
         self.verbose = verbose
         self.binning_kwargs = binning_kwargs
-        
+
         self.results_ = {}
         self.features_ = []
         self.numerical_features_ = []
         self.categorical_features_ = []
         self.overall_badrate_ = 0.0
         self._binning_instances_ = {}
-    
-    @analysis_inputs('X', roles=())
+
+    @analysis_inputs("X", roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         features: FeatureNames = None,
-        **kwargs
-    ) -> 'SingleFeatureRuleMiner':
+        **kwargs,
+    ) -> "SingleFeatureRuleMiner":
         """拟合挖掘器.
-        
+
         :param X: 训练数据，DataFrame或numpy数组
         :param y: 目标变量（可选）
         :param features: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
@@ -178,22 +178,20 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
 
         if y is None:
             raise ValueError("单特征规则挖掘需要目标变量y")
-        
+
         working.X_ = X
         working.y_ = y
-        
+
         # 分类特征
         working.numerical_features_ = working._get_numeric_features(X)
         working.categorical_features_ = working._get_categorical_features(X)
         working.features_ = (
-            list(X.columns)
-            if features_explicit
-            else working.numerical_features_ + working.categorical_features_
+            list(X.columns) if features_explicit else working.numerical_features_ + working.categorical_features_
         )
-        
+
         # 计算整体坏账率
         working.overall_badrate_ = y.mean()
-        
+
         # 分析所有特征
         tasks = [(working, feature) for feature in working.features_]
         has_parallel_children = _binning_has_parallel_children(working.method, working.binning_kwargs)
@@ -212,17 +210,15 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
             ),
         )
         working.results_ = {feature: result for feature, result, _ in analyzed}
-        working._binning_instances_ = {
-            feature: binner for feature, _, binner in analyzed if binner is not None
-        }
+        working._binning_instances_ = {feature: binner for feature, _, binner in analyzed if binner is not None}
 
         working._is_fitted = True
         self._commit_fitted_state(working)
         return self
-    
+
     def _analyze_feature(self, feature: str) -> Tuple[pd.DataFrame, Any]:
         """分析单个特征的不同阈值.
-        
+
         :param feature: 特征名
         :return: (包含各阈值指标的DataFrame, 分箱器实例或None)
         """
@@ -230,37 +226,37 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
             return self._analyze_numerical_feature(feature)
         else:
             return self._analyze_categorical_feature(feature), None
-    
+
     def _get_binning_instance(self) -> Any:
         """获取分箱器实例.
-        
+
         :return: hscredit分箱器实例
         """
         # 构建分箱器参数
         bin_params = {
-            'target': self.target,
-            'max_n_bins': self.max_n_bins,
-            'min_n_bins': self.min_n_bins,
-            'min_bin_size': self.min_bin_size,
-            'max_bin_size': self.max_bin_size,
-            'monotonic': self.monotonic,
-            'special_codes': self.special_codes,
-            'cat_cutoff': self.cat_cutoff,
-            'random_state': self.random_state,
-            'verbose': self.verbose,
-            'n_jobs': -1,
-            'parallel_backend': self.parallel_backend,
-            'parallel_config': self.parallel_config,
-            **self.binning_kwargs
+            "target": self.target,
+            "max_n_bins": self.max_n_bins,
+            "min_n_bins": self.min_n_bins,
+            "min_bin_size": self.min_bin_size,
+            "max_bin_size": self.max_bin_size,
+            "monotonic": self.monotonic,
+            "special_codes": self.special_codes,
+            "cat_cutoff": self.cat_cutoff,
+            "random_state": self.random_state,
+            "verbose": self.verbose,
+            "n_jobs": -1,
+            "parallel_backend": self.parallel_backend,
+            "parallel_config": self.parallel_config,
+            **self.binning_kwargs,
         }
-        
+
         # 卡方分箱特殊参数
-        if self.method == 'chi':
-            bin_params['min_chi2_threshold'] = self.min_chi2_threshold
-            bin_params['significance_level'] = self.significance_level
+        if self.method == "chi":
+            bin_params["min_chi2_threshold"] = self.min_chi2_threshold
+            bin_params["significance_level"] = self.significance_level
 
         return OptimalBinning(method=self.method, **bin_params)
-    
+
     def _analyze_numerical_feature(self, feature: str) -> Tuple[pd.DataFrame, Any]:
         """分析数值型特征.
 
@@ -271,16 +267,16 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         valid_values = feature_values[feature_values.notna()]
 
         if len(valid_values) == 0:
-            return pd.DataFrame([self._calculate_metrics(feature, None, 'isna')]), None
+            return pd.DataFrame([self._calculate_metrics(feature, None, "isna")]), None
 
         binner = self._get_binning_instance()
         X_feature = pd.DataFrame({feature: valid_values})
         y_valid = self.y_.iloc[np.flatnonzero(feature_values.notna().to_numpy())]
         binner.fit(X_feature, y_valid)
 
-        if hasattr(binner, 'splits_') and feature in binner.splits_:
+        if hasattr(binner, "splits_") and feature in binner.splits_:
             thresholds = binner.splits_[feature]
-        elif hasattr(binner, 'bin_edges_'):
+        elif hasattr(binner, "bin_edges_"):
             thresholds = sorted(set(binner.bin_edges_))[1:-1]
         else:
             thresholds = self._get_quantile_thresholds(valid_values)[1:-1]
@@ -291,14 +287,13 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
 
         results = []
         for threshold in thresholds:
-            results.append(self._calculate_metrics(feature, threshold, '>='))
-            results.append(self._calculate_metrics(feature, threshold, '<='))
+            results.append(self._calculate_metrics(feature, threshold, ">="))
+            results.append(self._calculate_metrics(feature, threshold, "<="))
 
         if feature_values.isna().any():
-            results.append(self._calculate_metrics(feature, None, 'isna'))
+            results.append(self._calculate_metrics(feature, None, "isna"))
 
         return pd.DataFrame(results), binner
-    
 
     def _analyze_categorical_feature(self, feature: str) -> pd.DataFrame:
         """分析类别型特征.
@@ -322,41 +317,36 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
 
         for category in valid_categories:
             if pd.isna(category):
-                metric_row = self._calculate_metrics(feature, None, 'isna')
+                metric_row = self._calculate_metrics(feature, None, "isna")
             else:
-                metric_row = self._calculate_metrics(feature, category, '==')
-            if metric_row['selected_samples'] < self.min_samples:
+                metric_row = self._calculate_metrics(feature, category, "==")
+            if metric_row["selected_samples"] < self.min_samples:
                 continue
             results.append(metric_row)
 
         return pd.DataFrame(results)
 
-    def _get_quantile_thresholds(
-self, feature_values: pd.Series) -> List[float]:
+    def _get_quantile_thresholds(self, feature_values: pd.Series) -> List[float]:
         """使用等频分箱获取阈值.
-        
+
         :param feature_values: 特征值
         :return: 阈值列表
         """
         n_unique = feature_values.nunique()
         n_bins = min(self.max_n_bins, n_unique)
-        
+
         if n_bins < 2:
             return [feature_values.median()]
-        
-        discretizer = KBinsDiscretizer(
-            n_bins=n_bins,
-            encode='ordinal',
-            strategy='quantile'
-        )
-        
+
+        discretizer = KBinsDiscretizer(n_bins=n_bins, encode="ordinal", strategy="quantile")
+
         try:
             discretizer.fit(feature_values.values.reshape(-1, 1))
             thresholds = sorted(set(discretizer.bin_edges_[0]))
             return thresholds
         except Exception:
             return [feature_values.median()]
-    
+
     def _calculate_metrics(
         self,
         feature: str,
@@ -367,18 +357,18 @@ self, feature_values: pd.Series) -> List[float]:
         feature_values = self.X_[feature]
         target_values = self.y_
 
-        if operator == '>=':
+        if operator == ">=":
             mask = feature_values >= threshold
-        elif operator == '<=':
+        elif operator == "<=":
             mask = feature_values <= threshold
-        elif operator == '==':
+        elif operator == "==":
             mask = feature_values == threshold
-        elif operator == 'isna':
+        elif operator == "isna":
             mask = feature_values.isna()
-        elif operator == 'notna':
+        elif operator == "notna":
             mask = feature_values.notna()
         else:
-            raise ValueError(f'不支持的操作符: {operator}')
+            raise ValueError(f"不支持的操作符: {operator}")
 
         total = len(target_values)
         selected_count = int(mask.sum())
@@ -392,40 +382,39 @@ self, feature_values: pd.Series) -> List[float]:
 
         try:
             from ...core.metrics.classification import ks as ks_metric
+
             ks = ks_metric(target_values, mask.astype(int))
         except Exception:
             ks = np.nan
 
         return {
-            'feature': feature,
-            'threshold': threshold,
-            'operator': operator,
-            'total_samples': total,
-            'selected_samples': selected_count,
-            '命中样本占比': selected_count / total if total > 0 else 0,
-            'total_bad': int(target_values.sum()),
-            'selected_bad': selected_bad,
-            'badrate': badrate,
-            'total_badrate': self.overall_badrate_,
-            'lift': lift,
-            'recall': recall,
-            'precision': precision,
-            'f1': f1,
-            'ks': ks
+            "feature": feature,
+            "threshold": threshold,
+            "operator": operator,
+            "total_samples": total,
+            "selected_samples": selected_count,
+            "命中样本占比": selected_count / total if total > 0 else 0,
+            "total_bad": int(target_values.sum()),
+            "selected_bad": selected_bad,
+            "badrate": badrate,
+            "total_badrate": self.overall_badrate_,
+            "lift": lift,
+            "recall": recall,
+            "precision": precision,
+            "f1": f1,
+            "ks": ks,
         }
-    
-
 
     def get_top_rules(
         self,
         top_n: int = 10,
-        metric: str = 'lift',
+        metric: str = "lift",
         feature: Optional[str] = None,
         min_lift: Optional[float] = None,
         min_samples: Optional[int] = None,
         ascending: bool = False,
         datasets: Optional[pd.DataFrame] = None,
-        target: Optional[str] = None
+        target: Optional[str] = None,
     ) -> pd.DataFrame:
         """获取Top规则（使用Rule.expr与Rule.report命中结果，支持缺失值规则）."""
         self._check_fitted()
@@ -445,8 +434,8 @@ self, feature_values: pd.Series) -> List[float]:
         if all_rules.empty:
             return pd.DataFrame()
 
-        all_rules = all_rules[all_rules['lift'] >= min_lift]
-        all_rules = all_rules[all_rules['selected_samples'] >= min_samples]
+        all_rules = all_rules[all_rules["lift"] >= min_lift]
+        all_rules = all_rules[all_rules["selected_samples"] >= min_samples]
         if all_rules.empty:
             return pd.DataFrame()
 
@@ -461,38 +450,38 @@ self, feature_values: pd.Series) -> List[float]:
         rows = []
         feature_map = resolve_feature_map(self.feature_map)
         for _, row in all_rules.head(top_n).iterrows():
-            feature_name = row['feature']
-            operator = row['operator']
-            threshold = row['threshold']
+            feature_name = row["feature"]
+            operator = row["operator"]
+            threshold = row["threshold"]
             feature_expr = field_expression(feature_name)
 
-            if operator == 'isna':
+            if operator == "isna":
                 expr = f"{feature_expr}.isna()"
-            elif operator == 'notna':
+            elif operator == "notna":
                 expr = f"{feature_expr}.notna()"
             else:
                 expr = f"{feature_expr} {operator} {value_expression(threshold)}"
 
             rule = Rule(expr=expr, name=expr, description=expr, weight=1.0)
             report_df = rule.report(datasets=datasets, target=target_col)
-            hit_rows = report_df[report_df['分箱'] == '命中'] if '分箱' in report_df.columns else pd.DataFrame()
+            hit_rows = report_df[report_df["分箱"] == "命中"] if "分箱" in report_df.columns else pd.DataFrame()
             hit = hit_rows.iloc[0].to_dict() if not hit_rows.empty else {}
 
             report_row = {
-                '规则表达式': rule.expr,
-                '规则名称': rule.name,
-                '命中样本数': hit.get('样本总数'),
-                '命中样本占比': hit.get('样本占比'),
-                '命中坏样本数': hit.get('坏样本数'),
-                '命中坏样本率': hit.get('坏样本率'),
-                '命中LIFT值': hit.get('LIFT值'),
-                '坏账改善': hit.get('坏账改善'),
-                '规则报告': report_df,
+                "规则表达式": rule.expr,
+                "规则名称": rule.name,
+                "命中样本数": hit.get("样本总数"),
+                "命中样本占比": hit.get("样本占比"),
+                "命中坏样本数": hit.get("坏样本数"),
+                "命中坏样本率": hit.get("坏样本率"),
+                "命中LIFT值": hit.get("LIFT值"),
+                "坏账改善": hit.get("坏账改善"),
+                "规则报告": report_df,
             }
             if feature_map is not None:
                 report_row = {
-                    '入参字段': feature_name,
-                    '字段含义': feature_map.get(feature_name, ''),
+                    "入参字段": feature_name,
+                    "字段含义": feature_map.get(feature_name, ""),
                     **report_row,
                 }
             rows.append(report_row)
@@ -500,16 +489,15 @@ self, feature_values: pd.Series) -> List[float]:
         result_df = pd.DataFrame(rows)
         if not result_df.empty:
             sort_map = {
-                'lift': '命中LIFT值',
-                'badrate': '命中坏样本率',
-                'sample_ratio': '命中样本占比',
-                'selected_samples': '命中样本数',
+                "lift": "命中LIFT值",
+                "badrate": "命中坏样本率",
+                "sample_ratio": "命中样本占比",
+                "selected_samples": "命中样本数",
             }
             sort_col = sort_map.get(metric, metric)
             if sort_col in result_df.columns:
                 result_df = result_df.sort_values(sort_col, ascending=ascending).reset_index(drop=True)
         return result_df
-
 
     def get_rules(
         self,
@@ -517,9 +505,9 @@ self, feature_values: pd.Series) -> List[float]:
         min_samples: Optional[int] = None,
         target: Optional[str] = None,
         datasets: Optional[pd.DataFrame] = None,
-        sort_by: str = 'lift',
+        sort_by: str = "lift",
         ascending: bool = False,
-        top_n: int = 10000
+        top_n: int = 10000,
     ) -> List[Rule]:
         """获取挖掘规则（只使用Rule.expr，并基于Rule.report命中结果）."""
         rules_df = self.get_top_rules(
@@ -542,41 +530,39 @@ self, feature_values: pd.Series) -> List[float]:
 
         rule_objects = []
         for _, row in rules_df.iterrows():
-            expr = row['规则表达式']
-            rule = Rule(expr=expr, name=row.get('规则名称', expr), description=expr, weight=1.0)
+            expr = row["规则表达式"]
+            rule = Rule(expr=expr, name=row.get("规则名称", expr), description=expr, weight=1.0)
             rule.artifact_ = RuleArtifact(expr, target_spec={"目标列": target_col})
-            report_df = row['规则报告']
-            hit_rows = report_df[report_df['分箱'] == '命中'] if '分箱' in report_df.columns else pd.DataFrame()
+            report_df = row["规则报告"]
+            hit_rows = report_df[report_df["分箱"] == "命中"] if "分箱" in report_df.columns else pd.DataFrame()
             hit = hit_rows.iloc[0].to_dict() if not hit_rows.empty else {}
             metadata = {
-                '规则表达式': rule.expr,
-                '规则报告': report_df,
-                '命中样本数': hit.get('样本总数'),
-                '命中样本占比': hit.get('样本占比'),
-                '命中坏样本数': hit.get('坏样本数'),
-                '命中坏样本率': hit.get('坏样本率'),
-                '命中LIFT值': hit.get('LIFT值'),
-                '坏账改善': hit.get('坏账改善'),
+                "规则表达式": rule.expr,
+                "规则报告": report_df,
+                "命中样本数": hit.get("样本总数"),
+                "命中样本占比": hit.get("样本占比"),
+                "命中坏样本数": hit.get("坏样本数"),
+                "命中坏样本率": hit.get("坏样本率"),
+                "命中LIFT值": hit.get("LIFT值"),
+                "坏账改善": hit.get("坏账改善"),
             }
-            if '入参字段' in row:
-                metadata.update({'入参字段': row['入参字段'], '字段含义': row['字段含义']})
+            if "入参字段" in row:
+                metadata.update({"入参字段": row["入参字段"], "字段含义": row["字段含义"]})
             rule.metadata_ = metadata
-            rule.metric_score_ = metadata.get('命中LIFT值', 0)
+            rule.metric_score_ = metadata.get("命中LIFT值", 0)
             rule_objects.append(rule)
 
         return rule_objects
 
     def get_rule_objects(
-
-
         self,
         min_lift: Optional[float] = None,
         min_samples: Optional[int] = None,
         target: Optional[str] = None,
         datasets: Optional[pd.DataFrame] = None,
-        sort_by: str = 'lift',
+        sort_by: str = "lift",
         ascending: bool = False,
-        top_n: int = 10000
+        top_n: int = 10000,
     ) -> List[Rule]:
         """获取Rule对象列表（与get_rules保持一致）."""
         return self.get_rules(
@@ -586,122 +572,117 @@ self, feature_values: pd.Series) -> List[float]:
             datasets=datasets,
             sort_by=sort_by,
             ascending=ascending,
-            top_n=top_n
+            top_n=top_n,
         )
 
-    def analyze_feature(
-
-        self,
-        feature: str,
-        max_n_bins: Optional[int] = None,
-        **kwargs
-    ) -> pd.DataFrame:
+    def analyze_feature(self, feature: str, max_n_bins: Optional[int] = None, **kwargs) -> pd.DataFrame:
         """分析单个特征.
-        
+
         :param feature: 特征名
         :param max_n_bins: 分箱数量（None则使用初始化参数）
         :param kwargs: 其他覆盖参数
         :return: 各阈值指标DataFrame
         """
         self._check_fitted()
-        
+
         if feature not in self.X_.columns:
             raise ValueError(f"特征 '{feature}' 不存在")
-        
+
         # 临时修改参数
         orig_max_n_bins = self.max_n_bins
         if max_n_bins is not None:
             self.max_n_bins = max_n_bins
-        
+
         # 应用其他覆盖参数
         for key, value in kwargs.items():
             if hasattr(self, key):
-                setattr(self, f'_{key}_backup', getattr(self, key))
+                setattr(self, f"_{key}_backup", getattr(self, key))
                 setattr(self, key, value)
-        
+
         result, _ = self._analyze_feature(feature)
-        
+
         # 恢复参数
         self.max_n_bins = orig_max_n_bins
         for key in kwargs.keys():
-            backup_key = f'_{key}_backup'
+            backup_key = f"_{key}_backup"
             if hasattr(self, backup_key):
                 setattr(self, key, getattr(self, backup_key))
                 delattr(self, backup_key)
-        
+
         return result
-    
+
     def get_feature_summary(self) -> pd.DataFrame:
         """获取特征分析摘要.
-        
+
         :return: 各特征的统计摘要
         """
         self._check_fitted()
-        
+
         summaries = []
         feature_map = resolve_feature_map(self.feature_map)
         for feature, df in self.results_.items():
             if df.empty:
                 continue
-            
-            best_idx = df['lift'].idxmax()
+
+            best_idx = df["lift"].idxmax()
             best = df.loc[best_idx]
-            
+
             summary = {
-                'feature': feature,
-                'max_lift': df['lift'].max(),
-                'max_ks': df['ks'].max() if 'ks' in df.columns else np.nan,
-                'best_threshold': best['threshold'],
-                'best_operator': best['operator'],
-                'best_badrate': best['badrate'],
-                'n_candidates': len(df)
+                "feature": feature,
+                "max_lift": df["lift"].max(),
+                "max_ks": df["ks"].max() if "ks" in df.columns else np.nan,
+                "best_threshold": best["threshold"],
+                "best_operator": best["operator"],
+                "best_badrate": best["badrate"],
+                "n_candidates": len(df),
             }
             if feature_map is not None:
                 summary = {
-                    'feature': summary.pop('feature'),
-                    '入参字段': feature,
-                    '字段含义': feature_map.get(feature, ''),
+                    "feature": summary.pop("feature"),
+                    "入参字段": feature,
+                    "字段含义": feature_map.get(feature, ""),
                     **summary,
                 }
             summaries.append(summary)
-        
-        return pd.DataFrame(summaries).sort_values('max_lift', ascending=False)
-    
+
+        return pd.DataFrame(summaries).sort_values("max_lift", ascending=False)
+
     def _check_fitted(self):
         """检查是否已拟合."""
         if not self._is_fitted:
             raise RuntimeError("请先调用fit()方法")
-    
+
     def get_binning_table(self, feature: str) -> Optional[pd.DataFrame]:
         """获取特征的分箱统计表（如果使用了hscredit分箱方法）.
-        
+
         :param feature: 特征名
         :return: 分箱统计表或None
         """
         self._check_fitted()
-        
+
         if feature not in self._binning_instances_:
             return None
-        
+
         binner = self._binning_instances_[feature]
-        if hasattr(binner, 'get_bin_table'):
+        if hasattr(binner, "get_bin_table"):
             return binner.get_bin_table(feature)
-        elif hasattr(binner, 'bin_tables_') and feature in binner.bin_tables_:
+        elif hasattr(binner, "bin_tables_") and feature in binner.bin_tables_:
             return binner.bin_tables_[feature]
-        
+
         return None
-    
+
     def plot_feature_analysis(
         self,
         feature: str,
-        metric: str = 'lift',
+        metric: str = "lift",
         figsize: Tuple[int, int] = (12, 6),
         title: Optional[str] = None,
-        save: Optional[str] = None, *,
+        save: Optional[str] = None,
+        *,
         dpi: int = 240,
     ):
         """绘制特征分析图.
-        
+
         :param feature: 特征名
         :param metric: 可视化指标
         :param figsize: 图大小
@@ -713,44 +694,44 @@ self, feature_values: pd.Series) -> List[float]:
             import matplotlib.pyplot as plt
         except ImportError:
             raise ImportError("需要安装matplotlib: pip install matplotlib")
-        
+
         from ...core.viz.utils import DEFAULT_COLORS, setup_axis_style
-        
+
         self._check_fitted()
-        
+
         df = self.analyze_feature(feature)
         if df.empty:
             raise ValueError(f"特征 '{feature}' 无有效分析结果")
-        
+
         fig, ax = plt.subplots(figsize=figsize)
-        
+
         # 分别绘制>=和<=两种情况
         colors = DEFAULT_COLORS[:2]
-        for i, operator in enumerate(['>=', '<=']):
-            subset = df[df['operator'] == operator]
+        for i, operator in enumerate([">=", "<="]):
+            subset = df[df["operator"] == operator]
             if not subset.empty:
                 ax.plot(
-                    subset['threshold'],
+                    subset["threshold"],
                     subset[metric],
-                    label=f'{operator}',
-                    marker='o',
+                    label=f"{operator}",
+                    marker="o",
                     markersize=5,
-                    color=colors[i % len(colors)]
+                    color=colors[i % len(colors)],
                 )
-        
+
         # 设置样式
         setup_axis_style(ax)
-        
-        plot_title = title or f'特征 {feature} - {metric.upper()} 分析'
+
+        plot_title = title or f"特征 {feature} - {metric.upper()} 分析"
         ax.set_title(plot_title)
-        ax.set_xlabel(f'{feature} 阈值')
+        ax.set_xlabel(f"{feature} 阈值")
         ax.set_ylabel(metric.upper())
         ax.grid(True, alpha=0.3)
         ax.legend()
-        
+
         plt.tight_layout()
-        
+
         if save:
-            fig.savefig(save, dpi=dpi, bbox_inches='tight')
-        
+            fig.savefig(save, dpi=dpi, bbox_inches="tight")
+
         return fig

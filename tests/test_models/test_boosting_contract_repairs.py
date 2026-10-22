@@ -250,9 +250,7 @@ def test_lightgbm_ks_metric_is_forwarded_as_callable(monkeypatch):
 
     monkeypatch.setattr(module.lgb, "LGBMClassifier", FakeLGBMClassifier)
     X, y = _binary_data()
-    module.LightGBM(n_estimators=2, eval_metric=["auc", "ks"], validation_fraction=0).fit(
-        X, y, eval_set=[(X, y)]
-    )
+    module.LightGBM(n_estimators=2, eval_metric=["auc", "ks"], validation_fraction=0).fit(X, y, eval_set=[(X, y)])
 
     fitted = FakeLGBMClassifier.instance
     assert fitted.params["metric"] == ["auc"]
@@ -400,9 +398,7 @@ def test_catboost_ks_metric_is_configured_as_custom_metric(monkeypatch):
 
     monkeypatch.setattr(module.cb, "CatBoostClassifier", FakeCatBoostClassifier)
     X, y = _binary_data()
-    module.CatBoost(iterations=2, eval_metric=["auc", "ks"], validation_fraction=0).fit(
-        X, y, eval_set=[(X, y)]
-    )
+    module.CatBoost(iterations=2, eval_metric=["auc", "ks"], validation_fraction=0).fit(X, y, eval_set=[(X, y)])
 
     params = FakeCatBoostClassifier.instance.params
     assert params["eval_metric"].__class__.__name__ == "CatBoostKSMetric"
@@ -570,9 +566,7 @@ def test_ngboost_fit_early_stopping_overrides_constructor_across_versions(
     monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
     X, y = _binary_data()
 
-    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
-        X, y, early_stopping_rounds=7
-    )
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(X, y, early_stopping_rounds=7)
 
     fitted = FakeNGBClassifier.instance
     assert fitted.n_rows == 80
@@ -658,9 +652,7 @@ def test_ngboost_disables_early_stopping_without_validation_data_across_versions
     monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
     X, y = _binary_data()
 
-    module.NGBoost(validation_fraction=0, early_stopping_rounds=2, random_state=23).fit(
-        X, y, X_val=None, Y_val=None
-    )
+    module.NGBoost(validation_fraction=0, early_stopping_rounds=2, random_state=23).fit(X, y, X_val=None, Y_val=None)
 
     fitted = FakeNGBClassifier.instance
     assert fitted.n_rows == len(y)

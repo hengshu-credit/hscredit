@@ -8,7 +8,9 @@ from hscredit.core.selectors import VIFSelector
 from hscredit.core.selectors.vif_selector import _compute_vif_single
 
 
-@pytest.mark.parametrize("case", ["ordinary", "offset", "constant", "missing", "singular", "tiny", "huge_offset", "wide", "one", "two_rows"])
+@pytest.mark.parametrize(
+    "case", ["ordinary", "offset", "constant", "missing", "singular", "tiny", "huge_offset", "wide", "one", "two_rows"]
+)
 def test_shared_vif_matches_column_ols(case):
     rng = np.random.default_rng(51)
     X = rng.normal(size=(120, 8))
@@ -40,10 +42,13 @@ def test_shared_vif_matches_column_ols(case):
 
 def test_regular_matrix_uses_one_shared_factorization_not_column_regression(monkeypatch):
     import hscredit.core.selectors.vif_selector as module
+
     rng = np.random.default_rng(73)
     frame = pd.DataFrame(rng.normal(size=(1000, 20)))
+
     def forbidden(*args, **kwargs):
         raise AssertionError("正常满秩路径不应逐列OLS")
+
     monkeypatch.setattr(module, "_compute_vif_feature", forbidden)
     selector = VIFSelector(n_jobs=1)
     values = selector._compute_vif_all(frame)
@@ -56,6 +61,7 @@ def test_shared_vif_keeps_iterative_deletion_and_forced_include():
         def _compute_vif_all(self, frame):
             filled = frame.fillna(self.missing).to_numpy()
             return pd.Series([_compute_vif_single(filled, i) for i in range(filled.shape[1])], index=frame.columns)
+
     rng = np.random.default_rng(42)
     data = pd.DataFrame(rng.normal(size=(300, 7)), columns=list("abcdefg"))
     data["b"] = data.a + rng.normal(scale=0.03, size=len(data))

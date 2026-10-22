@@ -12,8 +12,13 @@ from hscredit.report import ModelReport, auto_model_report
 
 
 def _data_and_model():
-    data = pd.DataFrame({"x": [1.25, 2.5, 3.75, 5.0], "y": [0, 1, 0, 1],
-                         "订单标识": ["PRIVATE_ORDER_A", "PRIVATE_ORDER_B", "PRIVATE_ORDER_C", "PRIVATE_ORDER_D"]})
+    data = pd.DataFrame(
+        {
+            "x": [1.25, 2.5, 3.75, 5.0],
+            "y": [0, 1, 0, 1],
+            "订单标识": ["PRIVATE_ORDER_A", "PRIVATE_ORDER_B", "PRIVATE_ORDER_C", "PRIVATE_ORDER_D"],
+        }
+    )
     model = LogisticRegression().fit(data[["x"]], data.y)
     return data, model
 
@@ -22,10 +27,19 @@ def _data_and_model():
 def test_disabling_sample_records_removes_row_level_table_and_marks_not_applicable(tmp_path, entry):
     data, model = _data_and_model()
     output = tmp_path / "without_records.xlsx"
-    kwargs = dict(with_plots=False, loc_cols="订单标识", include_sample_records=False, mode="strict", return_result=True)
+    kwargs = dict(
+        with_plots=False, loc_cols="订单标识", include_sample_records=False, mode="strict", return_result=True
+    )
     if entry == "auto":
-        result = auto_model_report(model, X_train=data[["x", "订单标识"]], y_train=data.y,
-                                   excel_path=str(output), n_jobs=1, verbose=False, **kwargs)
+        result = auto_model_report(
+            model,
+            X_train=data[["x", "订单标识"]],
+            y_train=data.y,
+            excel_path=str(output),
+            n_jobs=1,
+            verbose=False,
+            **kwargs,
+        )
     else:
         report = ModelReport(model, X_train=data[["x", "订单标识"]], y_train=data.y, n_jobs=1)
         result = report.to_excel(str(output), transactional=entry == "transactional", **kwargs)

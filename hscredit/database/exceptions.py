@@ -203,8 +203,8 @@ class DatabaseError(HSCreditError):
         if uncertain:
             return _REDACTED_DRIVER_MESSAGE
         for token in sorted(tokens, key=len, reverse=True):
-            contains_token = token in detail if len(token) >= 3 else bool(
-                re.search(rf"(?<!\w){re.escape(token)}(?!\w)", detail)
+            contains_token = (
+                token in detail if len(token) >= 3 else bool(re.search(rf"(?<!\w){re.escape(token)}(?!\w)", detail))
             )
             if contains_token:
                 return _REDACTED_DRIVER_MESSAGE

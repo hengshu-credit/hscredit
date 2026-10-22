@@ -31,7 +31,7 @@ def _canonical(node: "ExprNode") -> str:
     ``&``/``|`` 符号），仅压缩多余空白，做大小写敏感的精确比较，避免误判不同列名/
     字面量为等价。
     """
-    return ' '.join(node.to_string().split())
+    return " ".join(node.to_string().split())
 
 
 class ExprNode:
@@ -64,11 +64,11 @@ class VariableNode(ExprNode):
         # 使用正则提取变量名
         variables = set()
         # 匹配形如 "age > 18" 中的变量名
-        pattern = r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b'
+        pattern = r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b"
         for match in re.finditer(pattern, self.expr):
             var = match.group(1)
             # 排除 Python 关键字
-            if var not in {'and', 'or', 'not', 'True', 'False', 'None'}:
+            if var not in {"and", "or", "not", "True", "False", "None"}:
                 variables.add(var)
         return variables
 
@@ -109,7 +109,7 @@ class BinaryOpNode(ExprNode):
     def op_symbol(self) -> str:
         """获取可读的运算符符号。"""
         # 将 'and' 转换为 '&', 'or' 转换为 '|'
-        symbols = {'&': '&', '|': '|', '^': '^', 'and': '&', 'or': '|'}
+        symbols = {"&": "&", "|": "|", "^": "^", "and": "&", "or": "|"}
         return symbols.get(self.op, self.op)
 
     def need_parens(self, parent_op: str) -> bool:
@@ -136,7 +136,7 @@ class BinaryOpNode(ExprNode):
         self.right = self.right.simplify()
 
         # 幂等律 / 吸收律仅对与、或运算成立，异或不能套用
-        if self.op in ('&', '|'):
+        if self.op in ("&", "|"):
             left_expr = _canonical(self.left)
             right_expr = _canonical(self.right)
 
@@ -164,15 +164,14 @@ class BinaryOpNode(ExprNode):
         是否为内层运算的操作数之一。
         """
         if isinstance(node, BinaryOpNode) and node.op == op:
-            return (BinaryOpNode._flatten_same_op(node.left, op)
-                    + BinaryOpNode._flatten_same_op(node.right, op))
+            return BinaryOpNode._flatten_same_op(node.left, op) + BinaryOpNode._flatten_same_op(node.right, op)
         return [_canonical(node)]
 
 
 class UnaryOpNode(ExprNode):
     """一元运算符节点 (NOT)。"""
 
-    def __init__(self, operand: ExprNode, op: str = 'not'):
+    def __init__(self, operand: ExprNode, op: str = "not"):
         super().__init__()
         self.operand = operand
         self.op = op
@@ -279,7 +278,7 @@ class ExprParser:
 
         # 使用 AST 解析
         try:
-            tree = ast.parse(processed, mode='eval')
+            tree = ast.parse(processed, mode="eval")
             return self._visit(tree.body)
         except SyntaxError:
             # 如果解析失败，返回原子节点
@@ -313,26 +312,26 @@ class ExprParser:
                 i += 1
                 continue
 
-            if char in ('"', "'", '`'):
+            if char in ('"', "'", "`"):
                 quote = char
                 result.append(char)
                 i += 1
                 continue
 
-            if char == '~':
-                result.append(' not ')
+            if char == "~":
+                result.append(" not ")
                 i += 1
                 continue
 
-            if char == '&':
-                result.append(' and ')
+            if char == "&":
+                result.append(" and ")
                 # 同时兼容 && 写法
-                i += 2 if (i + 1 < n and expr[i + 1] == '&') else 1
+                i += 2 if (i + 1 < n and expr[i + 1] == "&") else 1
                 continue
 
-            if char == '|':
-                result.append(' or ')
-                i += 2 if (i + 1 < n and expr[i + 1] == '|') else 1
+            if char == "|":
+                result.append(" or ")
+                i += 2 if (i + 1 < n and expr[i + 1] == "|") else 1
                 continue
 
             result.append(char)
@@ -340,7 +339,7 @@ class ExprParser:
 
         # 去除首尾空白：ast.parse(mode='eval') 不允许表达式以空白开头（会被当作缩进），
         # 而前导的 ``~`` 被替换为 `` not `` 后会在行首引入空格
-        return ''.join(result).strip()
+        return "".join(result).strip()
 
     def _visit(self, node: ast.AST) -> ExprNode:
         """访问 AST 节点。"""
@@ -348,13 +347,13 @@ class ExprParser:
             # 处理布尔运算 (and, or)
             op = node.op
             if isinstance(op, ast.And):
-                op_str = '&'
+                op_str = "&"
             elif isinstance(op, ast.Or):
-                op_str = '|'
+                op_str = "|"
             elif isinstance(op, ast.Xor):
-                op_str = '^'
+                op_str = "^"
             else:
-                op_str = '&'
+                op_str = "&"
 
             # 处理多个操作数的情况 (a & b & c)
             result = self._visit(node.values[0])
@@ -366,13 +365,13 @@ class ExprParser:
             # 处理二元运算 (&, |, ^)
             op = node.op
             if isinstance(op, (ast.BitAnd, ast.And)):
-                op_str = '&'
+                op_str = "&"
             elif isinstance(op, (ast.BitOr, ast.Or)):
-                op_str = '|'
+                op_str = "|"
             elif isinstance(op, ast.BitXor):
-                op_str = '^'
+                op_str = "^"
             else:
-                op_str = '&'
+                op_str = "&"
 
             return BinaryOpNode(self._visit(node.left), self._visit(node.right), op_str)
 
@@ -406,10 +405,10 @@ class ExprParser:
         """提取表达式中的变量名。"""
         # 预处理：移除 ~ 和括号等
         variables = []
-        pattern = r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b'
+        pattern = r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b"
         for match in re.finditer(pattern, expr):
             var = match.group(1)
-            if var not in {'and', 'or', 'not', 'True', 'False', 'None', 'inf', 'nan'}:
+            if var not in {"and", "or", "not", "True", "False", "None", "inf", "nan"}:
                 variables.append(var)
         return list(set(variables))
 
@@ -515,11 +514,11 @@ def get_expr_variables(expr: str) -> List[str]:
     """
     # 直接使用正则表达式提取变量名
     variables = set()
-    pattern = r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b'
+    pattern = r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b"
     for match in re.finditer(pattern, expr):
         var = match.group(1)
         # 排除 Python 关键字和运算符
-        if var not in {'and', 'or', 'not', 'True', 'False', 'None', 'inf', 'nan'}:
+        if var not in {"and", "or", "not", "True", "False", "None", "inf", "nan"}:
             # 排除以开头的函数或方法调用
             # 检查是否是表达式中的比较运算符的一部分
             variables.add(var)

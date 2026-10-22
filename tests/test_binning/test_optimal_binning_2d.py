@@ -1003,7 +1003,9 @@ class TestOptimalBinning2DMerge:
             )
             binner.fit(df, y=df["target"], features=["a", "c"])
             normal = binner.get_bin_table().query("分箱 >= 0")
-            counts = {int(row["分箱"]): (float(row["坏样本数"]), float(row["好样本数"])) for _, row in normal.iterrows()}
+            counts = {
+                int(row["分箱"]): (float(row["坏样本数"]), float(row["好样本数"])) for _, row in normal.iterrows()
+            }
             # 硬约束：合并后必须零违例（软约束在随机数据上通常无法保证）
             assert not binner._monotonic_violations(
                 binner.solution_, counts, trend_x, trend_y
@@ -1244,11 +1246,7 @@ def test_binning_table_label_exactly_describes_non_rectangular_region():
     binner._compute_binning_table()
 
     labels = binner.binning_table_.set_index("分箱")["分箱标签"]
-    assert labels.loc[0] == (
-        "[-inf, 1) × [-inf, +inf) ∪ "
-        "[1, 2) × [-inf, 2) ∪ "
-        "[2, +inf) × [-inf, 1)"
-    )
+    assert labels.loc[0] == ("[-inf, 1) × [-inf, +inf) ∪ " "[1, 2) × [-inf, 2) ∪ " "[2, +inf) × [-inf, 1)")
     assert labels.loc[1] == "[1, +inf) × [2, +inf)"
     assert labels.loc[2] == "[2, +inf) × [1, 2)"
 

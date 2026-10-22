@@ -1,6 +1,7 @@
 """主题字体变大后，摘要仍可读且不会侵入图例或容器边界。"""
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pytest

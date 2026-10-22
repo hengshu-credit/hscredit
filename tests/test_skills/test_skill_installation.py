@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-
 ROOT = Path(__file__).parents[2]
 IMPLEMENTED = ("hscredit", "hsbin", "hsreport", "hsmodel", "hsrule", "hsselect", "hsviz", "hsexcel")
 

@@ -7,7 +7,14 @@ import pytest
 from scipy import sparse
 from sklearn.model_selection import GroupKFold, TimeSeriesSplit
 
-from hscredit.core.encoders import WOEEncoder, TargetEncoder, CatBoostEncoder, QuantileEncoder, OneHotEncoder, OrdinalEncoder
+from hscredit.core.encoders import (
+    WOEEncoder,
+    TargetEncoder,
+    CatBoostEncoder,
+    QuantileEncoder,
+    OneHotEncoder,
+    OrdinalEncoder,
+)
 from hscredit.core.selectors import IVSelector
 from hscredit.utils.data_contracts import prepare_xy, validate_target
 
@@ -64,7 +71,7 @@ def test_missing_nan_not_overridden_by_unknown_policy(cls, unknown):
 def test_catboost_ordered_training_is_not_in_sample_target():
     df = pd.DataFrame({"x": ["a", "a", "b", "b"], "target": [0, 0, 1, 1]})
     out = CatBoostEncoder(target="target", random_state=42, n_jobs=1).fit_transform(df)
-    np.testing.assert_allclose(out.x, [.25, .5, .75, .5])
+    np.testing.assert_allclose(out.x, [0.25, 0.5, 0.75, 0.5])
 
 
 @pytest.mark.parametrize("cls", [TargetEncoder, WOEEncoder])

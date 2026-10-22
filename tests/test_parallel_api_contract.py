@@ -28,7 +28,6 @@ from hscredit.utils.parallel import (
     validate_parallel_config,
 )
 
-
 COMMON_PARAMETERS = ("n_jobs", "parallel_backend", "parallel_config")
 
 EDA_PARALLEL_FUNCTIONS = (
@@ -64,6 +63,7 @@ def test_batch_eda_exposes_common_parallel_parameters(function):
     assert parameters["n_jobs"].default == -1
     assert parameters["parallel_backend"].default is None
     assert parameters["parallel_config"].default is None
+
 
 # 明确列出 Task 1-11 范围内的每个批量入口。下面的覆盖测试还会与各模块
 # __all__ 双向核对，避免只抽查少数类而漏掉新增或删除的公开入口。
@@ -193,7 +193,19 @@ NON_BATCH_EXPORTS = {
     },
     model_rules: {"LogicOperator", "RuleResult", "create_and_ruleset", "create_or_ruleset", "combine_rules"},
     mining: {"calculate_rule_metrics"},
-    report: {"ExcelWriter", "dataframe2excel", "SwapAnalysisResult", "SwapRiskConfig", "SwapType", "calculate_rule_metrics", "ReportResult", "ReportSectionResult", "ReportGenerationError", "save_selection_report", "load_selection_report"},
+    report: {
+        "ExcelWriter",
+        "dataframe2excel",
+        "SwapAnalysisResult",
+        "SwapRiskConfig",
+        "SwapType",
+        "calculate_rule_metrics",
+        "ReportResult",
+        "ReportSectionResult",
+        "ReportGenerationError",
+        "save_selection_report",
+        "load_selection_report",
+    },
 }
 
 
@@ -286,9 +298,7 @@ def test_base_constructor_preserves_parallel_parameters_without_resolution():
 def test_encoder_clone_and_pickle_preserve_parallel_configuration():
     """sklearn clone 与 pickle 必须保留并行配置值。"""
     config = {"batch_size": 8}
-    encoder = _CloneableEncoder(
-        features=["类别"], n_jobs=0.5, parallel_backend="threading", parallel_config=config
-    )
+    encoder = _CloneableEncoder(features=["类别"], n_jobs=0.5, parallel_backend="threading", parallel_config=config)
 
     cloned = clone(encoder)
     restored = pickle.loads(pickle.dumps(encoder))
@@ -466,13 +476,16 @@ def test_base_binning_feature_loop_uses_shared_parallel_configuration():
         binner.fit(pd.DataFrame({"特征A": [1, 2]}), [0, 1])
 
 
-@pytest.mark.parametrize('passthrough_target', [False, True])
+@pytest.mark.parametrize("passthrough_target", [False, True])
 def test_base_encoder_parallel_parameters_do_not_change_dual_api(passthrough_target):
     frame = pd.DataFrame({"类别": ["甲", "乙"], "FPD": [0, 1]})
     encoder = _CloneableEncoder(
-        features=["类别"], target="FPD", n_jobs=None, parallel_config={"batch_size": 1},
+        features=["类别"],
+        target="FPD",
+        n_jobs=None,
+        parallel_config={"batch_size": 1},
         passthrough_target=passthrough_target,
     )
-    expected = frame if passthrough_target else frame.drop(columns=['FPD'])
+    expected = frame if passthrough_target else frame.drop(columns=["FPD"])
     pd.testing.assert_frame_equal(encoder.fit_transform(frame), expected)
-    pd.testing.assert_frame_equal(encoder.fit_transform(frame, frame['FPD']), expected)
+    pd.testing.assert_frame_equal(encoder.fit_transform(frame, frame["FPD"]), expected)

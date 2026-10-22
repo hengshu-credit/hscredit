@@ -33,8 +33,12 @@ from ...utils.serialization import ArtifactSerializableMixin
 from ...utils.parallel import resolve_n_jobs
 from .scorecard_support import _ProbabilityScoreCardMixin
 from ._contracts import (
-    InferenceExportMixin, align_model_features, positive_probability,
-    record_feature_schema, take_rows, validate_sample_weight,
+    InferenceExportMixin,
+    align_model_features,
+    positive_probability,
+    record_feature_schema,
+    take_rows,
+    validate_sample_weight,
 )
 
 if TYPE_CHECKING:
@@ -75,7 +79,7 @@ def _evaluate_binary_predictions(
     *,
     metrics,
     sample_weight=None,
-    score_direction='auto',
+    score_direction="auto",
 ) -> Dict[str, float]:
     """按统一模型评估契约计算二值标签指标。"""
     from sklearn.metrics import (
@@ -134,7 +138,11 @@ def _evaluate_binary_predictions(
     from .losses.base import BaseMetric
 
     normalized = [metric if isinstance(metric, BaseMetric) else str(metric).lower() for metric in metrics]
-    unknown = [metric for metric, name in zip(metrics, normalized) if not isinstance(name, BaseMetric) and name not in supported]
+    unknown = [
+        metric
+        for metric, name in zip(metrics, normalized)
+        if not isinstance(name, BaseMetric) and name not in supported
+    ]
     if unknown:
         raise ValueError(f"不支持的评估指标: {unknown}")
 
@@ -230,7 +238,9 @@ def resolve_custom_objective(objective, sample_weight=None):
     return _sklearn_obj
 
 
-class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSerializableMixin, ClassifierMixin, BaseEstimator, ABC):
+class BaseRiskModel(
+    _ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSerializableMixin, ClassifierMixin, BaseEstimator, ABC
+):
     """风控模型基类.
 
     所有风控模型的抽象基类，定义统一接口。
@@ -532,7 +542,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         sample_weight: Optional[np.ndarray] = None,
         metrics: Optional[List[Any]] = None,
         positive_class: Optional[Any] = None,
-        score_direction: str = 'auto',
+        score_direction: str = "auto",
     ) -> Dict[str, float]:
         """评估模型性能.
 
@@ -548,9 +558,9 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         from .losses.base import BaseMetric
 
         requested_metrics = (
-            list(self.DEFAULT_METRICS) if metrics is None
-            else [metrics] if isinstance(metrics, (str, BaseMetric))
-            else list(metrics)
+            list(self.DEFAULT_METRICS)
+            if metrics is None
+            else [metrics] if isinstance(metrics, (str, BaseMetric)) else list(metrics)
         )
         probabilities = np.asarray(self.predict_proba(X), dtype=float)
         classes = np.asarray(getattr(self, "classes_", []))
@@ -920,7 +930,11 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         """
         from .tuning import ModelTuner
 
-        fit_options = {name: kwargs.pop(name) for name in ("groups", "catch", "gc_after_trial", "evaluation_weight") if name in kwargs}
+        fit_options = {
+            name: kwargs.pop(name)
+            for name in ("groups", "catch", "gc_after_trial", "evaluation_weight")
+            if name in kwargs
+        }
         fit_options.update(kwargs.pop("optimize_kwargs", {}))
         kwargs.setdefault("random_state", self.random_state)
 

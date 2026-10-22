@@ -29,5 +29,5 @@
 from .expression import NumExprDerive
 
 __all__ = [
-    'NumExprDerive',
+    "NumExprDerive",
 ]

@@ -15,37 +15,37 @@ import joblib
 from ..exceptions import DependencyError, ValidationError
 
 
-def _open_file(
-    file: Union[str, Path],
-    mode: str = 'rb',
-    compression: Optional[str] = None
-):
+def _open_file(file: Union[str, Path], mode: str = "rb", compression: Optional[str] = None):
     """根据压缩格式打开文件."""
-    if compression == 'gzip' or str(file).lower().endswith('.gz'):
+    if compression == "gzip" or str(file).lower().endswith(".gz"):
         return gzip.open(file, mode)
-    elif compression == 'bz2' or str(file).lower().endswith('.bz2'):
+    elif compression == "bz2" or str(file).lower().endswith(".bz2"):
         import bz2
+
         return bz2.open(file, mode)
-    elif compression == 'xz' or str(file).lower().endswith('.xz'):
+    elif compression == "xz" or str(file).lower().endswith(".xz"):
         try:
             import lzma
+
             return lzma.open(file, mode)
         except ImportError:
             raise DependencyError("缺少可选依赖 lzma，请改用 gzip 或 bz2 压缩格式")
-    elif compression == 'lz4' or str(file).lower().endswith('.lz4'):
+    elif compression == "lz4" or str(file).lower().endswith(".lz4"):
         try:
             import lz4.frame
+
             return lz4.frame.open(file, mode)
         except ImportError:
             raise DependencyError("缺少可选依赖 lz4，请先安装: pip install lz4")
-    elif compression in ('zstd', 'zstandard') or str(file).lower().endswith(('.zst', '.zstd')):
+    elif compression in ("zstd", "zstandard") or str(file).lower().endswith((".zst", ".zstd")):
         try:
             import zstandard
+
             return zstandard.open(file, mode)
         except ImportError:
             raise DependencyError("缺少可选依赖 zstandard，请先安装: pip install zstandard")
     else:
-        return nullcontext(file) if hasattr(file, 'read') else open(file, mode)
+        return nullcontext(file) if hasattr(file, "read") else open(file, mode)
 
 
 def load_pickle(
@@ -90,42 +90,43 @@ def load_pickle(
     # 自动检测压缩格式
     comp = compression
     if comp is None:
-        if file_str.endswith('.gz') or file_str.endswith('.gzip'):
-            comp = 'gzip'
-        elif file_str.endswith('.bz2'):
-            comp = 'bz2'
-        elif file_str.endswith('.xz'):
-            comp = 'xz'
-        elif file_str.endswith('.lz4'):
-            comp = 'lz4'
-        elif file_str.endswith('.zst') or file_str.endswith('.zstd'):
-            comp = 'zstd'
+        if file_str.endswith(".gz") or file_str.endswith(".gzip"):
+            comp = "gzip"
+        elif file_str.endswith(".bz2"):
+            comp = "bz2"
+        elif file_str.endswith(".xz"):
+            comp = "xz"
+        elif file_str.endswith(".lz4"):
+            comp = "lz4"
+        elif file_str.endswith(".zst") or file_str.endswith(".zstd"):
+            comp = "zstd"
 
     # 自动检测引擎
     eng = engine
     if eng == "auto":
         # 根据文件扩展名推断
-        if file_str.endswith('.joblib') or file_str.endswith('.joblib.gz'):
-            eng = 'joblib'
-        elif file_str.endswith('.dill') or file_str.endswith('.dill.gz'):
-            eng = 'dill'
-        elif file_str.endswith('.cloudpickle'):
-            eng = 'cloudpickle'
+        if file_str.endswith(".joblib") or file_str.endswith(".joblib.gz"):
+            eng = "joblib"
+        elif file_str.endswith(".dill") or file_str.endswith(".dill.gz"):
+            eng = "dill"
+        elif file_str.endswith(".cloudpickle"):
+            eng = "cloudpickle"
         else:
             # 默认使用 joblib（业内最常用）
-            eng = 'joblib'
+            eng = "joblib"
 
     # 使用指定引擎加载
     if eng == "joblib":
         if comp:
             # 直接读取解压流，避免再分配一份完整解压字节缓冲。
-            with _open_file(file, 'rb', comp) as f:
+            with _open_file(file, "rb", comp) as f:
                 return joblib.load(f)
         return joblib.load(file)
 
     elif eng == "dill":
         try:
             import dill
+
             with _open_file(file, "rb", comp) as f:
                 return dill.load(f)
         except ImportError:
@@ -134,6 +135,7 @@ def load_pickle(
     elif eng == "cloudpickle":
         try:
             import cloudpickle
+
             with _open_file(file, "rb", comp) as f:
                 return cloudpickle.load(f)
         except ImportError:
@@ -145,8 +147,7 @@ def load_pickle(
 
     else:
         raise ValidationError(
-            f"engine 目前只支持 ['auto', 'joblib', 'dill', 'cloudpickle', 'pickle'], "
-            f"不支持 {eng}"
+            f"engine 目前只支持 ['auto', 'joblib', 'dill', 'cloudpickle', 'pickle'], " f"不支持 {eng}"
         )
 
 
@@ -156,7 +157,7 @@ def save_pickle(
     engine: str = "joblib",
     compression: Optional[str] = None,
     compression_level: Optional[int] = None,
-    protocol: Optional[int] = None
+    protocol: Optional[int] = None,
 ) -> str:
     """保存数据至 pickle 文件。
 
@@ -195,17 +196,17 @@ def save_pickle(
 
     # 自动检测压缩格式
     comp = compression
-    if comp == 'auto' or comp is None:
-        if file_str.endswith('.gz') or file_str.endswith('.gzip'):
-            comp = 'gzip'
-        elif file_str.endswith('.bz2'):
-            comp = 'bz2'
-        elif file_str.endswith('.xz'):
-            comp = 'xz'
-        elif file_str.endswith('.lz4'):
-            comp = 'lz4'
-        elif file_str.endswith('.zst') or file_str.endswith('.zstd'):
-            comp = 'zstd'
+    if comp == "auto" or comp is None:
+        if file_str.endswith(".gz") or file_str.endswith(".gzip"):
+            comp = "gzip"
+        elif file_str.endswith(".bz2"):
+            comp = "bz2"
+        elif file_str.endswith(".xz"):
+            comp = "xz"
+        elif file_str.endswith(".lz4"):
+            comp = "lz4"
+        elif file_str.endswith(".zst") or file_str.endswith(".zstd"):
+            comp = "zstd"
 
     # 设置 pickle protocol
     proto = protocol
@@ -227,6 +228,7 @@ def save_pickle(
     elif engine == "dill":
         try:
             import dill
+
             with _open_file(file, "wb", comp) as f:
                 dill.dump(obj, f, protocol=proto)
         except ImportError:
@@ -235,6 +237,7 @@ def save_pickle(
     elif engine == "cloudpickle":
         try:
             import cloudpickle
+
             with _open_file(file, "wb", comp) as f:
                 cloudpickle.dump(obj, f, protocol=proto)
         except ImportError:
@@ -245,9 +248,6 @@ def save_pickle(
             pickle.dump(obj, f, protocol=proto)
 
     else:
-        raise ValidationError(
-            f"engine 目前只支持 ['joblib', 'dill', 'cloudpickle', 'pickle'], "
-            f"不支持 {engine}"
-        )
+        raise ValidationError(f"engine 目前只支持 ['joblib', 'dill', 'cloudpickle', 'pickle'], " f"不支持 {engine}")
 
     return str(file)

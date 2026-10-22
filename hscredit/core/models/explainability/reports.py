@@ -61,9 +61,7 @@ def model_explain_report(
     >>> report = model_explain_report(model, X_test, importance_type='coef')
     >>> print(report[['特征名', '重要性', '排名']].head())
     """
-    if top_n is not None and (
-        not isinstance(top_n, int) or isinstance(top_n, bool) or top_n <= 0
-    ):
+    if top_n is not None and (not isinstance(top_n, int) or isinstance(top_n, bool) or top_n <= 0):
         raise ValueError("top_n 必须是正整数或 None")
     source = "get_feature_importances"
     direction = None

@@ -432,7 +432,7 @@ class MDLPBinning(BaseBinning):
         positions = positions[(positions >= min_samples) & (n - positions >= min_samples)]
         scores = _split_scores_from_prefix(prefix_bad, positions, n)
         candidate_splits = (x[positions - 1] + x[positions]) / 2
-        candidate_splits = candidate_splits[np.argsort(-scores, kind='stable')]
+        candidate_splits = candidate_splits[np.argsort(-scores, kind="stable")]
 
         # 贪心选择：每次选择能最大化总IV的切分点
         while len(splits) < target_n_bins:
@@ -442,10 +442,12 @@ class MDLPBinning(BaseBinning):
             candidates = candidate_splits[~np.isin(candidate_splits, splits)]
             # 有界候选批次：工作区随4096×箱数增长，不构造候选数×样本数的mask。
             for offset in range(0, len(candidates), 4096):
-                chunk = candidates[offset:offset + 4096]
+                chunk = candidates[offset : offset + 4096]
                 proposed = np.sort(np.column_stack([np.broadcast_to(splits, (len(chunk), len(splits))), chunk]), axis=1)
-                cuts = np.searchsorted(x, proposed, side='left')
-                bounds = np.column_stack([np.zeros(len(chunk), dtype=np.intp), cuts, np.full(len(chunk), n, dtype=np.intp)])
+                cuts = np.searchsorted(x, proposed, side="left")
+                bounds = np.column_stack(
+                    [np.zeros(len(chunk), dtype=np.intp), cuts, np.full(len(chunk), n, dtype=np.intp)]
+                )
                 bad = np.diff(prefix_bad[bounds], axis=1)
                 good = np.diff(bounds, axis=1) - bad
                 contributions = _iv_from_counts(bad, good, total_bad, total_good)

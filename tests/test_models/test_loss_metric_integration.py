@@ -91,8 +91,12 @@ def test_lightgbm_default_early_stopping_preserves_requested_metric_order(loss_f
     metric = WeightedBCELoss().metric()
     metrics = [metric, "auc"] if loss_first else ["auc", metric]
     model = LightGBM(
-        n_estimators=40, n_jobs=1, random_state=19, learning_rate=0.05,
-        eval_metric=metrics, early_stopping_rounds=3,
+        n_estimators=40,
+        n_jobs=1,
+        random_state=19,
+        learning_rate=0.05,
+        eval_metric=metrics,
+        early_stopping_rounds=3,
     ).fit(X_train, y_train, eval_set=[(X_valid, y_valid)])
     curves = model.evals_result_["valid_0"]
     expected = np.argmin(curves[metric.name]) if loss_first else np.argmax(curves["auc"])
@@ -111,9 +115,7 @@ def test_xgboost_maximizes_metric_when_early_stopping_is_requested(loan_data):
 
 def test_catboost_preserves_default_auc_for_custom_loss(loan_data):
     X_train, X_valid, y_train, y_valid = loan_data
-    model = _model("CatBoost", objective=WeightedBCELoss()).fit(
-        X_train, y_train, eval_set=[(X_valid, y_valid)]
-    )
+    model = _model("CatBoost", objective=WeightedBCELoss()).fit(X_train, y_train, eval_set=[(X_valid, y_valid)])
     assert "AUC" in model.evals_result_["validation"]
 
 
@@ -131,9 +133,7 @@ def test_catboost_metric_list_has_consistent_entry_points(entry, loan_data):
         options["eval_metric"] = "auc"
         options["params"] = {"eval_metric": "Logloss"}
         fit_options["eval_metric"] = metrics
-    model = _model("CatBoost", **options).fit(
-        X_train, y_train, eval_set=[(X_valid, y_valid)], **fit_options
-    )
+    model = _model("CatBoost", **options).fit(X_train, y_train, eval_set=[(X_valid, y_valid)], **fit_options)
     results = model.evals_result_["validation"]
     assert metric.name in results and "AUC" in results
     expected = metric.evaluate(y_valid, model.predict_proba(X_valid))
@@ -156,15 +156,20 @@ def test_loss_scorer_and_tuner_use_correct_direction(loan_data):
     X_train, _, y_train, _ = loan_data
     metric = WeightedBCELoss().metric()
     tuner = ModelTuner(
-        SklearnLogisticRegression, search_space={"C": [0.1, 1.0]},
-        fixed_params={"max_iter": 1000}, metric=metric, cv=2, n_jobs=1,
+        SklearnLogisticRegression,
+        search_space={"C": [0.1, 1.0]},
+        fixed_params={"max_iter": 1000},
+        metric=metric,
+        cv=2,
+        n_jobs=1,
     )
     assert tuner.directions == ["minimize"]
     assert tuner.direction == "minimize"
     assert tuner.metric_names == [metric.name]
     assert Metric(metric).direction == "minimize"
-    scores = cross_val_score(SklearnLogisticRegression(max_iter=1000), X_train, y_train,
-                             scoring=metric.to_scorer(), cv=2)
+    scores = cross_val_score(
+        SklearnLogisticRegression(max_iter=1000), X_train, y_train, scoring=metric.to_scorer(), cv=2
+    )
     assert np.isfinite(scores).all()
     assert np.all(scores < 0)
     tuner.fit(X_train, y_train, n_trials=1, show_progress_bar=False)

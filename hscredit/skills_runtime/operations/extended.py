@@ -1,6 +1,5 @@
 """hscredit 其余 Skills 的统一、白名单化操作适配器。"""
 
-
 from __future__ import annotations
 
 from .binning import _target_parameters, _overdue_summary
@@ -211,8 +210,13 @@ def _rule_report(context) -> dict:
     from ...utils.targets import bind_targets
 
     data, targets = bind_targets(
-        data, params.get("target"), params.pop("overdue", None), params.pop("dpds", None),
-        params.get("del_grey", False), params.get("overdue_operator", ">"), default_target="target",
+        data,
+        params.get("target"),
+        params.pop("overdue", None),
+        params.pop("dpds", None),
+        params.get("del_grey", False),
+        params.get("overdue_operator", ">"),
+        default_target="target",
     )
     params["target"] = targets
     reports = {rule.name or f"规则{i + 1}": rule.report(data, **params) for i, rule in enumerate(rules)}
@@ -423,9 +427,14 @@ def _viz_plot(context) -> dict:
             context.artifacts.publish(child, f"{context.request.output.name}-{key}.{fmt}", artifact_type="image")
         plt.close(figure)
     operator_parameter = signature.parameters.get("overdue_operator")
-    label_summary = {} if kwargs.get("bin_table") is not None else _overdue_summary(
-        kwargs, default_operator=operator_parameter.default if operator_parameter else ">",
-        paired=plot_name in {"bin_overdues_plot", "distribution_plot"},
+    label_summary = (
+        {}
+        if kwargs.get("bin_table") is not None
+        else _overdue_summary(
+            kwargs,
+            default_operator=operator_parameter.default if operator_parameter else ">",
+            paired=plot_name in {"bin_overdues_plot", "distribution_plot"},
+        )
     )
     return {"summary": {"plot": plot_name, "format": fmt, "figures": len(figures), **label_summary}}
 

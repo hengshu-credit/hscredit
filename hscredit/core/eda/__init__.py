@@ -14,16 +14,16 @@
 
 示例:
     >>> import hscredit.core.eda as eda
-    >>> 
+    >>>
     >>> # 数据概览
     >>> summary = eda.data_info(df)
-    >>> 
+    >>>
     >>> # 批量IV分析
     >>> iv_result = eda.batch_iv_analysis(df, features=['age', 'income'], target='fpd15')
-    >>> 
+    >>>
     >>> # 逾期率趋势
     >>> trend = eda.bad_rate_trend(df, target='fpd15', date='apply_month')
-    >>> 
+    >>>
     >>> # Vintage分析
     >>> vintage = eda.vintage_analysis(df, vintage_col='issue_month', mob_col='mob', target='ever_dpd30')
 """
@@ -128,80 +128,71 @@ from .report import (
 
 __all__ = [
     # 数据概览
-    'data_info',
-    'missing_analysis',
-    'feature_summary',
-    'numeric_summary',
-    'category_summary',
-    'data_quality_report',
-    'feature_group_analysis',
-    'population_stability_monitor',
-    
+    "data_info",
+    "missing_analysis",
+    "feature_summary",
+    "numeric_summary",
+    "category_summary",
+    "data_quality_report",
+    "feature_group_analysis",
+    "population_stability_monitor",
     # 目标变量分析
-    'target_distribution',
-    'bad_rate_overall',
-    'bad_rate_by_dimension',
-    'bad_rate_trend',
-    'bad_rate_by_bins',
-    'sample_distribution',
-
+    "target_distribution",
+    "bad_rate_overall",
+    "bad_rate_by_dimension",
+    "bad_rate_trend",
+    "bad_rate_by_bins",
+    "sample_distribution",
     # 特征分析
-    'feature_type_inference',
-    'numeric_distribution',
-    'categorical_distribution',
-    'outlier_detection',
-    'rare_category_detection',
-    'concentration_analysis',
-    'feature_stability_over_time',
-    
+    "feature_type_inference",
+    "numeric_distribution",
+    "categorical_distribution",
+    "outlier_detection",
+    "rare_category_detection",
+    "concentration_analysis",
+    "feature_stability_over_time",
     # 特征标签关系
-    'iv_analysis',
-    'batch_iv_analysis',
-    'woe_analysis',
-    'binning_bad_rate',
-    'monotonicity_check',
-    'univariate_auc',
-    'feature_importance_ranking',
-    
+    "iv_analysis",
+    "batch_iv_analysis",
+    "woe_analysis",
+    "binning_bad_rate",
+    "monotonicity_check",
+    "univariate_auc",
+    "feature_importance_ranking",
     # 相关性分析
-    'correlation_matrix',
-    'high_correlation_pairs',
-    'correlation_filter',
-    'vif_analysis',
-    
+    "correlation_matrix",
+    "high_correlation_pairs",
+    "correlation_filter",
+    "vif_analysis",
     # 稳定性分析
-    'psi_analysis',
-    'batch_psi_analysis',
-    'csi_analysis',
-    'time_psi_tracking',
-    'stability_report',
-    'psi_cross_analysis',
-    'feature_drift_report',
-    'score_drift_report',
-    'model_drift_report',
-
+    "psi_analysis",
+    "batch_psi_analysis",
+    "csi_analysis",
+    "time_psi_tracking",
+    "stability_report",
+    "psi_cross_analysis",
+    "feature_drift_report",
+    "score_drift_report",
+    "model_drift_report",
     # 客群分析与偏移监控
-    'population_profile',
-    'population_shift_analysis',
-    'population_monitoring_report',
-    'segment_drift_analysis',
-    'feature_cross_segment_effectiveness',
-
+    "population_profile",
+    "population_shift_analysis",
+    "population_monitoring_report",
+    "segment_drift_analysis",
+    "feature_cross_segment_effectiveness",
     # 策略分析
-    'approval_badrate_tradeoff',
-    'score_strategy_simulation',
-    'vintage_performance_summary',
-    'roll_rate_matrix',
-    'label_leakage_check',
-    'multi_label_correlation',
-
+    "approval_badrate_tradeoff",
+    "score_strategy_simulation",
+    "vintage_performance_summary",
+    "roll_rate_matrix",
+    "label_leakage_check",
+    "multi_label_correlation",
     # Vintage分析
-    'vintage_analysis',
-    'vintage_summary',
-    'roll_rate_analysis',
-    
+    "vintage_analysis",
+    "vintage_summary",
+    "roll_rate_analysis",
     # 综合报告
-    'eda_summary',
-    'generate_report',
-    'export_report_to_excel',
+    "eda_summary",
+    "generate_report",
+    "export_report_to_excel",
 ]

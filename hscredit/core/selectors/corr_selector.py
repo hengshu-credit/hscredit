@@ -550,9 +550,7 @@ class CorrSelector(BaseFeatureSelector):
         binner = getattr(self, "_binner_instance", None)
         bin_tables = getattr(binner, "bin_tables_", {}) if binner is not None else {}
         if not bin_tables:
-            raise ValidationError(
-                "CorrSelector 使用指标权重时需要配置 binner 或 bin_params，" "也可以显式传入 weights"
-            )
+            raise ValidationError("CorrSelector 使用指标权重时需要配置 binner 或 bin_params，" "也可以显式传入 weights")
 
         scores = {}
         for col in feature_names:

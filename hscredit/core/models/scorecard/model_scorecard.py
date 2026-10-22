@@ -49,8 +49,13 @@ from sklearn.utils.validation import check_is_fitted
 from ....exceptions import NotFittedError, ValidationError
 from ....utils.serialization import ArtifactSerializableMixin
 from .._contracts import (
-    ExtraParamsMixin, align_model_features, extract_target, is_model_fitted,
-    positive_probability, record_feature_schema, validate_sample_weight,
+    ExtraParamsMixin,
+    align_model_features,
+    extract_target,
+    is_model_fitted,
+    positive_probability,
+    record_feature_schema,
+    validate_sample_weight,
 )
 from .._lifecycle import record_training
 from .score_transformer import ScoreTransformer
@@ -98,10 +103,10 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
     def __init__(
         self,
         model: Optional[Any] = None,
-        method: str = 'standard',
+        method: str = "standard",
         lower: Optional[float] = None,
         upper: Optional[float] = None,
-        direction: str = 'descending',
+        direction: str = "descending",
         base_odds: float = 0.05,
         base_score: float = 600,
         pdo: float = 20,
@@ -109,12 +114,12 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         decimal: int = 0,
         clip: bool = True,
         prefit: Optional[bool] = None,
-        target: str = 'target',
+        target: str = "target",
         verbose: bool = False,
         positive_class: Optional[Any] = 1,
         history_policy: str = "summary",
         max_history: int = 20,
-        **kwargs
+        **kwargs,
     ):
         self.model = model
         self.method = method
@@ -153,21 +158,21 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
 
     def _model_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """通过底层模型计算正类概率."""
-        model = self.model_ if getattr(self, 'model_', None) is not None else self.model
+        model = self.model_ if getattr(self, "model_", None) is not None else self.model
         if model is None:
             raise NotFittedError("未配置 model，无法从 X 计算概率，请改用 proba 参数")
-        if not hasattr(model, 'predict_proba'):
-            raise ValidationError(
-                f"模型 {type(model).__name__} 不含 predict_proba 方法，无法转换为评分"
-            )
+        if not hasattr(model, "predict_proba"):
+            raise ValidationError(f"模型 {type(model).__name__} 不含 predict_proba 方法，无法转换为评分")
         X = align_model_features(self, X)
-        return positive_probability(model.predict_proba(X), getattr(model, "classes_", [0, 1]), getattr(self, "positive_class", None))
+        return positive_probability(
+            model.predict_proba(X), getattr(model, "classes_", [0, 1]), getattr(self, "positive_class", None)
+        )
 
     def _build_transformer(self) -> ScoreTransformer:
         """根据当前参数构建 ScoreTransformer."""
         params: Dict[str, Any] = {}
         # standard 方法透传刻度参数
-        if self.method == 'standard':
+        if self.method == "standard":
             params.update(
                 base_odds=self.base_odds,
                 base_score=self.base_score,
@@ -188,7 +193,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
 
     def _check_fitted(self) -> None:
         """检查评分卡是否已拟合."""
-        if not getattr(self, '_is_fitted', False):
+        if not getattr(self, "_is_fitted", False):
             raise NotFittedError("ProbabilityScoreCard 尚未拟合，请先调用 fit()")
 
     # ==================== 训练 ====================
@@ -203,7 +208,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
         proba: Optional[Union[np.ndarray, pd.Series]] = None,
-    ) -> 'ProbabilityScoreCard':
+    ) -> "ProbabilityScoreCard":
         """拟合通用模型评分卡.
 
         三种使用方式:
@@ -266,8 +271,8 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         self.transformer_.fit(train_proba)
 
         # 3. 留存刻度参数
-        self.A_ = getattr(self.transformer_.transformer_, 'A_', None)
-        self.B_ = getattr(self.transformer_.transformer_, 'B_', None)
+        self.A_ = getattr(self.transformer_.transformer_, "A_", None)
+        self.B_ = getattr(self.transformer_.transformer_, "B_", None)
         self.direction_ = self.transformer_.direction_
 
         self._is_fitted = True
@@ -278,8 +283,8 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
     def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
         """预测概率（透传底层模型的 predict_proba，返回二维概率矩阵）."""
         self._check_fitted()
-        model = self.model_ if getattr(self, 'model_', None) is not None else self.model
-        if model is None or not hasattr(model, 'predict_proba'):
+        model = self.model_ if getattr(self, "model_", None) is not None else self.model
+        if model is None or not hasattr(model, "predict_proba"):
             raise NotFittedError("当前评分卡无底层模型，无法 predict_proba，请使用 predict_score(proba=...)")
         return model.predict_proba(align_model_features(self, X))
 
@@ -325,25 +330,25 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         """输出概率→评分的转换公式."""
         self._check_fitted()
         formula = self.transformer_.score_formula(decimal=decimal)
-        formula['模型'] = type(self.model_).__name__ if getattr(self, 'model_', None) is not None else None
+        formula["模型"] = type(self.model_).__name__ if getattr(self, "model_", None) is not None else None
         return formula
 
     def get_params_info(self) -> Dict[str, Any]:
         """获取评分卡基础参数信息（用于留存/复核）."""
         self._check_fitted()
         return {
-            '模型类型': type(self.model_).__name__ if getattr(self, 'model_', None) is not None else None,
-            '转换方法': self.method,
-            '评分方向': getattr(self, 'direction_', self.direction),
-            'lower': self.lower,
-            'upper': self.upper,
-            'base_odds': self.base_odds,
-            'base_score': self.base_score,
-            'pdo': self.pdo,
-            'rate': self.rate,
-            'A': None if self.A_ is None else round(float(self.A_), 4),
-            'B': None if self.B_ is None else round(float(self.B_), 4),
-            '特征数': len(getattr(self, 'feature_names_in_', []) or []) or None,
+            "模型类型": type(self.model_).__name__ if getattr(self, "model_", None) is not None else None,
+            "转换方法": self.method,
+            "评分方向": getattr(self, "direction_", self.direction),
+            "lower": self.lower,
+            "upper": self.upper,
+            "base_odds": self.base_odds,
+            "base_score": self.base_score,
+            "pdo": self.pdo,
+            "rate": self.rate,
+            "A": None if self.A_ is None else round(float(self.A_), 4),
+            "B": None if self.B_ is None else round(float(self.B_), 4),
+            "特征数": len(getattr(self, "feature_names_in_", []) or []) or None,
         }
 
     def score_to_bad_rate_table(
@@ -352,7 +357,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         max_n_bins: int = 10,
-        method: str = 'quantile',
+        method: str = "quantile",
     ) -> pd.DataFrame:
         """生成评分区间与坏样本率/odds/KS 的对照表.
 
@@ -371,47 +376,44 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
             scores = self.predict_score(X)
         scores = np.asarray(scores)
 
-        df = pd.DataFrame({'score': scores})
+        df = pd.DataFrame({"score": scores})
         if y is not None:
-            df['y'] = np.asarray(y)
+            df["y"] = np.asarray(y)
 
         if len(df) == 0:
-            columns = ['评分区间', '样本数']
+            columns = ["评分区间", "样本数"]
             if y is not None:
-                columns.extend(['坏样本数', '好样本数', '坏样本率', 'Odds(好:坏)', 'KS'])
+                columns.extend(["坏样本数", "好样本数", "坏样本率", "Odds(好:坏)", "KS"])
             return pd.DataFrame(columns=columns)
 
         if pd.Series(scores).nunique(dropna=True) <= 1:
             score_value = float(pd.Series(scores).dropna().iloc[0]) if pd.Series(scores).notna().any() else np.nan
-            df['score_bin'] = f"[{score_value:.2f}, {score_value:.2f}]"
-        elif method == 'quantile':
-            df['score_bin'] = pd.qcut(df['score'], q=max_n_bins, duplicates='drop', precision=2)
+            df["score_bin"] = f"[{score_value:.2f}, {score_value:.2f}]"
+        elif method == "quantile":
+            df["score_bin"] = pd.qcut(df["score"], q=max_n_bins, duplicates="drop", precision=2)
         else:
-            df['score_bin'] = pd.cut(df['score'], bins=max_n_bins, precision=2)
+            df["score_bin"] = pd.cut(df["score"], bins=max_n_bins, precision=2)
 
-        grouped = df.groupby('score_bin', observed=True)
+        grouped = df.groupby("score_bin", observed=True)
         rows = []
         cum_bad = cum_good = 0
-        total_bad = float(df['y'].sum()) if 'y' in df else 0.0
-        total_good = float((1 - df['y']).sum()) if 'y' in df else 0.0
+        total_bad = float(df["y"].sum()) if "y" in df else 0.0
+        total_good = float((1 - df["y"]).sum()) if "y" in df else 0.0
 
         for interval, g in grouped:
             n = len(g)
-            row = {'评分区间': str(interval), '样本数': n}
-            if 'y' in df:
-                n_bad = int(g['y'].sum())
+            row = {"评分区间": str(interval), "样本数": n}
+            if "y" in df:
+                n_bad = int(g["y"].sum())
                 n_good = n - n_bad
                 cum_bad += n_bad
                 cum_good += n_good
-                row['坏样本数'] = n_bad
-                row['好样本数'] = n_good
-                row['坏样本率'] = f"{(n_bad / n if n else 0):.2%}"
-                row['Odds(好:坏)'] = f"{(n_good / n_bad):.2f}" if n_bad > 0 else 'inf'
-                ks_val = abs(
-                    (cum_bad / total_bad if total_bad else 0)
-                    - (cum_good / total_good if total_good else 0)
-                )
-                row['KS'] = round(ks_val, 4)
+                row["坏样本数"] = n_bad
+                row["好样本数"] = n_good
+                row["坏样本率"] = f"{(n_bad / n if n else 0):.2%}"
+                row["Odds(好:坏)"] = f"{(n_good / n_bad):.2f}" if n_bad > 0 else "inf"
+                ks_val = abs((cum_bad / total_bad if total_bad else 0) - (cum_good / total_good if total_good else 0))
+                row["KS"] = round(ks_val, 4)
             rows.append(row)
 
         return pd.DataFrame(rows)
@@ -422,7 +424,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         scores: Optional[np.ndarray] = None,
         max_n_bins: int = 10,
-        method: str = 'quantile',
+        method: str = "quantile",
     ) -> pd.DataFrame:
         """生成评分维度报告（评分-坏率对照表）.
 
@@ -436,9 +438,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         :param method: 分箱方式，'quantile' 或 'uniform'
         :return: 评分-坏率对照表 DataFrame
         """
-        return self.score_to_bad_rate_table(
-            scores=scores, y=y, X=X, max_n_bins=max_n_bins, method=method
-        )
+        return self.score_to_bad_rate_table(scores=scores, y=y, X=X, max_n_bins=max_n_bins, method=method)
 
     def model_report(self, *args, **kwargs):
         """复用底层模型的报告能力.
@@ -450,20 +450,18 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         :raises ValidationError: 底层模型不支持 report
         """
         self._check_fitted()
-        model = getattr(self, 'model_', None)
+        model = getattr(self, "model_", None)
         try:
             from ..base import BaseRiskModel
         except Exception:
             BaseRiskModel = ()
         if model is not None and BaseRiskModel and isinstance(model, BaseRiskModel):
             return model.report(*args, **kwargs)
-        raise ValidationError(
-            "底层模型不是 BaseRiskModel 子类，无法生成模型报告；请使用 report() 获取评分-坏率对照表"
-        )
+        raise ValidationError("底层模型不是 BaseRiskModel 子类，无法生成模型报告；请使用 report() 获取评分-坏率对照表")
 
     # ==================== 持久化（复用 utils.io） ====================
 
-    def save(self, file: str, engine: str = 'joblib', **kwargs) -> str:
+    def save(self, file: str, engine: str = "joblib", **kwargs) -> str:
         """保存评分卡到文件（复用 ``hscredit.utils.io.save_pickle``）.
 
         :param file: 文件路径
@@ -484,7 +482,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         return file
 
     @classmethod
-    def load(cls, file: str, engine: str = 'auto', **kwargs) -> 'ProbabilityScoreCard':
+    def load(cls, file: str, engine: str = "auto", **kwargs) -> "ProbabilityScoreCard":
         """从文件加载评分卡（离线模型加载，复用 ``hscredit.utils.io.load_pickle``）.
 
         :param file: 文件路径
@@ -496,7 +494,5 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
 
         obj = _load_pickle(file, engine=engine, **kwargs)
         if not isinstance(obj, ProbabilityScoreCard):
-            raise TypeError(
-                f"加载的对象类型为 {type(obj).__name__}，不是 ProbabilityScoreCard"
-            )
+            raise TypeError(f"加载的对象类型为 {type(obj).__name__}，不是 ProbabilityScoreCard")
         return obj

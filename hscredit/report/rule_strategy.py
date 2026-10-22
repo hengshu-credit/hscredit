@@ -144,7 +144,9 @@ _DETAIL_COLUMNS = ("规则分类", "指标名称", "指标含义", "分箱")
 _BIN_ORDER = ("命中", "未命中", "合计")
 _DEFAULT_METRICS = ("样本总数", "样本占比", "坏样本率", "LIFT值")
 _DEFAULT_TARGET_METRICS = ("样本总数", "样本占比", "坏样本率", "LIFT值", "坏账改善", "风险拒绝比")
-_DEFAULT_GROUP_METRICS = OrderedDict((("坏样本率", "坏样本率"), ("样本占比", "样本占比"), ("LIFT指标", "LIFT值"), ("样本总数", "样本总数")))
+_DEFAULT_GROUP_METRICS = OrderedDict(
+    (("坏样本率", "坏样本率"), ("样本占比", "样本占比"), ("LIFT指标", "LIFT值"), ("样本总数", "样本总数"))
+)
 
 
 def _ordered_unique(values: Sequence[str]) -> list:
@@ -571,7 +573,7 @@ def _resolve_group_labels(
     return labels, _order_groups(unique_values, group_order)
 
 
-@analysis_inputs('data', roles=('date', 'group', 'amount'))
+@analysis_inputs("data", roles=("date", "group", "amount"))
 def rule_group_compare(
     data: pd.DataFrame,
     rule: Union[str, Rule],
@@ -663,7 +665,8 @@ def rule_group_compare(
     report_kwargs = dict(
         target=target,
         overdue=overdue,
-        dpds=dpds, overdue_operator=overdue_operator,
+        dpds=dpds,
+        overdue_operator=overdue_operator,
         del_grey=del_grey,
         prior_rules=prior_rules,
         amount=amount,
@@ -720,38 +723,55 @@ def _validate_metrics(normalized: pd.DataFrame, metrics: Sequence[str]) -> None:
 
 # 业务影响/规则效果报告中需展示的完整指标（与 Rule.report 字段一致）
 _SWAP_EFFECT_METRICS = (
-    "样本总数", "样本占比", "好样本数", "好样本占比", "坏样本数", "坏样本占比",
-    "坏样本率", "LIFT值", "坏账改善", "风险拒绝比",
+    "样本总数",
+    "样本占比",
+    "好样本数",
+    "好样本占比",
+    "坏样本数",
+    "坏样本占比",
+    "坏样本率",
+    "LIFT值",
+    "坏账改善",
+    "风险拒绝比",
 )
 # Excel 中按百分比格式展示的列（按多层列名的最末层匹配）
 _SWAP_PERCENT_NAMES = [
-    "样本占比", "好样本占比", "坏样本占比", "坏样本率", "金额占比",
-    "通过率", "逾期改善", "坏账改善", "LIFT值", "拒绝LIFT", "LIFT指标",
+    "样本占比",
+    "好样本占比",
+    "坏样本占比",
+    "坏样本率",
+    "金额占比",
+    "通过率",
+    "逾期改善",
+    "坏账改善",
+    "LIFT值",
+    "拒绝LIFT",
+    "LIFT指标",
 ]
 # Excel 中按千分位整数格式展示的列
 _SWAP_COUNT_NAMES = ["样本总数", "好样本数", "坏样本数", "金额总数", "累积好样本数", "累积坏样本数"]
 
 # 各表条件格式：仅对关键列着色（数据条/色阶），保持与模板一致的克制风格，避免满屏色块。
 # 业务/规则口径同时列出样本与金额两种列名，便于订单/金额口径表各自匹配到对应列。
-_CF_IMPACT_BAR = ["样本占比", "金额占比", "拒绝LIFT", "风险拒绝比"]   # 业务影响：占比/拒绝LIFT/风险拒绝比 → 数据条
-_CF_EFFECT_BAR = ["样本占比", "金额占比", "坏样本率", "LIFT值"]        # 规则效果：占比/坏样本率/LIFT → 数据条
-_CF_STABILITY_BAR = ["坏样本率", "样本占比", "LIFT指标"]               # 稳定性：坏样本率/样本占比/LIFT → 数据条
-_CF_BIN_BAR = ["LIFT值"]                                            # 分箱详情：LIFT → 数据条
-_CF_BIN_SCALE = ["分档KS值"]                                        # 分箱详情：KS → 色阶
-_CF_VARBIN_BAR = ["坏样本率", "LIFT值"]                              # 变量分箱明细：坏样本率/LIFT → 数据条
-_CF_OVERVIEW_SCALE = ["坏样本率"]                                    # 样本情况：坏样本率 → 色阶
+_CF_IMPACT_BAR = ["样本占比", "金额占比", "拒绝LIFT", "风险拒绝比"]  # 业务影响：占比/拒绝LIFT/风险拒绝比 → 数据条
+_CF_EFFECT_BAR = ["样本占比", "金额占比", "坏样本率", "LIFT值"]  # 规则效果：占比/坏样本率/LIFT → 数据条
+_CF_STABILITY_BAR = ["坏样本率", "样本占比", "LIFT指标"]  # 稳定性：坏样本率/样本占比/LIFT → 数据条
+_CF_BIN_BAR = ["LIFT值"]  # 分箱详情：LIFT → 数据条
+_CF_BIN_SCALE = ["分档KS值"]  # 分箱详情：KS → 色阶
+_CF_VARBIN_BAR = ["坏样本率", "LIFT值"]  # 变量分箱明细：坏样本率/LIFT → 数据条
+_CF_OVERVIEW_SCALE = ["坏样本率"]  # 样本情况：坏样本率 → 色阶
 
 # 数据条按指标着色：同一张表内并排的各指标使用不同色相，便于区分，避免满屏同色
 _CF_BAR_COLORS = {
-    "样本占比": "63C384",    # 绿 —— 规模/通过占比
-    "金额占比": "4BACC6",    # 青 —— 金额规模
-    "坏样本率": "F4796B",    # 红 —— 风险
-    "坏账改善": "8E7CC3",    # 紫 —— 坏账改善
-    "LIFT值": "F76E6C",      # 红 —— 区分度
-    "拒绝LIFT": "F76E6C",    # 红 —— 拒绝区分度
-    "LIFT指标": "F76E6C",    # 红 —— 稳定性区分度
-    "分档KS值": "5B9BD5",    # 蓝 —— 分档 KS
-    "风险拒绝比": "6E8FC7",   # 靛 —— 拒绝效率
+    "样本占比": "63C384",  # 绿 —— 规模/通过占比
+    "金额占比": "4BACC6",  # 青 —— 金额规模
+    "坏样本率": "F4796B",  # 红 —— 风险
+    "坏账改善": "8E7CC3",  # 紫 —— 坏账改善
+    "LIFT值": "F76E6C",  # 红 —— 区分度
+    "拒绝LIFT": "F76E6C",  # 红 —— 拒绝区分度
+    "LIFT指标": "F76E6C",  # 红 —— 稳定性区分度
+    "分档KS值": "5B9BD5",  # 蓝 —— 分档 KS
+    "风险拒绝比": "6E8FC7",  # 靛 —— 拒绝效率
 }
 _CF_BAR_DEFAULT_COLOR = "638EC6"
 # 色阶：绿-黄-红三色（min→percentile50→max）
@@ -765,10 +785,19 @@ _SWAP_HIT_LABELS = {"合计": "原始", "未命中": "通过", "命中": "拒绝
 
 # 分箱方法 → 中文展示名（用于「变量分箱」明细 sheet 的区块标题）
 _METHOD_DISPLAY_NAMES = {
-    "quantile": "等频分箱", "uniform": "等距分箱", "mdlp": "最优分箱(MDLP)",
-    "chi": "卡方分箱", "tree": "决策树分箱", "cart": "CART分箱", "dt": "决策树分箱",
-    "best_ks": "最优KS分箱", "best_iv": "最优IV分箱", "best_lift": "最优LIFT分箱",
-    "kmeans": "聚类分箱", "monotonic": "单调分箱", "genetic": "遗传分箱",
+    "quantile": "等频分箱",
+    "uniform": "等距分箱",
+    "mdlp": "最优分箱(MDLP)",
+    "chi": "卡方分箱",
+    "tree": "决策树分箱",
+    "cart": "CART分箱",
+    "dt": "决策树分箱",
+    "best_ks": "最优KS分箱",
+    "best_iv": "最优IV分箱",
+    "best_lift": "最优LIFT分箱",
+    "kmeans": "聚类分箱",
+    "monotonic": "单调分箱",
+    "genetic": "遗传分箱",
 }
 
 # 大模块之间空 2 行，模块内各表/文本之间空 1 行
@@ -884,8 +913,7 @@ def _resolve_swap_targets(
     """
     frame, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator)
     return OrderedDict(
-        (name, (frame.loc[values.notna()], values.loc[values.notna()]))
-        for name, values in targets.y_map(frame).items()
+        (name, (frame.loc[values.notna()], values.loc[values.notna()])) for name, values in targets.y_map(frame).items()
     )
 
 
@@ -916,9 +944,7 @@ def _rename_amount_caliber(table: pd.DataFrame) -> pd.DataFrame:
     table = table.copy()
     mapping = {"样本总数": "金额总数", "样本占比": "金额占比"}
     if isinstance(table.columns, pd.MultiIndex):
-        table.columns = pd.MultiIndex.from_tuples(
-            [(mapping.get(top, top), sub) for top, sub in table.columns]
-        )
+        table.columns = pd.MultiIndex.from_tuples([(mapping.get(top, top), sub) for top, sub in table.columns])
     else:
         table.columns = [mapping.get(col, col) for col in table.columns]
     return table
@@ -970,7 +996,11 @@ def _set_uniform_columns_width(writer, worksheet, start_col: int = 1, width: flo
 
 
 def _write_swap_text(
-    writer, worksheet, row: int, texts: Optional[Union[str, Sequence[str]]], start_col: int,
+    writer,
+    worksheet,
+    row: int,
+    texts: Optional[Union[str, Sequence[str]]],
+    start_col: int,
     numbered: Optional[bool] = None,
 ) -> int:
     """写入纯文本叙述段落：列表自动加「序号、内容」，每行一条，左对齐、无填充无边框（与模板一致）."""
@@ -1055,7 +1085,9 @@ def _rule_detail_lines(rules: Sequence["Rule"]) -> List[str]:
     return lines
 
 
-def _align_index_column(worksheet, table: pd.DataFrame, start_row: int, start_col: int, horizontal: str = "right") -> None:
+def _align_index_column(
+    worksheet, table: pd.DataFrame, start_row: int, start_col: int, horizontal: str = "right"
+) -> None:
     """对写入 DataFrame 时输出的索引列数据区设置对齐。"""
     data_start = start_row + table.columns.nlevels
     data_end = data_start + len(table) - 1
@@ -1064,8 +1096,15 @@ def _align_index_column(worksheet, table: pd.DataFrame, start_row: int, start_co
 
 
 def _write_swap_table(
-    writer, worksheet, table: pd.DataFrame, row: int, start_col: int, title: Optional[str],
-    bar_names: Optional[Sequence[str]] = None, scale_names: Optional[Sequence[str]] = None, **kwargs,
+    writer,
+    worksheet,
+    table: pd.DataFrame,
+    row: int,
+    start_col: int,
+    title: Optional[str],
+    bar_names: Optional[Sequence[str]] = None,
+    scale_names: Optional[Sequence[str]] = None,
+    **kwargs,
 ):
     """通过 dataframe2excel 写入单张表格：自动套用百分比/整数格式，并仅对 ``bar_names`` /
     ``scale_names`` 指定的关键列分别加数据条 / 色阶条件格式（按指标取不同颜色，匹配模板风格）.
@@ -1093,8 +1132,13 @@ def _write_swap_table(
     if color_map:
         params.setdefault("condition_color", color_map)
     return dataframe2excel(
-        table, excel_writer=writer, sheet_name=worksheet, title=None,
-        start_row=row, start_col=start_col, **params,
+        table,
+        excel_writer=writer,
+        sheet_name=worksheet,
+        title=None,
+        start_row=row,
+        start_col=start_col,
+        **params,
     )
 
 
@@ -1115,7 +1159,9 @@ def _add_group_databars(
         first_letter = get_column_letter(start_col + idxs[0])
         last_letter = get_column_letter(start_col + idxs[-1])
         writer.add_conditional_formatting(
-            worksheet, f"{first_letter}{data_first}", f"{last_letter}{data_last}",
+            worksheet,
+            f"{first_letter}{data_first}",
+            f"{last_letter}{data_last}",
             condition_color=_CF_BAR_COLORS.get(group, _CF_BAR_DEFAULT_COLOR),
         )
 
@@ -1123,9 +1169,7 @@ def _add_group_databars(
 def _rename_hit_labels(table: pd.DataFrame) -> pd.DataFrame:
     """将业务影响目标分析表的命中标签（合计/未命中/命中）改为模板口径（原始/通过/拒绝）."""
     table = table.copy()
-    table.columns = pd.MultiIndex.from_tuples(
-        [(top, _SWAP_HIT_LABELS.get(sub, sub)) for top, sub in table.columns]
-    )
+    table.columns = pd.MultiIndex.from_tuples([(top, _SWAP_HIT_LABELS.get(sub, sub)) for top, sub in table.columns])
     return table
 
 
@@ -1137,18 +1181,38 @@ def _drop_total_rows(table: pd.DataFrame) -> pd.DataFrame:
 
 
 def _write_caliber_pair(
-    writer, worksheet, row: int, start_col: int, prefix: str,
-    order_table: pd.DataFrame, amount_table: Optional[pd.DataFrame] = None,
-    bar_names: Optional[Sequence[str]] = None, **kwargs,
+    writer,
+    worksheet,
+    row: int,
+    start_col: int,
+    prefix: str,
+    order_table: pd.DataFrame,
+    amount_table: Optional[pd.DataFrame] = None,
+    bar_names: Optional[Sequence[str]] = None,
+    **kwargs,
 ) -> int:
     """订单口径 / 金额口径两张表并排写入同一起始行，返回下一可用行（含模块内 1 行间隔）."""
     end_row, _ = _write_swap_table(
-        writer, worksheet, order_table, row, start_col, f"{prefix}：订单口径", bar_names=bar_names, **kwargs,
+        writer,
+        worksheet,
+        order_table,
+        row,
+        start_col,
+        f"{prefix}：订单口径",
+        bar_names=bar_names,
+        **kwargs,
     )
     if amount_table is not None:
         amount = start_col + _table_display_width(order_table) + 1
         amount_end, _ = _write_swap_table(
-            writer, worksheet, amount_table, row, amount, f"{prefix}：金额口径", bar_names=bar_names, **kwargs,
+            writer,
+            worksheet,
+            amount_table,
+            row,
+            amount,
+            f"{prefix}：金额口径",
+            bar_names=bar_names,
+            **kwargs,
         )
         end_row = max(end_row, amount_end)
     return end_row + _GAP_INNER
@@ -1171,8 +1235,8 @@ def _write_binning_detail_sheet(
 
     worksheet = writer.get_sheet_by_name(sheet_name)
     start_col = 2
-    title_row = 2                    # 子标题（分箱方法名）所在行
-    header_row = title_row + 2       # 表头行（子标题与表格之间空 1 行）
+    title_row = 2  # 子标题（分箱方法名）所在行
+    header_row = title_row + 2  # 表头行（子标题与表格之间空 1 行）
     first_data_row = header_row + 1  # 数据首行
     first_block_ref: Optional[str] = None  # 首个区块的「表头行→末行」筛选区域
     for method in methods:
@@ -1185,9 +1249,16 @@ def _write_binning_detail_sheet(
             block["逾期标签"] = [_display_target_label(value, target_names) for value in block["逾期标签"]]
         merge_cols = [col for col in ("指标名称", "指标含义") if col in block.columns]
         end_row, _ = _write_swap_table(
-            writer, worksheet, block, title_row, start_col, _method_display(method),
-            merge_column=merge_cols or None, merge=bool(merge_cols),
-            bar_names=_CF_VARBIN_BAR, scale_names=_CF_BIN_SCALE,
+            writer,
+            worksheet,
+            block,
+            title_row,
+            start_col,
+            _method_display(method),
+            merge_column=merge_cols or None,
+            merge=bool(merge_cols),
+            bar_names=_CF_VARBIN_BAR,
+            scale_names=_CF_BIN_SCALE,
         )
         block_width = _table_display_width(block)
         if first_block_ref is None:
@@ -1201,7 +1272,7 @@ def _write_binning_detail_sheet(
         writer.add_auto_filter(worksheet, first_block_ref)
 
 
-@analysis_inputs('data', roles=('date', 'group', 'amount'))
+@analysis_inputs("data", roles=("date", "group", "amount"))
 def swap_out_report(
     data: pd.DataFrame,
     rules: Union[str, "Rule", Sequence[Union[str, "Rule"]]],
@@ -1309,7 +1380,9 @@ def swap_out_report(
     combined_rule, rule_objs, multi = _resolve_swap_rules(rules)
     methods_list = [methods] if isinstance(methods, str) else list(methods)
     # 统一 target_names 的键形式（兼容 MOB1_7+ / MOB1@7 / MOB1 7+ 三种写法）
-    target_names = _ExplicitTargetNames(target_names or {}) if target.mode == "target" else _normalize_target_names(target_names)
+    target_names = (
+        _ExplicitTargetNames(target_names or {}) if target.mode == "target" else _normalize_target_names(target_names)
+    )
 
     if features is None:
         features = _ordered_unique([col for rule in rule_objs for col in rule.feature_names_in_])
@@ -1319,7 +1392,8 @@ def swap_out_report(
     report_kwargs = dict(
         target=target,
         overdue=overdue,
-        dpds=dpds, overdue_operator=overdue_operator,
+        dpds=dpds,
+        overdue_operator=overdue_operator,
         del_grey=del_grey,
         prior_rules=prior_rules,
         n_jobs=n_jobs,
@@ -1343,10 +1417,20 @@ def swap_out_report(
         from .feature_analyzer import feature_binning_summary
 
         binning_tables, binning_summary = feature_binning_summary(
-            data, features, methods=methods_list, bin_params=bin_params,
+            data,
+            features,
+            methods=methods_list,
+            bin_params=bin_params,
             target=None if overdue is not None else target,
-            overdue=overdue, dpds=dpds, overdue_operator=overdue_operator, del_grey=del_grey, long_format=True, verbose=0,
-            n_jobs=n_jobs, parallel_backend=parallel_backend, parallel_config=parallel_config,
+            overdue=overdue,
+            dpds=dpds,
+            overdue_operator=overdue_operator,
+            del_grey=del_grey,
+            long_format=True,
+            verbose=0,
+            n_jobs=n_jobs,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         # 统一分箱详情的逾期标签形式（MOB1@7 → MOB1 7+）并套用 target_names 映射
         binning_summary = _rename_target_level(binning_summary, target_names, level=1)
@@ -1355,9 +1439,9 @@ def swap_out_report(
     has_amount = amount is not None and amount in data.columns
     rule_report_tasks = []
     for label, rule in section_rules:
-        rule_report_tasks.append(((label, 'count'), rule, data, None, report_kwargs))
+        rule_report_tasks.append(((label, "count"), rule, data, None, report_kwargs))
         if has_amount:
-            rule_report_tasks.append(((label, 'amount'), rule, data, amount, report_kwargs))
+            rule_report_tasks.append(((label, "amount"), rule, data, amount, report_kwargs))
     target_task_count = _rule_report_task_count(overdue, dpds, target)
     report_plan = _plan_report_parallel(
         n_jobs,
@@ -1373,42 +1457,54 @@ def swap_out_report(
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             task_labels=[f"{key[0]}:{key[1]}" for key, *_ in rule_report_tasks],
-            default_backend='threading',
+            default_backend="threading",
         )
     )
     impact_tables = {}
     effect_tables = {}
     for label, rule in section_rules:
-        order_rep = rule_reports[(label, 'count')]
+        order_rep = rule_reports[(label, "count")]
         impact_order = _rename_hit_labels(
             rule_target_analysis(
-                order_rep, current_pass_rate=current_pass_rate, rule_name=rule.name,
-                target_names=target_names, target_name=target.names()[0],
+                order_rep,
+                current_pass_rate=current_pass_rate,
+                rule_name=rule.name,
+                target_names=target_names,
+                target_name=target.names()[0],
             )
         )
         effect_order = _drop_total_rows(
             rule_target_table(
-                order_rep, rule_name=rule.name, target_names=target_names,
-                metrics=_SWAP_EFFECT_METRICS, target_name=target.names()[0],
+                order_rep,
+                rule_name=rule.name,
+                target_names=target_names,
+                metrics=_SWAP_EFFECT_METRICS,
+                target_name=target.names()[0],
             )
         )
         impact_amount = None
         effect_amount = None
         if has_amount:
-            amount_rep = rule_reports[(label, 'amount')]
+            amount_rep = rule_reports[(label, "amount")]
             impact_amount = _rename_amount_caliber(
                 _rename_hit_labels(
                     rule_target_analysis(
-                        amount_rep, current_pass_rate=current_pass_rate, rule_name=rule.name,
-                        target_names=target_names, target_name=target.names()[0],
+                        amount_rep,
+                        current_pass_rate=current_pass_rate,
+                        rule_name=rule.name,
+                        target_names=target_names,
+                        target_name=target.names()[0],
                     )
                 )
             )
             effect_amount = _rename_amount_caliber(
                 _drop_total_rows(
                     rule_target_table(
-                        amount_rep, rule_name=rule.name, target_names=target_names,
-                        metrics=_SWAP_EFFECT_METRICS, target_name=target.names()[0],
+                        amount_rep,
+                        rule_name=rule.name,
+                        target_names=target_names,
+                        metrics=_SWAP_EFFECT_METRICS,
+                        target_name=target.names()[0],
                     )
                 )
             )
@@ -1418,14 +1514,22 @@ def swap_out_report(
     stability_blocks: List[Tuple[str, pd.DataFrame]] = []
     if date is not None or group is not None:
         stability_kwargs = dict(
-            date=date, freq=freq, group=group, target=target,
-            overdue=overdue, dpds=dpds, overdue_operator=overdue_operator, target_names=target_names,
-            prior_rules=prior_rules, del_grey=del_grey, n_jobs=-1,
-            parallel_backend=parallel_backend, parallel_config=parallel_config,
+            date=date,
+            freq=freq,
+            group=group,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            overdue_operator=overdue_operator,
+            target_names=target_names,
+            prior_rules=prior_rules,
+            del_grey=del_grey,
+            n_jobs=-1,
+            parallel_backend=parallel_backend,
+            parallel_config=parallel_config,
         )
         stability_tasks = [
-            (label, data, rule, {**stability_kwargs, 'rule_name': rule.name})
-            for label, rule in section_rules
+            (label, data, rule, {**stability_kwargs, "rule_name": rule.name}) for label, rule in section_rules
         ]
         _, stability_groups = _resolve_group_labels(
             data,
@@ -1449,7 +1553,7 @@ def swap_out_report(
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             task_labels=[label for label, *_ in stability_tasks],
-            default_backend='threading',
+            default_backend="threading",
         )
         for label, stability in stability_results:
             prefix = "规则效果稳定性" if label == "整体" else f"{label}稳定性"
@@ -1472,8 +1576,8 @@ def swap_out_report(
     )
     summary_width = _table_display_width(binning_summary) if not binning_summary.empty else 14
     # 各表格模块的内容宽度（用于大标题横幅从起始列铺满到该模块最右列）
-    impact_pair = 14                                       # rule_target_analysis 固定 14 列
-    effect_pair = 3 + len(_SWAP_EFFECT_METRICS)            # 规则详情/逾期指标/命中情况 + 各指标
+    impact_pair = 14  # rule_target_analysis 固定 14 列
+    effect_pair = 3 + len(_SWAP_EFFECT_METRICS)  # 规则详情/逾期指标/命中情况 + 各指标
     impact_width = impact_pair * 2 + _GAP_INNER if has_amount else impact_pair
     effect_width = effect_pair * 2 + _GAP_INNER if has_amount else effect_pair
     # 纯文本模块（迭代背景/策略迭代总结）横幅取报告主体最大宽度，避免短横幅突兀
@@ -1503,7 +1607,13 @@ def swap_out_report(
         row += _GAP_INNER
     # 样本情况 / 相关系数：表头左上角即为标题（样本情况 / 相关系数），无需额外标题行
     row, _ = _write_swap_table(
-        writer, worksheet, overview, row, start_col, None, scale_names=_CF_OVERVIEW_SCALE,
+        writer,
+        worksheet,
+        overview,
+        row,
+        start_col,
+        None,
+        scale_names=_CF_OVERVIEW_SCALE,
     )
     if corr is not None:
         row += _GAP_INNER
@@ -1520,9 +1630,16 @@ def swap_out_report(
             row += _GAP_INNER
         # 分箱详情：表头左上角即为「分箱详情」，无需额外标题行
         row, _ = _write_swap_table(
-            writer, worksheet, binning_summary, row, start_col, None,
-            merge_column=[("分箱详情", "分箱方法")], merge=True,
-            bar_names=_CF_BIN_BAR, scale_names=_CF_BIN_SCALE,
+            writer,
+            worksheet,
+            binning_summary,
+            row,
+            start_col,
+            None,
+            merge_column=[("分箱详情", "分箱方法")],
+            merge=True,
+            bar_names=_CF_BIN_BAR,
+            scale_names=_CF_BIN_SCALE,
         )
         row += _GAP_MODULE
 
@@ -1535,8 +1652,15 @@ def swap_out_report(
         prefix = "业务影响情况" if label == "整体" else f"{label}影响情况"
         order_tbl, amount_tbl = impact_tables[label]
         row = _write_caliber_pair(
-            writer, worksheet, row, start_col, prefix, order_tbl, amount_tbl,
-            bar_names=_CF_IMPACT_BAR, merge_header=[0],
+            writer,
+            worksheet,
+            row,
+            start_col,
+            prefix,
+            order_tbl,
+            amount_tbl,
+            bar_names=_CF_IMPACT_BAR,
+            merge_header=[0],
         )
     row += _GAP_MODULE - _GAP_INNER
 
@@ -1547,8 +1671,16 @@ def swap_out_report(
         prefix = "规则整体效果" if label == "整体" else f"{label}效果"
         order_tbl, amount_tbl = effect_tables[label]
         row = _write_caliber_pair(
-            writer, worksheet, row, start_col, prefix, order_tbl, amount_tbl,
-            merge_column=effect_merge, merge=True, bar_names=_CF_EFFECT_BAR,
+            writer,
+            worksheet,
+            row,
+            start_col,
+            prefix,
+            order_tbl,
+            amount_tbl,
+            merge_column=effect_merge,
+            merge=True,
+            bar_names=_CF_EFFECT_BAR,
         )
     row += _GAP_MODULE - _GAP_INNER
 
@@ -1559,8 +1691,14 @@ def swap_out_report(
             row = _write_banner(writer, worksheet, row, "规则稳定性分析", start_col, stability_width, "swap_title")
             for prefix, stability in stability_blocks:
                 end_r, _ = _write_swap_table(
-                    writer, worksheet, stability, row, start_col, prefix,
-                    merge_column=[("规则详情", "规则名称"), ("规则详情", "逾期指标")], merge=True,
+                    writer,
+                    worksheet,
+                    stability,
+                    row,
+                    start_col,
+                    prefix,
+                    merge_column=[("规则详情", "规则名称"), ("规则详情", "逾期指标")],
+                    merge=True,
                 )
                 # 坏样本率 / 样本占比 各按「指标分组」整体加一条数据条（跨各时间周期共享标尺）
                 _add_group_databars(writer, worksheet, stability, end_r, start_col, _CF_STABILITY_BAR)

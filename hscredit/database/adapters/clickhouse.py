@@ -55,7 +55,7 @@ class ClickHouseQueryResource:
             self._offset = 0
             self.columns = list(self._buffer.columns)
         end = min(self._offset + size, len(self._buffer))
-        result = self._buffer.iloc[self._offset:end].copy()
+        result = self._buffer.iloc[self._offset : end].copy()
         self._offset = end
         return result
 
@@ -334,8 +334,7 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
 
         database_name, table = self._database_and_table(table_name)
         rows = self.query(
-            "SELECT 1 FROM system.tables "
-            "WHERE database={database:String} AND name={table:String} LIMIT 1",
+            "SELECT 1 FROM system.tables " "WHERE database={database:String} AND name={table:String} LIMIT 1",
             params={"database": database_name, "table": table},
             result="rows",
         )
@@ -459,7 +458,9 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
 
         del first_batch
         options = dict(dialect_options or {})
-        engine = str(options.get("engine") or ("MergeTree" if table_exists is False else self.get_table_engine(table_name)))
+        engine = str(
+            options.get("engine") or ("MergeTree" if table_exists is False else self.get_table_engine(table_name))
+        )
         capabilities = self.capabilities_for_table(table_name, {"engine": engine})
         if mode not in capabilities.write_modes:
             if mode == "r":

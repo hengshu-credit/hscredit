@@ -86,11 +86,7 @@ def _top_layout_boxes(fig):
         title = next(ax.title for ax in fig.axes if ax.title.get_text().strip())
     legend = fig.legends[0] if fig.legends else fig.axes[0].get_legend()
     axes_tops = [ax.get_window_extent(renderer).y1 for ax in fig.axes]
-    axes_tops.extend(
-        bbox.y1
-        for ax in fig.axes
-        if (bbox := ax.xaxis.get_tightbbox(renderer)) is not None
-    )
+    axes_tops.extend(bbox.y1 for ax in fig.axes if (bbox := ax.xaxis.get_tightbbox(renderer)) is not None)
     axes_top = max(axes_tops)
     return title.get_window_extent(renderer), legend.get_window_extent(renderer), axes_top
 
@@ -129,9 +125,7 @@ def _psi_figure(height, anchor=None):
 
 def _distribution_figure(height, anchor=None):
     kwargs = {} if anchor is None else {"anchor": anchor}
-    return distribution_plot(
-        _distribution_data(), date="日期", target="目标", freq="M", figsize=(10, height), **kwargs
-    )
+    return distribution_plot(_distribution_data(), date="日期", target="目标", freq="M", figsize=(10, height), **kwargs)
 
 
 def _score_dist_figure(height, anchor=None):

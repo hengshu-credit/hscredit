@@ -10,7 +10,6 @@ from typing import Any, Mapping, Sequence, Tuple
 
 from .errors import SkillExecutionError
 
-
 _OPERATION_EXTRAS = {
     "hsbin": {"*": ("skills",)},
     "hsreport": {"*": ("skills",)},

@@ -15,7 +15,6 @@ from hscredit.core.rules import Rule, RuleFlow
 from hscredit.core.selectors import CorrSelector, MutualInfoSelector
 from hscredit.utils.parallel import get_physical_cpu_count, parallel_execute
 
-
 pytestmark = pytest.mark.slow
 REPEATS = 5
 PARALLEL_WORKERS = 4
@@ -65,7 +64,11 @@ def _measure_medians(name, serial_call, parallel_call, metadata):
     serial_times = []
     parallel_times = []
     for run in range(REPEATS):
-        calls = (("serial", serial_call), ("parallel", parallel_call)) if run % 2 == 0 else (("parallel", parallel_call), ("serial", serial_call))
+        calls = (
+            (("serial", serial_call), ("parallel", parallel_call))
+            if run % 2 == 0
+            else (("parallel", parallel_call), ("serial", serial_call))
+        )
         for mode, call in calls:
             started = perf_counter()
             call()
@@ -75,7 +78,12 @@ def _measure_medians(name, serial_call, parallel_call, metadata):
     serial_median = median(serial_times)
     parallel_median = median(parallel_times)
     speedup = serial_median / parallel_median
-    diagnostic = f"BENCHMARK {name} {metadata} physical_cpus={get_physical_cpu_count()} " f"serial_runs={serial_times} parallel_runs={parallel_times} " f"serial_median={serial_median:.6f}s parallel_median={parallel_median:.6f}s " f"speedup={speedup:.3f}x"
+    diagnostic = (
+        f"BENCHMARK {name} {metadata} physical_cpus={get_physical_cpu_count()} "
+        f"serial_runs={serial_times} parallel_runs={parallel_times} "
+        f"serial_median={serial_median:.6f}s parallel_median={parallel_median:.6f}s "
+        f"speedup={speedup:.3f}x"
+    )
     print(diagnostic)
     return serial_warm, parallel_warm, serial_median, parallel_median, speedup, diagnostic
 
@@ -314,7 +322,12 @@ def test_three_label_rule_report_parallel_overhead_gate(benchmark_data):
         )
 
     def parallel_call():
-        return Rule("n0 > 0", n_jobs=3, parallel_backend="threading", parallel_config=config,).report(
+        return Rule(
+            "n0 > 0",
+            n_jobs=3,
+            parallel_backend="threading",
+            parallel_config=config,
+        ).report(
             label_data,
             overdue=["label0", "label1", "label2"],
             dpds=[0],

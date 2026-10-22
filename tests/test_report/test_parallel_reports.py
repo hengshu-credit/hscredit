@@ -44,7 +44,6 @@ from hscredit.report import (
 from hscredit.report._sample_stats import build_group_distribution_table, build_sample_stats_table
 from hscredit.report.swap_analysis import SwapRiskConfig
 
-
 COMMON = ("n_jobs", "parallel_backend", "parallel_config")
 
 
@@ -166,21 +165,15 @@ def test_feature_reports_parallel_match_serial(report_data, backend):
         random_state=7,
     )
     serial_tables, serial_summary = feature_binning_summary(n_jobs=1, **kwargs)
-    parallel_tables, parallel_summary = feature_binning_summary(
-        n_jobs=2, parallel_backend=backend, **kwargs
-    )
+    parallel_tables, parallel_summary = feature_binning_summary(n_jobs=2, parallel_backend=backend, **kwargs)
     assert list(parallel_tables) == list(serial_tables)
     for feature in serial_tables:
         assert list(parallel_tables[feature]) == list(serial_tables[feature])
         for method in serial_tables[feature]:
-            pd.testing.assert_frame_equal(
-                parallel_tables[feature][method], serial_tables[feature][method]
-            )
+            pd.testing.assert_frame_equal(parallel_tables[feature][method], serial_tables[feature][method])
     pd.testing.assert_frame_equal(parallel_summary, serial_summary)
 
-    serial_stats = feature_bin_stats(
-        report_data, ["score", "multi"], target="target", method="quantile", n_jobs=1
-    )
+    serial_stats = feature_bin_stats(report_data, ["score", "multi"], target="target", method="quantile", n_jobs=1)
     parallel_stats = feature_bin_stats(
         report_data,
         ["score", "multi"],
@@ -252,7 +245,10 @@ def test_swap_analyzer_parallel_match_and_is_transactional(backend, monkeypatch)
     reference, swap = _swap_inputs()
     cfg = SwapRiskConfig(score_col="score", amount="amount", targets=["t1", "t2"])
     provider = ReferenceDataProvider(
-        score_col="score", target_cols=["t1", "t2"], amount="amount", n_jobs=2,
+        score_col="score",
+        target_cols=["t1", "t2"],
+        amount="amount",
+        n_jobs=2,
         parallel_backend=backend,
     ).fit(reference)
     serial = SwapAnalyzer(cfg, provider, n_jobs=1).analyze(swap)
@@ -262,7 +258,9 @@ def test_swap_analyzer_parallel_match_and_is_transactional(backend, monkeypatch)
     pd.testing.assert_frame_equal(parallel.summary_report_count, serial.summary_report_count)
 
     old_result = analyzer.result
-    monkeypatch.setattr(provider, "predict_bad_rate", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        provider, "predict_bad_rate", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
     with pytest.raises(Exception, match="boom"):
         analyzer.analyze(swap)
     assert analyzer.result is old_result
@@ -311,9 +309,7 @@ def test_overdue_predictor_del_grey_uses_target_specific_totals():
         n_jobs=1,
     ).fit(data)
 
-    total = predictor.bin_table_.loc[
-        predictor.bin_table_[("分箱详情", "分箱标签")] == "合计"
-    ].iloc[0]
+    total = predictor.bin_table_.loc[predictor.bin_table_[("分箱详情", "分箱标签")] == "合计"].iloc[0]
     assert total[("MOB1_0+", "样本总数")] == 12
     assert total[("MOB1_3+", "样本总数")] == 9
 
@@ -354,7 +350,10 @@ def test_population_drift_parallel_excel_layout_matches_serial(report_data, tmp_
 
 def test_overdue_predictor_fit_is_transactional_and_successful_refit_is_fresh(report_data):
     predictor = OverduePredictor(
-        feature="score", target="target", rules=[560, 620, 680], n_jobs=2,
+        feature="score",
+        target="target",
+        rules=[560, 620, 680],
+        n_jobs=2,
     )
     with pytest.raises(ValueError, match="缺少目标变量字段"):
         predictor.fit(report_data.drop(columns="target"))
@@ -370,7 +369,11 @@ def test_overdue_predictor_fit_is_transactional_and_successful_refit_is_fresh(re
     predictor.set_coefficients(1.2)
     predictor.fit(report_data.assign(target=1 - report_data["target"]))
     fresh = OverduePredictor(
-        feature="score", target="target", rules=[560, 620, 680], coefficients=1.2, n_jobs=2,
+        feature="score",
+        target="target",
+        rules=[560, 620, 680],
+        coefficients=1.2,
+        n_jobs=2,
     ).fit(report_data.assign(target=1 - report_data["target"]))
     pd.testing.assert_frame_equal(predictor.bin_table_, fresh.bin_table_)
     assert not hasattr(predictor, "coefficients_")
@@ -408,12 +411,21 @@ def test_single_and_empty_report_tasks_do_not_create_backend(report_data, monkey
 
     monkeypatch.setattr(parallel_module, "_create_joblib_parallel", forbidden)
     feature_binning_summary(
-        report_data, "score", methods="quantile", target="target", n_jobs=8,
+        report_data,
+        "score",
+        methods="quantile",
+        target="target",
+        n_jobs=8,
     )
     build_sample_stats_table([], [], ["target"], n_jobs=8)
     OverduePredictor(
-        "score", target="target", rules=[560, 620], n_jobs=8,
-    ).fit(report_data).transform(report_data[["score"]])
+        "score",
+        target="target",
+        rules=[560, 620],
+        n_jobs=8,
+    ).fit(
+        report_data
+    ).transform(report_data[["score"]])
 
 
 def test_feature_binning_summary_preserves_explicit_child_parallel_config(report_data, monkeypatch):
@@ -488,7 +500,10 @@ def _simple_bin_table(data, feature):
 def _workbook_matrix(writer):
     return {
         sheet: [
-            [writer.workbook[sheet].cell(row=row, column=col).value for col in range(1, writer.workbook[sheet].max_column + 1)]
+            [
+                writer.workbook[sheet].cell(row=row, column=col).value
+                for col in range(1, writer.workbook[sheet].max_column + 1)
+            ]
             for row in range(1, writer.workbook[sheet].max_row + 1)
         ]
         for sheet in writer.workbook.sheetnames
@@ -637,9 +652,7 @@ def test_auto_feature_analysis_n_jobs_one_never_creates_backend(report_data, tmp
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])
 def test_population_drift_month_windows_are_ordered_and_parallel_exact(tmp_path, backend):
-    expected = pd.DataFrame(
-        {"x": [1, 2, 3, 4, 5, 6], "y": [6, 5, 4, 3, 2, 1], "target": [0, 0, 1, 0, 1, 1]}
-    )
+    expected = pd.DataFrame({"x": [1, 2, 3, 4, 5, 6], "y": [6, 5, 4, 3, 2, 1], "target": [0, 0, 1, 0, 1, 1]})
     actual = pd.DataFrame(
         {
             "x": [2, 5, 3, 6, 1, 4],
@@ -664,7 +677,10 @@ def test_population_drift_month_windows_are_ordered_and_parallel_exact(tmp_path,
         )
     overview = pd.read_excel(serial_path, sheet_name="PSI总览", header=1)
     assert list(zip(overview["特征名"], overview["时间窗口"])) == [
-        ("x", "2025-01"), ("x", "2025-02"), ("y", "2025-01"), ("y", "2025-02")
+        ("x", "2025-01"),
+        ("x", "2025-02"),
+        ("y", "2025-01"),
+        ("y", "2025-02"),
     ]
 
 
@@ -805,9 +821,7 @@ def test_rule_swap_sequential_mode_is_disjoint_and_skips_rule_executor(monkeypat
 def test_rule_group_nested_flag_requires_outer_and_inner_parallelism(monkeypatch, groups, dpds, expected):
     import hscredit.report.rule_strategy as module
 
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": groups}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": groups})
     original = module.parallel_execute
     captured = []
 
@@ -831,9 +845,7 @@ def test_rule_group_nested_flag_requires_outer_and_inner_parallelism(monkeypatch
 def test_swap_out_nested_flags_require_multiple_outer_sections(monkeypatch):
     import hscredit.report.rule_strategy as module
 
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A"] * 12}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A"] * 12})
     original = module.parallel_execute
     captured = {}
 
@@ -922,13 +934,16 @@ def test_rule_group_budget_uses_resolved_total_and_real_inner_tasks(monkeypatch,
 def test_rule_group_duplicate_or_default_dpds_have_one_real_child(monkeypatch, dpds):
     if dpds is None:
         with pytest.raises(ValueError, match="必须同时传入"):
-            rule_group_compare(pd.DataFrame({"score": [0, 1], "MOB1": [0, 1], "group": ["A", "B"]}),
-                               Rule("score < 1"), group="group", overdue="MOB1", dpds=None)
+            rule_group_compare(
+                pd.DataFrame({"score": [0, 1], "MOB1": [0, 1], "group": ["A", "B"]}),
+                Rule("score < 1"),
+                group="group",
+                overdue="MOB1",
+                dpds=None,
+            )
         return
     captured = _capture_rule_strategy_parallel(monkeypatch)
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6})
     rule_group_compare(
         data,
         Rule("score < 6"),
@@ -946,9 +961,7 @@ def test_rule_group_duplicate_or_default_dpds_have_one_real_child(monkeypatch, d
 
 def test_rule_group_single_outer_gives_full_budget_to_deduplicated_inner(monkeypatch):
     captured = _capture_rule_strategy_parallel(monkeypatch)
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A"] * 12}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A"] * 12})
     rule_group_compare(
         data,
         Rule("score < 6"),
@@ -968,9 +981,7 @@ def test_rule_group_budget_respects_active_parent(monkeypatch):
     from hscredit.utils.parallel import ParallelBudget, _ACTIVE_BUDGET
 
     captured = _capture_rule_strategy_parallel(monkeypatch)
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6})
     token = _ACTIVE_BUDGET.set(ParallelBudget(3, 1))
     try:
         rule_group_compare(
@@ -989,11 +1000,14 @@ def test_rule_group_budget_respects_active_parent(monkeypatch):
     assert call["child_jobs"] == [1, 1]
 
 
-@pytest.mark.parametrize("unique_dpds, expected_flag, expected_outer, expected_child", [
-    ([7, 7], False, 3, 1),
-    ([None, 0], False, 3, 1),
-    ([7, 3], True, 2, 2),
-])
+@pytest.mark.parametrize(
+    "unique_dpds, expected_flag, expected_outer, expected_child",
+    [
+        ([7, 7], False, 3, 1),
+        ([None, 0], False, 3, 1),
+        ([7, 3], True, 2, 2),
+    ],
+)
 def test_swap_out_rule_report_budget_uses_real_deduplicated_targets(
     monkeypatch, unique_dpds, expected_flag, expected_outer, expected_child
 ):
@@ -1014,18 +1028,19 @@ def test_swap_out_rule_report_budget_uses_real_deduplicated_targets(
     assert call["has_children"] is expected_flag
 
 
-@pytest.mark.parametrize("unique_dpds, expected_flag, expected_outer, expected_child", [
-    ([7, 7], False, 3, 1),
-    ([None, 0], False, 3, 1),
-    ([7, 3], True, 2, 2),
-])
+@pytest.mark.parametrize(
+    "unique_dpds, expected_flag, expected_outer, expected_child",
+    [
+        ([7, 7], False, 3, 1),
+        ([None, 0], False, 3, 1),
+        ([7, 3], True, 2, 2),
+    ],
+)
 def test_swap_out_stability_budget_uses_real_deduplicated_targets(
     monkeypatch, unique_dpds, expected_flag, expected_outer, expected_child
 ):
     captured = _capture_rule_strategy_parallel(monkeypatch)
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A"] * 12}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A"] * 12})
     swap_out_report(
         data,
         rules=[Rule("score < 4", name="规则1"), Rule("score > 8", name="规则2")],
@@ -1100,9 +1115,7 @@ def test_rule_group_executes_isolated_rule_copies_with_planned_config(monkeypatc
     call_config = {"batch_size": 1}
     rule = Rule("score < 6", name="低分", n_jobs=9, parallel_backend="loky", parallel_config=original_config)
     snapshot = _rule_snapshot(rule)
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6})
     token = _ACTIVE_BUDGET.set(ParallelBudget(3, 1))
     try:
         rule_group_compare(
@@ -1169,9 +1182,7 @@ def test_swap_stability_executes_section_rules_as_isolated_planned_copies(monkey
         Rule("score > 8", name="规则2", n_jobs=9, parallel_backend="loky"),
     ]
     snapshots = [_rule_snapshot(rule) for rule in rules]
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A"] * 12}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A"] * 12})
     token = _ACTIVE_BUDGET.set(ParallelBudget(3, 1))
     try:
         swap_out_report(
@@ -1227,9 +1238,7 @@ def test_configured_rule_worker_failure_preserves_direct_cause(monkeypatch):
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Rule, "report", fail)
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6})
     with pytest.raises(ParallelExecutionError, match="configured rule failed") as exc_info:
         rule_group_compare(
             data,
@@ -1248,9 +1257,7 @@ def test_configured_parent_rule_group_parallel_matches_serial_and_stays_unchange
     original_config = {"batch_size": 9}
     rule = Rule("score < 6", name="低分", n_jobs=9, parallel_backend="loky", parallel_config=original_config)
     snapshot = _rule_snapshot(rule)
-    data = pd.DataFrame(
-        {"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6}
-    )
+    data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A", "B"] * 6})
     kwargs = dict(data=data, rule=rule, group="group", overdue="MOB1", dpds=[7, 3])
     serial = rule_group_compare(n_jobs=1, **kwargs)
     parallel = rule_group_compare(
@@ -1275,8 +1282,11 @@ def test_configured_parent_rule_group_parallel_matches_serial_and_stays_unchange
 def test_task11_model_report_entries_expose_common_parallel_parameters(entry):
     signature = inspect.signature(entry)
     # 新增标签/报告协议选项只通过关键字传入，不改变既有位置参数与并行三元组。
-    names = [name for name, parameter in signature.parameters.items()
-             if parameter.kind is not inspect.Parameter.KEYWORD_ONLY or name in COMMON]
+    names = [
+        name
+        for name, parameter in signature.parameters.items()
+        if parameter.kind is not inspect.Parameter.KEYWORD_ONLY or name in COMMON
+    ]
     expected_slice = names[-4:-1] if names[-1] == "kwargs" else names[-3:]
     assert expected_slice == list(COMMON)
     assert signature.parameters["n_jobs"].default == -1
@@ -1351,23 +1361,15 @@ def test_model_report_parallel_tables_match_serial_exactly(backend):
 
     pd.testing.assert_frame_equal(parallel.summary(), serial.summary(), check_exact=True)
     for label in serial._label_names:
-        pd.testing.assert_frame_equal(
-            parallel.get_metrics(label), serial.get_metrics(label), check_exact=True
-        )
+        pd.testing.assert_frame_equal(parallel.get_metrics(label), serial.get_metrics(label), check_exact=True)
     pd.testing.assert_frame_equal(
         parallel.get_bin_table("test", max_n_bins=4, labels=parallel._label_names),
         serial.get_bin_table("test", max_n_bins=4, labels=serial._label_names),
         check_exact=True,
     )
-    pd.testing.assert_frame_equal(
-        parallel.get_feature_importance(), serial.get_feature_importance(), check_exact=True
-    )
-    pd.testing.assert_frame_equal(
-        parallel.get_features_describe(), serial.get_features_describe(), check_exact=True
-    )
-    pd.testing.assert_frame_equal(
-        parallel.get_features_corr(), serial.get_features_corr(), check_exact=True
-    )
+    pd.testing.assert_frame_equal(parallel.get_feature_importance(), serial.get_feature_importance(), check_exact=True)
+    pd.testing.assert_frame_equal(parallel.get_features_describe(), serial.get_features_describe(), check_exact=True)
+    pd.testing.assert_frame_equal(parallel.get_features_corr(), serial.get_features_corr(), check_exact=True)
     pd.testing.assert_frame_equal(
         parallel._get_monthly_metrics("date"), serial._get_monthly_metrics("date"), check_exact=True
     )

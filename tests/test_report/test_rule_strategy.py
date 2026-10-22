@@ -300,15 +300,15 @@ def test_swap_out_report_auto_width_preserves_template_column_fill(tmp_path):
 
     with zipfile.ZipFile(output) as zf:
         worksheet_names = [
-            name for name in zf.namelist()
-            if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+            name for name in zf.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
         ]
         assert len(worksheet_names) == 2
         for worksheet_name in worksheet_names:
             root = ET.fromstring(zf.read(worksheet_name))
             ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
             adjusted_columns = [
-                col for col in root.findall("x:cols/x:col", ns)
+                col
+                for col in root.findall("x:cols/x:col", ns)
                 if col.attrib.get("min") == col.attrib.get("max") and int(col.attrib["min"]) >= 3
             ]
             assert adjusted_columns
@@ -337,8 +337,7 @@ def test_swap_out_report_auto_width_preserves_template_column_fill(tmp_path):
     assert ws.cell(row=subtitle_cell.row + 1, column=subtitle_cell.column).value is None
 
     reject_merged = [
-        rng for rng in ws.merged_cells.ranges
-        if ws.cell(row=rng.min_row, column=rng.min_col).value == "拒绝"
+        rng for rng in ws.merged_cells.ranges if ws.cell(row=rng.min_row, column=rng.min_col).value == "拒绝"
     ]
     assert reject_merged == []
 
@@ -386,24 +385,12 @@ def test_swap_out_report_supports_decimal_dpds_and_target_specific_grey_deletion
     main = workbook["策略迭代"]
     detail = workbook["变量分箱"]
 
-    decimal_headers = [
-        cell
-        for row in main.iter_rows()
-        for cell in row
-        if cell.value == "MOB1 0.5+"
-    ]
-    sample_headers = [
-        cell
-        for cell in decimal_headers
-        if main.cell(cell.row - 1, cell.column).value == "样本总数"
-    ]
+    decimal_headers = [cell for row in main.iter_rows() for cell in row if cell.value == "MOB1 0.5+"]
+    sample_headers = [cell for cell in decimal_headers if main.cell(cell.row - 1, cell.column).value == "样本总数"]
     assert len(sample_headers) == 1
     sample_header = sample_headers[0]
     zero_headers = [
-        cell
-        for cell in main[sample_header.row]
-        if cell.value == "MOB1 0+"
-        and cell.column == sample_header.column + 1
+        cell for cell in main[sample_header.row] if cell.value == "MOB1 0+" and cell.column == sample_header.column + 1
     ]
     assert len(zero_headers) == 1
     zero_header = zero_headers[0]
@@ -437,8 +424,7 @@ def test_swap_out_report_accepts_scalar_decimal_dpd():
         cell
         for row in worksheet.iter_rows()
         for cell in row
-        if cell.value == "MOB1 0.5+"
-        and worksheet.cell(cell.row - 1, cell.column).value == "样本总数"
+        if cell.value == "MOB1 0.5+" and worksheet.cell(cell.row - 1, cell.column).value == "样本总数"
     ]
     assert len(sample_headers) == 1
     header = sample_headers[0]

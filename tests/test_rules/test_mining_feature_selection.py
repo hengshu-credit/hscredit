@@ -106,9 +106,7 @@ MINER_CASES = [
         pytest.param(["debt", "score"], ["debt", "score"], id="list"),
     ],
 )
-def test_constructor_features_selects_only_requested_fields(
-    feature_data, factory, state_attribute, features, expected
-):
+def test_constructor_features_selects_only_requested_fields(feature_data, factory, state_attribute, features, expected):
     """构造参数 features 若未生效，拟合状态会混入 noise 字段。"""
     miner = factory(features=features).fit(feature_data)
 
@@ -180,9 +178,7 @@ def test_single_feature_summary_includes_input_field_and_meaning(feature_data):
 
     report = miner.get_feature_summary()
 
-    assert report[["入参字段", "字段含义"]].to_dict("records") == [
-        {"入参字段": "score", "字段含义": "信用评分"}
-    ]
+    assert report[["入参字段", "字段含义"]].to_dict("records") == [{"入参字段": "score", "字段含义": "信用评分"}]
 
 
 def test_multi_feature_report_includes_each_feature_meaning(feature_data):

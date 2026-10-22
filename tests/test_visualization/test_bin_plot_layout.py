@@ -149,27 +149,16 @@ def _normalized_segment(segment):
 
 
 def _boundary_collections(ax):
-    return [
-        artist
-        for artist in ax.collections
-        if (artist.get_gid() or "").startswith("bin-2d-boundary-")
-    ]
+    return [artist for artist in ax.collections if (artist.get_gid() or "").startswith("bin-2d-boundary-")]
 
 
 def _bin_index_labels(ax):
-    return [
-        text
-        for text in ax.texts
-        if (text.get_gid() or "").startswith("bin-2d-index-")
-    ]
+    return [text for text in ax.texts if (text.get_gid() or "").startswith("bin-2d-index-")]
 
 
 def _has_segment(artist, expected):
     expected = np.asarray(_normalized_segment(expected))
-    return any(
-        np.allclose(np.asarray(_normalized_segment(segment)), expected)
-        for segment in artist.get_segments()
-    )
+    return any(np.allclose(np.asarray(_normalized_segment(segment)), expected) for segment in artist.get_segments())
 
 
 def test_draw_2d_bin_boundaries_insets_distinct_bin_outlines():
@@ -336,18 +325,14 @@ def test_bin_2d_plot_draws_same_distinct_inset_boundaries_on_five_metric_axes(bi
 
     assert len(reference) > 1
     reference_gids = [artist.get_gid() for artist in reference]
-    reference_segments = [
-        [_normalized_segment(segment) for segment in artist.get_segments()]
-        for artist in reference
-    ]
+    reference_segments = [[_normalized_segment(segment) for segment in artist.get_segments()] for artist in reference]
     reference_colors = [artist.get_colors()[0] for artist in reference]
     assert len({tuple(np.round(color, 6)) for color in reference_colors}) == len(reference)
     for axis_index in metric_axis_indexes[1:]:
         actual = _boundary_collections(axes[axis_index])
         assert [artist.get_gid() for artist in actual] == reference_gids
         assert [
-            [_normalized_segment(segment) for segment in artist.get_segments()]
-            for artist in actual
+            [_normalized_segment(segment) for segment in artist.get_segments()] for artist in actual
         ] == reference_segments
         assert np.allclose(
             [artist.get_colors()[0] for artist in actual],
@@ -364,25 +349,16 @@ def test_bin_2d_plot_draws_same_bin_indexes_on_five_metric_axes(bin_2d_figure):
     reference = _bin_index_labels(axes[metric_axis_indexes[0]])
 
     assert reference
-    expected = [
-        (label.get_gid(), label.get_text(), label.get_position())
-        for label in reference
-    ]
+    expected = [(label.get_gid(), label.get_text(), label.get_position()) for label in reference]
     for label in reference:
         assert label.get_color() == "#000000"
         assert np.allclose(label.get_bbox_patch().get_facecolor(), (1.0, 1.0, 1.0, 1.0))
 
     for axis_index in metric_axis_indexes[1:]:
         actual = _bin_index_labels(axes[axis_index])
-        assert [
-            (label.get_gid(), label.get_text(), label.get_position())
-            for label in actual
-        ] == expected
+        assert [(label.get_gid(), label.get_text(), label.get_position()) for label in actual] == expected
         assert all(label.get_color() == "#000000" for label in actual)
-        assert all(
-            np.allclose(label.get_bbox_patch().get_facecolor(), (1.0, 1.0, 1.0, 1.0))
-            for label in actual
-        )
+        assert all(np.allclose(label.get_bbox_patch().get_facecolor(), (1.0, 1.0, 1.0, 1.0)) for label in actual)
 
     for axis_index in (0, 1, 5, 8):
         assert _bin_index_labels(axes[axis_index]) == []
@@ -414,12 +390,7 @@ def test_bin_2d_plot_hides_requested_axes_and_legends(bin_2d_figure):
     assert not any(label.get_visible() for label in axes[1].get_xticklabels())
 
     # 特征2分箱标签在底行热力图垂直展示
-    feature_2_labels = [
-        label
-        for axis in (axes[6], axes[7])
-        for label in axis.get_xticklabels()
-        if label.get_visible()
-    ]
+    feature_2_labels = [label for axis in (axes[6], axes[7]) for label in axis.get_xticklabels() if label.get_visible()]
     assert feature_2_labels
     assert all(label.get_rotation() == 90 for label in feature_2_labels)
 
@@ -458,10 +429,12 @@ def test_bin_2d_plot_axis_bins_follow_numeric_interval_order():
     """组合图横纵坐标应按分箱索引对应的数值区间升序排列."""
     rng = np.random.RandomState(24)
     size = 500
-    frame = pd.DataFrame({
-        "x": rng.uniform(-20, 20, size),
-        "y": rng.uniform(0, 100, size),
-    })
+    frame = pd.DataFrame(
+        {
+            "x": rng.uniform(-20, 20, size),
+            "y": rng.uniform(0, 100, size),
+        }
+    )
     target = pd.Series(rng.randint(0, 2, size), name="目标")
     binner = OptimalBinning2D(
         user_splits_x=[-10, 0, 10],
@@ -480,11 +453,7 @@ def test_bin_2d_plot_axis_bins_follow_numeric_interval_order():
     axes = fig.axes[:9]
 
     # Matplotlib 返回 y 刻度时按坐标值从底到顶；组合图视觉顺序需反转为从上到下。
-    x_labels = [
-        label.get_text()
-        for label in reversed(axes[3].get_yticklabels())
-        if label.get_visible()
-    ]
+    x_labels = [label.get_text() for label in reversed(axes[3].get_yticklabels()) if label.get_visible()]
     y_labels = [label.get_text() for label in axes[7].get_xticklabels() if label.get_visible()]
     assert x_labels[0].startswith("[-inf,")
     assert x_labels[-1].endswith("+inf)")
@@ -496,10 +465,12 @@ def test_bin_2d_plot_includes_missing_bins_in_heatmaps():
     """缺失箱应作为最后一行/列显示，并纳入二维热力图统计."""
     rng = np.random.RandomState(31)
     size = 600
-    frame = pd.DataFrame({
-        "x": rng.uniform(-20, 20, size),
-        "y": rng.uniform(0, 100, size),
-    })
+    frame = pd.DataFrame(
+        {
+            "x": rng.uniform(-20, 20, size),
+            "y": rng.uniform(0, 100, size),
+        }
+    )
     frame.loc[:39, "x"] = np.nan
     frame.loc[40:79, "y"] = np.nan
     frame.loc[80:99, ["x", "y"]] = np.nan
@@ -517,11 +488,7 @@ def test_bin_2d_plot_includes_missing_bins_in_heatmaps():
     for axis_index in (2, 3, 4, 6, 7):
         assert axes[axis_index].images[0].get_array().shape == expected_shape
 
-    x_labels = [
-        label.get_text()
-        for label in reversed(axes[3].get_yticklabels())
-        if label.get_visible()
-    ]
+    x_labels = [label.get_text() for label in reversed(axes[3].get_yticklabels()) if label.get_visible()]
     y_labels = [label.get_text() for label in axes[7].get_xticklabels() if label.get_visible()]
     assert x_labels[-1] == "缺失值"
     assert y_labels[-1] == "缺失值"
@@ -529,23 +496,11 @@ def test_bin_2d_plot_includes_missing_bins_in_heatmaps():
     sample_share = np.asarray(axes[3].images[0].get_array(), dtype=float)
     assert np.isclose(np.nansum(sample_share), 1.0)
 
-    expected_boundary_gids = {
-        f"bin-2d-boundary-{bin_id}"
-        for bin_id in np.unique(binner.solution_)
-    }
-    expected_index_gids = {
-        f"bin-2d-index-{bin_id}"
-        for bin_id in np.unique(binner.solution_)
-    }
+    expected_boundary_gids = {f"bin-2d-boundary-{bin_id}" for bin_id in np.unique(binner.solution_)}
+    expected_index_gids = {f"bin-2d-index-{bin_id}" for bin_id in np.unique(binner.solution_)}
     for axis_index in (2, 3, 4, 6, 7):
-        assert {
-            artist.get_gid()
-            for artist in _boundary_collections(axes[axis_index])
-        } == expected_boundary_gids
-        assert {
-            label.get_gid()
-            for label in _bin_index_labels(axes[axis_index])
-        } == expected_index_gids
+        assert {artist.get_gid() for artist in _boundary_collections(axes[axis_index])} == expected_boundary_gids
+        assert {label.get_gid() for label in _bin_index_labels(axes[axis_index])} == expected_index_gids
 
 
 def test_bin_2d_plot_ks_does_not_require_retained_training_rows():
@@ -621,9 +576,7 @@ def test_bin_2d_plot_ks_marks_maximum_gap_between_cumulative_curves(bin_2d_binne
         x_data = np.asarray(gap_lines[0].get_xdata(), dtype=float)
         y_data = np.asarray(gap_lines[0].get_ydata(), dtype=float)
         assert x_data.tolist() == pytest.approx([maximum["累计样本占比"]] * 2)
-        assert y_data.tolist() == pytest.approx(
-            sorted([maximum["累积好样本占比"], maximum["累积坏样本占比"]])
-        )
+        assert y_data.tolist() == pytest.approx(sorted([maximum["累积好样本占比"], maximum["累积坏样本占比"]]))
 
 
 def test_bin_2d_plot_global_denominators_include_special_values(monkeypatch):

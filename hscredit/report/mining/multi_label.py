@@ -79,8 +79,8 @@ class MultiLabelRuleMiner(BaseRuleMiner):
 
     def __setattr__(self, name, value):
         """仅跟踪构造完成后的外部 target 赋值，将其切换为显式模式。"""
-        if name == 'target' and self.__dict__.get('_track_target_assignment', False):
-            object.__setattr__(self, '_target_is_auto', False)
+        if name == "target" and self.__dict__.get("_track_target_assignment", False):
+            object.__setattr__(self, "_target_is_auto", False)
         object.__setattr__(self, name, value)
 
     def __init__(
@@ -97,7 +97,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
-            target=labels[0] if labels else 'target',
+            target=labels[0] if labels else "target",
             exclude_cols=exclude_cols,
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
@@ -125,17 +125,17 @@ class MultiLabelRuleMiner(BaseRuleMiner):
 
     def _set_auto_target(self, target: str) -> None:
         """更新自动派生 target，不触发外部显式赋值标记。"""
-        object.__setattr__(self, 'target', target)
-        object.__setattr__(self, '_auto_target_value', target)
-        object.__setattr__(self, '_target_is_auto', True)
+        object.__setattr__(self, "target", target)
+        object.__setattr__(self, "_auto_target_value", target)
+        object.__setattr__(self, "_target_is_auto", True)
 
-    @analysis_inputs('X', roles=())
+    @analysis_inputs("X", roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y=None,
         features: Optional[List[str]] = None,
-    ) -> 'MultiLabelRuleMiner':
+    ) -> "MultiLabelRuleMiner":
         """拟合多标签规则挖掘器.
 
         :param X: 输入数据 DataFrame，须包含 labels 指定的标签列
@@ -152,8 +152,8 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         df = X.copy(deep=False)
         labels = working._resolved_labels()
         label_names = working._resolved_label_names()
-        if getattr(working, '_target_is_auto', True):
-            working._set_auto_target(labels[0] if labels else 'target')
+        if getattr(working, "_target_is_auto", True):
+            working._set_auto_target(labels[0] if labels else "target")
 
         # 验证标签列存在
         missing_labels = [lb for lb in labels if lb not in df.columns]
@@ -182,10 +182,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
 
         # 候选规则放宽 LIFT/样本量约束，最终是否有效由各标签下的 min_lift 单独判定
         candidate_min_samples = max(1, int(working.min_support * len(df)))
-        tasks = [
-            (working, df, list(features), label, candidate_min_samples)
-            for label in labels
-        ]
+        tasks = [(working, df, list(features), label, candidate_min_samples) for label in labels]
         mined_by_label = working._parallel_execute(
             _multi_label_mining_worker,
             tasks,
@@ -219,10 +216,10 @@ class MultiLabelRuleMiner(BaseRuleMiner):
                 continue
 
             rule_info = {
-                '规则': expr,
-                '覆盖样本数': int(n_match),
-                '覆盖率': round(support * 100, 2),
-                '入参字段': tuple(Rule(expr).feature_names_in_),
+                "规则": expr,
+                "覆盖样本数": int(n_match),
+                "覆盖率": round(support * 100, 2),
+                "入参字段": tuple(Rule(expr).feature_names_in_),
             }
 
             effective_labels = []
@@ -232,41 +229,37 @@ class MultiLabelRuleMiner(BaseRuleMiner):
                 rule_rate = df.loc[mask, label].mean() if n_match > 0 else 0
                 lift = rule_rate / overall_rate if overall_rate > 0 else 0
 
-                rule_info[f'{lname}_坏率'] = round(rule_rate * 100, 2)
-                rule_info[f'{lname}_LIFT'] = round(lift, 4)
-                rule_info[f'{lname}_有效'] = lift >= working.min_lift
+                rule_info[f"{lname}_坏率"] = round(rule_rate * 100, 2)
+                rule_info[f"{lname}_LIFT"] = round(lift, 4)
+                rule_info[f"{lname}_有效"] = lift >= working.min_lift
 
                 if lift >= working.min_lift:
                     effective_labels.append(lname)
 
             # 判断规则分类
             if len(effective_labels) == len(labels):
-                rule_info['规则类型'] = '强规则（全标签有效）'
-                rule_info['建议'] = '稳定拒绝规则'
+                rule_info["规则类型"] = "强规则（全标签有效）"
+                rule_info["建议"] = "稳定拒绝规则"
             elif len(effective_labels) > 0:
-                rule_info['规则类型'] = f'部分有效（{",".join(effective_labels)}）'
-                rule_info['建议'] = '谨慎使用/预警规则'
+                rule_info["规则类型"] = f'部分有效（{",".join(effective_labels)}）'
+                rule_info["建议"] = "谨慎使用/预警规则"
             else:
-                rule_info['规则类型'] = '无效规则'
-                rule_info['建议'] = '放弃'
+                rule_info["规则类型"] = "无效规则"
+                rule_info["建议"] = "放弃"
 
-            rule_info['有效标签'] = tuple(effective_labels)
+            rule_info["有效标签"] = tuple(effective_labels)
 
             merged_rules.append(rule_info)
 
         # 按第一个标签的 LIFT 降序排序
         if labels:
-            first_lift_col = (
-                f'{label_names[0]}_LIFT'
-                if label_names
-                else f'{labels[0]}_LIFT'
-            )
+            first_lift_col = f"{label_names[0]}_LIFT" if label_names else f"{labels[0]}_LIFT"
             merged_rules.sort(key=lambda r: r.get(first_lift_col, 0), reverse=True)
 
         counts = {}
         retained = []
         for rule in merged_rules:
-            fields = rule['入参字段']
+            fields = rule["入参字段"]
             if counts.get(fields, 0) >= working.max_rules:
                 continue
             counts[fields] = counts.get(fields, 0) + 1
@@ -278,7 +271,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
 
     def get_rules(
         self,
-        effectiveness: str = 'any',
+        effectiveness: str = "any",
         min_lift_per_label: Optional[float] = None,
         top_n: Optional[int] = None,
     ) -> pd.DataFrame:
@@ -303,22 +296,23 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         label_names = self._resolved_label_names()
 
         lift_columns = [
-            f'{label_names[i]}_LIFT' if i < len(label_names) else f'{label}_LIFT'
-            for i, label in enumerate(labels)
+            f"{label_names[i]}_LIFT" if i < len(label_names) else f"{label}_LIFT" for i, label in enumerate(labels)
         ]
 
         def effective(rule):
             return [rule.get(column, 0) >= min_lift for column in lift_columns]
 
-        if effectiveness == 'both':
+        if effectiveness == "both":
             rules = [rule for rule in rules if all(effective(rule))]
-        elif effectiveness == 'any':
+        elif effectiveness == "any":
             rules = [rule for rule in rules if any(effective(rule))]
-        elif effectiveness == 'short_only':
+        elif effectiveness == "short_only":
             rules = [rule for rule in rules if effective(rule) and effective(rule)[0] and not any(effective(rule)[1:])]
-        elif effectiveness == 'long_only':
-            rules = [rule for rule in rules if effective(rule) and effective(rule)[-1] and not any(effective(rule)[:-1])]
-        elif effectiveness != 'all':
+        elif effectiveness == "long_only":
+            rules = [
+                rule for rule in rules if effective(rule) and effective(rule)[-1] and not any(effective(rule)[:-1])
+            ]
+        elif effectiveness != "all":
             raise ValueError("effectiveness 必须为 both、any、short_only、long_only 或 all")
 
         if top_n:
@@ -338,11 +332,11 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         label_names = self._resolved_label_names()
         rows = []
         for rule in self._rules:
-            row = {'规则': rule['规则']}
+            row = {"规则": rule["规则"]}
             for i, label in enumerate(labels):
                 lname = label_names[i] if i < len(label_names) else label
-                row[f'{lname}_LIFT'] = rule.get(f'{lname}_LIFT', 0)
-            row['规则类型'] = rule.get('规则类型', '')
+                row[f"{lname}_LIFT"] = rule.get(f"{lname}_LIFT", 0)
+            row["规则类型"] = rule.get("规则类型", "")
             rows.append(row)
 
         return pd.DataFrame(rows)
@@ -352,4 +346,4 @@ class MultiLabelRuleMiner(BaseRuleMiner):
 
         :return: 含规则分类和业务解读的 DataFrame
         """
-        return self.get_rules(effectiveness='all')
+        return self.get_rules(effectiveness="all")

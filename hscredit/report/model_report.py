@@ -11,7 +11,6 @@
 - 模型部署需求
 """
 
-
 from __future__ import annotations
 
 from hscredit.utils.dates import date_groups, frequency_name
@@ -615,7 +614,11 @@ class ModelReport:
             validate_overdue_operator(overdue_operator)
         validate_target_mode(target, overdue, dpds)
         reject_legacy_target_keywords(kwargs)
-        for old, new in (("feature_names", "features"), ("method", "prediction_method"), ("method_kwargs", "prediction_kwargs")):
+        for old, new in (
+            ("feature_names", "features"),
+            ("method", "prediction_method"),
+            ("method_kwargs", "prediction_kwargs"),
+        ):
             if old in kwargs:
                 raise TypeError(f"{old} 参数已移除，请使用 {new}")
         self.overdue, self.dpds = overdue, dpds
@@ -628,7 +631,9 @@ class ModelReport:
             normalized_method = "predict_proba" if prediction_method == "predict_prob" else prediction_method
             allowed_methods = {"predict_proba", "predict", "predict_score", "transform"}
             if normalized_method not in allowed_methods:
-                raise ValidationError(f"不支持的 prediction_method: {prediction_method!r}，可选: {sorted(allowed_methods)}")
+                raise ValidationError(
+                    f"不支持的 prediction_method: {prediction_method!r}，可选: {sorted(allowed_methods)}"
+                )
             if not callable(getattr(model, normalized_method, None)):
                 raise ValidationError(f"模型 {type(model).__name__} 不支持方法 {normalized_method}")
         if prediction_kwargs is not None and not isinstance(prediction_kwargs, dict):
@@ -868,9 +873,7 @@ class ModelReport:
                 missing.append(parameter.name)
 
         if missing:
-            raise ValidationError(
-                f"method callable 缺少必填参数 {missing}，可用参数: {sorted(available)}"
-            )
+            raise ValidationError(f"method callable 缺少必填参数 {missing}，可用参数: {sorted(available)}")
         if accepts_kwargs:
             call_kwargs.update({name: value for name, value in available.items() if name not in consumed})
         return self.prediction_method(*args, **call_kwargs)
@@ -925,15 +928,23 @@ class ModelReport:
                 has_parallel_children=True,
                 operation="模型报告数据集预测",
                 # 输入投影、概率临时数组和返回的逐行预测；不包含模型原生内部工作区。
-                working_bytes_per_task=max((int(spec[3].memory_usage(deep=True).sum()) + len(spec[3]) * 32 for spec in specs), default=0),
-                result_bytes_per_task=max((int(spec[3].memory_usage(deep=True).sum()) + len(spec[3]) * 16 + sum(np.asarray(values).nbytes for values in (spec[5] or {}).values()) for spec in specs), default=0),
+                working_bytes_per_task=max(
+                    (int(spec[3].memory_usage(deep=True).sum()) + len(spec[3]) * 32 for spec in specs), default=0
+                ),
+                result_bytes_per_task=max(
+                    (
+                        int(spec[3].memory_usage(deep=True).sum())
+                        + len(spec[3]) * 16
+                        + sum(np.asarray(values).nbytes for values in (spec[5] or {}).values())
+                        for spec in specs
+                    ),
+                    default=0,
+                ),
                 output_rows_per_task=max((len(spec[3]) for spec in specs), default=0),
             ),
         )
         results = (
-            [self._dataset_from_prepared(item) for item in prepared]
-            if callable(self.prediction_method)
-            else prepared
+            [self._dataset_from_prepared(item) for item in prepared] if callable(self.prediction_method) else prepared
         )
         self._datasets = {dataset.name: dataset for dataset in results}
         self._datasets_info = {dataset.name: dataset.label for dataset in results}
@@ -1067,7 +1078,9 @@ class ModelReport:
                 has_parallel_children=True,
                 operation="模型报告新增数据集预测",
                 working_bytes_per_task=int(X.memory_usage(deep=True).sum()) + len(X) * 32,
-                result_bytes_per_task=int(X.memory_usage(deep=True).sum()) + len(X) * 16 + sum(np.asarray(values).nbytes for values in (y_dict or {}).values()),
+                result_bytes_per_task=int(X.memory_usage(deep=True).sum())
+                + len(X) * 16
+                + sum(np.asarray(values).nbytes for values in (y_dict or {}).values()),
                 output_rows_per_task=len(X),
             ),
         )[0]
@@ -1077,7 +1090,7 @@ class ModelReport:
         self._datasets_info[key] = label
         self._invalidate_caches()
 
-    @analysis_inputs('X', roles=())
+    @analysis_inputs("X", roles=())
     def add_dataset(self, key: str, label: str, X, y=None, features: Optional[List[str]] = None):
         """添加额外数据集（如 OOT）用于报告.
 
@@ -1128,7 +1141,8 @@ class ModelReport:
         if valid.all() and ds.X.index.is_unique:
             return ds
         return ReportDataset(
-            name=ds.name, label=ds.label,
+            name=ds.name,
+            label=ds.label,
             X=ds.X.iloc[valid].reset_index(drop=True),
             y=pd.Series(np.asarray(ds.y)[valid], name=ds.y.name),
             prediction=np.asarray(ds.prediction)[valid],
@@ -1191,7 +1205,11 @@ class ModelReport:
         if not self._is_overdue_cfg():
             return {name: name for name in self._label_names}
         overdue_cols, dpds_vals = self._overdue_dpds()
-        display = [overdue_label(col, dpd, self.overdue_operator, style="at" if separator == "@" else "plain") for col in overdue_cols for dpd in dpds_vals]
+        display = [
+            overdue_label(col, dpd, self.overdue_operator, style="at" if separator == "@" else "plain")
+            for col in overdue_cols
+            for dpd in dpds_vals
+        ]
         return dict(zip(self._label_names, display))
 
     def _normalize_overdue_bin_columns(self, table: pd.DataFrame) -> pd.DataFrame:
@@ -1293,8 +1311,10 @@ class ModelReport:
         from .feature_analyzer import feature_bin_stats
 
         targets = parameters["target"]
-        if parameters.get("binner") is None and y_dict and not any(
-            values.dropna().nunique() >= 2 for values in targets.y_map(data).values()
+        if (
+            parameters.get("binner") is None
+            and y_dict
+            and not any(values.dropna().nunique() >= 2 for values in targets.y_map(data).values())
         ):
             available = {name: values for name, values in y_dict.items() if pd.Series(values).dropna().nunique() >= 2}
             if available:
@@ -1369,7 +1389,9 @@ class ModelReport:
         ]
 
         chosen = labels if labels is not None else [label]
-        explicit = {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
+        explicit = (
+            {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
+        )
         df, targets = bind_targets(df, target=explicit, del_grey=True)
 
         kw = dict(
@@ -1636,7 +1658,11 @@ class ModelReport:
                 metric_tasks = []
                 for feat in importance_df.index:
                     train_values = train_ds.X[feat] if feat in train_ds.X.columns else pd.Series(dtype=float)
-                    test_values = self._datasets[test_key].X[feat] if test_key is not None and feat in self._datasets[test_key].X.columns else None
+                    test_values = (
+                        self._datasets[test_key].X[feat]
+                        if test_key is not None and feat in self._datasets[test_key].X.columns
+                        else None
+                    )
                     metric_tasks.append((y_arr, train_values, test_values))
                 metric_values = parallel_execute(
                     _feature_metric_worker,
@@ -1655,7 +1681,14 @@ class ModelReport:
                         capability="thread_safe",
                         releases_gil=True,
                         operation="模型报告字段IV KS PSI",
-                        working_bytes_per_task=max((int(task[1].memory_usage(deep=True)) * 2 + (len(task[0]) + (len(task[2]) if task[2] is not None else 0)) * 64 for task in metric_tasks), default=0),
+                        working_bytes_per_task=max(
+                            (
+                                int(task[1].memory_usage(deep=True)) * 2
+                                + (len(task[0]) + (len(task[2]) if task[2] is not None else 0)) * 64
+                                for task in metric_tasks
+                            ),
+                            default=0,
+                        ),
                         result_bytes_per_task=24,
                         output_rows_per_task=1,
                     ),
@@ -1890,9 +1923,7 @@ class ModelReport:
             try:
                 points = self.model.export(to_frame=True)
                 if isinstance(points, pd.DataFrame):
-                    points = points.rename(
-                        columns={"name": "变量名称", "value": "变量分箱", "score": "对应分数"}
-                    )
+                    points = points.rename(columns={"name": "变量名称", "value": "变量分箱", "score": "对应分数"})
                     if feature_map:
                         points.insert(
                             points.columns.get_loc("变量名称") + 1,
@@ -2074,7 +2105,9 @@ class ModelReport:
         binner = getattr(self.model, "binner", None)
 
         chosen = labels if labels is not None else [label]
-        explicit = {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
+        explicit = (
+            {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
+        )
         df, targets = bind_targets(df, target=explicit, del_grey=True)
 
         kw = dict(
@@ -2178,9 +2211,15 @@ class ModelReport:
 
             # 金额口径替代订单口径；调用方会将两个结果并排展示。
             if amount and amount in ds.X.columns:
-                amounts = pd.to_numeric(ds.X[amount], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)[valid]
+                amounts = (
+                    pd.to_numeric(ds.X[amount], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)[valid]
+                )
                 amounts_sorted = amounts[sorted_idx]
-                overall_bad_amount = float((sorted_y * amounts_sorted).sum() / amounts_sorted.sum()) if amounts_sorted.sum() > 0 else overall_bad_rate
+                overall_bad_amount = (
+                    float((sorted_y * amounts_sorted).sum() / amounts_sorted.sum())
+                    if amounts_sorted.sum() > 0
+                    else overall_bad_rate
+                )
 
                 amt_bad_rates: Dict[str, float] = {}
                 amt_lifts: Dict[str, float] = {}
@@ -2493,7 +2532,9 @@ class ModelReport:
                     col_raw = ds.X[feat]
                     col = col_raw.dropna()
                     # 检查是否为类别特征或低基数的数值特征
-                    is_categorical = col.dtype == "object" or (col.dtype in ["int64", "float64"] and col.nunique() <= 10)
+                    is_categorical = col.dtype == "object" or (
+                        col.dtype in ["int64", "float64"] and col.nunique() <= 10
+                    )
                     if is_categorical:
                         # 类别特征跳过KS图
                         continue
@@ -2621,6 +2662,7 @@ class ModelReport:
             task_labels.append(label)
 
         for ds_key, ds in plot_datasets.items():
+
             def render_model_group(ds_key=ds_key, ds=ds):
                 group_paths: Dict[str, List[str]] = {}
                 model_figs: List[str] = []
@@ -2688,6 +2730,7 @@ class ModelReport:
 
         contribution_table = self._get_model_input_table()
         if contribution_table["特征重要性%"].notna().any():
+
             def render_contribution_group():
                 group_paths: Dict[str, List[str]] = {}
                 path = str(output_dir / "feature_contribution.png")
@@ -2710,6 +2753,7 @@ class ModelReport:
         importance = self.get_feature_importance()
         top_features = importance.index.tolist()
         if len(top_features) >= 2:
+
             def render_corr_group():
                 group_paths: Dict[str, List[str]] = {}
                 path = str(output_dir / "feature_corr.png")
@@ -2725,6 +2769,7 @@ class ModelReport:
 
         ds_keys = list(plot_datasets.keys())
         for feature in top_features or self.feature_names:
+
             def render_feature_group(feature=feature):
                 group_paths: Dict[str, List[str]] = {}
                 group_tables: Dict[str, pd.DataFrame] = {}
@@ -2830,6 +2875,7 @@ class ModelReport:
             add_plot_group(f"特征图表:{feature}", render_feature_group)
 
         if self._is_scorecard_model():
+
             def render_scorecard_group():
                 group_paths: Dict[str, List[str]] = {}
                 group_tables: Dict[str, pd.DataFrame] = {}
@@ -3060,7 +3106,9 @@ class ModelReport:
                             labels=labels_arg,
                         )
                     except Exception as exc:
-                        raise RuntimeError(f"生成金额口径特征分箱失败 [特征={feature}, 数据集={ds.label}, 金额字段={amount}]") from exc
+                        raise RuntimeError(
+                            f"生成金额口径特征分箱失败 [特征={feature}, 数据集={ds.label}, 金额字段={amount}]"
+                        ) from exc
 
     def get_model_explanation(self) -> Dict[str, Any]:
         """返回显式配置的结构化模型解释结果。"""
@@ -3131,7 +3179,11 @@ class ModelReport:
             return self._to_excel_transactional(filepath, options)
         from .result import ReportGenerationError, ReportResult
 
-        result = ReportResult(mode=mode or "best_effort", metadata={"报告类型": "模型报告"}) if mode is not None or return_result else None
+        result = (
+            ReportResult(mode=mode or "best_effort", metadata={"报告类型": "模型报告"})
+            if mode is not None or return_result
+            else None
+        )
         previous = getattr(self, "_execution_result", None)
         self._execution_result = result
         if result is not None:
@@ -3146,25 +3198,25 @@ class ModelReport:
                 result.skip("生产订单测试用例", "include_sample_records=False，未导出逐行订单及模型分数")
         try:
             path = self._run_cache_transaction(
-            self._to_excel_impl,
-            filepath,
-            max_n_bins=max_n_bins,
-            method=method,
-            amount=amount,
-            date=date,
-            freq=freq,
-            group=group,
-            with_plots=with_plots,
-            model_name=model_name,
-            project_desc=project_desc,
-            feature_map=feature_map,
-            feature_info=feature_info,
-            show_lift=show_lift,
-            show_importance=show_importance,
-            feature_contribution_label_max_features=feature_contribution_label_max_features,
-            data_source=data_source,
-            loc_cols=loc_cols,
-            include_sample_records=include_sample_records,
+                self._to_excel_impl,
+                filepath,
+                max_n_bins=max_n_bins,
+                method=method,
+                amount=amount,
+                date=date,
+                freq=freq,
+                group=group,
+                with_plots=with_plots,
+                model_name=model_name,
+                project_desc=project_desc,
+                feature_map=feature_map,
+                feature_info=feature_info,
+                show_lift=show_lift,
+                show_importance=show_importance,
+                feature_contribution_label_max_features=feature_contribution_label_max_features,
+                data_source=data_source,
+                loc_cols=loc_cols,
+                include_sample_records=include_sample_records,
             )
             if result is not None:
                 result.artifacts.append({"类型": "Excel", "路径": str(path), "完整": result.complete})
@@ -3197,7 +3249,9 @@ class ModelReport:
 
         def publish_bundle():
             nonlocal result
-            with ArtifactTransaction({"directory": str(destination.parent), "name": destination.stem, "overwrite": True}) as transaction:
+            with ArtifactTransaction(
+                {"directory": str(destination.parent), "name": destination.stem, "overwrite": True}
+            ) as transaction:
                 staged = transaction.stage_path(destination.name)
                 result = self.to_excel(str(staged), mode=mode, return_result=True, **options)
                 if not staged.is_file():
@@ -3205,14 +3259,31 @@ class ModelReport:
                 # 内层记录的只是暂存文件，不应暴露为已发布制品。
                 result.artifacts = []
                 workbook = transaction.publish(staged, destination.name, artifact_type="excel")
-                assets = sorted(path for path in transaction.staging_dir.rglob("*") if path.is_file() and path != staged)
+                assets = sorted(
+                    path for path in transaction.staging_dir.rglob("*") if path.is_file() and path != staged
+                )
                 for asset in assets:
-                    transaction.publish(asset, str(asset.relative_to(transaction.staging_dir)), artifact_type="image" if asset.suffix.lower() in {".png", ".jpg", ".jpeg", ".svg"} else "file")
-                status_file = transaction.write_json("report-status.json", {"报告完整": result.complete, "运行口径": result.metadata, "章节": result.status_table().to_dict(orient="records")})
+                    transaction.publish(
+                        asset,
+                        str(asset.relative_to(transaction.staging_dir)),
+                        artifact_type="image" if asset.suffix.lower() in {".png", ".jpg", ".jpeg", ".svg"} else "file",
+                    )
+                status_file = transaction.write_json(
+                    "report-status.json",
+                    {
+                        "报告完整": result.complete,
+                        "运行口径": result.metadata,
+                        "章节": result.status_table().to_dict(orient="records"),
+                    },
+                )
                 transaction.publish(status_file, "report-status.json", artifact_type="json")
             # 只有成功退出事务（完成清单已原子发布）才公布正式路径。
-            result.metadata.update({"事务发布": True, "完成清单": str(transaction.manifest_path), "版本目录": str(transaction.run_dir)})
-            result.artifacts = [{"类型": item["type"], "路径": item["path"], "完整": result.complete} for item in transaction.artifacts]
+            result.metadata.update(
+                {"事务发布": True, "完成清单": str(transaction.manifest_path), "版本目录": str(transaction.run_dir)}
+            )
+            result.artifacts = [
+                {"类型": item["type"], "路径": item["path"], "完整": result.complete} for item in transaction.artifacts
+            ]
             self.last_report_result_ = result
             return result if return_result else workbook["path"]
 
@@ -3354,7 +3425,11 @@ class ModelReport:
                     if cell.value is not None:
                         max_content_col = max(max_content_col, cell.column)
             for cell_range in worksheet.merged_cells.ranges:
-                if cell_range.max_row >= start_row and cell_range.min_row <= end_row and cell_range.max_col >= start_col:
+                if (
+                    cell_range.max_row >= start_row
+                    and cell_range.min_row <= end_row
+                    and cell_range.max_col >= start_col
+                ):
                     max_content_col = max(max_content_col, cell_range.max_col)
             return max_content_col
 
@@ -3371,7 +3446,13 @@ class ModelReport:
                 )
 
         def _adjust_report_title_merges(worksheet) -> None:
-            title_rows = [(row_cell.row, level) for row_cells in worksheet.iter_rows(min_col=2, max_col=2) for row_cell in row_cells for level in [_report_title_level(row_cell.row, row_cell.value)] if level is not None]
+            title_rows = [
+                (row_cell.row, level)
+                for row_cells in worksheet.iter_rows(min_col=2, max_col=2)
+                for row_cell in row_cells
+                for level in [_report_title_level(row_cell.row, row_cell.value)]
+                if level is not None
+            ]
             for idx, (row_idx, level) in enumerate(title_rows):
                 if level == 0:
                     end_row_for_title = worksheet.max_row
@@ -3390,7 +3471,9 @@ class ModelReport:
                 writer.insert_hyperlink2sheet(worksheet, cell, hyperlink=hyperlink)
             except Exception as exc:
                 coordinate = writer.get_cell_space(cell)
-                raise RuntimeError(f"生成{purpose}失败 [工作表={worksheet.title}, 单元格={coordinate}, 目标={hyperlink}]") from exc
+                raise RuntimeError(
+                    f"生成{purpose}失败 [工作表={worksheet.title}, 单元格={coordinate}, 目标={hyperlink}]"
+                ) from exc
 
         # ============================================================
         # 目录 Sheet
@@ -3425,12 +3508,20 @@ class ModelReport:
                 purpose="目录链接",
             )
 
-        _, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 1, 3), value="V1.0", style="middle", end_space=(end_row + 1, 4))
+        _, _ = writer.insert_value2sheet(
+            ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2)
+        )
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 1, 3), value="V1.0", style="middle", end_space=(end_row + 1, 4)
+        )
         _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="创建日期:", style="middle", end_space=(end_row, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=calendar_date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row, 4))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row, 3), value=calendar_date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row, 4)
+        )
         _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="模型名称:", style="middle", end_space=(end_row, 2))
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 3), value=model_name, style="middle", end_space=(end_row, 4))
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row, 3), value=model_name, style="middle", end_space=(end_row, 4)
+        )
         writer.adjust_columns_width(ws, start_col=2, end_col=4)
 
         # ============================================================
@@ -3441,7 +3532,9 @@ class ModelReport:
         _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
         # 1.1 项目目标
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"}
+        )
         desc_text = project_desc or f"使用 {model_name} 模型进行信用风险评估"
         end_row, _ = writer.insert_value2sheet(
             ws,
@@ -3452,7 +3545,9 @@ class ModelReport:
         )
 
         # 1.2 数据样本描述
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、数据样本描述", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="2、数据样本描述", style="header_middle", align={"horizontal": "left"}
+        )
 
         label_text = self._target_name or "TARGET"
 
@@ -3467,7 +3562,10 @@ class ModelReport:
             if all_dates:
                 all_dates_combined = pd.concat(all_dates, ignore_index=True).dropna()
                 if not all_dates_combined.empty:
-                    global_date_prefix = f"{all_dates_combined.min().strftime('%Y-%m-%d')} ~ " f"{all_dates_combined.max().strftime('%Y-%m-%d')}  "
+                    global_date_prefix = (
+                        f"{all_dates_combined.min().strftime('%Y-%m-%d')} ~ "
+                        f"{all_dates_combined.max().strftime('%Y-%m-%d')}  "
+                    )
         sample_interval = global_date_prefix if global_date_prefix else ""
 
         is_multi = self._is_multi_label()
@@ -3477,7 +3575,8 @@ class ModelReport:
         # ---- Step 2: 整体样本描述（多标签时逐标签展示坏样本率） ----
         target_specific_totals = any(
             np.isnan(np.asarray(values, dtype=float)).any()
-            for ds in self._datasets.values() for values in (ds.y_dict or {"target": ds.y}).values()
+            for ds in self._datasets.values()
+            for values in (ds.y_dict or {"target": ds.y}).values()
         )
         overall_n = sum(len(self._datasets[k].y) for k in ds_keys_list)
         if overall_n > 0:
@@ -3540,14 +3639,25 @@ class ModelReport:
             ds_rows.append({"统计项": ds_label, "统计内容": content})
 
         desc_df = pd.DataFrame(fixed_rows + ds_rows)
-        end_row, _ = dataframe2excel(desc_df, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["统计项", "统计内容"])
+        end_row, _ = dataframe2excel(
+            desc_df, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["统计项", "统计内容"]
+        )
 
         # 1.3 数据样本统计
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="3、数据样本统计", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="3、数据样本统计", style="header_middle", align={"horizontal": "left"}
+        )
         ds_keys_list = list(self._datasets.keys())
         dataset_labels = [self._datasets[k].label for k in ds_keys_list]
 
-        y_maps = [{label: self._get_y(ds_key, label) for label in self._label_names} if is_multi else {label_text: self._get_y(ds_key)} for ds_key in ds_keys_list]
+        y_maps = [
+            (
+                {label: self._get_y(ds_key, label) for label in self._label_names}
+                if is_multi
+                else {label_text: self._get_y(ds_key)}
+            )
+            for ds_key in ds_keys_list
+        ]
         stat_df, stat_pct_cols = build_sample_stats_table(
             dataset_labels,
             y_maps,
@@ -3570,12 +3680,16 @@ class ModelReport:
                 percent_cols=stat_pct_cols,
             )
         else:
-            end_row, _ = dataframe2excel(stat_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=stat_pct_cols)
+            end_row, _ = dataframe2excel(
+                stat_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=stat_pct_cols
+            )
 
         # 1.4 样本分布情况
         freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年", "ME": "月", "QE": "季度", "YE": "年"}
         if date or group:
-            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"})
+            end_row, _ = writer.insert_value2sheet(
+                ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"}
+            )
 
             def _write_distribution(group_of_ds, title: str):
                 """构建并写入一张「数据集 × 数据分组」的分布表（数据集逐段堆叠）。
@@ -3592,7 +3706,11 @@ class ModelReport:
                         continue
                     distribution_dataset_labels.append(ds_label)
                     group_values.append(gvals)
-                    distribution_y_maps.append({label: self._get_y(ds_key, label) for label in self._label_names} if is_multi else {label_text: self._get_y(ds_key)})
+                    distribution_y_maps.append(
+                        {label: self._get_y(ds_key, label) for label in self._label_names}
+                        if is_multi
+                        else {label_text: self._get_y(ds_key)}
+                    )
                 if not distribution_y_maps:
                     return
                 dist_df, pct = build_group_distribution_table(
@@ -3624,7 +3742,9 @@ class ModelReport:
                 except ValueError as exc:
                     self._report_warning("日期频率 %s 无效，回退为月频: %s", freq, exc)
                     resolved_freq = "M"
-                period_col_name = freq_label_map.get(frequency_name(resolved_freq).split("-")[0], frequency_name(resolved_freq))
+                period_col_name = freq_label_map.get(
+                    frequency_name(resolved_freq).split("-")[0], frequency_name(resolved_freq)
+                )
 
                 def _period_of(ds_key, ds, _freq=resolved_freq):
                     if date not in ds.X.columns:
@@ -3924,10 +4044,18 @@ class ModelReport:
                         labels=self._label_names,
                     )
                     # 从 MultiIndex 列中提取百分位列
-                    pct_cols = [c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
-                    cond_cols = [c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
-                    amt_pct = [c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
-                    amt_cond = [c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
+                    pct_cols = [
+                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS
+                    ]
+                    cond_cols = [
+                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS
+                    ]
+                    amt_pct = [
+                        c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS
+                    ]
+                    amt_cond = [
+                        c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS
+                    ]
                     order_start_row = end_row + 1
                     order_end_row, order_end_col = dataframe2excel(
                         order_table,
@@ -3960,8 +4088,12 @@ class ModelReport:
                         margins=True,
                         labels=self._label_names,
                     )
-                    pct_cols = [c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
-                    cond_cols = [c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
+                    pct_cols = [
+                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS
+                    ]
+                    cond_cols = [
+                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS
+                    ]
                     end_row, _ = dataframe2excel(
                         order_table,
                         writer,
@@ -3990,7 +4122,9 @@ class ModelReport:
                     condition_color="F76E6C",
                 )
                 try:
-                    amount_table = self.get_bin_table(ds_key, method=method, max_n_bins=max_n_bins, amount=amount, margins=True)
+                    amount_table = self.get_bin_table(
+                        ds_key, method=method, max_n_bins=max_n_bins, amount=amount, margins=True
+                    )
                     amt_pct = [c for c in self._PERCENT_COLS if c in amount_table.columns]
                     amt_cond = [c for c in self._CONDITION_COLS if c in amount_table.columns]
                     amount_end_row, _ = dataframe2excel(
@@ -4054,12 +4188,15 @@ class ModelReport:
                 sheet_name=ws,
                 start_row=features_summary_start_row,
                 right_cols=[0],
-                condition_color='F76E6C',
-                percent_cols=['缺失率', 'KS', 'PSI', '众数占比', '零值率', '负值率', '重复率'],
-                condition_cols=['IV', 'KS'],
+                condition_color="F76E6C",
+                percent_cols=["缺失率", "KS", "PSI", "众数占比", "零值率", "负值率", "重复率"],
+                condition_cols=["IV", "KS"],
             )
             feature_name_col = 2 + features_summary.columns.get_loc("特征名")
-            features_summary_rows = {str(feat): features_summary_start_row + features_summary.columns.nlevels + position for position, feat in enumerate(features_summary["特征名"])}
+            features_summary_rows = {
+                str(feat): features_summary_start_row + features_summary.columns.nlevels + position
+                for position, feat in enumerate(features_summary["特征名"])
+            }
             feature_section += 1
 
         # 入模变量相关性
@@ -4152,8 +4289,16 @@ class ModelReport:
                         margins=True,
                         labels=labels_arg,
                     )
-                    ft_pct = [c for c in ft.columns if c[-1] in self._PERCENT_COLS] if isinstance(ft.columns, pd.MultiIndex) else [c for c in self._PERCENT_COLS if c in ft.columns]
-                    ft_cond = [c for c in ft.columns if c[-1] in self._CONDITION_COLS] if isinstance(ft.columns, pd.MultiIndex) else [c for c in self._CONDITION_COLS if c in ft.columns]
+                    ft_pct = (
+                        [c for c in ft.columns if c[-1] in self._PERCENT_COLS]
+                        if isinstance(ft.columns, pd.MultiIndex)
+                        else [c for c in self._PERCENT_COLS if c in ft.columns]
+                    )
+                    ft_cond = (
+                        [c for c in ft.columns if c[-1] in self._CONDITION_COLS]
+                        if isinstance(ft.columns, pd.MultiIndex)
+                        else [c for c in self._CONDITION_COLS if c in ft.columns]
+                    )
 
                     if amount:
                         table_start = end_row + 1
@@ -4177,8 +4322,16 @@ class ModelReport:
                             amount=amount,
                             labels=labels_arg,
                         )
-                        amt_pct = [c for c in ft_amt.columns if c[-1] in self._PERCENT_COLS] if isinstance(ft_amt.columns, pd.MultiIndex) else [c for c in self._PERCENT_COLS if c in ft_amt.columns]
-                        amt_cond = [c for c in ft_amt.columns if c[-1] in self._CONDITION_COLS] if isinstance(ft_amt.columns, pd.MultiIndex) else [c for c in self._CONDITION_COLS if c in ft_amt.columns]
+                        amt_pct = (
+                            [c for c in ft_amt.columns if c[-1] in self._PERCENT_COLS]
+                            if isinstance(ft_amt.columns, pd.MultiIndex)
+                            else [c for c in self._PERCENT_COLS if c in ft_amt.columns]
+                        )
+                        amt_cond = (
+                            [c for c in ft_amt.columns if c[-1] in self._CONDITION_COLS]
+                            if isinstance(ft_amt.columns, pd.MultiIndex)
+                            else [c for c in self._CONDITION_COLS if c in ft_amt.columns]
+                        )
                         amount_end_row, _ = dataframe2excel(
                             ft_amt,
                             writer,
@@ -4228,9 +4381,7 @@ class ModelReport:
                     or str(column) in {"实际% - 预期%", "分档PSI值", "总体PSI值"}
                 ]
                 psi_condition_cols = [
-                    column
-                    for column in psi_df.columns
-                    if str(column) in {"实际% - 预期%", "分档PSI值"}
+                    column for column in psi_df.columns if str(column) in {"实际% - 预期%", "分档PSI值"}
                 ]
                 end_row, _ = dataframe2excel(
                     psi_df,
@@ -4426,7 +4577,9 @@ class ModelReport:
             style="header_middle",
             align={"horizontal": "left"},
         )
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=model_name, style="middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row, 2), value=model_name, style="middle", align={"horizontal": "left"}
+        )
         param_section += 1
 
         # 5.2 模型参数
@@ -4444,8 +4597,12 @@ class ModelReport:
             except Exception as exc:
                 self._report_warning("读取模型参数失败 [模型=%s]: %s", model_name, exc)
         if not params_str and hasattr(self.model, "__dict__"):
-            params_str = str({k: v for k, v in self.model.__dict__.items() if not k.startswith("_") and not callable(v)})
-        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=params_str or "N/A", style="middle", align={"horizontal": "left"})
+            params_str = str(
+                {k: v for k, v in self.model.__dict__.items() if not k.startswith("_") and not callable(v)}
+            )
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row, 2), value=params_str or "N/A", style="middle", align={"horizontal": "left"}
+        )
         param_section += 1
 
         # 5.3 入模特征列表
@@ -4501,7 +4658,11 @@ class ModelReport:
                 writer,
                 sheet_name=ws,
                 start_row=end_row + 1,
-                left_cols=[column for column in ("入参字段", "Features", "变量", "feature", "特征", "字段名称") if column in direct_lr_summary.columns],
+                left_cols=[
+                    column
+                    for column in ("入参字段", "Features", "变量", "feature", "特征", "字段名称")
+                    if column in direct_lr_summary.columns
+                ],
             )
             param_section += 1
 
@@ -4668,7 +4829,9 @@ class ModelReport:
                             )
                 score_psi_df = psi_tables.get("score_psi")
                 if isinstance(score_psi_df, pd.DataFrame) and not score_psi_df.empty:
-                    end_row, _ = dataframe2excel(score_psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="评分PSI")
+                    end_row, _ = dataframe2excel(
+                        score_psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="评分PSI"
+                    )
                 param_section += 1
 
         # ============================================================
@@ -4679,7 +4842,9 @@ class ModelReport:
         _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
         # 6.1 入模变量信息
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、入模变量信息", style="header_middle", align={"horizontal": "left"})
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value="1、入模变量信息", style="header_middle", align={"horizontal": "left"}
+        )
         if feature_info is not None and isinstance(feature_info, pd.DataFrame) and not feature_info.empty:
             end_row, _ = dataframe2excel(feature_info, writer, sheet_name=ws, start_row=end_row + 1)
         else:
@@ -4697,8 +4862,12 @@ class ModelReport:
             end_row, _ = dataframe2excel(pd.DataFrame(fi_rows), writer, sheet_name=ws, start_row=end_row + 1)
 
         # 6.2 生产订单测试用例；关闭时不创建、读取或写入逐行样例表。
-        sample_title = "2、生产订单测试用例" if include_sample_records else "2、生产订单测试用例（不适用：已关闭明细输出）"
-        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=sample_title, style="header_middle", align={"horizontal": "left"})
+        sample_title = (
+            "2、生产订单测试用例" if include_sample_records else "2、生产订单测试用例（不适用：已关闭明细输出）"
+        )
+        end_row, _ = writer.insert_value2sheet(
+            ws, (end_row + 2, 2), value=sample_title, style="header_middle", align={"horizontal": "left"}
+        )
         if include_sample_records:
             try:
                 train_ds = self._datasets[self._train_key]
@@ -4788,9 +4957,7 @@ class ModelReport:
                     style="middle",
                 )
                 if with_plots:
-                    figure = explanation["解释器"].plot_explanation_overview(
-                        explanation["解释结果"], show=False
-                    )
+                    figure = explanation["解释器"].plot_explanation_overview(explanation["解释结果"], show=False)
                     try:
                         end_row, _ = writer.insert_pic2sheet(ws, figure, (end_row + 2, 2), figsize=(800, 550))
                     finally:
@@ -4827,7 +4994,12 @@ class ModelReport:
             execution_result.ensure_publishable()
             status_sheet = writer.get_sheet_by_name("报告执行状态")
             writer.move_sheet(status_sheet, index=0)
-            writer.insert_value2sheet(status_sheet, "B2", "报告完整" if execution_result.complete else "报告不完整：请检查失败章节", style="header")
+            writer.insert_value2sheet(
+                status_sheet,
+                "B2",
+                "报告完整" if execution_result.complete else "报告不完整：请检查失败章节",
+                style="header",
+            )
             writer.insert_df2sheet(status_sheet, execution_result.status_table(), "B4", index=False, auto_width=True)
         if execution_result is not None:
             execution_result.current_section = "工作簿发布"
@@ -5062,6 +5234,7 @@ def auto_model_report(
             return execution_result
     if return_result:
         from .result import ReportResult
+
         result = ReportResult(mode=mode or "best_effort", metadata={"报告类型": "模型报告", "未导出": True})
         result.plan("模型摘要")
         result.run("模型摘要", report.summary)

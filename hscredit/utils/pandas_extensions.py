@@ -335,7 +335,13 @@ def _dataframe_save(
         # 插入标题
         if title:
             col_width = len(self.columns) + self.index.nlevels if kwargs.get("index", False) else len(self.columns)
-            _start_row, _end_col = writer.insert_value2sheet(worksheet, (start_row, start_col), value=title, style="header", end_space=(start_row, start_col + col_width - 1))
+            _start_row, _end_col = writer.insert_value2sheet(
+                worksheet,
+                (start_row, start_col),
+                value=title,
+                style="header",
+                end_space=(start_row, start_col + col_width - 1),
+            )
             start_row += 1
 
         # 插入图片
@@ -347,43 +353,92 @@ def _dataframe_save(
                 pic_row = start_row
                 for i, pic in enumerate(figures):
                     if i == 0:
-                        start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, start_col), figsize=figsize)
+                        start_row, end_col = writer.insert_pic2sheet(
+                            worksheet, pic, (pic_row, start_col), figsize=figsize
+                        )
                     else:
-                        start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
+                        start_row, end_col = writer.insert_pic2sheet(
+                            worksheet, pic, (pic_row, end_col - 1), figsize=figsize
+                        )
 
                 start_row += 0 if image_bottom_padding_rows is None else max(int(image_bottom_padding_rows), 0)
 
         # 处理merge_column参数
         if "merge_column" in kwargs and kwargs["merge_column"]:
             if not isinstance(kwargs["merge_column"][0], (tuple, list)):
-                kwargs["merge_column"] = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in kwargs["merge_column"]) or (not isinstance(c, tuple) and c in kwargs["merge_column"])]
+                kwargs["merge_column"] = [
+                    c
+                    for c in self.columns
+                    if (isinstance(c, tuple) and c[-1] in kwargs["merge_column"])
+                    or (not isinstance(c, tuple) and c in kwargs["merge_column"])
+                ]
 
         # 插入DataFrame
-        end_row, end_col = writer.insert_df2sheet(worksheet, self, (start_row, start_col), fill=fill, header=header, **kwargs)
+        end_row, end_col = writer.insert_df2sheet(
+            worksheet, self, (start_row, start_col), fill=fill, header=header, **kwargs
+        )
 
         # 设置百分比格式列
         if percent_cols:
             if not isinstance(percent_cols[0], (tuple, list)):
-                percent_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in percent_cols) or (not isinstance(c, tuple) and c in percent_cols)]
+                percent_cols = [
+                    c
+                    for c in self.columns
+                    if (isinstance(c, tuple) and c[-1] in percent_cols)
+                    or (not isinstance(c, tuple) and c in percent_cols)
+                ]
             for c in [c for c in percent_cols if c in self.columns]:
-                conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
-                writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(self)}:{conditional_column}{end_row - 1}", "0.00%")
+                conditional_column = get_column_letter(
+                    start_col + self.columns.get_loc(c) + self.index.nlevels
+                    if kwargs.get("index", False)
+                    else start_col + self.columns.get_loc(c)
+                )
+                writer.set_number_format(
+                    worksheet, f"{conditional_column}{end_row - len(self)}:{conditional_column}{end_row - 1}", "0.00%"
+                )
 
         # 设置自定义格式列
         if custom_cols:
             if not isinstance(custom_cols[0], (tuple, list)):
-                custom_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in custom_cols) or (not isinstance(c, tuple) and c in custom_cols)]
+                custom_cols = [
+                    c
+                    for c in self.columns
+                    if (isinstance(c, tuple) and c[-1] in custom_cols)
+                    or (not isinstance(c, tuple) and c in custom_cols)
+                ]
             for c in [c for c in custom_cols if c in self.columns]:
-                conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
-                writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(self)}:{conditional_column}{end_row - 1}", custom_format)
+                conditional_column = get_column_letter(
+                    start_col + self.columns.get_loc(c) + self.index.nlevels
+                    if kwargs.get("index", False)
+                    else start_col + self.columns.get_loc(c)
+                )
+                writer.set_number_format(
+                    worksheet,
+                    f"{conditional_column}{end_row - len(self)}:{conditional_column}{end_row - 1}",
+                    custom_format,
+                )
 
         # 设置条件格式列
         if condition_cols:
             if not isinstance(condition_cols[0], (tuple, list)):
-                condition_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in condition_cols) or (not isinstance(c, tuple) and c in condition_cols)]
+                condition_cols = [
+                    c
+                    for c in self.columns
+                    if (isinstance(c, tuple) and c[-1] in condition_cols)
+                    or (not isinstance(c, tuple) and c in condition_cols)
+                ]
             for c in [c for c in condition_cols if c in self.columns]:
-                conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
-                writer.add_conditional_formatting(worksheet, f"{conditional_column}{end_row - len(self)}", f"{conditional_column}{end_row - 1}", condition_color=resolve_condition_color(condition_color, c, writer.condition_color))
+                conditional_column = get_column_letter(
+                    start_col + self.columns.get_loc(c) + self.index.nlevels
+                    if kwargs.get("index", False)
+                    else start_col + self.columns.get_loc(c)
+                )
+                writer.add_conditional_formatting(
+                    worksheet,
+                    f"{conditional_column}{end_row - len(self)}",
+                    f"{conditional_column}{end_row - 1}",
+                    condition_color=resolve_condition_color(condition_color, c, writer.condition_color),
+                )
 
         return writer
 
@@ -551,7 +606,20 @@ class BinTableDisplay:
         self._df = df
         self._styler = None
 
-    def show(self, max_rows: Optional[int] = None, highlight_iv: bool = True, highlight_bad_rate: bool = True, highlight_lift: bool = True, highlight_ks: bool = True, compact: bool = False, precision: Optional[Dict[str, int]] = None, index_as_bin: bool = False, percent_format: bool = True, high_tech_style: bool = False, **kwargs) -> "BinTableDisplay":
+    def show(
+        self,
+        max_rows: Optional[int] = None,
+        highlight_iv: bool = True,
+        highlight_bad_rate: bool = True,
+        highlight_lift: bool = True,
+        highlight_ks: bool = True,
+        compact: bool = False,
+        precision: Optional[Dict[str, int]] = None,
+        index_as_bin: bool = False,
+        percent_format: bool = True,
+        high_tech_style: bool = False,
+        **kwargs,
+    ) -> "BinTableDisplay":
         """展示美化的分箱表.
 
         :param max_rows: 最大显示行数
@@ -567,7 +635,19 @@ class BinTableDisplay:
         :param kwargs: 其他参数
         :return: self，支持链式调用
         """
-        self._styler = _style_bin_table(self._df, max_rows=max_rows, highlight_iv=highlight_iv, highlight_bad_rate=highlight_bad_rate, highlight_lift=highlight_lift, highlight_ks=highlight_ks, compact=compact, precision=precision, index_as_bin=index_as_bin, percent_format=percent_format, high_tech_style=high_tech_style)
+        self._styler = _style_bin_table(
+            self._df,
+            max_rows=max_rows,
+            highlight_iv=highlight_iv,
+            highlight_bad_rate=highlight_bad_rate,
+            highlight_lift=highlight_lift,
+            highlight_ks=highlight_ks,
+            compact=compact,
+            precision=precision,
+            index_as_bin=index_as_bin,
+            percent_format=percent_format,
+            high_tech_style=high_tech_style,
+        )
         try:
             from IPython.display import display
 
@@ -614,8 +694,7 @@ class BinTableDisplay:
 
         html = self._styler.to_html()
         with open(filename, "w", encoding="utf-8") as f:
-            f.write(
-                f"""
+            f.write(f"""
             <!DOCTYPE html>
             <html>
             <head>
@@ -631,8 +710,7 @@ class BinTableDisplay:
                 {html}
             </body>
             </html>
-            """
-            )
+            """)
         logger.info("已导出到: %s", filename)
         return self
 
@@ -708,7 +786,9 @@ def _style_bin_table(
         if indicator_name_col is not None and indicator_desc_col is not None:
             # 合并为新列
             if is_multi_level:
-                df_display["指标名称_合并"] = df_display[indicator_name_col].astype(str) + " - " + df_display[indicator_desc_col].astype(str)
+                df_display["指标名称_合并"] = (
+                    df_display[indicator_name_col].astype(str) + " - " + df_display[indicator_desc_col].astype(str)
+                )
                 df_display = df_display.drop(columns=[indicator_name_col, indicator_desc_col])
                 # 重建多级索引列名
                 new_columns = []
@@ -747,7 +827,17 @@ def _style_bin_table(
             # 多级表头
             all_cols = df_display.columns.tolist()
             # 保留核心列
-            keep_patterns = ["指标", "分箱标签", "样本总数", "坏样本率", "分档WOE值", "分档IV值", "指标IV值", "LIFT值", "分档KS值"]
+            keep_patterns = [
+                "指标",
+                "分箱标签",
+                "样本总数",
+                "坏样本率",
+                "分档WOE值",
+                "分档IV值",
+                "指标IV值",
+                "LIFT值",
+                "分档KS值",
+            ]
             for col in all_cols:
                 col_name = col[1] if isinstance(col, tuple) else col
                 if not any(p in col_name for p in keep_patterns):
@@ -755,7 +845,19 @@ def _style_bin_table(
         else:
             # 单层表头
             all_cols = df_display.columns.tolist()
-            keep_patterns = ["指标名称", "指标含义", "指标", "分箱标签", "样本总数", "坏样本率", "分档WOE值", "分档IV值", "指标IV值", "LIFT值", "分档KS值"]
+            keep_patterns = [
+                "指标名称",
+                "指标含义",
+                "指标",
+                "分箱标签",
+                "样本总数",
+                "坏样本率",
+                "分档WOE值",
+                "分档IV值",
+                "指标IV值",
+                "LIFT值",
+                "分档KS值",
+            ]
             hide_cols = [c for c in all_cols if not any(p in str(c) for p in keep_patterns)]
 
         if hide_cols:

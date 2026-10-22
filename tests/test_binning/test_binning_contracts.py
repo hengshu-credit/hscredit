@@ -39,7 +39,6 @@ from hscredit.core.binning._contracts import (
 )
 from hscredit.core.binning._candidate_search import search_candidate_splits
 
-
 DIRECT_BINNER_CLASSES = [
     UniformBinning,
     QuantileBinning,

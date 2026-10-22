@@ -30,12 +30,12 @@ def vintage_analysis(
     label_mode: Optional[str] = None,
     observation_end=None,
     cohort_sizes: Optional[Dict] = None,
-    exposure_col: Optional[str] = None
+    exposure_col: Optional[str] = None,
 ) -> pd.DataFrame:
     """Vintage账龄分析.
-    
+
     追踪不同放款批次（Vintage）随账龄（MOB）的风险表现变化
-    
+
     :param df: 输入数据
     :param vintage_col: Vintage批次列（如放款月份）
     :param mob_col: 账龄列（Month on Book）
@@ -51,7 +51,7 @@ def vintage_analysis(
     :param exposure_col: panel/snapshot 每条观测的非负金额字段；输出同一MOB的好/坏金额及金额坏账率，
         不把跨期余额相加。缺失金额拒绝计算，零金额分母输出NaN
     :return: Vintage分析DataFrame
-    
+
     **参考样例**
 
     >>> vintage = vintage_analysis(df, 'issue_month', 'mob', 'ever_dpd30', max_mob=12)
@@ -64,52 +64,84 @@ def vintage_analysis(
     if input_mode not in {"legacy", "panel", "snapshot", "event"}:
         raise ValueError("input_mode 必须为 legacy、panel、snapshot 或 event")
     if input_mode != "legacy":
-        return _explicit_vintage(df, vintage_col, mob_col, target, max_mob,
-                                 entity_col, input_mode, label_mode, observation_end, cohort_sizes, exposure_col)
-    if entity_col is not None or observation_end is not None or cohort_sizes is not None or label_mode is not None or exposure_col is not None:
+        return _explicit_vintage(
+            df,
+            vintage_col,
+            mob_col,
+            target,
+            max_mob,
+            entity_col,
+            input_mode,
+            label_mode,
+            observation_end,
+            cohort_sizes,
+            exposure_col,
+        )
+    if (
+        entity_col is not None
+        or observation_end is not None
+        or cohort_sizes is not None
+        or label_mode is not None
+        or exposure_col is not None
+    ):
         raise ValueError("指定账户、标签或成熟度口径时必须显式选择 input_mode，不能混用 legacy")
-    warnings.warn("legacy Vintage 保留累计行口径，不适用于账户×MOB的 ever 面板；请显式设置 input_mode、entity_col、label_mode", FutureWarning, stacklevel=2)
-    
+    warnings.warn(
+        "legacy Vintage 保留累计行口径，不适用于账户×MOB的 ever 面板；请显式设置 input_mode、entity_col、label_mode",
+        FutureWarning,
+        stacklevel=2,
+    )
+
     # 按Vintage和MOB汇总
-    grouped = df.groupby([vintage_col, mob_col]).agg({
-        target: ['count', 'sum']
-    }).reset_index()
-    
-    grouped.columns = ['Vintage批次', 'MOB', '开户数', '坏账户数']
-    
+    grouped = df.groupby([vintage_col, mob_col]).agg({target: ["count", "sum"]}).reset_index()
+
+    grouped.columns = ["Vintage批次", "MOB", "开户数", "坏账户数"]
+
     # 筛选最大账龄
-    grouped = grouped[grouped['MOB'] <= max_mob]
-    
+    grouped = grouped[grouped["MOB"] <= max_mob]
+
     # 计算累积坏账率
     results = []
-    
-    for vintage in grouped['Vintage批次'].unique():
-        vintage_data = grouped[grouped['Vintage批次'] == vintage].sort_values('MOB')
-        
+
+    for vintage in grouped["Vintage批次"].unique():
+        vintage_data = grouped[grouped["Vintage批次"] == vintage].sort_values("MOB")
+
         # 计算累积
-        total_accounts = vintage_data['开户数'].sum()
-        
+        total_accounts = vintage_data["开户数"].sum()
+
         cum_bad = 0
         for _, row in vintage_data.iterrows():
-            cum_bad += row['坏账户数']
+            cum_bad += row["坏账户数"]
             bad_rate = cum_bad / total_accounts * 100 if total_accounts > 0 else 0
-            
-            results.append({
-                'Vintage批次': vintage,
-                'MOB': int(row['MOB']),
-                '当期开户数': int(row['开户数']),
-                '当期坏账户数': int(row['坏账户数']),
-                '累积坏账户数': int(cum_bad),
-                '累积坏账率(%)': round(bad_rate, 2),
-            })
-    
+
+            results.append(
+                {
+                    "Vintage批次": vintage,
+                    "MOB": int(row["MOB"]),
+                    "当期开户数": int(row["开户数"]),
+                    "当期坏账户数": int(row["坏账户数"]),
+                    "累积坏账户数": int(cum_bad),
+                    "累积坏账率(%)": round(bad_rate, 2),
+                }
+            )
+
     result = pd.DataFrame(results)
     result.attrs["统计口径"] = {"input_mode": "legacy", "说明": "跨MOB累计行口径，非账户面板"}
     return result
 
 
-def _explicit_vintage(df, vintage_col, mob_col, target_col, max_mob, entity_col,
-                      input_mode, label_mode, observation_end, cohort_sizes, exposure_col):
+def _explicit_vintage(
+    df,
+    vintage_col,
+    mob_col,
+    target_col,
+    max_mob,
+    entity_col,
+    input_mode,
+    label_mode,
+    observation_end,
+    cohort_sizes,
+    exposure_col,
+):
     """有明确账户、标签及观察窗口契约的账龄统计。"""
     if entity_col is None:
         raise ValueError("显式 Vintage 模式必须指定 entity_col")
@@ -159,7 +191,9 @@ def _explicit_vintage(df, vintage_col, mob_col, target_col, max_mob, entity_col,
             raise ValueError("observation_end 必须为有效日期") from exc
         if pd.isna(cutoff):
             raise ValueError("observation_end 不能缺失")
-    points = list(range(max_mob + 1)) if cutoff is not None else sorted(data.loc[data[mob_col] <= max_mob, mob_col].unique())
+    points = (
+        list(range(max_mob + 1)) if cutoff is not None else sorted(data.loc[data[mob_col] <= max_mob, mob_col].unique())
+    )
     rows = []
     cohorts = {vintage: cohort for vintage, cohort in data.groupby(vintage_col, sort=False)}
     if input_mode == "event":
@@ -193,29 +227,50 @@ def _explicit_vintage(df, vintage_col, mob_col, target_col, max_mob, entity_col,
             else:
                 bad_count = int(snapshot.loc[valid, target_col].sum())
                 denominator = count if input_mode == "panel" else len(snapshot)
-            status = "未成熟" if not mature else ("观测不足" if observed_count < denominator or observed_count == 0 else "成功")
+            status = (
+                "未成熟"
+                if not mature
+                else ("观测不足" if observed_count < denominator or observed_count == 0 else "成功")
+            )
             rate = bad_count / denominator * 100 if status == "成功" and denominator else np.nan
-            rows.append({"Vintage批次": vintage, "MOB": int(mob), "总开户数": int(count),
-                         "当期开户数": observed_count, "当期坏账户数": int(snapshot[target_col].sum()),
-                         "累积坏账户数": bad_count if label_mode != "current" and status == "成功" else np.nan,
-                         "累积坏账率(%)": round(rate, 2) if label_mode != "current" else np.nan,
-                         "统计坏账户数": bad_count if status == "成功" else np.nan,
-                         "统计坏账率(%)": round(rate, 2), "有效分母": denominator if mature else np.nan,
-                         "状态": status, "标签口径": label_mode})
+            rows.append(
+                {
+                    "Vintage批次": vintage,
+                    "MOB": int(mob),
+                    "总开户数": int(count),
+                    "当期开户数": observed_count,
+                    "当期坏账户数": int(snapshot[target_col].sum()),
+                    "累积坏账户数": bad_count if label_mode != "current" and status == "成功" else np.nan,
+                    "累积坏账率(%)": round(rate, 2) if label_mode != "current" else np.nan,
+                    "统计坏账户数": bad_count if status == "成功" else np.nan,
+                    "统计坏账率(%)": round(rate, 2),
+                    "有效分母": denominator if mature else np.nan,
+                    "状态": status,
+                    "标签口径": label_mode,
+                }
+            )
             if exposure_col is not None:
                 amount = float(snapshot[exposure_col].sum())
                 bad_amount = float(snapshot.loc[snapshot[target_col].eq(1), exposure_col].sum())
                 available = status == "成功"
-                rows[-1].update({"有效金额分母": amount if available else np.nan,
-                                 "好账户金额": amount - bad_amount if available else np.nan,
-                                 "坏账金额": bad_amount if available else np.nan,
-                                 "金额坏账率(%)": round(bad_amount / amount * 100, 2) if available and amount > 0 else np.nan,
-                                 "金额状态": status if not available else ("成功" if amount > 0 else "零金额分母")})
+                rows[-1].update(
+                    {
+                        "有效金额分母": amount if available else np.nan,
+                        "好账户金额": amount - bad_amount if available else np.nan,
+                        "坏账金额": bad_amount if available else np.nan,
+                        "金额坏账率(%)": round(bad_amount / amount * 100, 2) if available and amount > 0 else np.nan,
+                        "金额状态": status if not available else ("成功" if amount > 0 else "零金额分母"),
+                    }
+                )
     result = pd.DataFrame(rows)
-    result.attrs["统计口径"] = {"input_mode": input_mode, "label_mode": label_mode,
-                                "entity_col": entity_col, "observation_end": str(observation_end),
-                                "exposure_col": exposure_col,
-                                "成熟口径": "批次自然月与观察截止自然月之差"}
+    result.attrs["统计口径"] = {
+        "input_mode": input_mode,
+        "label_mode": label_mode,
+        "entity_col": entity_col,
+        "observation_end": str(observation_end),
+        "exposure_col": exposure_col,
+        "成熟口径": "批次自然月与观察截止自然月之差",
+    }
     return result
 
 
@@ -223,14 +278,14 @@ def vintage_summary(
     df: pd.DataFrame, vintage_col: str, mob_col: str, target: str, max_mob: int = 12, **kwargs
 ) -> pd.DataFrame:
     """Vintage汇总统计.
-    
+
     :param df: 输入数据
     :param vintage_col: Vintage批次列
     :param mob_col: 账龄列
     :param target: 目标变量列
     :param max_mob: 最大账龄
     :return: Vintage汇总DataFrame
-    
+
     **参考样例**
 
     >>> summary = vintage_summary(df, 'issue_month', 'mob', 'ever_dpd30')
@@ -238,72 +293,76 @@ def vintage_summary(
     """
     reject_legacy_target_keywords(kwargs)
     vintage_df = vintage_analysis(df, vintage_col, mob_col, target, max_mob, **kwargs)
-    
+
     if vintage_df.empty:
         return pd.DataFrame()
-    
+
     # 汇总每个Vintage
     results = []
-    
-    for vintage in vintage_df['Vintage批次'].unique():
-        vintage_data = vintage_df[vintage_df['Vintage批次'] == vintage]
-        
-        total_accounts = vintage_data['总开户数'].iloc[0] if '总开户数' in vintage_data else vintage_data['当期开户数'].sum()
-        
+
+    for vintage in vintage_df["Vintage批次"].unique():
+        vintage_data = vintage_df[vintage_df["Vintage批次"] == vintage]
+
+        total_accounts = (
+            vintage_data["总开户数"].iloc[0] if "总开户数" in vintage_data else vintage_data["当期开户数"].sum()
+        )
+
         # 各MOB点的坏账率
         result = {
-            'Vintage批次': vintage,
-            '总开户数': int(total_accounts),
+            "Vintage批次": vintage,
+            "总开户数": int(total_accounts),
         }
-        
+
         for mob in range(max_mob + 1):
-            mob_data = vintage_data[vintage_data['MOB'] == mob]
+            mob_data = vintage_data[vintage_data["MOB"] == mob]
             if len(mob_data) > 0:
-                rate_col = '统计坏账率(%)' if '统计坏账率(%)' in mob_data else '累积坏账率(%)'
-                result[f'MOB{mob}坏账率(%)'] = mob_data[rate_col].values[0]
-                if '金额坏账率(%)' in mob_data:
-                    result[f'MOB{mob}金额坏账率(%)'] = mob_data['金额坏账率(%)'].iloc[0]
+                rate_col = "统计坏账率(%)" if "统计坏账率(%)" in mob_data else "累积坏账率(%)"
+                result[f"MOB{mob}坏账率(%)"] = mob_data[rate_col].values[0]
+                if "金额坏账率(%)" in mob_data:
+                    result[f"MOB{mob}金额坏账率(%)"] = mob_data["金额坏账率(%)"].iloc[0]
             else:
-                result[f'MOB{mob}坏账率(%)'] = np.nan
-        
+                result[f"MOB{mob}坏账率(%)"] = np.nan
+
         results.append(result)
-    
+
     return pd.DataFrame(results)
 
 
 def roll_rate_analysis(df: pd.DataFrame, overdue_cols: List[str], labels: List[str] = None) -> pd.DataFrame:
     """滚动率分析.
-    
+
     分析不同逾期状态之间的转化情况
-    
+
     :param df: 输入数据
     :param overdue_cols: 各期逾期状态列（如['mob1_status', 'mob2_status', 'mob3_status']）
     :param labels: 状态标签（如['M0', 'M1', 'M2+']）
     :return: 滚动率分析DataFrame
-    
+
     **参考样例**
 
     >>> roll = roll_rate_analysis(df, ['mob1', 'mob2', 'mob3'], ['M0', 'M1', 'M2+'])
     >>> print(roll)
     """
     validate_dataframe(df, required_cols=overdue_cols)
-    
+
     if labels is None:
-        labels = [f'状态{i+1}' for i in range(len(overdue_cols))]
-    
+        labels = [f"状态{i+1}" for i in range(len(overdue_cols))]
+
     # 计算各状态分布
     results = []
-    
+
     for i, col in enumerate(overdue_cols):
         value_counts = df[col].value_counts()
         total = len(df)
-        
+
         for status, count in value_counts.items():
-            results.append({
-                '期数': labels[i],
-                '状态': status,
-                '户数': int(count),
-                '占比(%)': round(count / total * 100, 2),
-            })
-    
+            results.append(
+                {
+                    "期数": labels[i],
+                    "状态": status,
+                    "户数": int(count),
+                    "占比(%)": round(count / total * 100, 2),
+                }
+            )
+
     return pd.DataFrame(results)

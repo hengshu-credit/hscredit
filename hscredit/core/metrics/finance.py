@@ -28,9 +28,7 @@ from ._base import _validate_same_length, _validate_binary_target
 from ._binning import compute_bin_stats
 
 
-def lift(y_true: Union[np.ndarray, pd.Series],
-         y_prob: Union[np.ndarray, pd.Series],
-         threshold: float = 0.5) -> float:
+def lift(y_true: Union[np.ndarray, pd.Series], y_prob: Union[np.ndarray, pd.Series], threshold: float = 0.5) -> float:
     """计算Lift值 (模型提升度).
 
     Lift = 命中样本坏账率 / 总体坏账率。
@@ -73,12 +71,14 @@ def lift(y_true: Union[np.ndarray, pd.Series],
     return hit_badrate / overall_badrate
 
 
-def lift_table(y_true: Union[np.ndarray, pd.Series],
-               y_prob: Union[np.ndarray, pd.Series],
-               method: str = 'quantile',
-               max_n_bins: int = 10,
-               min_bin_size: float = 0.01,
-               **kwargs) -> pd.DataFrame:
+def lift_table(
+    y_true: Union[np.ndarray, pd.Series],
+    y_prob: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> pd.DataFrame:
     """计算Lift详细统计表.
 
     按预测概率分箱后计算每箱的样本统计、Lift值和累积Lift值。
@@ -120,56 +120,54 @@ def lift_table(y_true: Union[np.ndarray, pd.Series],
 
     from ..binning import OptimalBinning
 
-    df = pd.DataFrame({'prob': y_prob_clean, 'target': y_true_clean})
+    df = pd.DataFrame({"prob": y_prob_clean, "target": y_true_clean})
 
-    binner = OptimalBinning(
-        method=method,
-        max_n_bins=max_n_bins,
-        min_bin_size=min_bin_size,
-        verbose=False,
-        **kwargs
-    )
-    binner.fit(df[['prob']], df['target'])
-    bins = binner.transform(df[['prob']], metric='indices').values.flatten()
+    binner = OptimalBinning(method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs)
+    binner.fit(df[["prob"]], df["target"])
+    bins = binner.transform(df[["prob"]], metric="indices").values.flatten()
 
     bin_labels = None
-    if 'prob' in binner.bin_tables_:
-        bin_table = binner.bin_tables_['prob']
-        if '分箱标签' in bin_table.columns:
-            bin_labels = bin_table['分箱标签'].tolist()
+    if "prob" in binner.bin_tables_:
+        bin_table = binner.bin_tables_["prob"]
+        if "分箱标签" in bin_table.columns:
+            bin_labels = bin_table["分箱标签"].tolist()
 
     stats_df = compute_bin_stats(bins, y_true_clean, bin_labels=bin_labels, round_digits=False)
 
     result_rows = []
     for _, row in stats_df.iterrows():
-        bin_idx = int(row['分箱'])
+        bin_idx = int(row["分箱"])
         mask = bins == bin_idx
 
         prob_min = y_prob_clean[mask].min() if mask.sum() > 0 else np.nan
         prob_max = y_prob_clean[mask].max() if mask.sum() > 0 else np.nan
 
-        result_rows.append({
-            '分箱': bin_idx + 1,
-            '最小概率': round(prob_min, 6) if not np.isnan(prob_min) else np.nan,
-            '最大概率': round(prob_max, 6) if not np.isnan(prob_max) else np.nan,
-            '样本数': int(row['样本总数']),
-            '好样本数': int(row['好样本数']),
-            '坏样本数': int(row['坏样本数']),
-            '坏样本率': round(row['坏样本率'], 6),
-            '样本占比': round(row['样本占比'], 6),
-            'Lift值': round(row['LIFT值'], 4),
-            '坏账改善': round(row['坏账改善'], 4),
-            '累积Lift值': round(row['累积LIFT值'], 4),
-            '累积坏账改善': round(row['累积坏账改善'], 4),
-        })
+        result_rows.append(
+            {
+                "分箱": bin_idx + 1,
+                "最小概率": round(prob_min, 6) if not np.isnan(prob_min) else np.nan,
+                "最大概率": round(prob_max, 6) if not np.isnan(prob_max) else np.nan,
+                "样本数": int(row["样本总数"]),
+                "好样本数": int(row["好样本数"]),
+                "坏样本数": int(row["坏样本数"]),
+                "坏样本率": round(row["坏样本率"], 6),
+                "样本占比": round(row["样本占比"], 6),
+                "Lift值": round(row["LIFT值"], 4),
+                "坏账改善": round(row["坏账改善"], 4),
+                "累积Lift值": round(row["累积LIFT值"], 4),
+                "累积坏账改善": round(row["累积坏账改善"], 4),
+            }
+        )
 
     return pd.DataFrame(result_rows)
 
 
-def lift_curve(y_true: Union[np.ndarray, pd.Series],
-               y_prob: Union[np.ndarray, pd.Series],
-               percentages: List[float] = None,
-               tail: bool = False) -> pd.DataFrame:
+def lift_curve(
+    y_true: Union[np.ndarray, pd.Series],
+    y_prob: Union[np.ndarray, pd.Series],
+    percentages: List[float] = None,
+    tail: bool = False,
+) -> pd.DataFrame:
     """计算Lift曲线数据.
 
     返回在不同覆盖率下的样本统计和Lift值，用于绘制Lift曲线和Decile Lift分析。
@@ -213,7 +211,7 @@ def lift_curve(y_true: Union[np.ndarray, pd.Series],
 
     # tail=True时从低概率端截取（分析低风险客群纯净度）
     if tail:
-        sorted_indices = np.argsort(y_prob)   # 升序，低概率在前
+        sorted_indices = np.argsort(y_prob)  # 升序，低概率在前
     else:
         sorted_indices = np.argsort(y_prob)[::-1]  # 降序，高概率在前
     y_true_sorted = y_true[sorted_indices]
@@ -230,13 +228,15 @@ def lift_curve(y_true: Union[np.ndarray, pd.Series],
         lift_value = hit_badrate / overall_badrate if overall_badrate > 0 else 0.0
         capture_rate = hit_bad / total_bad if total_bad > 0 else 0.0
 
-        results.append({
-            '覆盖率': f"{pct:.0%}" if pct >= 0.01 else f"{pct*100:.1f}%",
-            '样本数': n_samples,
-            '坏样本数': int(hit_bad),
-            '坏样本捕获率': f"{capture_rate:.2%}",
-            'Lift值': round(lift_value, 4),
-        })
+        results.append(
+            {
+                "覆盖率": f"{pct:.0%}" if pct >= 0.01 else f"{pct*100:.1f}%",
+                "样本数": n_samples,
+                "坏样本数": int(hit_bad),
+                "坏样本捕获率": f"{capture_rate:.2%}",
+                "Lift值": round(lift_value, 4),
+            }
+        )
 
     return pd.DataFrame(results)
 
@@ -273,7 +273,7 @@ def lift_at(
     1.4
     >>> result = lift_at(y_true, y_prob, ratios=[0.01, 0.03, 0.05, 0.10])
     >>> print(result)
-"""
+    """
     _return_scalar = isinstance(ratios, (int, float))
     if ratios is None:
         ratios = [0.01, 0.03, 0.05, 0.10]
@@ -306,17 +306,19 @@ def lift_at(
         capture_rate = hit_bad / total_bad if total_bad > 0 else 0.0
 
         pct_label = f"{ratio*100:.0f}%" if ratio >= 0.01 else f"{ratio*100:.1f}%"
-        results.append({
-            '覆盖率': pct_label,
-            '样本数': n_samples,
-            '坏样本数': hit_bad,
-            '坏样本率': f"{hit_badrate:.2%}",
-            '坏样本捕获率': f"{capture_rate:.2%}",
-            'LIFT值': round(lift_value, 4),
-        })
+        results.append(
+            {
+                "覆盖率": pct_label,
+                "样本数": n_samples,
+                "坏样本数": hit_bad,
+                "坏样本率": f"{hit_badrate:.2%}",
+                "坏样本捕获率": f"{capture_rate:.2%}",
+                "LIFT值": round(lift_value, 4),
+            }
+        )
 
     if _return_scalar:
-        return results[0]['LIFT值']
+        return results[0]["LIFT值"]
     return pd.DataFrame(results)
 
 
@@ -324,7 +326,7 @@ def lift_monotonicity_check(
     y_true: Union[np.ndarray, pd.Series],
     y_prob: Union[np.ndarray, pd.Series],
     max_n_bins: int = 10,
-    direction: str = 'both',
+    direction: str = "both",
 ) -> Dict[str, Any]:
     """检查LIFT单调性.
 
@@ -390,14 +392,16 @@ def lift_monotonicity_check(
             lv = br / overall_badrate if overall_badrate > 0 else 0.0
             bin_badrates.append(br)
             bin_lifts.append(round(lv, 4))
-            bin_rows.append({
-                '分箱': i + 1,
-                '样本数': n,
-                '坏样本数': n_bad,
-                '坏样本率': round(br, 6),
-                'LIFT值': round(lv, 4),
-                '概率均值': round(float(seg_prob.mean()), 6),
-            })
+            bin_rows.append(
+                {
+                    "分箱": i + 1,
+                    "样本数": n,
+                    "坏样本数": n_bad,
+                    "坏样本率": round(br, 6),
+                    "LIFT值": round(lv, 4),
+                    "概率均值": round(float(seg_prob.mean()), 6),
+                }
+            )
 
         bin_table = pd.DataFrame(bin_rows)
 
@@ -413,63 +417,65 @@ def lift_monotonicity_check(
         is_monotonic = len(violations) == 0
 
         return {
-            'monotonic': is_monotonic,
-            'lift_values': bin_lifts,
-            'violations': violations,
-            'violation_ratio': round(violation_ratio, 4),
-            'bin_table': bin_table,
+            "monotonic": is_monotonic,
+            "lift_values": bin_lifts,
+            "violations": violations,
+            "violation_ratio": round(violation_ratio, 4),
+            "bin_table": bin_table,
         }
 
     result: Dict[str, Any] = {}
 
-    if direction in ('head', 'both'):
+    if direction in ("head", "both"):
         # 头部：高概率排前，坏率应递减
         head_indices = np.argsort(y_prob)[::-1]
-        head = _check_direction(head_indices, 'head')
-        result['head_monotonic'] = head['monotonic']
-        result['head_lift_values'] = head['lift_values']
-        result['head_violations'] = head['violations']
-        result['head_violation_ratio'] = head['violation_ratio']
-        result['head_bin_table'] = head['bin_table']
+        head = _check_direction(head_indices, "head")
+        result["head_monotonic"] = head["monotonic"]
+        result["head_lift_values"] = head["lift_values"]
+        result["head_violations"] = head["violations"]
+        result["head_violation_ratio"] = head["violation_ratio"]
+        result["head_bin_table"] = head["bin_table"]
     else:
-        result['head_monotonic'] = None
-        result['head_lift_values'] = []
-        result['head_violations'] = []
-        result['head_violation_ratio'] = None
-        result['head_bin_table'] = pd.DataFrame()
+        result["head_monotonic"] = None
+        result["head_lift_values"] = []
+        result["head_violations"] = []
+        result["head_violation_ratio"] = None
+        result["head_bin_table"] = pd.DataFrame()
 
-    if direction in ('tail', 'both'):
+    if direction in ("tail", "both"):
         # 尾部：低概率排前，坏率应递增（即低风险区纯净度递增）
         # 注：对尾部客群而言，越靠前概率越低，坏率应越小，
         # 若坏率单调递增（从低风险到高风险）即合理
-        tail_indices = np.argsort(y_prob)          # 升序
-        tail = _check_direction(tail_indices, 'tail')
+        tail_indices = np.argsort(y_prob)  # 升序
+        tail = _check_direction(tail_indices, "tail")
         # 尾部单调性：坏率应单调递增（violations定义为坏率[i] < 坏率[i-1]）
         tail_violations = []
-        br_list = [row['坏样本率'] for _, row in tail['bin_table'].iterrows()]
+        br_list = [row["坏样本率"] for _, row in tail["bin_table"].iterrows()]
         for i in range(1, len(br_list)):
             if br_list[i] < br_list[i - 1] - 1e-8:
                 tail_violations.append((i, i + 1, round(br_list[i - 1] - br_list[i], 6)))
         n_pairs = max_n_bins - 1
         tail_vr = len(tail_violations) / n_pairs if n_pairs > 0 else 0.0
-        result['tail_monotonic'] = len(tail_violations) == 0
-        result['tail_lift_values'] = tail['lift_values']
-        result['tail_violations'] = tail_violations
-        result['tail_violation_ratio'] = round(tail_vr, 4)
-        result['tail_bin_table'] = tail['bin_table']
+        result["tail_monotonic"] = len(tail_violations) == 0
+        result["tail_lift_values"] = tail["lift_values"]
+        result["tail_violations"] = tail_violations
+        result["tail_violation_ratio"] = round(tail_vr, 4)
+        result["tail_bin_table"] = tail["bin_table"]
     else:
-        result['tail_monotonic'] = None
-        result['tail_lift_values'] = []
-        result['tail_violations'] = []
-        result['tail_violation_ratio'] = None
-        result['tail_bin_table'] = pd.DataFrame()
+        result["tail_monotonic"] = None
+        result["tail_lift_values"] = []
+        result["tail_violations"] = []
+        result["tail_violation_ratio"] = None
+        result["tail_bin_table"] = pd.DataFrame()
 
     return result
 
 
-def rule_lift(y_true: Union[np.ndarray, pd.Series],
-              rule_mask: Union[np.ndarray, pd.Series],
-              amount: Optional[Union[np.ndarray, pd.Series]] = None) -> Dict[str, Any]:
+def rule_lift(
+    y_true: Union[np.ndarray, pd.Series],
+    rule_mask: Union[np.ndarray, pd.Series],
+    amount: Optional[Union[np.ndarray, pd.Series]] = None,
+) -> Dict[str, Any]:
     """计算规则的Lift指标.
 
     评估单一规则的命中样本相对于总体的坏账率提升，用于规则效果评估与对比。
@@ -504,7 +510,7 @@ def rule_lift(y_true: Union[np.ndarray, pd.Series],
     >>> rule_mask = np.random.rand(1000) > 0.8  # 20%样本命中规则
     >>> result = rule_lift(y_true, rule_mask)
     >>> print(f"命中数={result['hit_count']}, Lift={result['lift']:.4f}")
-"""
+    """
     y_true = np.asarray(y_true)
     rule_mask = np.asarray(rule_mask)
 
@@ -519,9 +525,14 @@ def rule_lift(y_true: Union[np.ndarray, pd.Series],
 
     if hit_count == 0:
         return {
-            'hit_count': 0, 'hit_rate': 0.0, 'bad_count': 0, 'good_count': 0,
-            'badrate': 0.0, 'overall_badrate': overall_badrate,
-            'lift': 0.0, 'bad_improve': 0.0,
+            "hit_count": 0,
+            "hit_rate": 0.0,
+            "bad_count": 0,
+            "good_count": 0,
+            "badrate": 0.0,
+            "overall_badrate": overall_badrate,
+            "lift": 0.0,
+            "bad_improve": 0.0,
         }
 
     hit_bad = np.sum(y_true[rule_mask])
@@ -536,14 +547,14 @@ def rule_lift(y_true: Union[np.ndarray, pd.Series],
     bad_improve = (overall_badrate - other_badrate) / overall_badrate if overall_badrate > 0 else 0.0
 
     result = {
-        'hit_count': int(hit_count),
-        'hit_rate': round(hit_rate, 6),
-        'bad_count': int(hit_bad),
-        'good_count': int(hit_good),
-        'badrate': round(hit_badrate, 6),
-        'overall_badrate': round(overall_badrate, 6),
-        'lift': round(lift_value, 4),
-        'bad_improve': round(bad_improve, 4),
+        "hit_count": int(hit_count),
+        "hit_rate": round(hit_rate, 6),
+        "bad_count": int(hit_bad),
+        "good_count": int(hit_good),
+        "badrate": round(hit_badrate, 6),
+        "overall_badrate": round(overall_badrate, 6),
+        "lift": round(lift_value, 4),
+        "bad_improve": round(bad_improve, 4),
     }
 
     if amount is not None:
@@ -559,18 +570,19 @@ def rule_lift(y_true: Union[np.ndarray, pd.Series],
         hit_bad_amount_ratio = bad_amount / hit_amount if hit_amount > 0 else 0.0
         amount_lift = hit_bad_amount_ratio / overall_bad_amount_ratio if overall_bad_amount_ratio > 0 else 0.0
 
-        result.update({
-            'total_amount': total_amount,
-            'hit_amount': hit_amount,
-            'bad_amount': bad_amount,
-            'amount_lift': round(amount_lift, 4),
-        })
+        result.update(
+            {
+                "total_amount": total_amount,
+                "hit_amount": hit_amount,
+                "bad_amount": bad_amount,
+                "amount_lift": round(amount_lift, 4),
+            }
+        )
 
     return result
 
 
-def badrate(y_true: Union[np.ndarray, pd.Series],
-            weights: Optional[Union[np.ndarray, pd.Series]] = None) -> float:
+def badrate(y_true: Union[np.ndarray, pd.Series], weights: Optional[Union[np.ndarray, pd.Series]] = None) -> float:
     """计算总体坏账率.
 
     坏账率 = 坏样本数 / 总样本数，即目标变量为1的样本占比。
@@ -589,7 +601,7 @@ def badrate(y_true: Union[np.ndarray, pd.Series],
     >>> y_true = np.random.randint(0, 2, 1000)
     >>> badrate(y_true)
     0.5
-"""
+    """
     y_true = np.asarray(y_true)
 
     if weights is not None:
@@ -599,9 +611,11 @@ def badrate(y_true: Union[np.ndarray, pd.Series],
     return np.mean(y_true)
 
 
-def badrate_by_group(y_true: Union[np.ndarray, pd.Series],
-                     group: Union[np.ndarray, pd.Series],
-                     weights: Optional[Union[np.ndarray, pd.Series]] = None) -> pd.DataFrame:
+def badrate_by_group(
+    y_true: Union[np.ndarray, pd.Series],
+    group: Union[np.ndarray, pd.Series],
+    weights: Optional[Union[np.ndarray, pd.Series]] = None,
+) -> pd.DataFrame:
     """按分组计算坏账率.
 
     将样本按指定分组变量进行分群，分别计算各组的坏账率，用于群体风险对比分析。
@@ -630,7 +644,7 @@ def badrate_by_group(y_true: Union[np.ndarray, pd.Series],
     >>> groups = np.random.choice(['A', 'B', 'C', 'D'], size=1000)
     >>> result = badrate_by_group(y_true, groups)
     >>> print(result)
-"""
+    """
     y_true = np.asarray(y_true)
     group = np.asarray(group)
 
@@ -653,22 +667,24 @@ def badrate_by_group(y_true: Union[np.ndarray, pd.Series],
         else:
             group_badrate = group_bad / group_count if group_count > 0 else 0.0
 
-        results.append({
-            '分组': g,
-            '样本数': group_count,
-            '好样本数': group_good,
-            '坏样本数': group_bad,
-            '坏账率': round(group_badrate, 6),
-            '样本占比': round(group_count / total, 6),
-            '与总体差异': round(group_badrate - overall_badrate, 6),
-        })
+        results.append(
+            {
+                "分组": g,
+                "样本数": group_count,
+                "好样本数": group_good,
+                "坏样本数": group_bad,
+                "坏账率": round(group_badrate, 6),
+                "样本占比": round(group_count / total, 6),
+                "与总体差异": round(group_badrate - overall_badrate, 6),
+            }
+        )
 
-    return pd.DataFrame(results).sort_values('坏账率', ascending=False)
+    return pd.DataFrame(results).sort_values("坏账率", ascending=False)
 
 
-def badrate_trend(y_true: Union[np.ndarray, pd.Series],
-                  date: Union[np.ndarray, pd.Series],
-                  freq: str = 'M') -> pd.DataFrame:
+def badrate_trend(
+    y_true: Union[np.ndarray, pd.Series], date: Union[np.ndarray, pd.Series], freq: str = "M"
+) -> pd.DataFrame:
     """计算坏账率时间趋势.
 
     按指定时间频率聚合样本，计算各时间段的坏账率及环比变化，
@@ -705,26 +721,26 @@ def badrate_trend(y_true: Union[np.ndarray, pd.Series],
     >>> dates = pd.date_range('2024-01-01', periods=n, freq='D')
     >>> result = badrate_trend(y_true, dates, freq='M')
     >>> print(result)
-"""
+    """
     y_true = np.asarray(y_true)
     date = pd.to_datetime(date)
 
     _validate_same_length(y_true, date, ("y_true", "date"))
 
-    df = pd.DataFrame({'date': date, 'y_true': y_true})
+    df = pd.DataFrame({"date": date, "y_true": y_true})
 
     from ...utils.dates import date_groups
 
-    df['period'] = date_groups(df['date'], freq)
+    df["period"] = date_groups(df["date"], freq)
 
     results = []
     cum_good = 0
     cum_bad = 0
     prev_badrate = None
 
-    for period, group in df.groupby('period'):
+    for period, group in df.groupby("period"):
         count = len(group)
-        bad = group['y_true'].sum()
+        bad = group["y_true"].sum()
         good = count - bad
         badrate_val = bad / count if count > 0 else 0.0
 
@@ -736,25 +752,29 @@ def badrate_trend(y_true: Union[np.ndarray, pd.Series],
         cum_total = cum_good + cum_bad
         cum_badrate = cum_bad / cum_total if cum_total > 0 else 0.0
 
-        results.append({
-            '时间周期': period,
-            '样本数': count,
-            '好样本数': good,
-            '坏样本数': bad,
-            '坏账率': round(badrate_val, 6),
-            '环比变化': round(change, 6) if not np.isnan(change) else None,
-            '累积坏账率': round(cum_badrate, 6),
-        })
+        results.append(
+            {
+                "时间周期": period,
+                "样本数": count,
+                "好样本数": good,
+                "坏样本数": bad,
+                "坏账率": round(badrate_val, 6),
+                "环比变化": round(change, 6) if not np.isnan(change) else None,
+                "累积坏账率": round(cum_badrate, 6),
+            }
+        )
 
     return pd.DataFrame(results)
 
 
-def badrate_by_score_bin(y_true: Union[np.ndarray, pd.Series],
-                         score: Union[np.ndarray, pd.Series],
-                         method: str = 'quantile',
-                         max_n_bins: int = 10,
-                         min_bin_size: float = 0.01,
-                         **kwargs) -> pd.DataFrame:
+def badrate_by_score_bin(
+    y_true: Union[np.ndarray, pd.Series],
+    score: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> pd.DataFrame:
     """按评分分箱计算坏账率.
 
     将评分按指定分箱方法划分为多个区间，计算各区间的坏账率及与总体坏账率的差异，
@@ -790,7 +810,7 @@ def badrate_by_score_bin(y_true: Union[np.ndarray, pd.Series],
     >>> score = np.random.randn(1000) * 50 + 600  # 模拟评分分布
     >>> result = badrate_by_score_bin(y_true, score, max_n_bins=5)
     >>> print(result)
-"""
+    """
     y_true = np.asarray(y_true)
     score = np.asarray(score)
 
@@ -807,50 +827,47 @@ def badrate_by_score_bin(y_true: Union[np.ndarray, pd.Series],
 
     from ..binning import OptimalBinning
 
-    df = pd.DataFrame({'score': score_clean, 'target': y_true_clean})
+    df = pd.DataFrame({"score": score_clean, "target": y_true_clean})
 
-    binner = OptimalBinning(
-        method=method,
-        max_n_bins=max_n_bins,
-        min_bin_size=min_bin_size,
-        verbose=False,
-        **kwargs
-    )
-    binner.fit(df[['score']], df['target'])
-    bins = binner.transform(df[['score']], metric='indices').values.flatten()
+    binner = OptimalBinning(method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs)
+    binner.fit(df[["score"]], df["target"])
+    bins = binner.transform(df[["score"]], metric="indices").values.flatten()
 
     bin_labels = None
-    if 'score' in binner.bin_tables_:
-        bin_table = binner.bin_tables_['score']
-        if '分箱标签' in bin_table.columns:
-            bin_labels = bin_table['分箱标签'].tolist()
+    if "score" in binner.bin_tables_:
+        bin_table = binner.bin_tables_["score"]
+        if "分箱标签" in bin_table.columns:
+            bin_labels = bin_table["分箱标签"].tolist()
 
     stats_df = compute_bin_stats(bins, y_true_clean, bin_labels=bin_labels, round_digits=False)
 
     result_rows = []
     for _, row in stats_df.iterrows():
-        bin_idx = int(row['分箱'])
+        bin_idx = int(row["分箱"])
         mask = bins == bin_idx
 
         score_min = score_clean[mask].min() if mask.sum() > 0 else np.nan
         score_max = score_clean[mask].max() if mask.sum() > 0 else np.nan
 
-        result_rows.append({
-            '分箱': bin_idx + 1,
-            '最小评分': round(score_min, 2) if not np.isnan(score_min) else np.nan,
-            '最大评分': round(score_max, 2) if not np.isnan(score_max) else np.nan,
-            '样本数': int(row['样本总数']),
-            '好样本数': int(row['好样本数']),
-            '坏样本数': int(row['坏样本数']),
-            '坏账率': round(row['坏样本率'], 6),
-            '与总体差异': round(row['坏样本率'] - overall_badrate, 6),
-        })
+        result_rows.append(
+            {
+                "分箱": bin_idx + 1,
+                "最小评分": round(score_min, 2) if not np.isnan(score_min) else np.nan,
+                "最大评分": round(score_max, 2) if not np.isnan(score_max) else np.nan,
+                "样本数": int(row["样本总数"]),
+                "好样本数": int(row["好样本数"]),
+                "坏样本数": int(row["坏样本数"]),
+                "坏账率": round(row["坏样本率"], 6),
+                "与总体差异": round(row["坏样本率"] - overall_badrate, 6),
+            }
+        )
 
     return pd.DataFrame(result_rows)
 
 
-def score_stats(score: Union[np.ndarray, pd.Series],
-                y_true: Optional[Union[np.ndarray, pd.Series]] = None) -> Dict[str, Any]:
+def score_stats(
+    score: Union[np.ndarray, pd.Series], y_true: Optional[Union[np.ndarray, pd.Series]] = None
+) -> Dict[str, Any]:
     """计算评分统计信息.
 
     提供评分的完整描述性统计信息，包括样本量、缺失情况、分布特征，
@@ -885,20 +902,20 @@ def score_stats(score: Union[np.ndarray, pd.Series],
     >>> y_true = np.random.randint(0, 2, 1000)
     >>> stats_with_target = score_stats(score, y_true)
     >>> print(f"KS={stats_with_target.get('KS', 0):.4f}")
-"""
+    """
     score = np.asarray(score)
 
     result = {
-        '样本数': len(score),
-        '缺失数': np.sum(pd.isna(score)),
-        '缺失率': np.mean(pd.isna(score)),
-        '均值': np.nanmean(score),
-        '标准差': np.nanstd(score),
-        '最小值': np.nanmin(score),
-        '最大值': np.nanmax(score),
-        '中位数': np.nanmedian(score),
-        '分位数_25': np.nanquantile(score, 0.25),
-        '分位数_75': np.nanquantile(score, 0.75),
+        "样本数": len(score),
+        "缺失数": np.sum(pd.isna(score)),
+        "缺失率": np.mean(pd.isna(score)),
+        "均值": np.nanmean(score),
+        "标准差": np.nanstd(score),
+        "最小值": np.nanmin(score),
+        "最大值": np.nanmax(score),
+        "中位数": np.nanmedian(score),
+        "分位数_25": np.nanquantile(score, 0.25),
+        "分位数_75": np.nanquantile(score, 0.75),
     }
 
     if y_true is not None:
@@ -907,20 +924,23 @@ def score_stats(score: Union[np.ndarray, pd.Series],
         if valid_mask.sum() > 0:
             try:
                 from .classification import ks, auc
-                result['KS'] = ks(y_true[valid_mask], score[valid_mask])
-                result['AUC'] = auc(y_true[valid_mask], score[valid_mask])
+
+                result["KS"] = ks(y_true[valid_mask], score[valid_mask])
+                result["AUC"] = auc(y_true[valid_mask], score[valid_mask])
             except Exception:
                 pass
 
     return result
 
 
-def score_stability(score_train: Union[np.ndarray, pd.Series],
-                    score_test: Union[np.ndarray, pd.Series],
-                    method: str = 'quantile',
-                    max_n_bins: int = 10,
-                    min_bin_size: float = 0.01,
-                    **kwargs) -> pd.DataFrame:
+def score_stability(
+    score_train: Union[np.ndarray, pd.Series],
+    score_test: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> pd.DataFrame:
     """计算评分稳定性.
 
     使用PSI（群体稳定性指标）评估训练集评分与测试集（新数据）评分之间的分布差异，
@@ -952,7 +972,7 @@ def score_stability(score_train: Union[np.ndarray, pd.Series],
     >>> test_scores = np.random.randn(1000) * 50 + 605
     >>> result = score_stability(train_scores, test_scores)
     >>> print(result)
-"""
+    """
     from .stability import psi_table
 
     return psi_table(score_train, score_test, method, max_n_bins, min_bin_size, **kwargs)

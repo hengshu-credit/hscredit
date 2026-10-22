@@ -442,11 +442,7 @@ def test_category_min_bin_size_finds_feasible_multi_boundary_relocation():
     """可行解需要连续移动多个边界时，也应找到满足约束的有序分区。"""
     category_counts = [2, 8, 2, 11, 13, 9, 3, 7, 19]
     category_order = [f"C{index}" for index in range(len(category_counts))]
-    categories = [
-        category
-        for category, count in zip(category_order, category_counts)
-        for _ in range(count)
-    ]
+    categories = [category for category, count in zip(category_order, category_counts) for _ in range(count)]
     X = pd.DataFrame({"category": categories})
     y = pd.Series(([0, 1] * 37), name="target")
 

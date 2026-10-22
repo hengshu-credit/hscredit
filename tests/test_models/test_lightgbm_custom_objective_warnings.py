@@ -34,7 +34,11 @@ def _model(objective):
     from hscredit import LightGBM
 
     return LightGBM(
-        objective=objective, n_estimators=6, num_leaves=7, n_jobs=1, random_state=24,
+        objective=objective,
+        n_estimators=6,
+        num_leaves=7,
+        n_jobs=1,
+        random_state=24,
         validation_fraction=0,
     )
 
@@ -51,9 +55,7 @@ def test_custom_loss_fit_predict_and_cross_validation_do_not_warn(loans, use_ada
         probability = model.predict_proba(X_valid)
         array_probability = model.predict_proba(X_valid.to_numpy())
         labels = model.predict(X_valid)
-        scores = cross_val_score(
-            model, X, y, scoring=loss.metric().to_scorer(), cv=2, error_score="raise"
-        )
+        scores = cross_val_score(model, X, y, scoring=loss.metric().to_scorer(), cv=2, error_score="raise")
     assert not caught, [str(item.message) for item in caught]
     raw_margin = model._model.predict_proba(X_valid, raw_score=True)
     np.testing.assert_allclose(probability[:, 1], expit(raw_margin))
@@ -85,9 +87,7 @@ def test_probability_prediction_preserves_iteration_parameters_and_explicit_fals
     margin = model._model.predict_proba(X_valid, raw_score=True, **options)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        probability = model.predict_proba(
-            X_valid, raw_score=False, pred_leaf=False, pred_contrib=False, **options
-        )
+        probability = model.predict_proba(X_valid, raw_score=False, pred_leaf=False, pred_contrib=False, **options)
     assert not caught, [str(item.message) for item in caught]
     np.testing.assert_allclose(probability[:, 1], expit(margin))
 

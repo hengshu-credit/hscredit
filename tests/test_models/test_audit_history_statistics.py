@@ -20,7 +20,9 @@ def data():
     return X, y
 
 
-@pytest.mark.parametrize("cls", [RandomForest, LogisticRegression, ScoreCard, RoundScoreCard, ProbabilityScoreCard, ProbabilityCalibrator])
+@pytest.mark.parametrize(
+    "cls", [RandomForest, LogisticRegression, ScoreCard, RoundScoreCard, ProbabilityScoreCard, ProbabilityCalibrator]
+)
 def test_history_configuration_survives_clone(cls):
     estimator = cls(history_policy="diagnostics", max_history=3)
     copied = clone(estimator)
@@ -65,6 +67,7 @@ def test_summary_does_not_copy_callback_owned_state():
     class Callback:
         def __deepcopy__(self, memo):
             raise RuntimeError("不能复制")
+
     assert "对象类型" in _fit_parameter_snapshot(Callback())
 
 
@@ -73,7 +76,9 @@ def test_frequency_weight_standard_errors_equal_repeated_rows(data):
     weights = np.arange(len(X)) % 3 + 1
     kwargs = dict(penalty=None, max_iter=1000, tol=1e-10, statistics_level="coef", positive_woe_coef=False)
     weighted = LogisticRegression(**kwargs).fit(X, y, sample_weight=weights)
-    repeated = LogisticRegression(**kwargs).fit(X.iloc[np.repeat(np.arange(len(X)), weights)], y.iloc[np.repeat(np.arange(len(X)), weights)])
+    repeated = LogisticRegression(**kwargs).fit(
+        X.iloc[np.repeat(np.arange(len(X)), weights)], y.iloc[np.repeat(np.arange(len(X)), weights)]
+    )
     np.testing.assert_allclose(weighted.coef_, repeated.coef_, atol=1e-7)
     np.testing.assert_allclose(weighted.std_err_coef_, repeated.std_err_coef_, atol=1e-7)
     np.testing.assert_allclose(weighted.std_err_intercept_, repeated.std_err_intercept_, atol=1e-7)

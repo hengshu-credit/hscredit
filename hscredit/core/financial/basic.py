@@ -35,14 +35,7 @@ import numpy as np
 
 def _convert_when(when):
     """转换付款时间参数."""
-    _when_to_num = {
-        'end': 0, 'begin': 1,
-        'e': 0, 'b': 1,
-        0: 0, 1: 1,
-        'beginning': 1,
-        'start': 1,
-        'finish': 0
-    }
+    _when_to_num = {"end": 0, "begin": 1, "e": 0, "b": 1, 0: 0, 1: 1, "beginning": 1, "start": 1, "finish": 0}
 
     try:
         values = np.asarray(when)
@@ -60,7 +53,7 @@ def _broadcast_financial(*values):
         raise ValueError("金融函数参数必须为可广播的数值") from exc
 
 
-def fv(rate, nper, pmt, pv, when='end'):
+def fv(rate, nper, pmt, pv, when="end"):
     """计算未来值 (Future Value).
 
     在固定每期利率与等额分期付款条件下，计算一系列现金流在最后一期期末的累计价值。
@@ -116,9 +109,7 @@ def fv(rate, nper, pmt, pv, when='end'):
         if rate == 0:
             return -(pv + pmt * nper)
         else:
-            return -(pv * (1 + rate) ** nper +
-                     pmt * (1 + rate * when) / rate *
-                     ((1 + rate) ** nper - 1))
+            return -(pv * (1 + rate) ** nper + pmt * (1 + rate * when) / rate * ((1 + rate) ** nper - 1))
 
     # 数组情况
     result = np.zeros_like(rate)
@@ -126,10 +117,13 @@ def fv(rate, nper, pmt, pv, when='end'):
     result[zero_rate] = -(pv[zero_rate] + pmt[zero_rate] * nper[zero_rate])
 
     non_zero = ~zero_rate
-    result[non_zero] = -(pv[non_zero] * (1 + rate[non_zero]) ** nper[non_zero] +
-                         pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]) /
-                         rate[non_zero] *
-                         ((1 + rate[non_zero]) ** nper[non_zero] - 1))
+    result[non_zero] = -(
+        pv[non_zero] * (1 + rate[non_zero]) ** nper[non_zero]
+        + pmt[non_zero]
+        * (1 + rate[non_zero] * when[non_zero])
+        / rate[non_zero]
+        * ((1 + rate[non_zero]) ** nper[non_zero] - 1)
+    )
 
     return result
 
@@ -138,7 +132,7 @@ def fv(rate, nper, pmt, pv, when='end'):
 _fv = fv
 
 
-def pv(rate, nper, pmt, fv=0, when='end'):
+def pv(rate, nper, pmt, fv=0, when="end"):
     """计算现值 (Present Value).
 
     在固定每期利率与等额分期付款条件下，将未来各期现金流与终值折算到期初的等价价值。
@@ -182,24 +176,28 @@ def pv(rate, nper, pmt, fv=0, when='end'):
         if rate == 0:
             return -(fv + pmt * nper)
         else:
-            return -(fv + pmt * (1 + rate * when) / rate *
-                     ((1 + rate) ** nper - 1)) / (1 + rate) ** nper
+            return -(fv + pmt * (1 + rate * when) / rate * ((1 + rate) ** nper - 1)) / (1 + rate) ** nper
 
     result = np.zeros_like(rate)
     zero_rate = rate == 0
     result[zero_rate] = -(fv[zero_rate] + pmt[zero_rate] * nper[zero_rate])
 
     non_zero = ~zero_rate
-    result[non_zero] = (-(fv[non_zero] +
-                          pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]) /
-                          rate[non_zero] *
-                          ((1 + rate[non_zero]) ** nper[non_zero] - 1)) /
-                        (1 + rate[non_zero]) ** nper[non_zero])
+    result[non_zero] = (
+        -(
+            fv[non_zero]
+            + pmt[non_zero]
+            * (1 + rate[non_zero] * when[non_zero])
+            / rate[non_zero]
+            * ((1 + rate[non_zero]) ** nper[non_zero] - 1)
+        )
+        / (1 + rate[non_zero]) ** nper[non_zero]
+    )
 
     return result
 
 
-def pmt(rate, nper, pv, fv=0, when='end'):
+def pmt(rate, nper, pv, fv=0, when="end"):
     """计算每期付款额 (Payment).
 
     在给定现值、每期利率与期数条件下，计算等额本息分期的每期偿付额。
@@ -236,24 +234,23 @@ def pmt(rate, nper, pv, fv=0, when='end'):
         if rate == 0:
             return -(fv + pv) / nper
         else:
-            return -(fv + pv * (1 + rate) ** nper) * rate / \
-                   ((1 + rate * when) * ((1 + rate) ** nper - 1))
+            return -(fv + pv * (1 + rate) ** nper) * rate / ((1 + rate * when) * ((1 + rate) ** nper - 1))
 
     result = np.zeros_like(rate)
     zero_rate = rate == 0
     result[zero_rate] = -(fv[zero_rate] + pv[zero_rate]) / nper[zero_rate]
 
     non_zero = ~zero_rate
-    result[non_zero] = (-(fv[non_zero] +
-                          pv[non_zero] * (1 + rate[non_zero]) ** nper[non_zero]) *
-                        rate[non_zero] /
-                        ((1 + rate[non_zero] * when[non_zero]) *
-                         ((1 + rate[non_zero]) ** nper[non_zero] - 1)))
+    result[non_zero] = (
+        -(fv[non_zero] + pv[non_zero] * (1 + rate[non_zero]) ** nper[non_zero])
+        * rate[non_zero]
+        / ((1 + rate[non_zero] * when[non_zero]) * ((1 + rate[non_zero]) ** nper[non_zero] - 1))
+    )
 
     return result
 
 
-def nper(rate, pmt, pv, fv=0, when='end'):
+def nper(rate, pmt, pv, fv=0, when="end"):
     """计算期数 (Number of Periods).
 
     在给定每期利率、每期付款额与现值条件下，计算达到目标未来值所需的付款期数。
@@ -290,25 +287,24 @@ def nper(rate, pmt, pv, fv=0, when='end'):
         if rate == 0:
             return -(fv + pv) / pmt
         else:
-            return (np.log((-fv * rate + pmt * (1 + rate * when)) /
-                          (pv * rate + pmt * (1 + rate * when))) /
-                    np.log(1 + rate))
+            return np.log((-fv * rate + pmt * (1 + rate * when)) / (pv * rate + pmt * (1 + rate * when))) / np.log(
+                1 + rate
+            )
 
     result = np.zeros_like(rate)
     zero_rate = rate == 0
     result[zero_rate] = -(fv[zero_rate] + pv[zero_rate]) / pmt[zero_rate]
 
     non_zero = ~zero_rate
-    result[non_zero] = (np.log((-fv[non_zero] * rate[non_zero] +
-                                pmt[non_zero] * (1 + rate[non_zero] * when[non_zero])) /
-                               (pv[non_zero] * rate[non_zero] +
-                                pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]))) /
-                        np.log(1 + rate[non_zero]))
+    result[non_zero] = np.log(
+        (-fv[non_zero] * rate[non_zero] + pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]))
+        / (pv[non_zero] * rate[non_zero] + pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]))
+    ) / np.log(1 + rate[non_zero])
 
     return result
 
 
-def ipmt(rate, per, nper, pv, fv=0, when='end'):
+def ipmt(rate, per, nper, pv, fv=0, when="end"):
     """计算给定期间的利息部分 (Interest Payment).
 
     将等额本息分期中第 ``per`` 期的还款额拆分出"利息"部分。基于摊销公式：
@@ -359,7 +355,7 @@ def ipmt(rate, per, nper, pv, fv=0, when='end'):
     return result
 
 
-def ppmt(rate, per, nper, pv, fv=0, when='end'):
+def ppmt(rate, per, nper, pv, fv=0, when="end"):
     """计算给定期间的本金部分 (Principal Payment).
 
     将等额本息分期中第 ``per`` 期的还款额拆分出"本金"部分，等于该期总付款额减去利息
@@ -394,7 +390,7 @@ def ppmt(rate, per, nper, pv, fv=0, when='end'):
     return total - interest
 
 
-def rate(nper, pmt, pv, fv=0, when='end', guess=0.1, tol=1e-6, max_iter=100):
+def rate(nper, pmt, pv, fv=0, when="end", guess=0.1, tol=1e-6, max_iter=100):
     """计算每期利率 (Rate).
 
     在给定期数、每期付款额、现值与未来值条件下，使用牛顿迭代法（Newton-Raphson）
@@ -434,7 +430,9 @@ def rate(nper, pmt, pv, fv=0, when='end', guess=0.1, tol=1e-6, max_iter=100):
     if nper_a.ndim:
         output = np.empty(nper_a.shape, dtype=float)
         for index in np.ndindex(output.shape):
-            output[index] = rate(nper_a[index], pmt_a[index], pv_a[index], fv_a[index], when_a[index], guess_a[index], tol, max_iter)
+            output[index] = rate(
+                nper_a[index], pmt_a[index], pv_a[index], fv_a[index], when_a[index], guess_a[index], tol, max_iter
+            )
         return output
     nper, pmt, pv, fv, when, guess = (value.item() for value in (nper_a, pmt_a, pv_a, fv_a, when_a, guess_a))
 

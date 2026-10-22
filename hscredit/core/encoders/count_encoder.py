@@ -76,8 +76,8 @@ class CountEncoder(BaseEncoder):
         features: Optional[List[str]] = None,
         normalize: bool = False,
         min_group_size: Optional[int] = None,
-        handle_unknown: str = 'value',
-        handle_missing: str = 'value',
+        handle_unknown: str = "value",
+        handle_missing: str = "value",
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
@@ -119,10 +119,7 @@ class CountEncoder(BaseEncoder):
     @classmethod
     def _canonicalize_nan_keys(cls, mapping: Dict) -> Dict:
         """按浮点标量类型规范化计数键，保留 pandas 的 typed-NaN 分组。"""
-        return {
-            cls._float_nan_representative(key): value
-            for key, value in mapping.items()
-        }
+        return {cls._float_nan_representative(key): value for key, value in mapping.items()}
 
     def _serialize_mapping(self, mapping: Dict) -> Dict:
         """导出时保留 CountEncoder 的 typed-NaN 公开代表键。"""
@@ -148,7 +145,9 @@ class CountEncoder(BaseEncoder):
         :param y: 目标变量（可选），计数编码器不需要
         """
         total_count = len(X)
-        self._fit_columns(X, y, state_attrs=("mapping_", "infrequent_categories_"), shared_state={"total_count_": total_count})
+        self._fit_columns(
+            X, y, state_attrs=("mapping_", "infrequent_categories_"), shared_state={"total_count_": total_count}
+        )
         self.total_count_ = total_count
 
     def _fit_column(self, column, values, y=None):
@@ -174,10 +173,10 @@ class CountEncoder(BaseEncoder):
             else:
                 mapping[normalized] = mapping.get(normalized, 0) + value
 
-        if self.handle_missing == 'value':
+        if self.handle_missing == "value":
             if not any(self._is_float_nan_key(key) for key in mapping):
                 mapping[MISSING] = 0 if not self.normalize else 0.0
-        elif self.handle_missing == 'return_nan':
+        elif self.handle_missing == "return_nan":
             typed_nan_keys = [key for key in mapping if self._is_float_nan_key(key)]
             if typed_nan_keys:
                 for key in typed_nan_keys:
@@ -185,9 +184,9 @@ class CountEncoder(BaseEncoder):
             else:
                 mapping[MISSING] = np.nan
 
-        if self.handle_unknown == 'value':
+        if self.handle_unknown == "value":
             mapping[UNKNOWN] = 0 if not self.normalize else 0.0
-        elif self.handle_unknown == 'return_nan':
+        elif self.handle_unknown == "return_nan":
             mapping[UNKNOWN] = np.nan
 
         return {"mapping_": mapping, "infrequent_categories_": list(small_categories)}
@@ -220,15 +219,15 @@ class CountEncoder(BaseEncoder):
             [self._is_float_nan_key(value) for value in values.array],
             index=values.index,
         )
-        if self.handle_missing == 'value':
+        if self.handle_missing == "value":
             missing_default = 0 if not self.normalize else 0.0
             result = result.mask(result.isna() & typed_missing, missing_default)
         unknown = result.isna() & ~typed_missing
 
-        if self.handle_unknown == 'value':
+        if self.handle_unknown == "value":
             default_value = 0 if not self.normalize else 0.0
             result = result.mask(unknown, default_value)
-        elif self.handle_unknown == 'error' and unknown.any():
+        elif self.handle_unknown == "error" and unknown.any():
             raise ValueError(f"列'{column}'包含未知类别")
 
         return result

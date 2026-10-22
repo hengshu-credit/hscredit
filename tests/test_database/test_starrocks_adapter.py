@@ -118,9 +118,7 @@ def test_starrocks_rejects_append_on_primary_table(adapter):
 
 
 def test_starrocks_drop_mode_creates_missing_table_with_default_model():
-    adapter = ObservableStarRocksAdapter(
-        connect_kwargs={"database": "risk", "missing_table": True}
-    )
+    adapter = ObservableStarRocksAdapter(connect_kwargs={"database": "risk", "missing_table": True})
 
     adapter.prepare_write(
         "risk.new_events",

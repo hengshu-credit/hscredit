@@ -50,7 +50,7 @@ class State:
 
 def names(sql):
     identifiers = [part.replace("``", "`") for part in re.findall(r"`((?:``|[^`])*)`", sql)]
-    return [".".join(identifiers[i:i + 2]) for i in range(0, len(identifiers), 2)]
+    return [".".join(identifiers[i : i + 2]) for i in range(0, len(identifiers), 2)]
 
 
 class Cursor:
@@ -84,7 +84,14 @@ class Cursor:
         elif "information_schema.triggers" in sql:
             self.rows = [("trigger",)] if state.trigger else []
         elif sql.startswith("SHOW CREATE TABLE"):
-            self.rows = [("target", "CREATE target (id BIGINT, name TEXT) ENGINE=InnoDB" + state.ddl_options + (" CHANGED" if state.schema_drift and state.commits else ""))]
+            self.rows = [
+                (
+                    "target",
+                    "CREATE target (id BIGINT, name TEXT) ENGINE=InnoDB"
+                    + state.ddl_options
+                    + (" CHANGED" if state.schema_drift and state.commits else ""),
+                )
+            ]
         elif sql.startswith("CREATE TABLE"):
             stage, target = names(sql)
             if state.create_collision:
@@ -92,7 +99,7 @@ class Cursor:
                 raise RuntimeError("staging exists")
             if state.fail_create:
                 raise RuntimeError("create failed")
-            assert stage.split('.')[0] == target.split('.')[0]
+            assert stage.split(".")[0] == target.split(".")[0]
             state.tables[stage] = []
         elif sql.startswith("LOCK TABLES"):
             state.locked = True
@@ -104,7 +111,7 @@ class Cursor:
                 raise RuntimeError("batch write failed")
             prefix = sql.rsplit(" VALUES ", 1)[0]
             column_count = len(re.findall(r"`((?:``|[^`])*)`", prefix)) - 2
-            values = [tuple(params[i:i + column_count]) for i in range(0, len(params), column_count)]
+            values = [tuple(params[i : i + column_count]) for i in range(0, len(params), column_count)]
             self.connection.pending = (names(sql)[0], values)
             self.connection.warning_count = int(state.batch_calls == state.warning_batch)
         elif sql == "SHOW COUNT(*) WARNINGS":
@@ -181,11 +188,15 @@ class Connection:
 
 class FakeMySQL(MySQLAdapter):
     def __init__(self, *, connect_kwargs, pool_options, adapter_options):
-        BaseDatabaseAdapter.__init__(self, connect_kwargs=connect_kwargs, pool_options=pool_options, adapter_options=adapter_options)
+        BaseDatabaseAdapter.__init__(
+            self, connect_kwargs=connect_kwargs, pool_options=pool_options, adapter_options=adapter_options
+        )
         state = connect_kwargs["state"]
+
         def connect(**kwargs):
             state.connects += 1
             return Connection(state)
+
         self.driver = SimpleNamespace(connect=connect)
 
 
@@ -210,8 +221,14 @@ def test_atomic_replace_only_publishes_once_and_keeps_old_backup():
     assert state.tables["risk.target"] == list(data().itertuples(index=False, name=None))
     assert result.staging_table not in state.tables
     assert state.rename_calls == 1 and state.connects == 1
-    rename_position = next(i for i, call in enumerate(state.calls) if call[0] == "execute" and call[1].startswith("RENAME"))
-    assert all(i < rename_position for i, call in enumerate(state.calls) if call[0] == "execute" and call[1].startswith("INSERT"))
+    rename_position = next(
+        i for i, call in enumerate(state.calls) if call[0] == "execute" and call[1].startswith("RENAME")
+    )
+    assert all(
+        i < rename_position
+        for i, call in enumerate(state.calls)
+        if call[0] == "execute" and call[1].startswith("INSERT")
+    )
     assert not any("TRUNCATE" in str(call) or "DROP TABLE `risk`.`target`" in str(call) for call in state.calls)
 
 
@@ -219,9 +236,11 @@ def test_atomic_replace_only_publishes_once_and_keeps_old_backup():
 def test_prepublication_failures_keep_old_target_and_report_staged_counts(failure):
     db, state = database(State(fail_create=failure == "prepare", fail_batch=2 if failure == "batch" else 0))
     old = deepcopy(state.tables)
+
     def chunks():
         yield data().iloc[:2]
         raise RuntimeError("input failed")
+
     with pytest.raises(DatabaseWriteError) as error:
         db.atomic_replace_table(chunks() if failure == "iterator" else data(), "risk.target", batch_size=2)
     result = error.value.result
@@ -288,12 +307,21 @@ def test_successful_opt_in_backup_cleanup_only_removes_owned_backup():
     assert drop_statements == [f"DROP TABLE `risk`.`{result.backup_table.split('.')[1]}`"]
 
 
-@pytest.mark.parametrize("options", [
-    {"version": "5.7.44"}, {"version": "8.0.12"}, {"version": "8.0.36-MariaDB"},
-    {"vendor": "TiDB"}, {"engine": "MyISAM"}, {"table_type": "VIEW"},
-    {"foreign_key": True}, {"trigger": True}, {"grants": ["GRANT SELECT, TRIGGER ON risk.* TO 'user'@'%' "]},
-    {"grants": ["GRANT ALL PRIVILEGES ON *.* TO 'user'@'%'", "REVOKE SELECT ON secret.* FROM 'user'@'%'"]},
-])
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"version": "5.7.44"},
+        {"version": "8.0.12"},
+        {"version": "8.0.36-MariaDB"},
+        {"vendor": "TiDB"},
+        {"engine": "MyISAM"},
+        {"table_type": "VIEW"},
+        {"foreign_key": True},
+        {"trigger": True},
+        {"grants": ["GRANT SELECT, TRIGGER ON risk.* TO 'user'@'%' "]},
+        {"grants": ["GRANT ALL PRIVILEGES ON *.* TO 'user'@'%'", "REVOKE SELECT ON secret.* FROM 'user'@'%'"]},
+    ],
+)
 def test_unsafe_capabilities_are_rejected_before_any_table_change(options):
     db, state = database(State(**options))
     with pytest.raises(DatabaseCapabilityError):
@@ -336,9 +364,11 @@ def test_other_backends_do_not_consume_input_or_fall_back_to_destructive_write()
     assert not StarRocksAdapter.capabilities.atomic_replace
     db, state = database()
     db.adapter.database_type = "starrocks"
+
     def forbidden():
         raise AssertionError("不支持后端不应消费输入")
         yield data()
+
     with pytest.raises(DatabaseCapabilityError):
         db.atomic_replace_table(forbidden(), "risk.target")
     assert state.connects == 0
@@ -350,12 +380,14 @@ def test_session_strict_mode_and_finite_lock_timeout_apply_only_to_owned_connect
     assert result.completed
     assert state.sql_mode == "ALLOW_INVALID_DATES"  # 假服务器初始/全局配置未变
     setting = next(call for call in state.calls if call[0] == "execute" and call[1] == "SET SESSION sql_mode=%s")
-    modes = set(setting[2][0].split(','))
-    assert {'STRICT_TRANS_TABLES', 'STRICT_ALL_TABLES', 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE'}.issubset(modes)
-    assert 'ALLOW_INVALID_DATES' not in modes
+    modes = set(setting[2][0].split(","))
+    assert {"STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "NO_ZERO_DATE", "NO_ZERO_IN_DATE"}.issubset(modes)
+    assert "ALLOW_INVALID_DATES" not in modes
     assert any(call[:2] == ("execute", "SET SESSION lock_wait_timeout=30") for call in state.calls)
     sql_calls = [call[1] for call in state.calls if call[0] == "execute"]
-    assert sql_calls.index("SET SESSION lock_wait_timeout=30") < next(i for i, sql in enumerate(sql_calls) if sql.startswith("LOCK TABLES"))
+    assert sql_calls.index("SET SESSION lock_wait_timeout=30") < next(
+        i for i, sql in enumerate(sql_calls) if sql.startswith("LOCK TABLES")
+    )
     for index, call in enumerate(state.calls):
         if call[0] == "execute" and call[1].startswith("INSERT"):
             assert state.calls[index + 1][:2] == ("execute", "SHOW COUNT(*) WARNINGS")
@@ -377,12 +409,15 @@ def test_any_batch_warning_blocks_commit_and_publication(batch):
     assert state.rename_calls == 0 and state.tables == {"risk.target": [(99, "old")]}
 
 
-@pytest.mark.parametrize("options", [
-    {"ignore_safety_settings": True},
-    {"ddl_options": " DATA DIRECTORY='/external'"},
-    {"ddl_options": " INDEX DIRECTORY='/external'"},
-    {"sql_mode": "NO_BACKSLASH_ESCAPES", "ddl_options": " COMMENT='path\\' DATA DIRECTORY='/external'"},
-])
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"ignore_safety_settings": True},
+        {"ddl_options": " DATA DIRECTORY='/external'"},
+        {"ddl_options": " INDEX DIRECTORY='/external'"},
+        {"sql_mode": "NO_BACKSLASH_ESCAPES", "ddl_options": " COMMENT='path\\' DATA DIRECTORY='/external'"},
+    ],
+)
 def test_unverified_safety_or_unpreserved_options_fail_before_create(options):
     db, state = database(State(**options))
     with pytest.raises(DatabaseCapabilityError):

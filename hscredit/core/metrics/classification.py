@@ -31,7 +31,10 @@ from typing import Union, Tuple, Optional, Dict, Any
 from sklearn.metrics import (
     confusion_matrix as sk_confusion_matrix,
     classification_report as sk_classification_report,
-    accuracy_score, precision_score, recall_score, f1_score
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
 )
 
 from ._base import _validate_same_length, _validate_binary_target
@@ -40,8 +43,9 @@ from ._ranking import _binary_ranking_curve, _binary_roc_statistics, _prepare_bi
 from scipy.stats import ks_2samp as _ks_2samp
 
 
-def ks(y_true: Union[np.ndarray, pd.Series],
-       y_prob: Union[np.ndarray, pd.Series], *, pos_label=1, sample_weight=None) -> float:
+def ks(
+    y_true: Union[np.ndarray, pd.Series], y_prob: Union[np.ndarray, pd.Series], *, pos_label=1, sample_weight=None
+) -> float:
     """计算Kolmogorov-Smirnov统计量.
 
     KS值衡量模型区分正负样本的能力，值越大区分效果越好。
@@ -82,8 +86,7 @@ def ks(y_true: Union[np.ndarray, pd.Series],
     return float(np.max(np.abs(cum_pos - cum_neg)))
 
 
-def ks_2samps(sample1: Union[np.ndarray, pd.Series],
-               sample2: Union[np.ndarray, pd.Series]) -> float:
+def ks_2samps(sample1: Union[np.ndarray, pd.Series], sample2: Union[np.ndarray, pd.Series]) -> float:
     """计算两组独立样本之间的 Kolmogorov-Smirnov 统计量（两样本KS）.
 
     与 ks(y_true, y_prob) 不同，本函数比较两个独立样本的分布，
@@ -116,9 +119,14 @@ def ks_2samps(sample1: Union[np.ndarray, pd.Series],
     return _ks_2samp(s1, s2)[0]
 
 
-def auc(y_true: Union[np.ndarray, pd.Series],
-        y_prob: Union[np.ndarray, pd.Series], *, pos_label=1,
-        score_direction: str = 'auto', sample_weight=None) -> float:
+def auc(
+    y_true: Union[np.ndarray, pd.Series],
+    y_prob: Union[np.ndarray, pd.Series],
+    *,
+    pos_label=1,
+    score_direction: str = "auto",
+    sample_weight=None,
+) -> float:
     """计算ROC曲线下的面积(AUC).
 
     AUC值衡量模型在不同分类阈值下区分正负样本的综合能力，
@@ -155,9 +163,14 @@ def auc(y_true: Union[np.ndarray, pd.Series],
     return _binary_roc_statistics(y_true, y_prob, pos_label, score_direction, sample_weight).auc
 
 
-def gini(y_true: Union[np.ndarray, pd.Series],
-         y_prob: Union[np.ndarray, pd.Series], *, pos_label=1,
-         score_direction: str = 'auto', sample_weight=None) -> float:
+def gini(
+    y_true: Union[np.ndarray, pd.Series],
+    y_prob: Union[np.ndarray, pd.Series],
+    *,
+    pos_label=1,
+    score_direction: str = "auto",
+    sample_weight=None,
+) -> float:
     """计算基尼系数 (Gini Coefficient).
 
     基尼系数是AUC的线性变换：基尼系数 = 2 * AUC - 1。
@@ -188,11 +201,12 @@ def gini(y_true: Union[np.ndarray, pd.Series],
     Gini = 2·AUC − 1，是信用风险领域衡量区分度的常用指标，见
     Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
-    return 2 * auc(y_true, y_prob, pos_label=pos_label, score_direction=score_direction, sample_weight=sample_weight) - 1
+    return (
+        2 * auc(y_true, y_prob, pos_label=pos_label, score_direction=score_direction, sample_weight=sample_weight) - 1
+    )
 
 
-def accuracy(y_true: Union[np.ndarray, pd.Series],
-             y_pred: Union[np.ndarray, pd.Series]) -> float:
+def accuracy(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series]) -> float:
     """计算准确率 (Accuracy).
 
     准确率 = 预测正确的样本数 / 总样本数。
@@ -215,9 +229,9 @@ def accuracy(y_true: Union[np.ndarray, pd.Series],
     return accuracy_score(y_true, y_pred)
 
 
-def precision(y_true: Union[np.ndarray, pd.Series],
-              y_pred: Union[np.ndarray, pd.Series],
-              average: str = 'binary') -> float:
+def precision(
+    y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], average: str = "binary"
+) -> float:
     """计算精确率 (Precision).
 
     精确率 = TP / (TP + FP)，即预测为正的样本中真正为正的比例。
@@ -243,9 +257,9 @@ def precision(y_true: Union[np.ndarray, pd.Series],
     return precision_score(y_true, y_pred, average=average, zero_division=0)
 
 
-def recall(y_true: Union[np.ndarray, pd.Series],
-           y_pred: Union[np.ndarray, pd.Series],
-           average: str = 'binary') -> float:
+def recall(
+    y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], average: str = "binary"
+) -> float:
     """计算召回率 (Recall / Sensitivity).
 
     召回率 = TP / (TP + FN)，即所有正样本中被正确预测的比例。
@@ -269,9 +283,7 @@ def recall(y_true: Union[np.ndarray, pd.Series],
     return recall_score(y_true, y_pred, average=average, zero_division=0)
 
 
-def f1(y_true: Union[np.ndarray, pd.Series],
-       y_pred: Union[np.ndarray, pd.Series],
-       average: str = 'binary') -> float:
+def f1(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], average: str = "binary") -> float:
     """计算F1分数 (F1 Score).
 
     F1 = 2 * (精确率 * 召回率) / (精确率 + 召回率)，是精确率和召回率的调和平均。
@@ -295,12 +307,14 @@ def f1(y_true: Union[np.ndarray, pd.Series],
     return f1_score(y_true, y_pred, average=average, zero_division=0)
 
 
-def ks_bucket(y_true: Union[np.ndarray, pd.Series],
-              y_prob: Union[np.ndarray, pd.Series],
-              method: str = 'quantile',
-              max_n_bins: int = 10,
-              min_bin_size: float = 0.01,
-              **kwargs) -> pd.DataFrame:
+def ks_bucket(
+    y_true: Union[np.ndarray, pd.Series],
+    y_prob: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> pd.DataFrame:
     """计算分桶KS统计表.
 
     将样本按预测概率分为多个桶，计算每个桶的KS统计信息，
@@ -359,46 +373,47 @@ def ks_bucket(y_true: Union[np.ndarray, pd.Series],
     # 使用OptimalBinning进行分箱
     from ..binning import OptimalBinning
 
-    df = pd.DataFrame({'prob': y_prob_clean, 'target': y_true_clean})
+    df = pd.DataFrame({"prob": y_prob_clean, "target": y_true_clean})
 
-    binner = OptimalBinning(
-        method=method,
-        max_n_bins=max_n_bins,
-        min_bin_size=min_bin_size,
-        verbose=False,
-        **kwargs
-    )
-    binner.fit(df[['prob']], df['target'])
-    bins = binner.transform(df[['prob']], metric='indices').values.flatten()
+    binner = OptimalBinning(method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs)
+    binner.fit(df[["prob"]], df["target"])
+    bins = binner.transform(df[["prob"]], metric="indices").values.flatten()
 
     stats_df = compute_bin_stats(bins, y_true_clean, round_digits=False)
 
     results = []
     for _, row in stats_df.iterrows():
-        bin_idx = int(row['分箱'])
+        bin_idx = int(row["分箱"])
         mask = bins == bin_idx
 
         prob_min = y_prob_clean[mask].min() if mask.sum() > 0 else np.nan
         prob_max = y_prob_clean[mask].max() if mask.sum() > 0 else np.nan
 
-        cum_total = row['累积坏样本数'] + row['累积好样本数']
-        results.append({
-            '桶编号': bin_idx,
-            '最小概率': prob_min,
-            '最大概率': prob_max,
-            '样本数': int(row['样本总数']),
-            '坏样本率': row['坏样本率'],
-            '累积坏样本率': row['累积坏样本数'] / cum_total if cum_total > 0 else 0,
-            '累积好样本率': row['累积好样本数'] / cum_total if cum_total > 0 else 0,
-            'KS贡献': row['分档KS值'],
-        })
+        cum_total = row["累积坏样本数"] + row["累积好样本数"]
+        results.append(
+            {
+                "桶编号": bin_idx,
+                "最小概率": prob_min,
+                "最大概率": prob_max,
+                "样本数": int(row["样本总数"]),
+                "坏样本率": row["坏样本率"],
+                "累积坏样本率": row["累积坏样本数"] / cum_total if cum_total > 0 else 0,
+                "累积好样本率": row["累积好样本数"] / cum_total if cum_total > 0 else 0,
+                "KS贡献": row["分档KS值"],
+            }
+        )
 
     return pd.DataFrame(results)
 
 
-def roc_curve(y_true: Union[np.ndarray, pd.Series],
-              y_prob: Union[np.ndarray, pd.Series], *, pos_label=1,
-              score_direction: str = 'auto', sample_weight=None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def roc_curve(
+    y_true: Union[np.ndarray, pd.Series],
+    y_prob: Union[np.ndarray, pd.Series],
+    *,
+    pos_label=1,
+    score_direction: str = "auto",
+    sample_weight=None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """计算ROC曲线数据.
 
     返回与 ``auc``、``ks_plot``、``roc_plot`` 同口径的FPR、TPR和阈值数据。
@@ -426,9 +441,9 @@ def roc_curve(y_true: Union[np.ndarray, pd.Series],
     return result.fpr, result.tpr, result.thresholds
 
 
-def confusion_matrix(y_true: Union[np.ndarray, pd.Series],
-                     y_pred: Union[np.ndarray, pd.Series],
-                     labels: Optional[list] = None) -> np.ndarray:
+def confusion_matrix(
+    y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], labels: Optional[list] = None
+) -> np.ndarray:
     """计算混淆矩阵.
 
     混淆矩阵展示分类器的预测结果与真实标签的对应关系。
@@ -454,10 +469,12 @@ def confusion_matrix(y_true: Union[np.ndarray, pd.Series],
     return sk_confusion_matrix(y_true, y_pred, labels=labels)
 
 
-def classification_report(y_true: Union[np.ndarray, pd.Series],
-                          y_pred: Union[np.ndarray, pd.Series],
-                          target_names: Optional[list] = None,
-                          output_dict: bool = False) -> Union[str, dict]:
+def classification_report(
+    y_true: Union[np.ndarray, pd.Series],
+    y_pred: Union[np.ndarray, pd.Series],
+    target_names: Optional[list] = None,
+    output_dict: bool = False,
+) -> Union[str, dict]:
     """生成分类报告.
 
     输出各类的精确率、召回率、F1分数和支持样本数。
@@ -487,8 +504,4 @@ def classification_report(y_true: Union[np.ndarray, pd.Series],
     >>> classification_report(y_true, y_pred, output_dict=True)
     {'0': {'precision': 0.67, 'recall': 1.0, 'f1-score': 0.8, 'support': 2}, ...}
     """
-    return sk_classification_report(
-        y_true, y_pred,
-        target_names=target_names,
-        output_dict=output_dict
-    )
+    return sk_classification_report(y_true, y_pred, target_names=target_names, output_dict=output_dict)

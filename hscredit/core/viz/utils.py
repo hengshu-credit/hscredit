@@ -22,7 +22,6 @@ from .style import (
     GRADIENT_PALETTES,
 )
 
-
 # 默认配色方案：主题色 + 2 个副主题色（与 PRIMARY_COLORS 一致）
 DEFAULT_COLORS = list(PRIMARY_COLORS)
 _RENDER_STATE = threading.local()
@@ -103,8 +102,9 @@ def _tight_layout(figure, *args, **kwargs):
         return figure.tight_layout(*args, **kwargs)
     return plt.tight_layout(*args, **kwargs)
 
+
 # 语义色（与 bin_plot 参考样式一致）：坏样本率折线、整体基线参考线
-BAD_RATE_COLOR = SEMANTIC_COLORS["bad_rate"]            # #F0556F 坏样本率折线（副主题红融粉）
+BAD_RATE_COLOR = SEMANTIC_COLORS["bad_rate"]  # #F0556F 坏样本率折线（副主题红融粉）
 REFERENCE_COLOR = SEMANTIC_COLORS["overall_baseline"]  # #2639E9 整体基线参考线（主题蓝）
 # PSI/稳定性状态语义色
 STABLE_COLOR = SEMANTIC_COLORS["stable"]
@@ -134,7 +134,7 @@ def _axes_top_boundary(axes: list, renderer: Any) -> float:
         summaries = [
             artist
             for artist in [*ax.texts, *ax.artists]
-            if artist.get_visible() and artist.get_gid() == 'bin-metric-summary'
+            if artist.get_visible() and artist.get_gid() == "bin-metric-summary"
         ]
         if summaries:
             title = ax.title
@@ -276,30 +276,30 @@ def get_series_colors(n: int) -> list:
 
 def setup_axis_style(ax, colors: Optional[list] = None, hide_top_right: bool = False):
     """设置坐标轴样式.
-    
+
     :param ax: matplotlib Axes 对象
     :param colors: 边框颜色
     :param hide_top_right: 是否隐藏顶部和右侧边框
     """
     if colors is None:
         colors = DEFAULT_COLORS
-    
+
     color = colors[0] if colors else "#2639E9"
-    
+
     for spine in ax.spines.values():
         spine.set_color(color)
-    ax.tick_params(axis='both', colors=color)
+    ax.tick_params(axis="both", colors=color)
     ax.xaxis.label.set_color(color)
     ax.yaxis.label.set_color(color)
-    
+
     if hide_top_right:
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
 
 def save_figure(fig, save_path: Optional[str] = None, dpi: int = 240):
     """保存图表.
-    
+
     :param fig: matplotlib Figure 对象
     :param save_path: 保存路径（为 None 时不保存，直接返回）；目录不存在时自动创建
     :param dpi: 分辨率，默认 240
@@ -314,17 +314,17 @@ def save_figure(fig, save_path: Optional[str] = None, dpi: int = 240):
         save_dir = os.path.dirname(save_path)
         if save_dir and not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=True)
-        save_kwargs = {'format': 'png'} if not os.path.splitext(save_path)[1] else {}
+        save_kwargs = {"format": "png"} if not os.path.splitext(save_path)[1] else {}
         fig.savefig(save_path, dpi=dpi, bbox_inches="tight", **save_kwargs)
 
 
-def get_or_create_ax(figsize: Tuple[float, float] = (10, 6), 
-                     ax: Optional[Any] = None,
-                     return_fig: bool = True) -> Tuple[Any, ...]:
+def get_or_create_ax(
+    figsize: Tuple[float, float] = (10, 6), ax: Optional[Any] = None, return_fig: bool = True
+) -> Tuple[Any, ...]:
     """获取或创建 Axes 对象.
-    
+
     如果传入 ax，则直接使用；否则创建新的 Figure 和 Axes。
-    
+
     :param figsize: 图像尺寸（创建新图时使用）
     :param ax: 可选的 matplotlib Axes 对象
     :param return_fig: 是否返回 Figure 对象
@@ -349,23 +349,27 @@ def get_or_create_ax(figsize: Tuple[float, float] = (10, 6),
             return fig, ax
         else:
             return ax
-    
+
     # 创建新的 figure 和 ax
     fig, ax = _create_subplots(figsize=figsize)
-    
+
     if return_fig:
         return fig, ax
     else:
         return ax
 
 
-def create_legend(fig_or_ax, loc: str = 'upper center', 
-                  bbox_to_anchor: Tuple[float, float] = (0.5, 0.98),
-                  ncol: int = 2, frameon: bool = False,
-                  handles: Optional[list] = None, 
-                  labels: Optional[list] = None):
+def create_legend(
+    fig_or_ax,
+    loc: str = "upper center",
+    bbox_to_anchor: Tuple[float, float] = (0.5, 0.98),
+    ncol: int = 2,
+    frameon: bool = False,
+    handles: Optional[list] = None,
+    labels: Optional[list] = None,
+):
     """创建图例.
-    
+
     :param fig_or_ax: Figure 或 Axes 对象
     :param loc: 图例位置
     :param bbox_to_anchor: 锚点位置
@@ -376,44 +380,38 @@ def create_legend(fig_or_ax, loc: str = 'upper center',
     :return: Legend 对象
     """
     if handles is None or labels is None:
-        if hasattr(fig_or_ax, 'get_legend_handles_labels'):
+        if hasattr(fig_or_ax, "get_legend_handles_labels"):
             handles, labels = fig_or_ax.get_legend_handles_labels()
         else:
             return None
-    
-    legend = fig_or_ax.legend(
-        handles, labels,
-        loc=loc,
-        bbox_to_anchor=bbox_to_anchor,
-        ncol=ncol,
-        frameon=frameon
-    )
-    
+
+    legend = fig_or_ax.legend(handles, labels, loc=loc, bbox_to_anchor=bbox_to_anchor, ncol=ncol, frameon=frameon)
+
     return legend
 
 
 def format_bin_label(label: str, max_len: int = 35) -> str:
     """格式化分箱标签.
-    
+
     :param label: 原始标签
     :param max_len: 最大长度
     :return: 格式化后的标签
     """
     import re
-    
+
     if pd.isnull(label):
         return "缺失值"
-    
+
     label_str = str(label)
-    
+
     # 检查是否符合区间格式 [x, y)
     if re.match(r"^\[.*\)$", label_str):
         return label_str
-    
+
     # 截断过长的标签
     if len(label_str) > max_len:
         return label_str[:max_len] + "..."
-    
+
     return label_str
 
 

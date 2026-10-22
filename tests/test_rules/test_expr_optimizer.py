@@ -47,12 +47,13 @@ def _assert_eval_equal(df, expr_a, expr_b, msg=""):
 # bug 1: 嵌套括号内运算符优先级 / 括号丢失
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize(
     "combined",
     [
-        "(age > 18 | income > 5000) & (score > 0.5)",   # (A|B)&C，不可塌缩为 A|(B&C)
-        "(age > 18) & (income > 5000 | score > 0.5)",   # A&(B|C)
-        "(age > 18 & income > 5000) | (score > 0.5)",   # (A&B)|C
+        "(age > 18 | income > 5000) & (score > 0.5)",  # (A|B)&C，不可塌缩为 A|(B&C)
+        "(age > 18) & (income > 5000 | score > 0.5)",  # A&(B|C)
+        "(age > 18 & income > 5000) | (score > 0.5)",  # (A&B)|C
         "((age > 18 | income > 5000) & score > 0.5) | (age > 18)",
         "~(age > 18 | income > 5000) & (score > 0.5)",
         "(age > 18 | income > 5000) | (score > 0.5 & income > 100)",
@@ -77,6 +78,7 @@ def test_or_inside_parens_not_absorbed_into_outer_and(df):
 # --------------------------------------------------------------------------- #
 # bug 2: 吸收律
 # --------------------------------------------------------------------------- #
+
 
 def test_valid_absorption_still_applies():
     # A | (A & B) = A,  A & (A | B) = A，以及交换形式
@@ -112,6 +114,7 @@ def test_double_negation():
 # bug 3: 列名含 and/or 子串不应影响等价判断
 # --------------------------------------------------------------------------- #
 
+
 def test_column_name_with_keyword_substring(df):
     combined = "(brand == 2 | ord_x == 1) & (score > 0.5)"
     optimized = optimize_expr(beautify_expr(combined))
@@ -128,6 +131,7 @@ def test_xor_is_not_idempotently_collapsed(df):
 # --------------------------------------------------------------------------- #
 # Rule 组合的端到端一致性
 # --------------------------------------------------------------------------- #
+
 
 def test_string_literal_with_operator_chars_preserved():
     # 字符串字面量内部的 & | ~ 不应被转换为 and/or/not

@@ -47,7 +47,7 @@ def execute_skill(
                     "extras": list(spec.extras),
                 },
             }
-        result['manifest'] = str(transaction.manifest_path) if transaction.artifacts else None
+        result["manifest"] = str(transaction.manifest_path) if transaction.artifacts else None
     except SkillExecutionError:
         raise
     except Exception as exc:

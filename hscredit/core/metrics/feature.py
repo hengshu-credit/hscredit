@@ -34,12 +34,14 @@ from ._base import _validate_same_length, _validate_binary_target, _create_bin_e
 from ._binning import compute_bin_stats, _chi2_by_bin
 
 
-def iv(y_true: Union[np.ndarray, pd.Series],
-       feature: Union[np.ndarray, pd.Series],
-       method: str = 'quantile',
-       max_n_bins: int = 10,
-       min_bin_size: float = 0.01,
-       **kwargs) -> float:
+def iv(
+    y_true: Union[np.ndarray, pd.Series],
+    feature: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> float:
     """计算Information Value (信息价值).
 
     IV用于衡量特征的预测能力，值越大表示特征的区分能力越强。
@@ -82,15 +84,17 @@ def iv(y_true: Union[np.ndarray, pd.Series],
     好/坏两个条件分布之间的对称 KL 散度（与 PSI 同源）。
     """
     table = iv_table(y_true, feature, method, max_n_bins, min_bin_size, **kwargs)
-    return table['分档IV值'].sum()
+    return table["分档IV值"].sum()
 
 
-def iv_table(y_true: Union[np.ndarray, pd.Series],
-             feature: Union[np.ndarray, pd.Series],
-             method: str = 'quantile',
-             max_n_bins: int = 10,
-             min_bin_size: float = 0.01,
-             **kwargs) -> pd.DataFrame:
+def iv_table(
+    y_true: Union[np.ndarray, pd.Series],
+    feature: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> pd.DataFrame:
     """计算IV详细统计表.
 
     对特征进行分箱后，计算每箱的好坏样本数、占比、WOE、IV贡献等详细指标。
@@ -134,29 +138,22 @@ def iv_table(y_true: Union[np.ndarray, pd.Series],
     # 使用OptimalBinning进行分箱
     from ..binning import OptimalBinning
 
-    df = pd.DataFrame({'feature': feature_clean, 'target': y_true_clean})
+    df = pd.DataFrame({"feature": feature_clean, "target": y_true_clean})
 
-    binner = OptimalBinning(
-        method=method,
-        max_n_bins=max_n_bins,
-        min_bin_size=min_bin_size,
-        verbose=False,
-        **kwargs
-    )
-    binner.fit(df[['feature']], df['target'])
-    bins = binner.transform(df[['feature']], metric='indices').values.flatten()
+    binner = OptimalBinning(method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs)
+    binner.fit(df[["feature"]], df["target"])
+    bins = binner.transform(df[["feature"]], metric="indices").values.flatten()
 
     bin_labels = None
-    if 'feature' in binner.bin_tables_:
-        bin_table = binner.bin_tables_['feature']
-        if '分箱标签' in bin_table.columns:
-            bin_labels = bin_table['分箱标签'].tolist()
+    if "feature" in binner.bin_tables_:
+        bin_table = binner.bin_tables_["feature"]
+        if "分箱标签" in bin_table.columns:
+            bin_labels = bin_table["分箱标签"].tolist()
 
     return compute_bin_stats(bins, y_true_clean, bin_labels=bin_labels)
 
 
-def chi2_test(x: Union[np.ndarray, pd.Series],
-              y: Union[np.ndarray, pd.Series]) -> Tuple[float, float]:
+def chi2_test(x: Union[np.ndarray, pd.Series], y: Union[np.ndarray, pd.Series]) -> Tuple[float, float]:
     """计算卡方独立性检验 (Chi-Square Test).
 
     检验特征变量与目标变量之间是否存在统计学显著的关联关系。
@@ -199,8 +196,7 @@ def chi2_test(x: Union[np.ndarray, pd.Series],
     return chi2_stat, p_value
 
 
-def cramers_v(x: Union[np.ndarray, pd.Series],
-              y: Union[np.ndarray, pd.Series]) -> float:
+def cramers_v(x: Union[np.ndarray, pd.Series], y: Union[np.ndarray, pd.Series]) -> float:
     """计算Cramer's V关联强度 (Cramér's V).
 
     Cramer's V是卡方检验的效应量，衡量两个分类变量之间的关联强度，
@@ -252,10 +248,9 @@ def cramers_v(x: Union[np.ndarray, pd.Series],
     return np.sqrt(chi2 / (n * min_dim))
 
 
-def feature_importance(X: Union[pd.DataFrame, np.ndarray],
-                       y: Union[np.ndarray, pd.Series],
-                       method: str = 'gini',
-                       **kwargs) -> pd.Series:
+def feature_importance(
+    X: Union[pd.DataFrame, np.ndarray], y: Union[np.ndarray, pd.Series], method: str = "gini", **kwargs
+) -> pd.Series:
     """计算特征重要性.
 
     使用树模型基于特征对目标变量的分裂增益计算特征重要性。
@@ -286,19 +281,15 @@ def feature_importance(X: Union[pd.DataFrame, np.ndarray],
         feature_names = X.columns
         X = X.values
     else:
-        feature_names = [f'feature_{i}' for i in range(X.shape[1])]
+        feature_names = [f"feature_{i}" for i in range(X.shape[1])]
 
-    if method == 'gini':
-        max_depth = kwargs.get('max_depth', 3)
+    if method == "gini":
+        max_depth = kwargs.get("max_depth", 3)
         model = DecisionTreeClassifier(max_depth=max_depth, random_state=42)
-    elif method == 'entropy':
-        n_estimators = kwargs.get('n_estimators', 100)
-        max_depth = kwargs.get('max_depth', 3)
-        model = RandomForestClassifier(
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            random_state=42
-        )
+    elif method == "entropy":
+        n_estimators = kwargs.get("n_estimators", 100)
+        max_depth = kwargs.get("max_depth", 3)
+        model = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42)
     else:
         raise ValueError(f"未知的计算方法: {method}")
 

@@ -94,8 +94,8 @@ class WOEEncoder(BaseEncoder):
         features: Optional[List[str]] = None,
         regularization: float = 1.0,
         woe_clip: Optional[float] = 5.0,
-        handle_unknown: str = 'value',
-        handle_missing: str = 'value',
+        handle_unknown: str = "value",
+        handle_missing: str = "value",
         drop_invariant: bool = False,
         return_df: bool = True,
         target: Optional[str] = None,
@@ -179,9 +179,7 @@ class WOEEncoder(BaseEncoder):
         woe_map, iv = self._fit_categorical(values, y, total_good, total_bad)
         return {"mapping_": woe_map, "iv_": iv}
 
-    def _fit_categorical(
-        self, x: pd.Series, y: pd.Series, total_good: int, total_bad: int
-    ) -> tuple:
+    def _fit_categorical(self, x: pd.Series, y: pd.Series, total_good: int, total_bad: int) -> tuple:
         """拟合类别特征的WOE。
 
         :param x: 特征列
@@ -204,21 +202,19 @@ class WOEEncoder(BaseEncoder):
             bad_dist = (bad_count + self.regularization) / (total_bad + 2 * self.regularization)
             iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
 
-        if self.handle_missing == 'value':
+        if self.handle_missing == "value":
             woe_map[MISSING] = 0.0
-        elif self.handle_missing == 'return_nan':
+        elif self.handle_missing == "return_nan":
             woe_map[MISSING] = np.nan
 
-        if self.handle_unknown == 'value':
+        if self.handle_unknown == "value":
             woe_map[UNKNOWN] = 0.0
-        elif self.handle_unknown == 'return_nan':
+        elif self.handle_unknown == "return_nan":
             woe_map[UNKNOWN] = np.nan
 
         return woe_map, iv
 
-    def _compute_woe(
-        self, good_count: int, bad_count: int, total_good: int, total_bad: int
-    ) -> float:
+    def _compute_woe(self, good_count: int, bad_count: int, total_good: int, total_bad: int) -> float:
         """计算WOE值（带正则化和截断）。
 
         WOE = ln(坏样本占比 / 好样本占比)
@@ -246,9 +242,7 @@ class WOEEncoder(BaseEncoder):
 
         return woe
 
-    def _compute_iv_categorical(
-        self, x: pd.Series, y: pd.Series, total_good: int, total_bad: int
-    ) -> float:
+    def _compute_iv_categorical(self, x: pd.Series, y: pd.Series, total_good: int, total_bad: int) -> float:
         """计算类别特征的IV。
 
         :param x: 特征列
@@ -278,8 +272,8 @@ class WOEEncoder(BaseEncoder):
         :return: 编码后的数据
         """
         output = self._transform_columns(X, y)
-        output.attrs['hscredit_encoding'] = 'woe'
-        output.attrs['hscredit_source'] = 'WOEEncoder'
+        output.attrs["hscredit_encoding"] = "woe"
+        output.attrs["hscredit_source"] = "WOEEncoder"
         return output
 
     def _transform_column(self, column, values, y=None, context=None):
@@ -301,10 +295,12 @@ class WOEEncoder(BaseEncoder):
                 # 仅在显式旧格式且普通字符串回退仍未命中时，兼容这类整数浮点值。
                 remaining = mapped.isna() & values.notna()
                 if remaining.any():
+
                     def legacy_key(value):
                         if isinstance(value, (float, np.floating)) and np.isfinite(value) and float(value).is_integer():
                             return str(int(value))
                         return str(value)
+
                     mapped.loc[remaining] = values.loc[remaining].map(legacy_key).map(str_map)
 
         return self._apply_missing_unknown(column, values, mapped, 0.0)
@@ -326,7 +322,7 @@ class WOEEncoder(BaseEncoder):
         :raises NotFittedError: 当编码器尚未拟合时抛出
         :raises FeatureNotFoundError: 当指定的 col 不在编码器中时抛出
         """
-        if not hasattr(self, 'mapping_') or not self.mapping_:
+        if not hasattr(self, "mapping_") or not self.mapping_:
             raise NotFittedError("WOEEncoder 尚未拟合，请先调用 fit 方法")
         if col is None:
             return self.mapping_
@@ -359,23 +355,25 @@ class WOEEncoder(BaseEncoder):
         summary = []
         for col, iv in self.iv_.items():
             if iv < 0.02:
-                power = '无预测力'
+                power = "无预测力"
             elif iv < 0.1:
-                power = '弱预测力'
+                power = "弱预测力"
             elif iv < 0.3:
-                power = '中等预测力'
+                power = "中等预测力"
             elif iv < 0.5:
-                power = '强预测力'
+                power = "强预测力"
             else:
-                power = '超强预测力(需检查)'
+                power = "超强预测力(需检查)"
 
-            summary.append({
-                '特征': col,
-                'IV值': round(iv, 4),
-                '预测能力': power,
-            })
+            summary.append(
+                {
+                    "特征": col,
+                    "IV值": round(iv, 4),
+                    "预测能力": power,
+                }
+            )
 
-        return pd.DataFrame(summary).sort_values('IV值', ascending=False)
+        return pd.DataFrame(summary).sort_values("IV值", ascending=False)
 
     def export(self, to_json: Optional[str] = None) -> Dict[str, Dict]:
         """导出WOE编码规则，兼容 toad/scorecardpipeline 格式.
@@ -410,10 +408,10 @@ class WOEEncoder(BaseEncoder):
         >>> transformer.load(rules)
         """
         import json
-        
-        if not hasattr(self, 'mapping_') or not self.mapping_:
+
+        if not hasattr(self, "mapping_") or not self.mapping_:
             raise ValueError("WOEEncoder 尚未拟合，请先调用 fit 方法")
-        
+
         # 构建与 toad 兼容的格式: {feature: {value: woe_value}}
         rules = {}
         for col, woe_map in self.mapping_.items():
@@ -424,29 +422,30 @@ class WOEEncoder(BaseEncoder):
                 if value == UNKNOWN:
                     continue  # toad 不保存 __UNKNOWN__
                 if value == MISSING or pd.isna(value):
-                    if 'nan' in col_rules:
+                    if "nan" in col_rules:
                         raise ValueError("传统 WOE JSON 缺失键与业务类别冲突，请使用 export_mapping()")
-                    col_rules['nan'] = woe  # toad 使用字符串 'nan'
+                    col_rules["nan"] = woe  # toad 使用字符串 'nan'
                 else:
                     key = str(value)
                     if key in col_rules:
                         raise ValueError("传统 WOE JSON 字符串键存在类型碰撞，请使用 export_mapping() 的类型化协议")
                     col_rules[key] = float(woe)
             rules[col] = col_rules
-        
+
         if to_json is not None:
             # 确保目录存在
             import os
+
             dir_path = os.path.dirname(to_json)
             if dir_path and not os.path.exists(dir_path):
                 os.makedirs(dir_path, exist_ok=True)
-            
-            with open(to_json, 'w', encoding='utf-8') as f:
+
+            with open(to_json, "w", encoding="utf-8") as f:
                 json.dump(rules, f, ensure_ascii=False, indent=2)
-        
+
         return rules
 
-    def load(self, from_json: Union[str, Dict], update: bool = False) -> 'WOEEncoder':
+    def load(self, from_json: Union[str, Dict], update: bool = False) -> "WOEEncoder":
         """加载WOE编码规则，兼容 toad/scorecardpipeline 格式.
 
         从字典或 JSON 文件加载WOE编码规则，支持 toad 和 scorecardpipeline 导出的格式。
@@ -485,16 +484,17 @@ class WOEEncoder(BaseEncoder):
         >>> encoder.load(rules)
         """
         import json
+
         self._legacy_string_keys_ = True
-        
+
         if isinstance(from_json, str):
             # 从文件加载
-            with open(from_json, 'r', encoding='utf-8') as f:
+            with open(from_json, "r", encoding="utf-8") as f:
                 rules = json.load(f)
         else:
             # 直接使用字典
             rules = from_json
-        
+
         if not update:
             self.mapping_ = {}
             self.cols_ = []
@@ -514,7 +514,7 @@ class WOEEncoder(BaseEncoder):
 
             for value, woe in col_rules.items():
                 # toad/scorecardpipeline 用字符串 'nan' 表示缺失键
-                if value == 'nan':
+                if value == "nan":
                     self.mapping_[col][MISSING] = woe
                 else:
                     # 保持原始（字符串）键，不做 int/float 强转：
@@ -524,9 +524,9 @@ class WOEEncoder(BaseEncoder):
                     self.mapping_[col][value] = woe
 
             # 添加未知值处理
-            if self.handle_unknown == 'value':
+            if self.handle_unknown == "value":
                 self.mapping_[col][UNKNOWN] = 0.0
-            elif self.handle_unknown == 'return_nan':
+            elif self.handle_unknown == "return_nan":
                 self.mapping_[col][UNKNOWN] = np.nan
 
         self._is_fitted = True

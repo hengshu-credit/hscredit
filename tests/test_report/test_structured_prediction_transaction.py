@@ -38,8 +38,13 @@ def test_structured_table_predictions_do_not_parse_display_labels():
 
 
 def test_category_specs_preserve_comma_and_quote_values():
-    table = pd.DataFrame({"分箱": [0, 1], "分箱标签": ["展示箱甲", "展示箱乙"], "坏样本率": [0.1, 0.9], "样本总数": [10, 10]})
-    specs = {0: BinSpec("x", 0, kind="categories", values=("a,b",)), 1: BinSpec("x", 1, kind="categories", values=("a'b",))}
+    table = pd.DataFrame(
+        {"分箱": [0, 1], "分箱标签": ["展示箱甲", "展示箱乙"], "坏样本率": [0.1, 0.9], "样本总数": [10, 10]}
+    )
+    specs = {
+        0: BinSpec("x", 0, kind="categories", values=("a,b",)),
+        1: BinSpec("x", 1, kind="categories", values=("a'b",)),
+    }
     predictor = OverduePredictor("x", bin_specs=specs, table_mode="strict").fit(table)
     np.testing.assert_allclose(predictor.predict(pd.DataFrame({"x": ["a,b", "a'b", "a"]})), [0.1, 0.9, 0.5])
 
@@ -55,7 +60,9 @@ def test_legacy_table_is_explicitly_marked_and_strict_rejects_it():
 
 def test_multifeature_stats_return_fitted_binners_without_changing_default():
     data = pd.DataFrame({"x": [0, 1, 2, 3], "z": [2, 4, 1, 3], "y": [0, 0, 1, 1]})
-    table, rules, binners = feature_bin_stats(data, ["x", "z"], target="y", method="quantile", return_rules=True, return_binner=True, n_jobs=1)
+    table, rules, binners = feature_bin_stats(
+        data, ["x", "z"], target="y", method="quantile", return_rules=True, return_binner=True, n_jobs=1
+    )
     assert set(binners) == {"x", "z"} == set(rules)
     assert "分箱" in table
     default = feature_bin_stats(data, "x", target="y", method="quantile", n_jobs=1)
@@ -98,6 +105,7 @@ def test_transaction_failure_after_image_stage_preserves_previous_bundle(tmp_pat
         asset_dir.mkdir()
         (asset_dir / "partial.png").write_bytes(b"partial-image")
         raise RuntimeError("受控图片失败")
+
     monkeypatch.setattr(report, "_to_excel_impl", failing_export)
     with pytest.raises(ReportGenerationError, match="图片失败") as error:
         report.to_excel(str(destination), transactional=True)
@@ -114,9 +122,13 @@ def test_transaction_commit_failure_never_exposes_staging_as_published(tmp_path,
     first = report.to_excel(str(destination), with_plots=False, transactional=True, return_result=True)
     manifest_path = Path(first.metadata["完成清单"])
     before = manifest_path.read_bytes()
+
     def fail_commit(self):
         raise RuntimeError("受控整批提交失败")
+
     monkeypatch.setattr(ArtifactTransaction, "_commit", fail_commit)
-    result = report.to_excel(str(destination), with_plots=False, transactional=True, mode="best_effort", return_result=True)
+    result = report.to_excel(
+        str(destination), with_plots=False, transactional=True, mode="best_effort", return_result=True
+    )
     assert result.artifacts == [] and not result.complete
     assert manifest_path.read_bytes() == before

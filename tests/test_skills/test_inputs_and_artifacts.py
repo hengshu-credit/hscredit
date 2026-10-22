@@ -27,9 +27,7 @@ def test_input_resolver_reads_csv_options(tmp_path):
     path = tmp_path / "sample.csv"
     path.write_text("年龄;target\n22;0\n35;1\n", encoding="utf-8-sig")
 
-    result = InputResolver().resolve(
-        {"kind": "file", "path": str(path), "encoding": "utf-8-sig", "separator": ";"}
-    )
+    result = InputResolver().resolve({"kind": "file", "path": str(path), "encoding": "utf-8-sig", "separator": ";"})
 
     assert result.to_dict("records") == [{"年龄": 22, "target": 0}, {"年龄": 35, "target": 1}]
 
@@ -59,9 +57,7 @@ def test_failed_artifact_transaction_does_not_publish_a_partial_file(tmp_path):
     final_path = tmp_path / "report.xlsx"
 
     with pytest.raises(RuntimeError):
-        with ArtifactTransaction(
-            {"directory": str(tmp_path), "name": "report", "overwrite": False}
-        ) as transaction:
+        with ArtifactTransaction({"directory": str(tmp_path), "name": "report", "overwrite": False}) as transaction:
             transaction.stage_path("report.xlsx").write_bytes(b"partial")
             raise RuntimeError("render failed")
 
@@ -75,9 +71,7 @@ def test_artifact_transaction_refuses_to_overwrite_existing_file(tmp_path):
     final_path.write_bytes(b"original")
 
     with pytest.raises(SkillExecutionError) as exc_info:
-        with ArtifactTransaction(
-            {"directory": str(tmp_path), "name": "report", "overwrite": False}
-        ) as transaction:
+        with ArtifactTransaction({"directory": str(tmp_path), "name": "report", "overwrite": False}) as transaction:
             staged = transaction.stage_path("report.xlsx")
             staged.write_bytes(b"replacement")
             transaction.publish(staged, "report.xlsx")

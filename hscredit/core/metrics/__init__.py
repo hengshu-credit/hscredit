@@ -28,37 +28,61 @@
 
 # 分类指标
 from .classification import (
-    ks, auc, gini,
-    accuracy, precision, recall, f1,
-    ks_bucket, roc_curve,
-    confusion_matrix, classification_report,
+    ks,
+    auc,
+    gini,
+    accuracy,
+    precision,
+    recall,
+    f1,
+    ks_bucket,
+    roc_curve,
+    confusion_matrix,
+    classification_report,
     ks_2samps,
 )
 
 # 特征评估
 from .feature import (
-    iv, iv_table,
-    chi2_test, cramers_v,
+    iv,
+    iv_table,
+    chi2_test,
+    cramers_v,
     feature_importance,
 )
 
 # 稳定性
 from .stability import (
-    psi, psi_table, psi_rating,
-    csi, csi_table,
+    psi,
+    psi_table,
+    psi_rating,
+    csi,
+    csi_table,
     batch_psi,
 )
 
 # 金融风控
 from .finance import (
-    lift, lift_at, lift_table, lift_curve, lift_monotonicity_check, rule_lift,
-    badrate, badrate_by_group, badrate_trend, badrate_by_score_bin,
-    score_stats, score_stability,
+    lift,
+    lift_at,
+    lift_table,
+    lift_curve,
+    lift_monotonicity_check,
+    rule_lift,
+    badrate,
+    badrate_by_group,
+    badrate_trend,
+    badrate_by_score_bin,
+    score_stats,
+    score_stability,
 )
 
 # 回归指标
 from .regression import (
-    mse, mae, rmse, r2,
+    mse,
+    mae,
+    rmse,
+    r2,
 )
 
 # 分箱统计（供其他模块直接使用）
@@ -68,31 +92,55 @@ from .aggregation import BinStatsAccumulator, MetricSpec
 
 __all__ = [
     # 分类指标
-    'ks', 'auc', 'gini',
-    'accuracy', 'precision', 'recall', 'f1',
-    'ks_bucket', 'roc_curve',
-    'confusion_matrix', 'classification_report',
-    'ks_2samps',
-    
+    "ks",
+    "auc",
+    "gini",
+    "accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "ks_bucket",
+    "roc_curve",
+    "confusion_matrix",
+    "classification_report",
+    "ks_2samps",
     # 特征评估
-    'iv', 'iv_table',
-    'chi2_test', 'cramers_v',
-    'feature_importance',
-
+    "iv",
+    "iv_table",
+    "chi2_test",
+    "cramers_v",
+    "feature_importance",
     # 稳定性
-    'psi', 'psi_table', 'psi_rating',
-    'csi', 'csi_table',
-    'batch_psi',
-    
+    "psi",
+    "psi_table",
+    "psi_rating",
+    "csi",
+    "csi_table",
+    "batch_psi",
     # 金融风控
-    'lift', 'lift_at', 'lift_table', 'lift_curve', 'lift_monotonicity_check', 'rule_lift',
-    'badrate', 'badrate_by_group', 'badrate_trend', 'badrate_by_score_bin',
-    'score_stats', 'score_stability',
-    
+    "lift",
+    "lift_at",
+    "lift_table",
+    "lift_curve",
+    "lift_monotonicity_check",
+    "rule_lift",
+    "badrate",
+    "badrate_by_group",
+    "badrate_trend",
+    "badrate_by_score_bin",
+    "score_stats",
+    "score_stability",
     # 回归指标
-    'mse', 'mae', 'rmse', 'r2',
-    
+    "mse",
+    "mae",
+    "rmse",
+    "r2",
     # 分箱统计
-    'compute_bin_stats', 'add_margins', 'quadratic_curve_coefficient', 'composite_binning_quality',
-    'MonitoringBaseline', 'BinStatsAccumulator', 'MetricSpec',
+    "compute_bin_stats",
+    "add_margins",
+    "quadratic_curve_coefficient",
+    "composite_binning_quality",
+    "MonitoringBaseline",
+    "BinStatsAccumulator",
+    "MetricSpec",
 ]

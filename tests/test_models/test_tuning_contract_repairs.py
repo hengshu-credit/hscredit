@@ -270,9 +270,7 @@ def test_analysis_apis_translate_latent_parameter_names(monkeypatch):
         tuning_module,
         "optuna",
         SimpleNamespace(
-            importance=SimpleNamespace(
-                get_param_importances=lambda study, **kwargs: {latent_name: 1.0}
-            ),
+            importance=SimpleNamespace(get_param_importances=lambda study, **kwargs: {latent_name: 1.0}),
             visualization=SimpleNamespace(plot_contour=fake_plot_contour),
         ),
     )

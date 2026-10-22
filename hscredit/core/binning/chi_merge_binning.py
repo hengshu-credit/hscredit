@@ -279,7 +279,9 @@ class ChiMergeBinning(BaseBinning):
             # 检查停止条件
             if min_chi2_val > self.min_chi2_threshold:
                 if self.verbose:
-                    logger.info(f"  迭代 {iteration}: 最小卡方值 {min_chi2_val:.4f} > 阈值 {self.min_chi2_threshold:.4f}，停止合并")
+                    logger.info(
+                        f"  迭代 {iteration}: 最小卡方值 {min_chi2_val:.4f} > 阈值 {self.min_chi2_threshold:.4f}，停止合并"
+                    )
                 break
 
             if len(splits) + 1 <= self.max_n_bins:
@@ -294,7 +296,9 @@ class ChiMergeBinning(BaseBinning):
 
             # 合并卡方值最小的相邻箱
             if self.verbose:
-                logger.info(f"  迭代 {iteration}: 合并箱 {min_chi2_idx} 和 {min_chi2_idx + 1}，卡方值={min_chi2_val:.4f}")
+                logger.info(
+                    f"  迭代 {iteration}: 合并箱 {min_chi2_idx} 和 {min_chi2_idx + 1}，卡方值={min_chi2_val:.4f}"
+                )
 
             # 更新分箱统计：合并相邻两个箱
             bin_stats[min_chi2_idx] += bin_stats[min_chi2_idx + 1]

@@ -414,11 +414,12 @@ class Rule(ParallelizableMixin):
         if not isinstance(data, DataFrame):
             raise InputTypeError("Rule 只能对 DataFrame 执行预测")
         for start in range(0, len(data), batch_size):
-            yield self.predict(data.iloc[start:start + batch_size])
+            yield self.predict(data.iloc[start : start + batch_size])
 
     def aggregate(self, batches, target=None):
         """只保留固定规则的可合并命中计数，不保存逐行结果。"""
         from .accumulator import RuleAccumulator
+
         accumulator = RuleAccumulator(self, target=target)
         for batch in batches:
             accumulator.update(batch)
@@ -469,7 +470,22 @@ class Rule(ParallelizableMixin):
         return X[prediction]
 
     @analysis_inputs("datasets", roles=("amount",))
-    def report(self, datasets: pd.DataFrame, target: Optional[TargetInput] = None, overdue: Optional[Union[str, List[str]]] = None, dpds: Optional[Union[int, float, List[Union[int, float]]]] = None, del_grey: bool = False, desc: str = "", filter_cols: Optional[List[str]] = None, prior_rules: Optional["Rule"] = None, amount: Optional[str] = None, margins: bool = False, *, overdue_operator: str = ">", **kwargs) -> pd.DataFrame:
+    def report(
+        self,
+        datasets: pd.DataFrame,
+        target: Optional[TargetInput] = None,
+        overdue: Optional[Union[str, List[str]]] = None,
+        dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
+        del_grey: bool = False,
+        desc: str = "",
+        filter_cols: Optional[List[str]] = None,
+        prior_rules: Optional["Rule"] = None,
+        amount: Optional[str] = None,
+        margins: bool = False,
+        *,
+        overdue_operator: str = ">",
+        **kwargs,
+    ) -> pd.DataFrame:
         """规则效果报告表格输出。
 
         将规则命中与否作为二分类，对数据集计算统计指标，
@@ -519,10 +535,27 @@ class Rule(ParallelizableMixin):
         """
         validate_overdue_operator(overdue_operator)
         reject_legacy_target_keywords(kwargs)
-        datasets, targets = bind_targets(datasets, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
-        del_grey = targets.needs_filtering(datasets) or (del_grey and (targets.mode == "target" or targets.operator in (">", ">=")))
+        datasets, targets = bind_targets(
+            datasets, target, overdue, dpds, del_grey, overdue_operator, default_target="target"
+        )
+        del_grey = targets.needs_filtering(datasets) or (
+            del_grey and (targets.mode == "target" or targets.operator in (">", ">="))
+        )
         detail_group_name = "分箱详情"
-        return_cols = ["指标名称", "指标含义", "分箱", "样本总数", "样本占比", "好样本数", "好样本占比", "坏样本数", "坏样本占比", "坏样本率", "LIFT值", "坏账改善"]
+        return_cols = [
+            "指标名称",
+            "指标含义",
+            "分箱",
+            "样本总数",
+            "样本占比",
+            "好样本数",
+            "好样本占比",
+            "坏样本数",
+            "坏样本占比",
+            "坏样本率",
+            "LIFT值",
+            "坏账改善",
+        ]
         if not desc:
             if "指标含义" in return_cols:
                 return_cols.remove("指标含义")
@@ -537,19 +570,37 @@ class Rule(ParallelizableMixin):
             列名与 feature_bin_stats 保持一致，便于统一处理。
             """
             if prior_rules:
-                prior_tables = prior_rules.report(data, target=target, desc=desc, prior_rules=None, margins=margins, amount=amount)
+                prior_tables = prior_rules.report(
+                    data, target=target, desc=desc, prior_rules=None, margins=margins, amount=amount
+                )
                 prior_tables["规则分类"] = "先验规则"
                 temp = data[~prior_rules.predict(data)]
                 if amount is not None and amount in temp.columns:
-                    rule_result = pd.DataFrame({rule_expr: np.where(self.predict(temp), "命中", "未命中"), amount: temp[amount].values, "target": temp[target].tolist()})
+                    rule_result = pd.DataFrame(
+                        {
+                            rule_expr: np.where(self.predict(temp), "命中", "未命中"),
+                            amount: temp[amount].values,
+                            "target": temp[target].tolist(),
+                        }
+                    )
                 else:
-                    rule_result = pd.DataFrame({rule_expr: np.where(self.predict(temp), "命中", "未命中"), "target": temp[target].tolist()})
+                    rule_result = pd.DataFrame(
+                        {rule_expr: np.where(self.predict(temp), "命中", "未命中"), "target": temp[target].tolist()}
+                    )
             else:
                 prior_tables = pd.DataFrame(columns=return_cols)
                 if amount is not None and amount in data.columns:
-                    rule_result = pd.DataFrame({rule_expr: np.where(self.predict(data), "命中", "未命中"), amount: data[amount].values, "target": data[target].tolist()})
+                    rule_result = pd.DataFrame(
+                        {
+                            rule_expr: np.where(self.predict(data), "命中", "未命中"),
+                            amount: data[amount].values,
+                            "target": data[target].tolist(),
+                        }
+                    )
                 else:
-                    rule_result = pd.DataFrame({rule_expr: np.where(self.predict(data), "命中", "未命中"), "target": data[target].tolist()})
+                    rule_result = pd.DataFrame(
+                        {rule_expr: np.where(self.predict(data), "命中", "未命中"), "target": data[target].tolist()}
+                    )
 
             # 判断是否使用金额口径
             has_amount = amount is not None and amount in rule_result.columns
@@ -578,7 +629,9 @@ class Rule(ParallelizableMixin):
                     other_bad = total_bad_amount - bin_bad_amount
                     other_total = total_amount - bin_amount
                     remaining_bad_rate = other_bad / other_total if other_total > 0 else 0
-                    bad_decrease = (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
+                    bad_decrease = (
+                        (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
+                    )
 
                     row = {
                         "指标名称": rule_expr,
@@ -636,7 +689,9 @@ class Rule(ParallelizableMixin):
                     other_bad = total_bad - bin_bad
                     other_total = total - bin_total
                     remaining_bad_rate = other_bad / other_total if other_total > 0 else 0
-                    bad_decrease = (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
+                    bad_decrease = (
+                        (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
+                    )
 
                     row = {
                         "指标名称": rule_expr,
@@ -689,10 +744,22 @@ class Rule(ParallelizableMixin):
 
             metrics_data = {
                 "分箱": ["命中", "未命中"],
-                "准确率": [accuracy_score(y_true, y_pred) if len(y_true) > 0 else 0, accuracy_score(y_true, 1 - y_pred) if len(y_true) > 0 else 0],
-                "精确率": [precision_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0, precision_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0],
-                "召回率": [recall_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0, recall_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0],
-                "F1分数": [f1_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0, f1_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0],
+                "准确率": [
+                    accuracy_score(y_true, y_pred) if len(y_true) > 0 else 0,
+                    accuracy_score(y_true, 1 - y_pred) if len(y_true) > 0 else 0,
+                ],
+                "精确率": [
+                    precision_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
+                    precision_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0,
+                ],
+                "召回率": [
+                    recall_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
+                    recall_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0,
+                ],
+                "F1分数": [
+                    f1_score(y_true, y_pred, zero_division=0) if len(y_true) > 0 else 0,
+                    f1_score(y_true, 1 - y_pred, zero_division=0) if len(y_true) > 0 else 0,
+                ],
             }
             metrics = pd.DataFrame(metrics_data)
 
@@ -735,22 +802,34 @@ class Rule(ParallelizableMixin):
                 for definition in targets.labels
             )
             tables = self._parallel_execute(
-                _rule_report_target_worker, tasks, task_labels=labels, default_backend="threading",
+                _rule_report_target_worker,
+                tasks,
+                task_labels=labels,
+                default_backend="threading",
                 workload=ParallelWorkload(
-                    task_count=len(targets), rows=len(datasets), columns=len(targets),
-                    data_bytes=int(datasets.memory_usage(deep=True).sum()), cost_per_item=6.0,
-                    capability="thread_safe", releases_gil=True, operation="规则多标签报告",
+                    task_count=len(targets),
+                    rows=len(datasets),
+                    columns=len(targets),
+                    data_bytes=int(datasets.memory_usage(deep=True).sum()),
+                    cost_per_item=6.0,
+                    capability="thread_safe",
+                    releases_gil=True,
+                    operation="规则多标签报告",
                 ),
             )
             merge_keys = pd.concat([item[merge_columns] for item in tables], ignore_index=True).drop_duplicates()
             merge_keys.columns = pd.MultiIndex.from_tuples([(detail_group_name, column) for column in merge_columns])
             table = pd.DataFrame()
             for position, (label, current) in enumerate(zip(labels, tables)):
-                current.columns = pd.MultiIndex.from_tuples([
-                    (detail_group_name if column in merge_columns else label, column) for column in current.columns
-                ])
-                table = current if position == 0 else table.merge(
-                    current, on=[(detail_group_name, column) for column in merge_columns], how="outer", sort=False
+                current.columns = pd.MultiIndex.from_tuples(
+                    [(detail_group_name if column in merge_columns else label, column) for column in current.columns]
+                )
+                table = (
+                    current
+                    if position == 0
+                    else table.merge(
+                        current, on=[(detail_group_name, column) for column in merge_columns], how="outer", sort=False
+                    )
                 )
             table = merge_keys.merge(table, on=list(merge_keys.columns), how="left", sort=False)
         else:
@@ -776,7 +855,9 @@ class Rule(ParallelizableMixin):
                     table = table[cols_to_keep]
             else:
                 # 单层级列结构
-                cols_to_keep = [c for c in table.columns if c in filter_cols or c in ["规则分类", "指标名称", "指标含义", "分箱"]]
+                cols_to_keep = [
+                    c for c in table.columns if c in filter_cols or c in ["规则分类", "指标名称", "指标含义", "分箱"]
+                ]
                 if cols_to_keep:
                     table = table[cols_to_keep]
 

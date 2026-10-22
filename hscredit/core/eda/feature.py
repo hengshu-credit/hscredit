@@ -11,13 +11,7 @@ import pandas as pd
 from typing import List, Dict, Optional, Union, Literal, Any
 
 from ...utils.parallel import parallel_execute
-from .utils import (
-    _eda_workload,
-    infer_feature_types,
-    validate_dataframe,
-    calculate_gini,
-    remove_outliers_iqr
-)
+from .utils import _eda_workload, infer_feature_types, validate_dataframe, calculate_gini, remove_outliers_iqr
 
 
 def _outlier_feature_worker(task):
@@ -117,11 +111,13 @@ def _feature_stability_worker(task):
     }
 
 
-def feature_type_inference(df: pd.DataFrame,
-                          categorical_threshold: int = 20,
-                          unique_ratio_threshold: float = 0.05,
-                          numeric_as_categorical: Optional[List[str]] = None,
-                          force_numeric: Optional[List[str]] = None) -> pd.DataFrame:
+def feature_type_inference(
+    df: pd.DataFrame,
+    categorical_threshold: int = 20,
+    unique_ratio_threshold: float = 0.05,
+    numeric_as_categorical: Optional[List[str]] = None,
+    force_numeric: Optional[List[str]] = None,
+) -> pd.DataFrame:
     """自动推断特征类型.
 
     默认严格按照实际数据类型判断：
@@ -148,170 +144,174 @@ def feature_type_inference(df: pd.DataFrame,
     """
     validate_dataframe(df)
 
-    feature_types = infer_feature_types(df, categorical_threshold, unique_ratio_threshold,
-                                       numeric_as_categorical, force_numeric)
-    
+    feature_types = infer_feature_types(
+        df, categorical_threshold, unique_ratio_threshold, numeric_as_categorical, force_numeric
+    )
+
     results = []
     for col, ftype in feature_types.items():
         n_unique = df[col].nunique(dropna=True)
-        
+
         # 建议处理方式
-        if ftype == 'constant':
-            suggestion = '考虑删除'
-        elif ftype == 'id':
-            suggestion = '不参与建模'
-        elif ftype == 'datetime':
-            suggestion = '提取时间特征'
-        elif ftype == 'categorical':
-            suggestion = '编码处理'
-        elif ftype == 'text':
-            suggestion = '文本特征工程'
+        if ftype == "constant":
+            suggestion = "考虑删除"
+        elif ftype == "id":
+            suggestion = "不参与建模"
+        elif ftype == "datetime":
+            suggestion = "提取时间特征"
+        elif ftype == "categorical":
+            suggestion = "编码处理"
+        elif ftype == "text":
+            suggestion = "文本特征工程"
         else:
-            suggestion = '标准化/归一化'
-        
-        results.append({
-            '特征名': col,
-            '特征类型': ftype,
-            '数据类型': str(df[col].dtype),
-            '唯一值数': n_unique,
-            '建议处理方式': suggestion,
-        })
-    
+            suggestion = "标准化/归一化"
+
+        results.append(
+            {
+                "特征名": col,
+                "特征类型": ftype,
+                "数据类型": str(df[col].dtype),
+                "唯一值数": n_unique,
+                "建议处理方式": suggestion,
+            }
+        )
+
     return pd.DataFrame(results)
 
 
-def numeric_distribution(df: pd.DataFrame,
-                        feature: str,
-                        n_bins: int = 20) -> pd.DataFrame:
+def numeric_distribution(df: pd.DataFrame, feature: str, n_bins: int = 20) -> pd.DataFrame:
     """数值特征分布统计.
-    
+
     :param df: 输入数据
     :param feature: 特征名
     :param n_bins: 分箱数
     :return: 分布统计DataFrame
-    
+
     **参考样例**
 
     >>> dist = numeric_distribution(df, 'age', n_bins=10)
     >>> print(dist[['分箱区间', '频数', '频率(%)', '累计频率(%)']])
     """
     validate_dataframe(df, required_cols=[feature])
-    
+
     series = df[feature].dropna()
-    
+
     if len(series) == 0:
         return pd.DataFrame()
-    
+
     # 分箱统计
     counts, bin_edges = np.histogram(series, bins=n_bins)
     total = counts.sum()
-    
+
     results = []
     cumsum = 0
-    
+
     for i in range(len(counts)):
         freq = counts[i]
         ratio = freq / total * 100 if total > 0 else 0
         cumsum += ratio
-        
-        results.append({
-            '分箱编号': i + 1,
-            '分箱区间': f'[{bin_edges[i]:.2f}, {bin_edges[i+1]:.2f})',
-            '频数': int(freq),
-            '频率(%)': round(ratio, 2),
-            '累计频率(%)': round(cumsum, 2),
-        })
-    
+
+        results.append(
+            {
+                "分箱编号": i + 1,
+                "分箱区间": f"[{bin_edges[i]:.2f}, {bin_edges[i+1]:.2f})",
+                "频数": int(freq),
+                "频率(%)": round(ratio, 2),
+                "累计频率(%)": round(cumsum, 2),
+            }
+        )
+
     return pd.DataFrame(results)
 
 
-def categorical_distribution(df: pd.DataFrame,
-                            feature: str,
-                            top_n: int = None) -> pd.DataFrame:
+def categorical_distribution(df: pd.DataFrame, feature: str, top_n: int = None) -> pd.DataFrame:
     """类别特征分布统计.
-    
+
     :param df: 输入数据
     :param feature: 特征名
     :param top_n: 仅显示前N个类别
     :return: 分布统计DataFrame
-    
+
     **参考样例**
 
     >>> dist = categorical_distribution(df, 'education', top_n=5)
     >>> print(dist[['类别值', '频数', '频率(%)']])
     """
     validate_dataframe(df, required_cols=[feature])
-    
+
     series = df[feature]
     total = len(series)
-    
+
     value_counts = series.value_counts()
-    
+
     if top_n:
         value_counts = value_counts.head(top_n)
-    
+
     results = []
     cumsum = 0
-    
+
     for value, count in value_counts.items():
         ratio = count / total * 100
         cumsum += ratio
-        
-        results.append({
-            '类别值': value,
-            '频数': int(count),
-            '频率(%)': round(ratio, 2),
-            '累计频率(%)': round(cumsum, 2),
-        })
-    
+
+        results.append(
+            {
+                "类别值": value,
+                "频数": int(count),
+                "频率(%)": round(ratio, 2),
+                "累计频率(%)": round(cumsum, 2),
+            }
+        )
+
     result_df = pd.DataFrame(results)
-    
+
     # 添加其他类别统计
     if top_n and len(value_counts) < series.nunique():
         other_count = total - value_counts.sum()
         other_ratio = other_count / total * 100
-        
-        other_row = pd.DataFrame({
-            '类别值': ['其他'],
-            '频数': [other_count],
-            '频率(%)': [round(other_ratio, 2)],
-            '累计频率(%)': [100.0],
-        })
+
+        other_row = pd.DataFrame(
+            {
+                "类别值": ["其他"],
+                "频数": [other_count],
+                "频率(%)": [round(other_ratio, 2)],
+                "累计频率(%)": [100.0],
+            }
+        )
         result_df = pd.concat([result_df, other_row], ignore_index=True)
-    
+
     return result_df
 
 
-@analysis_inputs('df', roles=())
-def outlier_detection(df: pd.DataFrame,
-                     features: List[str] = None,
-                     method: Literal['iqr', 'zscore', 'mad'] = 'iqr',
-                     threshold: float = 1.5,
-                     n_jobs=-1,
-                     parallel_backend=None,
-                     parallel_config=None) -> pd.DataFrame:
+@analysis_inputs("df", roles=())
+def outlier_detection(
+    df: pd.DataFrame,
+    features: List[str] = None,
+    method: Literal["iqr", "zscore", "mad"] = "iqr",
+    threshold: float = 1.5,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
+) -> pd.DataFrame:
     """异常值检测.
-    
+
     :param df: 输入数据
     :param features: 指定检测的特征，None则检测全部数值型
     :param method: 检测方法，'iqr'/'zscore'/'mad'
     :param threshold: 阈值
     :return: 异常值统计DataFrame
-    
+
     **参考样例**
 
     >>> outliers = outlier_detection(df, method='iqr')
     >>> print(outliers[['特征名', '异常值数', '异常值率(%)', '正常范围']])
     """
     validate_dataframe(df)
-    
+
     if features is None:
         features = df.select_dtypes(include=[np.number]).columns.tolist()
-    
-    valid_features = [
-        col for col in features
-        if col in df.columns and pd.api.types.is_numeric_dtype(df[col])
-    ]
+
+    valid_features = [col for col in features if col in df.columns and pd.api.types.is_numeric_dtype(df[col])]
     tasks = ((df[col], col, method, threshold) for col in valid_features)
     analyzed = parallel_execute(
         _outlier_feature_worker,
@@ -321,38 +321,42 @@ def outlier_detection(df: pd.DataFrame,
         parallel_config=parallel_config,
         task_labels=valid_features,
         default_backend="threading",
-        workload=_eda_workload(df.loc[:, valid_features], len(valid_features), operation="异常值检测", cost_per_item=4.0),
+        workload=_eda_workload(
+            df.loc[:, valid_features], len(valid_features), operation="异常值检测", cost_per_item=4.0
+        ),
     )
     results = [row for row in analyzed if row is not None]
-    
-    return pd.DataFrame(results).sort_values('异常值率(%)', ascending=False)
+
+    return pd.DataFrame(results).sort_values("异常值率(%)", ascending=False)
 
 
-@analysis_inputs('df', roles=())
-def rare_category_detection(df: pd.DataFrame,
-                           features: List[str] = None,
-                           threshold: float = 0.01,
-                           n_jobs=-1,
-                           parallel_backend=None,
-                           parallel_config=None) -> pd.DataFrame:
+@analysis_inputs("df", roles=())
+def rare_category_detection(
+    df: pd.DataFrame,
+    features: List[str] = None,
+    threshold: float = 0.01,
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
+) -> pd.DataFrame:
     """稀有类别检测.
-    
+
     :param df: 输入数据
     :param features: 指定检测的特征，None则检测全部分类别
     :param threshold: 稀有阈值（频率低于此值视为稀有）
     :return: 稀有类别统计DataFrame
-    
+
     **参考样例**
 
     >>> rare = rare_category_detection(df, threshold=0.01)
     >>> print(rare[['特征名', '稀有类别', '频数', '频率(%)', '建议']])
     """
     validate_dataframe(df)
-    
+
     if features is None:
         feature_types = infer_feature_types(df)
-        features = [f for f, t in feature_types.items() if t == 'categorical']
-    
+        features = [f for f, t in feature_types.items() if t == "categorical"]
+
     total = len(df)
     valid_features = [col for col in features if col in df.columns]
     analyzed = parallel_execute(
@@ -363,42 +367,39 @@ def rare_category_detection(df: pd.DataFrame,
         parallel_config=parallel_config,
         task_labels=valid_features,
         default_backend="threading",
-        workload=_eda_workload(df.loc[:, valid_features], len(valid_features), operation="稀有类别检测", cost_per_item=2.0),
+        workload=_eda_workload(
+            df.loc[:, valid_features], len(valid_features), operation="稀有类别检测", cost_per_item=2.0
+        ),
     )
     results = [row for feature_rows in analyzed for row in feature_rows]
-    
+
     if not results:
-        return pd.DataFrame({'信息': ['未发现稀有类别']})
-    
-    return pd.DataFrame(results).sort_values('频率(%)')
+        return pd.DataFrame({"信息": ["未发现稀有类别"]})
+
+    return pd.DataFrame(results).sort_values("频率(%)")
 
 
-@analysis_inputs('df', roles=())
-def concentration_analysis(df: pd.DataFrame,
-                          features: List[str] = None,
-                          n_jobs=-1,
-                          parallel_backend=None,
-                          parallel_config=None) -> pd.DataFrame:
+@analysis_inputs("df", roles=())
+def concentration_analysis(
+    df: pd.DataFrame, features: List[str] = None, n_jobs=-1, parallel_backend=None, parallel_config=None
+) -> pd.DataFrame:
     """集中度分析(Gini系数).
-    
+
     :param df: 输入数据
     :param features: 指定分析的特征，None则分析全部数值型
     :return: 集中度分析DataFrame
-    
+
     **参考样例**
 
     >>> concentration = concentration_analysis(df)
     >>> print(concentration[['特征名', 'Gini系数', '集中度评级']])
     """
     validate_dataframe(df)
-    
+
     if features is None:
         features = df.select_dtypes(include=[np.number]).columns.tolist()
-    
-    valid_features = [
-        col for col in features
-        if col in df.columns and pd.api.types.is_numeric_dtype(df[col])
-    ]
+
+    valid_features = [col for col in features if col in df.columns and pd.api.types.is_numeric_dtype(df[col])]
     analyzed = parallel_execute(
         _concentration_feature_worker,
         ((df[col], col) for col in valid_features),
@@ -407,50 +408,51 @@ def concentration_analysis(df: pd.DataFrame,
         parallel_config=parallel_config,
         task_labels=valid_features,
         default_backend="threading",
-        workload=_eda_workload(df.loc[:, valid_features], len(valid_features), operation="集中度分析", cost_per_item=3.0),
+        workload=_eda_workload(
+            df.loc[:, valid_features], len(valid_features), operation="集中度分析", cost_per_item=3.0
+        ),
     )
     results = [row for row in analyzed if row is not None]
-    
+
     if not results:
-        return pd.DataFrame(columns=['特征名', 'Gini系数', '集中度评级'])
-    
-    return pd.DataFrame(results).sort_values('Gini系数', ascending=False)
+        return pd.DataFrame(columns=["特征名", "Gini系数", "集中度评级"])
+
+    return pd.DataFrame(results).sort_values("Gini系数", ascending=False)
 
 
-@analysis_inputs('df', roles=('date',))
-def feature_stability_over_time(df: pd.DataFrame,
-                               features: List[str],
-                               date: str,
-                               freq: str = 'M',
-                               n_jobs=-1,
-                               parallel_backend=None,
-                               parallel_config=None) -> pd.DataFrame:
+@analysis_inputs("df", roles=("date",))
+def feature_stability_over_time(
+    df: pd.DataFrame,
+    features: List[str],
+    date: str,
+    freq: str = "M",
+    n_jobs=-1,
+    parallel_backend=None,
+    parallel_config=None,
+) -> pd.DataFrame:
     """特征时序稳定性分析.
-    
+
     :param df: 输入数据
     :param features: 指定分析的特征列表
     :param date: 日期列名
     :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
     :return: 时序稳定性DataFrame
-    
+
     **参考样例**
 
     >>> stability = feature_stability_over_time(df, ['age', 'income'], 'apply_date')
     >>> print(stability[['特征名', '均值标准差', '变异系数', '稳定性评级']])
     """
     validate_dataframe(df, required_cols=[date])
-    
+
     df = df.copy()
     df[date] = pd.to_datetime(df[date])
-    
+
     # 创建时间周期
-    period_col = '时间周期'
+    period_col = "时间周期"
     df[period_col] = date_groups(df[date], freq)
-    
-    valid_features = [
-        col for col in features
-        if col in df.columns and pd.api.types.is_numeric_dtype(df[col])
-    ]
+
+    valid_features = [col for col in features if col in df.columns and pd.api.types.is_numeric_dtype(df[col])]
     analyzed = parallel_execute(
         _feature_stability_worker,
         ((df.loc[:, [period_col, col]], col, period_col) for col in valid_features),
@@ -467,5 +469,5 @@ def feature_stability_over_time(df: pd.DataFrame,
         ),
     )
     results = [row for row in analyzed if row is not None]
-    
-    return pd.DataFrame(results).sort_values('均值变异系数', ascending=False)
+
+    return pd.DataFrame(results).sort_values("均值变异系数", ascending=False)

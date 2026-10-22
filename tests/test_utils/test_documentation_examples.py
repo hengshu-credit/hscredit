@@ -10,7 +10,6 @@ import pandas as pd
 
 from hscredit.core.selectors import PSISelector
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -36,6 +35,7 @@ def test_executable_quickstart_notebook(tmp_path, monkeypatch):
     monkeypatch.setenv("HSCREDIT_EXAMPLE_OUTPUT", str(tmp_path))
     notebook = json.loads((PROJECT_ROOT / "examples" / "00_quickstart.ipynb").read_text(encoding="utf-8"))
     from IPython.display import display
+
     namespace = {"__name__": "__notebook_example__", "display": display}
     for cell in notebook["cells"]:
         if cell["cell_type"] == "code":
@@ -81,9 +81,7 @@ def test_active_docs_and_examples_use_new_model_subpackages():
 
 def test_model_interpretability_notebook_uses_new_explainability_api():
     """模型解释 notebook 必须使用新子包且不保留已删除的反事实参数。"""
-    notebook = json.loads(
-        (PROJECT_ROOT / "examples" / "27_model_interpretability.ipynb").read_text(encoding="utf-8")
-    )
+    notebook = json.loads((PROJECT_ROOT / "examples" / "27_model_interpretability.ipynb").read_text(encoding="utf-8"))
     sources = [cell.get("source", []) for cell in notebook["cells"]]
     source_texts = ["".join(source) if isinstance(source, list) else source for source in sources]
     all_source = "\n".join(source_texts)

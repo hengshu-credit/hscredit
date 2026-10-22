@@ -22,10 +22,10 @@ from typing import Any, Dict, List, Optional, Union
 from ...utils.parallel import parallel_execute
 from .utils import _eda_workload, validate_dataframe, psi_rating, iv_rating
 
-
 # ---------------------------------------------------------------------------
 # 内部辅助
 # ---------------------------------------------------------------------------
+
 
 def _quick_psi(base: np.ndarray, target: np.ndarray, max_n_bins: int = 10) -> float:
     """两个分布之间的快速 PSI 计算."""
@@ -227,14 +227,15 @@ def _cross_segment_metric_worker(task):
 # 1. population_profile
 # ---------------------------------------------------------------------------
 
-@analysis_inputs('df', roles=('date',))
+
+@analysis_inputs("df", roles=("date",))
 def population_profile(
     df: pd.DataFrame,
     features: List[str],
     segment_col: Optional[str] = None,
     date: Optional[str] = None,
     target: Optional[str] = None,
-    freq: str = 'M',
+    freq: str = "M",
     percentiles: List[float] = [0.25, 0.5, 0.75],
     n_jobs=-1,
     parallel_backend=None,
@@ -267,18 +268,18 @@ def population_profile(
     if segment_col is not None and segment_col in df.columns:
         group = segment_col
     elif date is not None and date in df.columns:
-        df['__period__'] = date_groups(df[date], freq)
-        group = '__period__'
+        df["__period__"] = date_groups(df[date], freq)
+        group = "__period__"
 
-    pct_labels = [f'p{int(p * 100)}' for p in percentiles]
-    stat_cols = ['均值', '标准差', '缺失率(%)'] + pct_labels + ['样本数']
+    pct_labels = [f"p{int(p * 100)}" for p in percentiles]
+    stat_cols = ["均值", "标准差", "缺失率(%)"] + pct_labels + ["样本数"]
     if target is not None and target in df.columns:
-        stat_cols.append('坏率(%)')
+        stat_cols.append("坏率(%)")
 
     if group is not None:
         groups = list(df.groupby(group, sort=True))
     else:
-        groups = [('全量', df)]
+        groups = [("全量", df)]
 
     def iter_tasks():
         for group_value, group_frame in groups:
@@ -313,14 +314,15 @@ def population_profile(
 
     result = pd.DataFrame(rows)
     # 清理临时列
-    if '__period__' in df.columns and group == '__period__':
-        result = result.rename(columns={'分组': date or '时间周期'})
+    if "__period__" in df.columns and group == "__period__":
+        result = result.rename(columns={"分组": date or "时间周期"})
     return result
 
 
 # ---------------------------------------------------------------------------
 # 2. population_shift_analysis
 # ---------------------------------------------------------------------------
+
 
 def population_shift_analysis(
     df_base: pd.DataFrame,
@@ -389,14 +391,15 @@ def population_shift_analysis(
     )
 
     result = pd.DataFrame(rows)
-    if not result.empty and 'PSI' in result.columns:
-        result = result.sort_values('PSI', ascending=False).reset_index(drop=True)
+    if not result.empty and "PSI" in result.columns:
+        result = result.sort_values("PSI", ascending=False).reset_index(drop=True)
     return result
 
 
 # ---------------------------------------------------------------------------
 # 3. population_monitoring_report
 # ---------------------------------------------------------------------------
+
 
 def population_monitoring_report(
     df_base: pd.DataFrame,
@@ -406,7 +409,7 @@ def population_monitoring_report(
     target: Optional[str] = None,
     max_n_bins: int = 10,
     top_drift_n: int = 10,
-    output_path: str = 'population_monitor.xlsx',
+    output_path: str = "population_monitor.xlsx",
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
@@ -441,8 +444,7 @@ def population_monitoring_report(
     """
     from ...excel import ExcelWriter, dataframe2excel
 
-    assert len(df_compare_list) == len(compare_labels), \
-        "df_compare_list 与 compare_labels 长度必须一致"
+    assert len(df_compare_list) == len(compare_labels), "df_compare_list 与 compare_labels 长度必须一致"
 
     writer = ExcelWriter()
 
@@ -478,59 +480,66 @@ def population_monitoring_report(
     for feature, label, value in psi_results:
         psi_matrix_rows[feature][label] = value
 
-    psi_df = pd.DataFrame(psi_matrix_rows).T.reset_index().rename(columns={'index': '特征名'})
+    psi_df = pd.DataFrame(psi_matrix_rows).T.reset_index().rename(columns={"index": "特征名"})
     # 添加均值 PSI 和等级
     numeric_cols = compare_labels
-    psi_df['平均PSI'] = psi_df[numeric_cols].mean(axis=1).round(4)
-    psi_df['稳定性'] = psi_df['平均PSI'].apply(psi_rating)
-    psi_df = psi_df.sort_values('平均PSI', ascending=False).reset_index(drop=True)
+    psi_df["平均PSI"] = psi_df[numeric_cols].mean(axis=1).round(4)
+    psi_df["稳定性"] = psi_df["平均PSI"].apply(psi_rating)
+    psi_df = psi_df.sort_values("平均PSI", ascending=False).reset_index(drop=True)
 
-    ws = writer.get_sheet_by_name('PSI总览')
-    end_row, _ = writer.insert_value2sheet(ws, (2, 2), value='客群监控 - PSI总览', style='header_middle', end_space=(2, 30))
-    end_row, _ = dataframe2excel(psi_df, writer, sheet_name=ws, start_row=end_row + 1,
-                                  title='各期特征PSI（相对基准）')
+    ws = writer.get_sheet_by_name("PSI总览")
+    end_row, _ = writer.insert_value2sheet(
+        ws, (2, 2), value="客群监控 - PSI总览", style="header_middle", end_space=(2, 30)
+    )
+    end_row, _ = dataframe2excel(psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="各期特征PSI（相对基准）")
 
     # ======================================================================
     # Sheet 2 - 趋势：样本量 + 坏率
     # ======================================================================
     trend_rows = []
     base_bad = _safe_badrate(df_base[target]) if target and target in df_base.columns else np.nan
-    trend_rows.append({
-        '期次': '基准',
-        '样本数': len(df_base),
-        '坏率(%)': round(base_bad * 100, 4) if not np.isnan(base_bad) else np.nan,
-    })
+    trend_rows.append(
+        {
+            "期次": "基准",
+            "样本数": len(df_base),
+            "坏率(%)": round(base_bad * 100, 4) if not np.isnan(base_bad) else np.nan,
+        }
+    )
     for label, df_cmp in zip(compare_labels, df_compare_list):
         br = _safe_badrate(df_cmp[target]) if target and target in df_cmp.columns else np.nan
-        trend_rows.append({
-            '期次': label,
-            '样本数': len(df_cmp),
-            '坏率(%)': round(br * 100, 4) if not np.isnan(br) else np.nan,
-        })
+        trend_rows.append(
+            {
+                "期次": label,
+                "样本数": len(df_cmp),
+                "坏率(%)": round(br * 100, 4) if not np.isnan(br) else np.nan,
+            }
+        )
     trend_df = pd.DataFrame(trend_rows)
 
-    ws2 = writer.get_sheet_by_name('样本趋势')
-    end_row2, _ = writer.insert_value2sheet(ws2, (2, 2), value='各期样本量与坏率趋势', style='header_middle', end_space=(2, 20))
-    end_row2, _ = dataframe2excel(trend_df, writer, sheet_name=ws2, start_row=end_row2 + 1,
-                                   percent_cols=['坏率(%)'])
+    ws2 = writer.get_sheet_by_name("样本趋势")
+    end_row2, _ = writer.insert_value2sheet(
+        ws2, (2, 2), value="各期样本量与坏率趋势", style="header_middle", end_space=(2, 20)
+    )
+    end_row2, _ = dataframe2excel(trend_df, writer, sheet_name=ws2, start_row=end_row2 + 1, percent_cols=["坏率(%)"])
 
     # ======================================================================
     # Sheet 3 - 偏移 Top N 详细分布对比
     # ======================================================================
-    top_features = psi_df['特征名'].head(top_drift_n).tolist()
-    ws3 = writer.get_sheet_by_name(f'偏移Top{top_drift_n}')
+    top_features = psi_df["特征名"].head(top_drift_n).tolist()
+    ws3 = writer.get_sheet_by_name(f"偏移Top{top_drift_n}")
     cur_row = 2
-    end_row3, _ = writer.insert_value2sheet(ws3, (cur_row, 2),
-                                             value=f'偏移最大 Top{top_drift_n} 特征分布对比',
-                                             style='header_middle', end_space=(cur_row, 30))
+    end_row3, _ = writer.insert_value2sheet(
+        ws3,
+        (cur_row, 2),
+        value=f"偏移最大 Top{top_drift_n} 特征分布对比",
+        style="header_middle",
+        end_space=(cur_row, 30),
+    )
     cur_row = end_row3 + 1
 
     distribution_results = parallel_execute(
         _monitoring_distribution_worker,
-        (
-            (feature, df_base, tuple(df_compare_list), tuple(compare_labels), max_n_bins)
-            for feature in top_features
-        ),
+        ((feature, df_base, tuple(df_compare_list), tuple(compare_labels), max_n_bins) for feature in top_features),
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
@@ -547,9 +556,12 @@ def population_monitoring_report(
     for feat, dist_df in distribution_results:
         if not dist_df.empty:
             end_row3, _ = dataframe2excel(
-                dist_df, writer, sheet_name=ws3,
-                title=f'{feat} 分布对比', start_row=cur_row,
-                percent_cols=['占比(%)'],
+                dist_df,
+                writer,
+                sheet_name=ws3,
+                title=f"{feat} 分布对比",
+                start_row=cur_row,
+                percent_cols=["占比(%)"],
             )
             cur_row = end_row3 + 2
 
@@ -561,7 +573,8 @@ def population_monitoring_report(
 # 4. segment_drift_analysis
 # ---------------------------------------------------------------------------
 
-@analysis_inputs('df', roles=('date',))
+
+@analysis_inputs("df", roles=("date",))
 def segment_drift_analysis(
     df: pd.DataFrame,
     date: str,
@@ -569,7 +582,7 @@ def segment_drift_analysis(
     features: List[str],
     target: Optional[str] = None,
     base_period: Optional[str] = None,
-    freq: str = 'M',
+    freq: str = "M",
     max_n_bins: int = 10,
     n_jobs=-1,
     parallel_backend=None,
@@ -599,9 +612,9 @@ def segment_drift_analysis(
     validate_dataframe(df, required_cols=[date, segment_col] + features)
 
     df = df.copy()
-    df['__period__'] = date_groups(df[date], freq)
+    df["__period__"] = date_groups(df[date], freq)
 
-    all_periods = sorted(df['__period__'].unique())
+    all_periods = sorted(df["__period__"].unique())
     if base_period is None:
         base_period = all_periods[0]
 
@@ -609,14 +622,14 @@ def segment_drift_analysis(
     task_specs = []
     for seg in segments:
         seg_df = df[df[segment_col] == seg]
-        base_seg = seg_df[seg_df['__period__'] == base_period]
+        base_seg = seg_df[seg_df["__period__"] == base_period]
         if len(base_seg) == 0:
             continue
 
         for period in all_periods:
             if period == base_period:
                 continue
-            period_seg = seg_df[seg_df['__period__'] == period]
+            period_seg = seg_df[seg_df["__period__"] == period]
             if len(period_seg) == 0:
                 continue
 
@@ -637,7 +650,7 @@ def segment_drift_analysis(
 
     result = pd.DataFrame(rows)
     if not result.empty:
-        result = result.sort_values(['特征名', '客群', '时间']).reset_index(drop=True)
+        result = result.sort_values(["特征名", "客群", "时间"]).reset_index(drop=True)
     return result
 
 
@@ -645,13 +658,14 @@ def segment_drift_analysis(
 # 5. feature_cross_segment_effectiveness
 # ---------------------------------------------------------------------------
 
-@analysis_inputs('df', roles=())
+
+@analysis_inputs("df", roles=())
 def feature_cross_segment_effectiveness(
     df: pd.DataFrame,
     features: List[str],
     target: str,
     segment_col: str,
-    metric: str = 'iv',
+    metric: str = "iv",
     max_n_bins: int = 10,
     min_segment_size: int = 50,
     n_jobs=-1,
@@ -685,7 +699,7 @@ def feature_cross_segment_effectiveness(
     """
     validate_dataframe(df, required_cols=[target, segment_col] + features)
     metric = metric.lower()
-    assert metric in ('iv', 'ks', 'auc'), "metric 须为 'iv' / 'ks' / 'auc'"
+    assert metric in ("iv", "ks", "auc"), "metric 须为 'iv' / 'ks' / 'auc'"
 
     segments = sorted(df[segment_col].dropna().unique())
     records: Dict[str, Dict[str, Any]] = {f: {} for f in features}
@@ -695,8 +709,7 @@ def feature_cross_segment_effectiveness(
         if len(seg_df) < min_segment_size:
             continue
         task_specs.extend(
-            (seg_df[feature], seg_df[target], feature, str(seg), metric, min_segment_size)
-            for feature in features
+            (seg_df[feature], seg_df[target], feature, str(seg), metric, min_segment_size) for feature in features
         )
 
     metric_results = parallel_execute(
@@ -719,9 +732,9 @@ def feature_cross_segment_effectiveness(
         records[feature][label] = value
 
     result = pd.DataFrame(records).T
-    result.index.name = '特征名'
+    result.index.name = "特征名"
     result = result.reset_index()
     # 按全量指标降序
-    if '全量' in result.columns:
-        result = result.sort_values('全量', ascending=False).reset_index(drop=True)
+    if "全量" in result.columns:
+        result = result.sort_values("全量", ascending=False).reset_index(drop=True)
     return result

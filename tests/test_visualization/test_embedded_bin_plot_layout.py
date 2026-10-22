@@ -1,6 +1,7 @@
 """测试所有嵌入式 ``bin_plot`` 调用共享的顶部标题与指标摘要布局。"""
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt

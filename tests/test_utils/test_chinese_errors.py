@@ -35,11 +35,7 @@ def test_all_explicit_raise_messages_contain_chinese():
                 )
 
             message = "".join(literal_parts)
-            if (
-                message
-                and re.search(r"[A-Za-z]", message)
-                and not re.search(r"[\u4e00-\u9fff]", message)
-            ):
+            if message and re.search(r"[A-Za-z]", message) and not re.search(r"[\u4e00-\u9fff]", message):
                 english_only_messages.append(f"{path}:{node.lineno}: {message}")
 
     assert english_only_messages == []

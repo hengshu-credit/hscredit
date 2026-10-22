@@ -25,9 +25,15 @@ def test_interpretability_example_runs_and_writes_explanation_sheet(tmp_path):
         }
     )
     frame.to_excel(source, index=False)
-    environment = dict(os.environ, PYTHONUTF8="1", MPLBACKEND="Agg",
-                       HSCREDIT_EXAMPLE_INPUT=str(source), HSCREDIT_EXAMPLE_OUTPUT=str(output),
-                       HSCREDIT_EXAMPLE_MAX_SAMPLES="20", HSCREDIT_EXAMPLE_BOOTSTRAP="3")
+    environment = dict(
+        os.environ,
+        PYTHONUTF8="1",
+        MPLBACKEND="Agg",
+        HSCREDIT_EXAMPLE_INPUT=str(source),
+        HSCREDIT_EXAMPLE_OUTPUT=str(output),
+        HSCREDIT_EXAMPLE_MAX_SAMPLES="20",
+        HSCREDIT_EXAMPLE_BOOTSTRAP="3",
+    )
     completed = subprocess.run(
         [
             sys.executable,

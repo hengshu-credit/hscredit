@@ -353,20 +353,23 @@ class LightGBM(BaseRiskModel):
         if self.early_stopping_metric is not None:
             selected = self.early_stopping_metric
             matches = [
-                item for item in requested
-                if item == selected or isinstance(item, BaseMetric) and item.name == selected
+                item for item in requested if item == selected or isinstance(item, BaseMetric) and item.name == selected
             ]
             if not matches and not any(callable(item) for item in requested):
                 raise ValueError("early_stopping_metric 必须包含在 eval_metric 中")
             selected_item = matches[0] if matches else selected
-            requested = [selected_item] + [item for item in requested if item is not selected_item and item != selected_item]
+            requested = [selected_item] + [
+                item for item in requested if item is not selected_item and item != selected_item
+            ]
         native_metrics = [
             self._convert_metrics(item) for item in requested if isinstance(item, str) and item.lower() != "ks"
         ]
         custom_metrics = [
-            item.to_lightgbm(api="sklearn", raw_score=callable(objective))
-            if isinstance(item, BaseMetric)
-            else (_lightgbm_ks_metric if isinstance(item, str) and item.lower() == "ks" else item)
+            (
+                item.to_lightgbm(api="sklearn", raw_score=callable(objective))
+                if isinstance(item, BaseMetric)
+                else (_lightgbm_ks_metric if isinstance(item, str) and item.lower() == "ks" else item)
+            )
             for item in requested
             if callable(item) or str(item).lower() == "ks"
         ]
@@ -492,9 +495,7 @@ class LightGBM(BaseRiskModel):
         X = self._prepare_data(X)[0]
         if isinstance(X, np.ndarray) and hasattr(self._model, "feature_name_"):
             X = pd.DataFrame(X, columns=list(self._model.feature_name_))
-        native_output_requested = any(
-            predict_params.get(name) for name in ("raw_score", "pred_leaf", "pred_contrib")
-        )
+        native_output_requested = any(predict_params.get(name) for name in ("raw_score", "pred_leaf", "pred_contrib"))
         if getattr(self, "_native_margin_output_", False):
             proba = self._model.booster_.predict(X, **predict_params)
         else:

@@ -30,19 +30,11 @@ class RedisAdapter(BaseDatabaseAdapter):
             adapter_options=adapter_options,
         )
         redis_module = self.load_redis_module()
-        pool_class = (
-            redis_module.BlockingConnectionPool
-            if self.pool_options.blocking
-            else redis_module.ConnectionPool
-        )
+        pool_class = redis_module.BlockingConnectionPool if self.pool_options.blocking else redis_module.ConnectionPool
         connection_options = dict(self.connect_kwargs)
         url = connection_options.pop("url", None)
         pool_kwargs = {**connection_options, **self.pool_options.to_redis_kwargs()}
-        self.pool = (
-            pool_class.from_url(url, **pool_kwargs)
-            if url is not None
-            else pool_class(**pool_kwargs)
-        )
+        self.pool = pool_class.from_url(url, **pool_kwargs) if url is not None else pool_class(**pool_kwargs)
         self.client = redis_module.Redis(connection_pool=self.pool)
 
     def load_redis_module(self) -> Any:

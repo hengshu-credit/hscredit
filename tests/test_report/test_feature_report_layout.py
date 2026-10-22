@@ -18,7 +18,7 @@ import hscredit.report.feature_analyzer as feature_analyzer_module
 
 def _mock_insert_pic2sheet(self, worksheet, fig, insert_space, figsize=(600, 250)):
     if isinstance(insert_space, str):
-        row = int(''.join(ch for ch in insert_space if ch.isdigit()))
+        row = int("".join(ch for ch in insert_space if ch.isdigit()))
         col = 2
     else:
         row, col = insert_space
@@ -320,15 +320,22 @@ def test_auto_feature_analysis_defaults_to_non_role_columns(monkeypatch, tmp_pat
     )
 
     ws = writer.get_sheet_by_name("default_features")
-    feature_titles = [cell.value for row in ws.iter_rows() for cell in row if isinstance(cell.value, str) and "、数据字段:" in cell.value]
+    feature_titles = [
+        cell.value
+        for row in ws.iter_rows()
+        for cell in row
+        if isinstance(cell.value, str) and "、数据字段:" in cell.value
+    ]
     assert feature_titles == ["4.1、数据字段: x (缺失率: 0.0%)", "4.2、数据字段: amount (缺失率: 0.0%)"]
 
 
 def test_auto_feature_analysis_can_analyze_amount_as_default_feature(tmp_path):
-    data = pd.DataFrame({
-        "amount": list(range(1, 41)),
-        "target": [0, 1] * 20,
-    })
+    data = pd.DataFrame(
+        {
+            "amount": list(range(1, 41)),
+            "target": [0, 1] * 20,
+        }
+    )
     writer = ExcelWriter(system="windows")
 
     auto_feature_analysis(
@@ -395,11 +402,13 @@ def test_auto_feature_analysis_labels_order_and_amount_tables_in_existing_gap(mo
 def test_auto_feature_analysis_reserves_title_row_when_amount_gap_is_zero(monkeypatch, tmp_path):
     monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
 
-    data = pd.DataFrame({
-        "x": [1, 2, 3, 4],
-        "target": [0, 1, 0, 1],
-        "amount": [10, 20, 30, 40],
-    })
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4],
+            "target": [0, 1, 0, 1],
+            "amount": [10, 20, 30, 40],
+        }
+    )
     writer = ExcelWriter(system="windows")
 
     auto_feature_analysis(
@@ -416,7 +425,9 @@ def test_auto_feature_analysis_reserves_title_row_when_amount_gap_is_zero(monkey
     )
 
     ws = writer.get_sheet_by_name("zero_metric_title_gap")
-    feature_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "3.1、数据字段: x (缺失率: 0.0%)")
+    feature_title = next(
+        cell for row in ws.iter_rows() for cell in row if cell.value == "3.1、数据字段: x (缺失率: 0.0%)"
+    )
     order_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "订单口径")
     amount_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "金额口径")
     table_headers = [cell for row in ws.iter_rows() for cell in row if cell.value == "指标名称"]
@@ -485,12 +496,15 @@ def test_auto_feature_analysis_numbers_titles_and_formats_feature_summary(monkey
     )
 
     ws = writer.get_sheet_by_name("numbered_summary")
-    title_rows = [_row_for_value(ws, title) for title in [
-        "1、样本总体分布情况",
-        "2、变量综合统计",
-        "3、数值类特征 OR 评分效果评估",
-        "3.1、数据字段: x (缺失率: 0.0%)",
-    ]]
+    title_rows = [
+        _row_for_value(ws, title)
+        for title in [
+            "1、样本总体分布情况",
+            "2、变量综合统计",
+            "3、数值类特征 OR 评分效果评估",
+            "3.1、数据字段: x (缺失率: 0.0%)",
+        ]
+    ]
     assert title_rows == sorted(title_rows)
 
     summary_title_row = _row_for_value(ws, "2、变量综合统计")
@@ -577,10 +591,12 @@ def test_auto_feature_analysis_system_gap(monkeypatch):
     # 屏蔽绘图函数，避免真实生成图片
     monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
 
-    data = pd.DataFrame({
-        "x": [1, 2, 3, 4, 5, 6, 7, 8],
-        "target": [0, 0, 0, 1, 0, 1, 1, 1],
-    })
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4, 5, 6, 7, 8],
+            "target": [0, 0, 0, 1, 0, 1, 1, 1],
+        }
+    )
 
     def run_for_system(system_name, sheet_name):
         writer = ExcelWriter(system=system_name)
@@ -613,10 +629,12 @@ def test_auto_feature_analysis_system_gap(monkeypatch):
 def test_feature_title_end_space_with_return_cols(monkeypatch):
     monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
 
-    data = pd.DataFrame({
-        "x": [1, 2, 3, 4, 5, 6, 7, 8],
-        "target": [0, 0, 0, 1, 0, 1, 1, 1],
-    })
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4, 5, 6, 7, 8],
+            "target": [0, 0, 0, 1, 0, 1, 1, 1],
+        }
+    )
 
     writer = ExcelWriter(system="windows")
     writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
@@ -641,7 +659,11 @@ def test_feature_title_end_space_with_return_cols(monkeypatch):
     actual_span = None
 
     for merged_range in ws.merged_cells.ranges:
-        if merged_range.min_row == feature_title_row and merged_range.max_row == feature_title_row and merged_range.min_col == 2:
+        if (
+            merged_range.min_row == feature_title_row
+            and merged_range.max_row == feature_title_row
+            and merged_range.min_col == 2
+        ):
             actual_span = merged_range.max_col - merged_range.min_col + 1
             break
 
@@ -650,25 +672,29 @@ def test_feature_title_end_space_with_return_cols(monkeypatch):
 
 def test_auto_feature_analysis_title_merges_follow_actual_content_width(monkeypatch):
     def fake_feature_bin_stats(data, feature, **kwargs):
-        return pd.DataFrame({
-            "指标名称": [feature],
-            "指标含义": [feature],
-            "分箱标签": ["(0, 1]"],
-            "样本总数": [len(data)],
-            "样本占比": [1.0],
-            "坏样本率": [0.5],
-            "LIFT值": [1.0],
-            "分档KS值": [0.25],
-        })
+        return pd.DataFrame(
+            {
+                "指标名称": [feature],
+                "指标含义": [feature],
+                "分箱标签": ["(0, 1]"],
+                "样本总数": [len(data)],
+                "样本占比": [1.0],
+                "坏样本率": [0.5],
+                "LIFT值": [1.0],
+                "分档KS值": [0.25],
+            }
+        )
 
     monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", fake_feature_bin_stats)
 
-    data = pd.DataFrame({
-        "x": [1, 2, 3, 4],
-        "y": [4, 3, 2, 1],
-        "target": [0, 1, 0, 1],
-        "amount": [10, 20, 30, 40],
-    })
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4],
+            "y": [4, 3, 2, 1],
+            "target": [0, 1, 0, 1],
+            "amount": [10, 20, 30, 40],
+        }
+    )
     writer = ExcelWriter(system="windows")
 
     auto_feature_analysis(
@@ -705,21 +731,25 @@ def test_auto_feature_analysis_keeps_overdue_binning_mode(monkeypatch):
 
     def fake_feature_bin_stats(data, feature, **kwargs):
         calls.append({"columns": list(data.columns), "values": data[kwargs["target"].columns[0]].tolist(), **kwargs})
-        return pd.DataFrame({
-            "指标名称": [feature],
-            "指标含义": [feature],
-            "分箱标签": ["(0, 1]"],
-            "样本总数": [len(data)],
-            "样本占比": [1.0],
-            "坏样本率": [0.5],
-        })
+        return pd.DataFrame(
+            {
+                "指标名称": [feature],
+                "指标含义": [feature],
+                "分箱标签": ["(0, 1]"],
+                "样本总数": [len(data)],
+                "样本占比": [1.0],
+                "坏样本率": [0.5],
+            }
+        )
 
     monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", fake_feature_bin_stats)
 
-    data = pd.DataFrame({
-        "x": [1, 2, 3, 4],
-        "mob": [0, 1, 4, 6],
-    })
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4],
+            "mob": [0, 1, 4, 6],
+        }
+    )
     writer = ExcelWriter(system="windows")
 
     auto_feature_analysis(
@@ -782,14 +812,9 @@ def test_auto_feature_analysis_resolves_top_level_del_grey_precedence(
 
     ws = writer.get_sheet_by_name("top_level_del_grey")
     _, table_header_row = _get_feature_title_and_table_header_rows(ws)
-    headers = {
-        ws.cell(table_header_row, column).value: column
-        for column in range(1, ws.max_column + 1)
-    }
+    headers = {ws.cell(table_header_row, column).value: column for column in range(1, ws.max_column + 1)}
     total_row = next(
-        row
-        for row in range(table_header_row + 1, ws.max_row + 1)
-        if ws.cell(row, headers["分箱标签"]).value == "合计"
+        row for row in range(table_header_row + 1, ws.max_row + 1) if ws.cell(row, headers["分箱标签"]).value == "合计"
     )
 
     assert ws.cell(total_row, headers["样本总数"]).value == expected_total
@@ -798,10 +823,12 @@ def test_auto_feature_analysis_resolves_top_level_del_grey_precedence(
 def test_auto_feature_analysis_missing_rate_and_summary_links(monkeypatch):
     monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda *args, **kwargs: None)
 
-    data = pd.DataFrame({
-        "x": [1.0, 2.0, None, 4.0],
-        "target": [0, 0, 1, 1],
-    })
+    data = pd.DataFrame(
+        {
+            "x": [1.0, 2.0, None, 4.0],
+            "target": [0, 0, 1, 1],
+        }
+    )
     writer = ExcelWriter(system="windows")
     writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
 
@@ -823,10 +850,7 @@ def test_auto_feature_analysis_missing_rate_and_summary_links(monkeypatch):
     assert "缺失率: 25.0%" in feature_title_cell.value
 
     summary_feature_cell = next(
-        cell
-        for row in ws.iter_rows()
-        for cell in row
-        if cell.value == "x" and cell.hyperlink is not None
+        cell for row in ws.iter_rows() for cell in row if cell.value == "x" and cell.hyperlink is not None
     )
     assert summary_feature_cell.hyperlink.location == f"#'{ws.title}'!{feature_title_cell.coordinate}"
     assert feature_title_cell.hyperlink.location == f"#'{ws.title}'!{summary_feature_cell.coordinate}"
@@ -837,22 +861,26 @@ def test_auto_feature_analysis_sample_distribution_uses_model_report_layout(monk
     monkeypatch.setattr(feature_analyzer_module, "distribution_plot", lambda *args, **kwargs: pd.DataFrame())
 
     def fake_feature_bin_stats(data, feature, **kwargs):
-        return pd.DataFrame({
-            "指标名称": [feature],
-            "指标含义": [feature],
-            "分箱标签": ["(0, 1]"],
-            "样本总数": [len(data)],
-            "样本占比": [1.0],
-            "坏样本率": [0.5],
-        })
+        return pd.DataFrame(
+            {
+                "指标名称": [feature],
+                "指标含义": [feature],
+                "分箱标签": ["(0, 1]"],
+                "样本总数": [len(data)],
+                "样本占比": [1.0],
+                "坏样本率": [0.5],
+            }
+        )
 
     monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", fake_feature_bin_stats)
 
-    data = pd.DataFrame({
-        "x": [1, 2, 3, 4],
-        "mob": [0, 2, 5, 9],
-        "apply_date": pd.to_datetime(["2024-01-01", "2024-01-15", "2024-02-01", "2024-02-15"]),
-    })
+    data = pd.DataFrame(
+        {
+            "x": [1, 2, 3, 4],
+            "mob": [0, 2, 5, 9],
+            "apply_date": pd.to_datetime(["2024-01-01", "2024-01-15", "2024-02-01", "2024-02-15"]),
+        }
+    )
     writer = ExcelWriter(system="windows")
     writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
 
@@ -964,11 +992,7 @@ def test_auto_feature_analysis_removes_grey_samples_from_top_distributions(monke
     )
 
     ws = writer.get_sheet_by_name("top_distributions_without_grey")
-    header_rows = [
-        row
-        for row in range(1, ws.max_row)
-        if ws.cell(row + 1, 2).value == "数据集"
-    ]
+    header_rows = [row for row in range(1, ws.max_row) if ws.cell(row + 1, 2).value == "数据集"]
     sample_group_row, time_group_row = header_rows[:2]
 
     def header_columns(group_row):

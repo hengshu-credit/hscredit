@@ -50,14 +50,14 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, su
 
     default_font_name = initialize_bundled_font()
 
-    pd.options.display.float_format = '{:.4f}'.format
+    pd.options.display.float_format = "{:.4f}".format
     pd.set_option("display.max_colwidth", 300)
-    pd.set_option('expand_frame_repr', False)
+    pd.set_option("expand_frame_repr", False)
 
     if "seaborn-ticks" in plt.style.available:
-        plt.style.use('seaborn-ticks')
+        plt.style.use("seaborn-ticks")
     else:
-        plt.style.use('seaborn-v0_8-ticks')
+        plt.style.use("seaborn-v0_8-ticks")
 
     resolved_font_name = default_font_name
     resolved_font_path = None
@@ -76,21 +76,23 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, su
             font_manager.fontManager.addfont(resolved_font_path)
             resolved_font_name = font_manager.FontProperties(fname=resolved_font_path).get_name()
             # 使用粗体字
-            plt.rcParams['font.weight'] = 'bold'
-            plt.rcParams['axes.titleweight'] = 'bold'
-            plt.rcParams['axes.labelweight'] = 'bold'
+            plt.rcParams["font.weight"] = "bold"
+            plt.rcParams["axes.titleweight"] = "bold"
+            plt.rcParams["axes.labelweight"] = "bold"
         except Exception:
             if font_path is not None:
                 raise
 
-    plt.rcParams['font.family'] = resolved_font_name
+    plt.rcParams["font.family"] = resolved_font_name
 
-    plt.rcParams['axes.unicode_minus'] = False
+    plt.rcParams["axes.unicode_minus"] = False
 
     if seed is not None:
         from .random import seed_everything
+
         seed_everything(seed, freeze_torch=freeze_torch)
 
     if logger:
         import logging
+
         return logging.getLogger(**kwargs)

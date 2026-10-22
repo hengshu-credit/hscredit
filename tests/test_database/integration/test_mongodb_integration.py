@@ -41,11 +41,14 @@ def test_mongodb_real_pool_and_adaptive_crud():
             mode="update",
         )
         assert updated.modified_count == 1
-        assert database.delete(
-            collection,
-            {"_id": {"$regex": f"^{run_id}"}},
-            many=True,
-        ).affected_count == 2
+        assert (
+            database.delete(
+                collection,
+                {"_id": {"$regex": f"^{run_id}"}},
+                many=True,
+            ).affected_count
+            == 2
+        )
     finally:
         database.delete_many(
             collection,

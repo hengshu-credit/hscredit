@@ -12,15 +12,15 @@
 使用示例:
     >>> import pandas as pd
     >>> from hscredit.excel import ExcelWriter
-    >>> 
+    >>>
     >>> # DataFrame直接保存
     >>> df = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]})
     >>> df.save("report.xlsx", sheet_name="数据", title="统计表")
-    >>> 
+    >>>
     >>> # Series直接保存（自动转为DataFrame）
     >>> s = pd.Series([1, 2, 3], name='数值')
     >>> s.save("series_report.xlsx", title="序列数据")
-    >>> 
+    >>>
     >>> # 写入已有的ExcelWriter
     >>> writer = ExcelWriter()
     >>> worksheet = writer.get_sheet_by_name("Sheet1")

@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, Optional
 
 import pandas as pd
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -125,11 +124,20 @@ class ReportResult(dict):
             raise ReportGenerationError(f"报告包含未完成的必需章节: {', '.join(failed)}", self)
 
     def status_table(self) -> pd.DataFrame:
-        return pd.DataFrame([
-            {"章节": s.name, "状态": s.status, "必需章节": s.required, "说明": s.reason,
-             "输入行数": s.input_rows, "输出行数": s.output_rows, "耗时(秒)": s.elapsed_seconds}
-            for s in self.sections.values()
-        ])
+        return pd.DataFrame(
+            [
+                {
+                    "章节": s.name,
+                    "状态": s.status,
+                    "必需章节": s.required,
+                    "说明": s.reason,
+                    "输入行数": s.input_rows,
+                    "输出行数": s.output_rows,
+                    "耗时(秒)": s.elapsed_seconds,
+                }
+                for s in self.sections.values()
+            ]
+        )
 
 
 __all__ = ["ReportResult", "ReportSectionResult", "ReportGenerationError"]

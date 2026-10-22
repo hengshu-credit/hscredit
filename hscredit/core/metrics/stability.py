@@ -31,12 +31,14 @@ from scipy.stats import chi2_contingency
 from ._base import _create_bin_edges
 
 
-def psi(expected: Union[np.ndarray, pd.Series],
-        actual: Union[np.ndarray, pd.Series],
-        method: str = 'quantile',
-        max_n_bins: int = 10,
-        min_bin_size: float = 0.01,
-        **kwargs) -> float:
+def psi(
+    expected: Union[np.ndarray, pd.Series],
+    actual: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> float:
     """计算Population Stability Index (群体稳定性指标).
 
     PSI用于衡量两个分布之间的差异，评估模型或特征的稳定性。
@@ -70,15 +72,17 @@ def psi(expected: Union[np.ndarray, pd.Series],
     >>> print(f"PSI={p:.4f}, 评级: {psi_rating(p)}")
     """
     table = psi_table(expected, actual, method, max_n_bins, min_bin_size, **kwargs)
-    return table['PSI贡献'].sum(min_count=1)
+    return table["PSI贡献"].sum(min_count=1)
 
 
-def psi_table(expected: Union[np.ndarray, pd.Series],
-              actual: Union[np.ndarray, pd.Series],
-              method: str = 'quantile',
-              max_n_bins: int = 10,
-              min_bin_size: float = 0.01,
-              **kwargs) -> pd.DataFrame:
+def psi_table(
+    expected: Union[np.ndarray, pd.Series],
+    actual: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> pd.DataFrame:
     """计算PSI详细统计表.
 
     返回每个分箱的期望占比、实际占比及PSI贡献，用于分析分布变化的具体来源。
@@ -110,26 +114,26 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
     >>> table = psi_table(train, test)
     >>> print(table)
     """
-    baseline = kwargs.pop('baseline', None)
-    include_missing = kwargs.pop('include_missing', True)
+    baseline = kwargs.pop("baseline", None)
+    include_missing = kwargs.pop("include_missing", True)
     if not isinstance(include_missing, (bool, np.bool_)):
         raise ValueError("include_missing 必须为布尔值")
     if baseline is not None:
-        return baseline.evaluate(actual, include_missing=include_missing)['分箱明细']
-    if method == 'quantile':
+        return baseline.evaluate(actual, include_missing=include_missing)["分箱明细"]
+    if method == "quantile":
         from .monitoring import MonitoringBaseline
+
         reference = pd.Series(expected)
         current = pd.Series(actual)
-        return MonitoringBaseline(max_n_bins=max_n_bins, min_bin_size=min_bin_size, bin_params=kwargs).fit(reference).evaluate(current, include_missing=include_missing)['分箱明细']
+        return (
+            MonitoringBaseline(max_n_bins=max_n_bins, min_bin_size=min_bin_size, bin_params=kwargs)
+            .fit(reference)
+            .evaluate(current, include_missing=include_missing)["分箱明细"]
+        )
     # 先验证公开方法和构造参数；空/全缺失数据只改变统计路径，不能绕过配置校验。
     from ..binning import OptimalBinning
-    binner = OptimalBinning(
-        method=method,
-        max_n_bins=max_n_bins,
-        min_bin_size=min_bin_size,
-        verbose=False,
-        **kwargs
-    )
+
+    binner = OptimalBinning(method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs)
     expected = np.asarray(expected)
     actual = np.asarray(actual)
     if expected.ndim != 1 or actual.ndim != 1:
@@ -145,20 +149,25 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
         raise ValueError("PSI 基准不能为空")
     if len(expected_clean) == 0 or len(actual_clean) == 0:
         from .monitoring import MonitoringBaseline
-        return MonitoringBaseline(max_n_bins=max_n_bins).fit(expected).evaluate(actual, include_missing=include_missing)['分箱明细']
+
+        return (
+            MonitoringBaseline(max_n_bins=max_n_bins)
+            .fit(expected)
+            .evaluate(actual, include_missing=include_missing)["分箱明细"]
+        )
 
     # 构建DataFrame
-    df_expected = pd.DataFrame({'value': expected_clean, 'is_expected': 1})
-    df_actual = pd.DataFrame({'value': actual_clean, 'is_expected': 0})
+    df_expected = pd.DataFrame({"value": expected_clean, "is_expected": 1})
+    df_actual = pd.DataFrame({"value": actual_clean, "is_expected": 0})
     df_combined = pd.concat([df_expected, df_actual], ignore_index=True)
 
     # PSI 的分箱边界必须可复现。对于有监督分箱方法，用“基准/实际”作为确定性目标，
     # 避免随机 dummy target 让同一输入多次调用得到不同分箱和 PSI。
-    binner.fit(df_combined[['value']], df_combined['is_expected'])
+    binner.fit(df_combined[["value"]], df_combined["is_expected"])
 
     # 分别转换expected和actual
-    bins_expected = binner.transform(df_expected[['value']], metric='indices').values.flatten()
-    bins_actual = binner.transform(df_actual[['value']], metric='indices').values.flatten()
+    bins_expected = binner.transform(df_expected[["value"]], metric="indices").values.flatten()
+    bins_actual = binner.transform(df_actual[["value"]], metric="indices").values.flatten()
 
     # 计算每个箱的统计
     unique_bins = sorted(set(bins_expected) | set(bins_actual))
@@ -181,19 +190,21 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
 
         # 获取分箱标签
         bin_label = f"Bin_{bin_idx}"
-        if 'value' in binner.bin_tables_:
-            bin_table = binner.bin_tables_['value']
-            if bin_idx < len(bin_table) and '分箱标签' in bin_table.columns:
-                bin_label = bin_table.iloc[bin_idx]['分箱标签']
+        if "value" in binner.bin_tables_:
+            bin_table = binner.bin_tables_["value"]
+            if bin_idx < len(bin_table) and "分箱标签" in bin_table.columns:
+                bin_label = bin_table.iloc[bin_idx]["分箱标签"]
 
-        results.append({
-            '分箱': bin_label,
-            '期望样本数': expected_count,
-            '实际样本数': actual_count,
-            '期望占比': expected_prop,
-            '实际占比': actual_prop,
-            'PSI贡献': psi_contrib,
-        })
+        results.append(
+            {
+                "分箱": bin_label,
+                "期望样本数": expected_count,
+                "实际样本数": actual_count,
+                "期望占比": expected_prop,
+                "实际占比": actual_prop,
+                "PSI贡献": psi_contrib,
+            }
+        )
 
     if include_missing:
         exp_missing = int(pd.isna(expected).sum())
@@ -201,15 +212,26 @@ def psi_table(expected: Union[np.ndarray, pd.Series],
         if exp_missing or act_missing:
             ep = max(exp_missing / total_expected, epsilon)
             ap = max(act_missing / total_actual, epsilon) if total_actual else epsilon
-            results.append({'分箱': '缺失值', '期望样本数': exp_missing, '实际样本数': act_missing,
-                            '期望占比': exp_missing / total_expected,
-                            '实际占比': act_missing / total_actual if total_actual else 0.,
-                            'PSI贡献': (ap - ep) * np.log(ap / ep)})
+            results.append(
+                {
+                    "分箱": "缺失值",
+                    "期望样本数": exp_missing,
+                    "实际样本数": act_missing,
+                    "期望占比": exp_missing / total_expected,
+                    "实际占比": act_missing / total_actual if total_actual else 0.0,
+                    "PSI贡献": (ap - ep) * np.log(ap / ep),
+                }
+            )
     result = pd.DataFrame(results)
     if total_actual == 0:
-        result['PSI贡献'] = np.nan
-    result.attrs.update({'分箱口径': '两期联合分箱', '缺失策略': '独立分箱' if include_missing else '排除',
-                         '状态': '成功' if total_actual else '数据不足'})
+        result["PSI贡献"] = np.nan
+    result.attrs.update(
+        {
+            "分箱口径": "两期联合分箱",
+            "缺失策略": "独立分箱" if include_missing else "排除",
+            "状态": "成功" if total_actual else "数据不足",
+        }
+    )
     return result
 
 
@@ -242,12 +264,14 @@ def psi_rating(psi_value: float) -> str:
         return "有显著变化 (PSI >= 0.25)"
 
 
-def csi(expected: Union[np.ndarray, pd.Series],
-        actual: Union[np.ndarray, pd.Series],
-        method: str = 'quantile',
-        max_n_bins: int = 10,
-        min_bin_size: float = 0.01,
-        **kwargs) -> float:
+def csi(
+    expected: Union[np.ndarray, pd.Series],
+    actual: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> float:
     """计算Characteristic Stability Index (特征稳定性指标).
 
     CSI是PSI的变体，专门用于衡量单个特征分布的稳定性。
@@ -277,12 +301,14 @@ def csi(expected: Union[np.ndarray, pd.Series],
     return psi(expected, actual, method, max_n_bins, min_bin_size, **kwargs)
 
 
-def csi_table(expected: Union[np.ndarray, pd.Series],
-              actual: Union[np.ndarray, pd.Series],
-              method: str = 'quantile',
-              max_n_bins: int = 10,
-              min_bin_size: float = 0.01,
-              **kwargs) -> pd.DataFrame:
+def csi_table(
+    expected: Union[np.ndarray, pd.Series],
+    actual: Union[np.ndarray, pd.Series],
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> pd.DataFrame:
     """计算CSI详细统计表.
 
     **参数**
@@ -306,17 +332,19 @@ def csi_table(expected: Union[np.ndarray, pd.Series],
     >>> print(table)
     """
     table = psi_table(expected, actual, method, max_n_bins, min_bin_size, **kwargs)
-    table = table.rename(columns={'PSI贡献': 'CSI贡献'})
+    table = table.rename(columns={"PSI贡献": "CSI贡献"})
     return table
 
 
-def batch_psi(X_train: pd.DataFrame,
-              X_test: pd.DataFrame,
-              features: Optional[List[str]] = None,
-              method: str = 'quantile',
-              max_n_bins: int = 10,
-              min_bin_size: float = 0.01,
-              **kwargs) -> pd.DataFrame:
+def batch_psi(
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+    features: Optional[List[str]] = None,
+    method: str = "quantile",
+    max_n_bins: int = 10,
+    min_bin_size: float = 0.01,
+    **kwargs,
+) -> pd.DataFrame:
     """批量计算多特征的PSI.
 
     对指定的多个特征同时计算PSI，返回各特征的PSI值和稳定性评级。
@@ -354,21 +382,22 @@ def batch_psi(X_train: pd.DataFrame,
     for feature in features:
         if feature in X_train.columns and feature in X_test.columns:
             try:
-                psi_value = psi(
-                    X_train[feature], X_test[feature],
-                    method, max_n_bins, min_bin_size, **kwargs
-                )
+                psi_value = psi(X_train[feature], X_test[feature], method, max_n_bins, min_bin_size, **kwargs)
                 rating = psi_rating(psi_value)
-                results.append({
-                    '特征': feature,
-                    'PSI': psi_value,
-                    '评级': rating,
-                })
+                results.append(
+                    {
+                        "特征": feature,
+                        "PSI": psi_value,
+                        "评级": rating,
+                    }
+                )
             except Exception as e:
-                results.append({
-                    '特征': feature,
-                    'PSI': np.nan,
-                    '评级': f'计算失败: {str(e)}',
-                })
+                results.append(
+                    {
+                        "特征": feature,
+                        "PSI": np.nan,
+                        "评级": f"计算失败: {str(e)}",
+                    }
+                )
 
     return pd.DataFrame(results)

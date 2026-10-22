@@ -473,9 +473,7 @@ def test_correlation_chain_does_not_drop_feature_only_related_to_removed_feature
             "A": basis[:, 0],
             "B": 0.8 * basis[:, 0] + 0.6 * basis[:, 1],
             "C": (
-                0.3 * basis[:, 0]
-                + (0.56 / 0.6) * basis[:, 1]
-                + np.sqrt(1 - 0.3**2 - (0.56 / 0.6) ** 2) * basis[:, 2]
+                0.3 * basis[:, 0] + (0.56 / 0.6) * basis[:, 1] + np.sqrt(1 - 0.3**2 - (0.56 / 0.6) ** 2) * basis[:, 2]
             ),
         }
     )

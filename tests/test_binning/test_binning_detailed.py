@@ -13,17 +13,22 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from hscredit.core.binning import (
-    UniformBinning, QuantileBinning, TreeBinning, 
-    ChiMergeBinning, BestKSBinning, BestIVBinning,
-    MDLPBinning, OptimalBinning
+    UniformBinning,
+    QuantileBinning,
+    TreeBinning,
+    ChiMergeBinning,
+    BestKSBinning,
+    BestIVBinning,
+    MDLPBinning,
+    OptimalBinning,
 )
 
 # 加载测试数据
 df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit_yyp.xlsx")
-df['target'] = df['FPD'].astype(int)
+df["target"] = df["FPD"].astype(int)
 
-X = df[['青云24']].copy()
-y = df['target'].copy()
+X = df[["青云24"]].copy()
+y = df["target"].copy()
 
 print("=" * 80)
 print("问题1: OptimalBinning统一接口 - uniform和quantile方法参数冲突")
@@ -45,37 +50,38 @@ print("=" * 80)
 try:
     binner = TreeBinning(max_depth=5, max_n_bins=5)
     binner.fit(X, y)
-    
+
     print(f"\nTreeBinning splits_: {binner.splits_}")
     print(f"TreeBinning n_bins_: {binner.n_bins_}")
     print(f"TreeBinning feature_types_: {binner.feature_types_}")
-    
+
     # 检查bin_table
-    bin_table = binner.get_bin_table('青云24')
+    bin_table = binner.get_bin_table("青云24")
     print(f"\nBin table rows: {len(bin_table)}")
     print(bin_table)
-    
+
     # 尝试transform
     try:
-        result = binner.transform(X, metric='indices')
+        result = binner.transform(X, metric="indices")
         print(f"\nTransform result shape: {result.shape}")
     except Exception as e:
         print(f"\nTransform error: {e}")
-        
+
         # 调试_transform_bins
-        splits = binner.splits_['青云24']
+        splits = binner.splits_["青云24"]
         print(f"\nSplits: {splits}")
         print(f"Splits type: {type(splits)}")
         print(f"Splits length: {len(splits)}")
-        
+
         # 手动调用_apply_bins
-        bins = binner._apply_bins(X['青云24'], splits)
+        bins = binner._apply_bins(X["青云24"], splits)
         print(f"\nBins from _apply_bins: {len(bins)}")
         print(f"Unique bins: {np.unique(bins)}")
-        
+
 except Exception as e:
     print(f"Error: {e}")
     import traceback
+
     traceback.print_exc()
 
 print("\n" + "=" * 80)
@@ -85,17 +91,18 @@ print("=" * 80)
 try:
     binner = BestKSBinning(max_n_bins=5)
     binner.fit(X, y)
-    
+
     print(f"\nBestKSBinning splits_: {binner.splits_}")
     print(f"BestKSBinning n_bins_: {binner.n_bins_}")
-    
-    bin_table = binner.get_bin_table('青云24')
+
+    bin_table = binner.get_bin_table("青云24")
     print(f"\nBin table rows: {len(bin_table)}")
     print(f"Expected max bins: 5, Actual: {len(bin_table)}")
-    
+
 except Exception as e:
     print(f"Error: {e}")
     import traceback
+
     traceback.print_exc()
 
 print("\n" + "=" * 80)
@@ -105,15 +112,18 @@ print("=" * 80)
 # 检查base.py中的_get_bin_labels方法
 from hscredit.core.binning.base import BaseBinning
 
+
 class TestBinning(BaseBinning):
     def fit(self, X, y=None, **kwargs):
         return self
-    def transform(self, X, metric='indices', **kwargs):
+
+    def transform(self, X, metric="indices", **kwargs):
         return X
+
 
 # 测试_get_bin_labels
 test_binner = TestBinning()
-test_binner.splits_ = {'test': np.array([100, 200, 300])}
+test_binner.splits_ = {"test": np.array([100, 200, 300])}
 
 # 测试正常情况
 bins_normal = np.array([0, 1, 2, 3, -1, -2])
@@ -132,15 +142,15 @@ print("=" * 80)
 try:
     binner = TreeBinning(max_depth=5, max_n_bins=5)
     binner.fit(X, y)
-    
-    splits = binner.splits_['青云24']
+
+    splits = binner.splits_["青云24"]
     print(f"\nSplits for '青云24': {splits}")
     print(f"Feature type: {binner.feature_types_['青云24']}")
-    
+
     # 手动测试_apply_bins
-    x_series = X['青云24']
+    x_series = X["青云24"]
     print(f"\nX series length: {len(x_series)}")
-    
+
     # 检查_apply_bins的实现
     if isinstance(splits, list):
         print("Splits is a list (categorical)")
@@ -152,26 +162,27 @@ try:
     else:
         print("Splits is an array (numerical)")
         bins = np.zeros(len(x_series), dtype=int)
-        
+
         if binner.missing_separate:
             bins[x_series.isna()] = -1
-        
+
         if binner.special_codes:
             for code in binner.special_codes:
                 bins[x_series == code] = -2
-        
+
         mask = x_series.notna()
         if binner.special_codes:
             for code in binner.special_codes:
                 mask = mask & (x_series != code)
-        
+
         bins[mask] = np.digitize(x_series[mask], splits)
         print(f"Bins length: {len(bins)}")
         print(f"Unique bins: {np.unique(bins)}")
-        
+
 except Exception as e:
     print(f"Error: {e}")
     import traceback
+
     traceback.print_exc()
 
 print("\n" + "=" * 80)
@@ -199,7 +210,7 @@ print("=" * 80)
 # 检查WOE计算中的极端值
 binner = UniformBinning(max_n_bins=5)
 binner.fit(X, y)
-bin_table = binner.get_bin_table('青云24')
+bin_table = binner.get_bin_table("青云24")
 
 print("\nWOE值检查:")
 print(f"WOE min: {bin_table['分档WOE值'].min()}")
@@ -207,10 +218,10 @@ print(f"WOE max: {bin_table['分档WOE值'].max()}")
 print(f"WOE values:\n{bin_table['分档WOE值']}")
 
 # 检查是否有极端WOE值（如-13.11）
-extreme_woe = bin_table[abs(bin_table['分档WOE值']) > 10]
+extreme_woe = bin_table[abs(bin_table["分档WOE值"]) > 10]
 if len(extreme_woe) > 0:
     print(f"\n极端WOE值发现:")
-    print(extreme_woe[['分箱', '样本总数', '好样本数', '坏样本数', '坏样本率', '分档WOE值']])
+    print(extreme_woe[["分箱", "样本总数", "好样本数", "坏样本数", "坏样本率", "分档WOE值"]])
     print("\n原因分析: 当某个分箱的good或bad数量为0时，WOE计算会添加1e-10平滑值")
     print("但log(1e-10)仍然是一个很大的负数，导致WOE值极端")
 

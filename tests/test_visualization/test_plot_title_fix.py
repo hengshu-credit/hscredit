@@ -3,6 +3,7 @@
 
 import sys
 import os
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 hscredit_pkg = os.path.dirname(script_dir)
 sys.path.insert(0, hscredit_pkg)
@@ -11,17 +12,20 @@ from hscredit.core.viz.binning_plots import bin_plot, hist_plot, psi_plot
 import pandas as pd
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # 创建测试数据
-feature_table = pd.DataFrame({
-    '分箱': ['[0, 100)', '[100, 200)', '[200, 300)'],
-    '好样本数': [100, 150, 200],
-    '坏样本数': [10, 15, 20],
-    '样本总数': [110, 165, 220],
-    '坏样本率': [0.091, 0.091, 0.091]
-})
+feature_table = pd.DataFrame(
+    {
+        "分箱": ["[0, 100)", "[100, 200)", "[200, 300)"],
+        "好样本数": [100, 150, 200],
+        "坏样本数": [10, 15, 20],
+        "样本总数": [110, 165, 220],
+        "坏样本率": [0.091, 0.091, 0.091],
+    }
+)
 
 print("=" * 70)
 print("测试绘图函数的 title 参数支持")

@@ -48,7 +48,6 @@ except ImportError:
 
 from ..base import BaseRiskModel
 
-
 _NGB_CLASSIFIER_INIT_EARLY_STOPPING_MIN_VERSION = Version("0.5.11")
 
 
@@ -243,9 +242,7 @@ class NGBoost(BaseRiskModel):
         self._validate_probability_scorecard_labels(y)
         eval_set = self._prepare_eval_set(eval_set)
         fit_kwargs = dict(fit_params)
-        effective_early_stopping_rounds = fit_kwargs.pop(
-            "early_stopping_rounds", self.early_stopping_rounds
-        )
+        effective_early_stopping_rounds = fit_kwargs.pop("early_stopping_rounds", self.early_stopping_rounds)
         has_native_x_val = "X_val" in fit_kwargs
         has_native_y_val = "Y_val" in fit_kwargs
         native_x_val = fit_kwargs.pop("X_val", None)

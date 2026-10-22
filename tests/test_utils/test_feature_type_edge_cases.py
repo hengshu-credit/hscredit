@@ -21,20 +21,20 @@ print("=" * 80)
 # 测试1: 唯一值 > 10 的数值型特征（应该识别为数值型）
 print("\n1. 唯一值 > 10 的数值型特征 (信用分类型)")
 print("-" * 60)
-X1 = pd.DataFrame({'score': np.random.choice(range(300, 850), 1000)})
+X1 = pd.DataFrame({"score": np.random.choice(range(300, 850), 1000)})
 y1 = pd.Series(np.random.binomial(1, 0.3, 1000))
 
 binner = UniformBinning(max_n_bins=5)
 binner.fit(X1, y1)
 print(f"  唯一值数量: {X1['score'].nunique()}")
 print(f"  检测结果: {binner.feature_types_}")
-assert binner.feature_types_['score'] == 'numerical', "应该识别为数值型"
+assert binner.feature_types_["score"] == "numerical", "应该识别为数值型"
 print("  ✓ 正确识别为数值型")
 
 # 测试2: 唯一值 <= 10 且比例 < 5%（通常识别为类别型）
 print("\n2. 唯一值 <= 10 且比例 < 5% (评分等级)")
 print("-" * 60)
-X2 = pd.DataFrame({'grade': np.random.choice(['A', 'B', 'C', 'D', 'E'], 1000)})
+X2 = pd.DataFrame({"grade": np.random.choice(["A", "B", "C", "D", "E"], 1000)})
 y2 = pd.Series(np.random.binomial(1, 0.3, 1000))
 
 binner = UniformBinning(max_n_bins=5)
@@ -43,7 +43,7 @@ print(f"  唯一值数量: {X2['grade'].nunique()}")
 print(f"  唯一值比例: {X2['grade'].nunique() / len(X2):.4f}")
 print(f"  检测结果: {binner.feature_types_}")
 # 字符串类型会被识别为类别型
-if binner.feature_types_['grade'] == 'categorical':
+if binner.feature_types_["grade"] == "categorical":
     print("  ✓ 正确识别为类别型")
 else:
     print(f"  ℹ 识别为数值型（字符串类型通常应为类别型）")
@@ -51,7 +51,7 @@ else:
 # 测试3: 唯一值 <= 10 但比例 >= 5%（应该识别为数值型）
 print("\n3. 唯一值 <= 10 但比例 >= 5% (小样本数值型)")
 print("-" * 60)
-X3 = pd.DataFrame({'small_num': np.random.choice([1, 2, 3, 4, 5], 50)})
+X3 = pd.DataFrame({"small_num": np.random.choice([1, 2, 3, 4, 5], 50)})
 y3 = pd.Series(np.random.binomial(1, 0.3, 50))
 
 binner = UniformBinning(max_n_bins=5)
@@ -66,7 +66,7 @@ print(f"  ✓ 检测结果: {binner.feature_types_['small_num']}")
 # 测试4: 字符串类型（应该识别为类别型）
 print("\n4. 字符串类型特征")
 print("-" * 60)
-X4 = pd.DataFrame({'city': ['北京', '上海', '广州', '深圳'] * 250})
+X4 = pd.DataFrame({"city": ["北京", "上海", "广州", "深圳"] * 250})
 y4 = pd.Series(np.random.binomial(1, 0.3, 1000))
 
 binner = UniformBinning(max_n_bins=5)
@@ -75,7 +75,7 @@ print(f"  唯一值数量: {X4['city'].nunique()}")
 print(f"  数据类型: {X4['city'].dtype}")
 print(f"  检测结果: {binner.feature_types_}")
 # 根据实际代码行为调整期望
-if binner.feature_types_['city'] == 'categorical':
+if binner.feature_types_["city"] == "categorical":
     print("  ✓ 正确识别为类别型")
 else:
     print(f"  ℹ 识别为数值型（当前版本行为）")
@@ -83,7 +83,7 @@ else:
 # 测试5: 整数类型但唯一值 > 10（应该识别为数值型）
 print("\n5. 整数类型且唯一值 > 10")
 print("-" * 60)
-X5 = pd.DataFrame({'age': np.random.randint(18, 80, 1000)})
+X5 = pd.DataFrame({"age": np.random.randint(18, 80, 1000)})
 y5 = pd.Series(np.random.binomial(1, 0.3, 1000))
 
 binner = UniformBinning(max_n_bins=5)
@@ -91,13 +91,13 @@ binner.fit(X5, y5)
 print(f"  唯一值数量: {X5['age'].nunique()}")
 print(f"  数据类型: {X5['age'].dtype}")
 print(f"  检测结果: {binner.feature_types_}")
-assert binner.feature_types_['age'] == 'numerical', "应该识别为数值型"
+assert binner.feature_types_["age"] == "numerical", "应该识别为数值型"
 print("  ✓ 正确识别为数值型")
 
 # 测试6: 布尔类型（应该识别为类别型）
 print("\n6. 布尔类型特征")
 print("-" * 60)
-X6 = pd.DataFrame({'is_vip': np.random.choice([True, False], 1000)})
+X6 = pd.DataFrame({"is_vip": np.random.choice([True, False], 1000)})
 y6 = pd.Series(np.random.binomial(1, 0.3, 1000))
 
 binner = UniformBinning(max_n_bins=5)
@@ -116,9 +116,9 @@ except Exception as e:
 print("\n7. 真实数据 - 青云24")
 print("-" * 60)
 df = pd.read_excel(_PROJECT_ROOT / "examples" / "hscredit_yyp.xlsx")
-df['target'] = df['FPD'].astype(int)
-X7 = df[['青云24']].copy()
-y7 = df['target'].copy()
+df["target"] = df["FPD"].astype(int)
+X7 = df[["青云24"]].copy()
+y7 = df["target"].copy()
 
 binner = UniformBinning(max_n_bins=5)
 binner.fit(X7, y7)
@@ -126,7 +126,7 @@ print(f"  唯一值数量: {X7['青云24'].nunique()}")
 print(f"  唯一值比例: {X7['青云24'].nunique() / len(X7):.4f}")
 print(f"  数据类型: {X7['青云24'].dtype}")
 print(f"  检测结果: {binner.feature_types_}")
-assert binner.feature_types_['青云24'] == 'numerical', "应该识别为数值型"
+assert binner.feature_types_["青云24"] == "numerical", "应该识别为数值型"
 print("  ✓ 正确识别为数值型")
 
 print("\n" + "=" * 80)

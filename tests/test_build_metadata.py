@@ -52,8 +52,7 @@ def test_build_tools_are_not_runtime_dependencies():
 def test_runtime_dependency_floors_avoid_known_pandas_warning_combinations():
     """运行时依赖下限不得允许 pandas 已明确警告的不兼容版本。"""
     requirements = {
-        item.name.lower(): item
-        for item in (Requirement(raw) for raw in _pyproject()["project"]["dependencies"])
+        item.name.lower(): item for item in (Requirement(raw) for raw in _pyproject()["project"]["dependencies"])
     }
 
     assert str(requirements["numexpr"].specifier) == ">=2.8.4"
@@ -99,18 +98,15 @@ def test_ci_runs_full_suite_with_all_extras_on_every_supported_python():
     assert 'python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]' in workflow
     assert workflow.count('pip install -e ".[all]"') == 2
     assert 'pip install -e ".[dev' not in workflow
-    assert 'test-full:' not in workflow
+    assert "test-full:" not in workflow
     assert '-m "not slow and not integration"' not in workflow
-    assert 'run: pytest tests/ --tb=short' in workflow
+    assert "run: pytest tests/ --tb=short" in workflow
     assert 'HSCREDIT_STRICT_CI_SKIPS: "1"' in workflow
 
 
 def test_pmml_extra_does_not_install_incompatible_sklearn_pandas():
     """PMML 导出使用 sklearn 原生组合器，不得再安装已不兼容新版 sklearn 的桥接包。"""
-    names = {
-        Requirement(item).name.lower()
-        for item in _pyproject()["project"]["optional-dependencies"]["pmml"]
-    }
+    names = {Requirement(item).name.lower() for item in _pyproject()["project"]["optional-dependencies"]["pmml"]}
 
     assert "sklearn-pandas" not in names
     requirements = (PROJECT_ROOT / "requirements.txt").read_text(encoding="utf-8").lower()

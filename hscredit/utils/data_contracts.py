@@ -76,8 +76,16 @@ def validate_target(y, *, target_type=None, allow_single_class=True, allow_empty
 
 
 def prepare_xy(
-    X, y=None, *, target=None, alignment="position", require_y=False,
-    target_type=None, allow_single_class=True, allow_empty=False, allow_empty_features=False,
+    X,
+    y=None,
+    *,
+    target=None,
+    alignment="position",
+    require_y=False,
+    target_type=None,
+    allow_single_class=True,
+    allow_empty=False,
+    allow_empty_features=False,
 ):
     """统一三种调用风格并隔离目标列，默认按位置对齐标签。
 
@@ -112,12 +120,17 @@ def prepare_xy(
                 raise ValidationError("按索引对齐时特征与目标索引必须完全匹配")
             y = y.reindex(X.index)
         values = validate_target(
-            y, target_type=target_type, allow_single_class=allow_single_class, allow_empty=allow_empty,
+            y,
+            target_type=target_type,
+            allow_single_class=allow_single_class,
+            allow_empty=allow_empty,
         )
         if len(values) != len(X):
             raise ValidationError(f"输入特征与目标变量的样本数量不一致: [{len(X)}, {len(values)}]")
         normalized_y = pd.Series(values, index=X.index, name=target or getattr(y, "name", None))
     return PreparedData(
-        X=X, y=normalized_y, positions=np.arange(len(X)),
+        X=X,
+        y=normalized_y,
+        positions=np.arange(len(X)),
         target_spec=TargetSpec(target, target_type, alignment, allow_single_class),
     )

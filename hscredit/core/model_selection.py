@@ -134,7 +134,7 @@ def oot_split(
     return development, oot
 
 
-@analysis_inputs('X', roles=('group',))
+@analysis_inputs("X", roles=("group",))
 def group_train_test_split(
     X,
     y=None,

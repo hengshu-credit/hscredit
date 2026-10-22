@@ -26,10 +26,7 @@ class ObservableOracleAdapter(OracleAdapter):
             [{"OWNER": "RISK", "TABLE_NAME": "EVENTS", "COLUMN_NAME": "ID", "POSITION": 1}],
         )
         self.metadata_rows = connect_kwargs.get("metadata_rows", [])
-        self.existing_tables = {
-            str(name).upper()
-            for name in connect_kwargs.get("existing_tables", {"RISK.EVENTS"})
-        }
+        self.existing_tables = {str(name).upper() for name in connect_kwargs.get("existing_tables", {"RISK.EVENTS"})}
 
     def execute(self, sql, params=None):
         self.sql_calls.append(("execute", sql, params))
@@ -185,7 +182,9 @@ def test_oracle_ensure_table_creates_only_when_missing(adapter):
 
     assert adapter.sql_calls[0][0] == "query"
     assert "FROM ALL_TABLES" in adapter.sql_calls[0][1]
-    assert any(call[0] == "execute" and call[1].startswith('CREATE TABLE "RISK"."NEW_EVENTS"') for call in adapter.sql_calls)
+    assert any(
+        call[0] == "execute" and call[1].startswith('CREATE TABLE "RISK"."NEW_EVENTS"') for call in adapter.sql_calls
+    )
 
     existing = ObservableOracleAdapter(
         connect_kwargs={"user": "risk", "existing_tables": {"RISK.EVENTS"}},

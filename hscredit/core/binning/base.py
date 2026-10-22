@@ -664,14 +664,17 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 f"最终普通箱数为 {n_bins}，可用类别数为 {available_categories}"
             )
         if n_bins > self.max_n_bins:
-            raise ValueError(f"特征 '{feature}' 的类别分箱无法满足 max_n_bins={self.max_n_bins}；" f"最终普通箱数为 {n_bins}")
+            raise ValueError(
+                f"特征 '{feature}' 的类别分箱无法满足 max_n_bins={self.max_n_bins}；" f"最终普通箱数为 {n_bins}"
+            )
 
         counts = ordinary["样本总数"].to_numpy(dtype=int)
         min_samples = BaseBinning._get_min_samples(self, len(y))
         if np.any(counts < min_samples):
             observed = int(counts.min())
             raise ValueError(
-                f"特征 '{feature}' 的类别分箱无法满足 min_bin_size={self.min_bin_size}；" f"最小箱样本数为 {observed}，要求至少 {min_samples}"
+                f"特征 '{feature}' 的类别分箱无法满足 min_bin_size={self.min_bin_size}；"
+                f"最小箱样本数为 {observed}，要求至少 {min_samples}"
             )
 
         max_samples = BaseBinning._get_max_samples(self, len(y))
@@ -686,14 +689,18 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         bad_rates = ordinary["坏样本率"].to_numpy(dtype=float)
         if self.min_bad_rate > 0 and np.any(bad_rates < self.min_bad_rate - 1e-12):
             observed = float(bad_rates.min())
-            raise ValueError(f"特征 '{feature}' 的类别分箱无法满足 min_bad_rate={self.min_bad_rate}；" f"最小坏样本率为 {observed:.6f}")
+            raise ValueError(
+                f"特征 '{feature}' 的类别分箱无法满足 min_bad_rate={self.min_bad_rate}；"
+                f"最小坏样本率为 {observed:.6f}"
+            )
 
         if self.monotonic in {"ascending", "descending"} and len(bad_rates) > 1:
             differences = np.diff(bad_rates)
             valid = np.all(differences >= -1e-12) if self.monotonic == "ascending" else np.all(differences <= 1e-12)
             if not valid:
                 raise ValueError(
-                    f"特征 '{feature}' 的类别分箱无法满足 monotonic={self.monotonic}；" f"最终坏样本率为 {bad_rates.tolist()}"
+                    f"特征 '{feature}' 的类别分箱无法满足 monotonic={self.monotonic}；"
+                    f"最终坏样本率为 {bad_rates.tolist()}"
                 )
 
     def _set_input_feature_attributes(self, X: pd.DataFrame) -> None:
@@ -966,8 +973,13 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         # 统一按位置对齐；异长标签必须由调用方显式筛选 X/y，不能按交集静默丢行。
         prepared = prepare_xy(
-            X, y, target=self.target, require_y=True, target_type="binary",
-            allow_single_class=False, allow_empty_features=True,
+            X,
+            y,
+            target=self.target,
+            require_y=True,
+            target_type="binary",
+            allow_single_class=False,
+            allow_empty_features=True,
         )
         X, y = prepared.X, prepared.y
 
@@ -1219,9 +1231,11 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """事务式拟合所有特征，并按输入列顺序一次性提交状态。"""
         features = list(X.columns)
         task_methods = [
-            "_fit_common_user_split_feature"
-            if method_name == "_fit_feature" and self._has_explicit_user_rule(feature)
-            else method_name
+            (
+                "_fit_common_user_split_feature"
+                if method_name == "_fit_feature" and self._has_explicit_user_rule(feature)
+                else method_name
+            )
             for feature in features
         ]
         tasks = ((feature, X[feature], y, feature_method) for feature, feature_method in zip(features, task_methods))
@@ -1407,7 +1421,11 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         else:
             total_bad_rate = bin_table["坏样本率"].mean()
         bin_table["LIFT值"] = [
-            np.nan if row["分箱标签"] in ["缺失", "special"] else row["坏样本率"] / total_bad_rate if total_bad_rate > 0 else 1.0
+            (
+                np.nan
+                if row["分箱标签"] in ["缺失", "special"]
+                else row["坏样本率"] / total_bad_rate if total_bad_rate > 0 else 1.0
+            )
             for _, row in bin_table.iterrows()
         ]
         return bin_table
@@ -1975,9 +1993,11 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             for code in self.special_codes:
                 claimed_target = self._categorical_group_target(
                     feature,
-                    lambda value, expected=code: is_missing_marker(value)
-                    if is_missing_marker(expected)
-                    else (not is_missing_marker(value) and type(value) is type(expected) and value == expected),
+                    lambda value, expected=code: (
+                        is_missing_marker(value)
+                        if is_missing_marker(expected)
+                        else (not is_missing_marker(value) and type(value) is type(expected) and value == expected)
+                    ),
                 )
                 if claimed_target is None:
                     continue
@@ -2061,7 +2081,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 self._woe_maps_[feature] = {int(key): float(value) for key, value in imported_woe.items()}
             else:
                 self._woe_maps_[feature] = {
-                    int(row["分箱"]): float(row["分档WOE值"]) for _, row in table.iterrows() if "分档WOE值" in table.columns
+                    int(row["分箱"]): float(row["分档WOE值"])
+                    for _, row in table.iterrows()
+                    if "分档WOE值" in table.columns
                 }
             if self.handle_unknown == UNKNOWN_BIN:
                 self._woe_maps_[feature].setdefault(UNKNOWN_BIN, 0.0)
@@ -2844,9 +2866,11 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                     # 将numpy数组转换为列表
                     bins = self._cat_bins_[feature]
                     rules[feature] = [
-                        [item if not (isinstance(item, float) and np.isnan(item)) else np.nan for item in group]
-                        if isinstance(group, (list, np.ndarray))
-                        else group
+                        (
+                            [item if not (isinstance(item, float) and np.isnan(item)) else np.nan for item in group]
+                            if isinstance(group, (list, np.ndarray))
+                            else group
+                        )
                         for group in bins
                     ]
                 else:

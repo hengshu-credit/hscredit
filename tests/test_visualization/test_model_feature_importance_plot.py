@@ -62,8 +62,12 @@ def test_combined_plot_uses_independent_top_n_and_brand_styles(fitted_forest):
     assert [text.get_text() for text in right_title_ax.texts] == ["SHAP 特征依赖关系"]
     assert [ax.get_title().split(":", 1)[0] for ax in dependence_axes] == ["Top 1", "Top 2", "Top 3", "Top 4"]
     expected_ranking = np.argsort(-model.feature_importances_, kind="stable")
-    assert [ax.get_title().split(": ", 1)[1] for ax in dependence_axes] == [X.columns[index] for index in expected_ranking[:4]]
-    assert [label.get_text() for label in main_ax.get_yticklabels()] == [X.columns[index] for index in expected_ranking[:3][::-1]]
+    assert [ax.get_title().split(": ", 1)[1] for ax in dependence_axes] == [
+        X.columns[index] for index in expected_ranking[:4]
+    ]
+    assert [label.get_text() for label in main_ax.get_yticklabels()] == [
+        X.columns[index] for index in expected_ranking[:3][::-1]
+    ]
     assert importance_ax.patches
     assert all(patch.get_hatch() == "/" for patch in importance_ax.patches)
     np.testing.assert_allclose(
@@ -270,8 +274,14 @@ def test_shap_importance_can_compare_binary_labels_or_show_aggregate(fitted_fore
         [patch.get_width() for patch in split_ax.patches[4:]],
         label_one_mean[reversed_indices],
     )
-    assert all(to_hex(patch.get_facecolor(), keep_alpha=False).lower() == PRIMARY_COLORS[0].lower() for patch in split_ax.patches[:4])
-    assert all(to_hex(patch.get_facecolor(), keep_alpha=False).lower() == PRIMARY_COLORS[1].lower() for patch in split_ax.patches[4:])
+    assert all(
+        to_hex(patch.get_facecolor(), keep_alpha=False).lower() == PRIMARY_COLORS[0].lower()
+        for patch in split_ax.patches[:4]
+    )
+    assert all(
+        to_hex(patch.get_facecolor(), keep_alpha=False).lower() == PRIMARY_COLORS[1].lower()
+        for patch in split_ax.patches[4:]
+    )
     assert all(patch.get_alpha() < 0.5 for patch in split_ax.patches)
     assert [patch.get_hatch() for patch in split_ax.patches[:4]] == ["/"] * 4
     assert [patch.get_hatch() for patch in split_ax.patches[4:]] == ["\\"] * 4

@@ -6,7 +6,6 @@ import hscredit
 from hscredit.core import models
 from hscredit.core.models.classical.sklearn_models import SklearnRiskModel
 
-
 EXPECTED_MODELS = {
     "XGBoost": "hscredit.core.models.boosting.xgboost_model",
     "LightGBM": "hscredit.core.models.boosting.lightgbm_model",

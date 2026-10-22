@@ -231,9 +231,7 @@ class SklearnRiskModel(BaseRiskModel):
                 coefficient = coefficient.toarray()
             coefficient = np.abs(np.asarray(coefficient, dtype=float))
             return coefficient if coefficient.ndim == 1 else coefficient.mean(axis=0)
-        raise ValidationError(
-            "当前非线性模型没有原生逐字段特征重要性，请使用 permutation importance 或模型解释工具"
-        )
+        raise ValidationError("当前非线性模型没有原生逐字段特征重要性，请使用 permutation importance 或模型解释工具")
 
     def save_model(self, path: str):
         """保存底层sklearn模型（pickle格式）.

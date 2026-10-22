@@ -87,11 +87,7 @@ def build_sample_stats_table(
     if is_multi:
         if target_specific_totals:
             metrics = ["样本总数", "好样本数", "坏样本数", "坏样本率"]
-            columns = [
-                (metric, display_labels.get(label, label))
-                for metric in metrics
-                for label in label_names
-            ]
+            columns = [(metric, display_labels.get(label, label)) for metric in metrics for label in label_names]
         else:
             columns = [("统计详情", "样本总数")] + [
                 (metric, display_labels.get(label, label))
@@ -215,11 +211,7 @@ def build_group_distribution_table(
         else:
             columns.append(("统计详情", "样本总数"))
             metrics = ["好样本数", "坏样本数", "坏样本率"]
-        columns.extend(
-            (metric, display_labels.get(label, label))
-            for metric in metrics
-            for label in label_names
-        )
+        columns.extend((metric, display_labels.get(label, label)) for metric in metrics for label in label_names)
         multi_cols = pd.MultiIndex.from_tuples(columns, names=["统计详情", ""])
         result = pd.DataFrame(rows, columns=multi_cols)
         return result, [c for c in multi_cols if c[0] == "坏样本率"]

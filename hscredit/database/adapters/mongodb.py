@@ -320,12 +320,15 @@ class MongoDBAdapter(BaseDatabaseAdapter):
 
     def exists(self, collection_name: Any, selector: Any = None, **options: Any) -> bool:
         projection = options.pop("projection", {"_id": 1})
-        return self.read_one(
-            collection_name,
-            selector,
-            projection=projection,
-            **options,
-        ) is not None
+        return (
+            self.read_one(
+                collection_name,
+                selector,
+                projection=projection,
+                **options,
+            )
+            is not None
+        )
 
     def query(self, sql: str, params: Any = None, result: str = "dataframe") -> Any:
         del sql, params, result

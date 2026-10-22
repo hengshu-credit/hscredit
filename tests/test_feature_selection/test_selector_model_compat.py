@@ -12,14 +12,12 @@ import numpy as np
 import pandas as pd
 from sklearn.datasets import make_classification
 
+
 # -- 生成测试数据 --
 @pytest.fixture
 def data():
-    X, y = make_classification(
-        n_samples=200, n_features=10, n_informative=5,
-        n_redundant=2, random_state=42
-    )
-    feature_names = [f'f{i}' for i in range(X.shape[1])]
+    X, y = make_classification(n_samples=200, n_features=10, n_informative=5, n_redundant=2, random_state=42)
+    feature_names = [f"f{i}" for i in range(X.shape[1])]
     X_df = pd.DataFrame(X, columns=feature_names)
     return X_df, y
 
@@ -33,6 +31,7 @@ class TestGetFeatureImportances:
     def test_sklearn_random_forest(self, data):
         from sklearn.ensemble import RandomForestClassifier
         from hscredit.core.selectors.base import get_feature_importances
+
         X, y = data
         model = RandomForestClassifier(n_estimators=10, random_state=42)
         model.fit(X, y)
@@ -44,6 +43,7 @@ class TestGetFeatureImportances:
     def test_sklearn_logistic_regression(self, data):
         from sklearn.linear_model import LogisticRegression
         from hscredit.core.selectors.base import get_feature_importances
+
         X, y = data
         model = LogisticRegression(max_iter=1000, random_state=42)
         model.fit(X, y)
@@ -55,6 +55,7 @@ class TestGetFeatureImportances:
     def test_sklearn_gradient_boosting(self, data):
         from sklearn.ensemble import GradientBoostingClassifier
         from hscredit.core.selectors.base import get_feature_importances
+
         X, y = data
         model = GradientBoostingClassifier(n_estimators=10, random_state=42)
         model.fit(X, y)
@@ -65,6 +66,7 @@ class TestGetFeatureImportances:
     def test_hscredit_logistic_regression(self, data):
         from hscredit.core.models import LogisticRegression
         from hscredit.core.selectors.base import get_feature_importances
+
         X, y = data
         model = LogisticRegression(max_iter=1000)
         model.fit(X, y)
@@ -73,9 +75,10 @@ class TestGetFeatureImportances:
         assert imp.shape == (10,)
 
     def test_xgb_classifier(self, data):
-        pytest.importorskip('xgboost')
+        pytest.importorskip("xgboost")
         import xgboost as xgb
         from hscredit.core.selectors.base import get_feature_importances
+
         X, y = data
         model = xgb.XGBClassifier(n_estimators=10, random_state=42, verbosity=0)
         model.fit(X, y)
@@ -84,9 +87,10 @@ class TestGetFeatureImportances:
         assert imp.shape == (10,)
 
     def test_lgbm_classifier(self, data):
-        pytest.importorskip('lightgbm')
+        pytest.importorskip("lightgbm")
         import lightgbm as lgb
         from hscredit.core.selectors.base import get_feature_importances
+
         X, y = data
         model = lgb.LGBMClassifier(n_estimators=10, random_state=42, verbose=-1)
         model.fit(X, y)
@@ -95,9 +99,10 @@ class TestGetFeatureImportances:
         assert imp.shape == (10,)
 
     def test_catboost_classifier(self, data):
-        pytest.importorskip('catboost')
+        pytest.importorskip("catboost")
         from catboost import CatBoostClassifier
         from hscredit.core.selectors.base import get_feature_importances
+
         X, y = data
         model = CatBoostClassifier(iterations=10, random_seed=42, verbose=0)
         model.fit(X, y)
@@ -124,6 +129,7 @@ class TestFeatureImportanceSelectorCompat:
     def test_with_sklearn_rf(self, data):
         from sklearn.ensemble import RandomForestClassifier
         from hscredit.core.selectors import FeatureImportanceSelector
+
         X, y = data
         sel = FeatureImportanceSelector(RandomForestClassifier(n_estimators=10, random_state=42), threshold=3)
         sel.fit(X, y)
@@ -132,6 +138,7 @@ class TestFeatureImportanceSelectorCompat:
     def test_with_sklearn_lr(self, data):
         from sklearn.linear_model import LogisticRegression
         from hscredit.core.selectors import FeatureImportanceSelector
+
         X, y = data
         sel = FeatureImportanceSelector(LogisticRegression(max_iter=1000), threshold=3)
         sel.fit(X, y)
@@ -140,33 +147,37 @@ class TestFeatureImportanceSelectorCompat:
     def test_with_hscredit_lr(self, data):
         from hscredit.core.models import LogisticRegression
         from hscredit.core.selectors import FeatureImportanceSelector
+
         X, y = data
         sel = FeatureImportanceSelector(LogisticRegression(max_iter=1000), threshold=3)
         sel.fit(X, y)
         assert len(sel.selected_features_) == 3
 
     def test_with_xgb(self, data):
-        pytest.importorskip('xgboost')
+        pytest.importorskip("xgboost")
         import xgboost as xgb
         from hscredit.core.selectors import FeatureImportanceSelector
+
         X, y = data
         sel = FeatureImportanceSelector(xgb.XGBClassifier(n_estimators=10, verbosity=0), threshold=3)
         sel.fit(X, y)
         assert len(sel.selected_features_) == 3
 
     def test_with_lgbm(self, data):
-        pytest.importorskip('lightgbm')
+        pytest.importorskip("lightgbm")
         import lightgbm as lgb
         from hscredit.core.selectors import FeatureImportanceSelector
+
         X, y = data
         sel = FeatureImportanceSelector(lgb.LGBMClassifier(n_estimators=10, verbose=-1), threshold=3)
         sel.fit(X, y)
         assert len(sel.selected_features_) == 3
 
     def test_with_catboost(self, data):
-        pytest.importorskip('catboost')
+        pytest.importorskip("catboost")
         from catboost import CatBoostClassifier
         from hscredit.core.selectors import FeatureImportanceSelector
+
         X, y = data
         sel = FeatureImportanceSelector(CatBoostClassifier(iterations=10, verbose=0), threshold=3)
         sel.fit(X, y)
@@ -182,10 +193,10 @@ class TestNullImportanceSelectorCompat:
     def test_with_sklearn_rf(self, data):
         from sklearn.ensemble import RandomForestClassifier
         from hscredit.core.selectors import NullImportanceSelector
+
         X, y = data
         sel = NullImportanceSelector(
-            RandomForestClassifier(n_estimators=10, random_state=42),
-            n_runs=1, cv=2, threshold=0.5
+            RandomForestClassifier(n_estimators=10, random_state=42), n_runs=1, cv=2, threshold=0.5
         )
         sel.fit(X, y)
         assert isinstance(sel.selected_features_, list)
@@ -193,35 +204,29 @@ class TestNullImportanceSelectorCompat:
     def test_with_sklearn_lr(self, data):
         from sklearn.linear_model import LogisticRegression
         from hscredit.core.selectors import NullImportanceSelector
+
         X, y = data
-        sel = NullImportanceSelector(
-            LogisticRegression(max_iter=1000),
-            n_runs=1, cv=2, threshold=0.5
-        )
+        sel = NullImportanceSelector(LogisticRegression(max_iter=1000), n_runs=1, cv=2, threshold=0.5)
         sel.fit(X, y)
         assert isinstance(sel.selected_features_, list)
 
     def test_with_xgb(self, data):
-        pytest.importorskip('xgboost')
+        pytest.importorskip("xgboost")
         import xgboost as xgb
         from hscredit.core.selectors import NullImportanceSelector
+
         X, y = data
-        sel = NullImportanceSelector(
-            xgb.XGBClassifier(n_estimators=10, verbosity=0),
-            n_runs=1, cv=2, threshold=0.5
-        )
+        sel = NullImportanceSelector(xgb.XGBClassifier(n_estimators=10, verbosity=0), n_runs=1, cv=2, threshold=0.5)
         sel.fit(X, y)
         assert isinstance(sel.selected_features_, list)
 
     def test_with_lgbm(self, data):
-        pytest.importorskip('lightgbm')
+        pytest.importorskip("lightgbm")
         import lightgbm as lgb
         from hscredit.core.selectors import NullImportanceSelector
+
         X, y = data
-        sel = NullImportanceSelector(
-            lgb.LGBMClassifier(n_estimators=10, verbose=-1),
-            n_runs=1, cv=2, threshold=0.5
-        )
+        sel = NullImportanceSelector(lgb.LGBMClassifier(n_estimators=10, verbose=-1), n_runs=1, cv=2, threshold=0.5)
         sel.fit(X, y)
         assert isinstance(sel.selected_features_, list)
 
@@ -235,31 +240,28 @@ class TestBorutaSelectorCompat:
     def test_with_sklearn_rf(self, data):
         from sklearn.ensemble import RandomForestClassifier
         from hscredit.core.selectors import BorutaSelector
+
         X, y = data
-        sel = BorutaSelector(
-            RandomForestClassifier(n_estimators=10, random_state=42),
-            max_iter=3
-        )
+        sel = BorutaSelector(RandomForestClassifier(n_estimators=10, random_state=42), max_iter=3)
         sel.fit(X, y)
         assert isinstance(sel.selected_features_, list)
 
     def test_with_sklearn_lr(self, data):
         from sklearn.linear_model import LogisticRegression
         from hscredit.core.selectors import BorutaSelector
+
         X, y = data
         sel = BorutaSelector(LogisticRegression(max_iter=1000), max_iter=3)
         sel.fit(X, y)
         assert isinstance(sel.selected_features_, list)
 
     def test_with_xgb(self, data):
-        pytest.importorskip('xgboost')
+        pytest.importorskip("xgboost")
         import xgboost as xgb
         from hscredit.core.selectors import BorutaSelector
+
         X, y = data
-        sel = BorutaSelector(
-            xgb.XGBClassifier(n_estimators=10, verbosity=0),
-            max_iter=3
-        )
+        sel = BorutaSelector(xgb.XGBClassifier(n_estimators=10, verbosity=0), max_iter=3)
         sel.fit(X, y)
         assert isinstance(sel.selected_features_, list)
 
@@ -273,6 +275,7 @@ class TestRFESelectorCompat:
     def test_with_sklearn_lr(self, data):
         from sklearn.linear_model import LogisticRegression
         from hscredit.core.selectors import RFESelector
+
         X, y = data
         sel = RFESelector(LogisticRegression(max_iter=1000), n_features_to_select=5)
         sel.fit(X, y)
@@ -281,6 +284,7 @@ class TestRFESelectorCompat:
     def test_with_sklearn_rf(self, data):
         from sklearn.ensemble import RandomForestClassifier
         from hscredit.core.selectors import RFESelector
+
         X, y = data
         sel = RFESelector(RandomForestClassifier(n_estimators=10, random_state=42), n_features_to_select=5)
         sel.fit(X, y)
@@ -296,10 +300,10 @@ class TestSequentialSelectorCompat:
     def test_with_sklearn_lr(self, data):
         from sklearn.linear_model import LogisticRegression
         from hscredit.core.selectors import SequentialFeatureSelector
+
         X, y = data
         sel = SequentialFeatureSelector(
-            LogisticRegression(max_iter=1000),
-            n_features_to_select=3, direction='forward', cv=2
+            LogisticRegression(max_iter=1000), n_features_to_select=3, direction="forward", cv=2
         )
         sel.fit(X, y)
         assert len(sel.selected_features_) == 3
@@ -307,10 +311,10 @@ class TestSequentialSelectorCompat:
     def test_with_sklearn_rf(self, data):
         from sklearn.ensemble import RandomForestClassifier
         from hscredit.core.selectors import SequentialFeatureSelector
+
         X, y = data
         sel = SequentialFeatureSelector(
-            RandomForestClassifier(n_estimators=10, random_state=42),
-            n_features_to_select=3, direction='forward', cv=2
+            RandomForestClassifier(n_estimators=10, random_state=42), n_features_to_select=3, direction="forward", cv=2
         )
         sel.fit(X, y)
         assert len(sel.selected_features_) == 3

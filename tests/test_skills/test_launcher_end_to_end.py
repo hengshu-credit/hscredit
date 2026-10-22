@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[2]
 EXECUTION_MODE = os.environ.get("HSCREDIT_SKILL_TEST_ENV", "current")
 

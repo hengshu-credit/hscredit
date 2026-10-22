@@ -2,6 +2,7 @@
 
 验证当传入 user_splits_fixed=True 时，分箱器会完全保留用户指定的切分点。
 """
+
 import numpy as np
 
 from hscredit.core.binning import OptimalBinning
@@ -74,7 +75,9 @@ def test_user_splits_fixed_with_out_of_range():
     np.testing.assert_array_equal(binner_strict.splits_["age_in_years"], np.array([10, 20, 30, 100], dtype=float))
 
     # 验证默认模式过滤了超出范围的切分点
-    assert len(binner_default.splits_["age_in_years"]) < len(user_splits["age_in_years"]), "默认模式应该过滤超出范围的切分点"
+    assert len(binner_default.splits_["age_in_years"]) < len(
+        user_splits["age_in_years"]
+    ), "默认模式应该过滤超出范围的切分点"
 
     print("[OK] user_splits_fixed=True 正确保留了超出数据范围的切分点")
 

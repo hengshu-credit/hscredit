@@ -60,16 +60,16 @@ class _BinaryRocResult:
     auto_reversed: bool
 
 
-def _binary_roc_statistics(y_true, y_score, pos_label=1, score_direction='auto', sample_weight=None):
+def _binary_roc_statistics(y_true, y_score, pos_label=1, score_direction="auto", sample_weight=None):
     """统一计算 ROC 与曲线面积，方向、样本过滤、权重及同分处理只在这里实现。"""
     direction = str(score_direction).strip().lower()
-    if direction not in {'auto', 'higher_risk', 'higher_safe'}:
+    if direction not in {"auto", "higher_risk", "higher_safe"}:
         raise ValueError("score_direction 必须是 'auto'、'higher_risk' 或 'higher_safe'")
     target, score, weights = _prepare_binary_scores(y_true, y_score, pos_label, sample_weight=sample_weight)
     fpr, tpr, thresholds = roc_curve(target, score, sample_weight=weights, drop_intermediate=False)
     value = float(curve_area(fpr, tpr))
-    auto_reversed = direction == 'auto' and value < 0.5
-    if direction == 'higher_safe' or auto_reversed:
+    auto_reversed = direction == "auto" and value < 0.5
+    if direction == "higher_safe" or auto_reversed:
         fpr, tpr, thresholds = roc_curve(target, -score, sample_weight=weights, drop_intermediate=False)
         value = float(curve_area(fpr, tpr))
     if weights is None:

@@ -22,44 +22,57 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from .utils import (
-    DEFAULT_COLORS, get_or_create_ax, save_figure, setup_axis_style,
-    BLUE_GRADIENT, NEUTRAL_COLOR, STABLE_COLOR, CHANGING_COLOR, UNSTABLE_COLOR,
-    get_series_colors, get_psi_color, make_risk_cmap,
+    DEFAULT_COLORS,
+    get_or_create_ax,
+    save_figure,
+    setup_axis_style,
+    BLUE_GRADIENT,
+    NEUTRAL_COLOR,
+    STABLE_COLOR,
+    CHANGING_COLOR,
+    UNSTABLE_COLOR,
+    get_series_colors,
+    get_psi_color,
+    make_risk_cmap,
 )
 
-
 # IV 强度配色：采用 hscredit 主题蓝色阶（浅→深，越深表示 IV 越强），保持整体风格统一
-_IV_COLORS = list(BLUE_GRADIENT)   # ['#E3F2FD', '#90CAF9', '#42A5F5', '#1565C0']
+_IV_COLORS = list(BLUE_GRADIENT)  # ['#E3F2FD', '#90CAF9', '#42A5F5', '#1565C0']
 
 # IV评级参考线
 _IV_THRESHOLDS = [
-    (0.02, '弱（< 0.02）', _IV_COLORS[0]),
-    (0.10, '一般（0.02-0.10）', _IV_COLORS[1]),
-    (0.30, '较强（0.10-0.30）', _IV_COLORS[2]),
-    (float('inf'), '强（≥ 0.30）', _IV_COLORS[3]),
+    (0.02, "弱（< 0.02）", _IV_COLORS[0]),
+    (0.10, "一般（0.02-0.10）", _IV_COLORS[1]),
+    (0.30, "较强（0.10-0.30）", _IV_COLORS[2]),
+    (float("inf"), "强（≥ 0.30）", _IV_COLORS[3]),
 ]
 
 # PSI 稳定性配色：复用 hscredit 语义色（稳定/略变/不稳定）
-_PSI_THRESHOLDS = [(0.1, '稳定', STABLE_COLOR), (0.25, '略变', CHANGING_COLOR), (float('inf'), '不稳定', UNSTABLE_COLOR)]
+_PSI_THRESHOLDS = [
+    (0.1, "稳定", STABLE_COLOR),
+    (0.25, "略变", CHANGING_COLOR),
+    (float("inf"), "不稳定", UNSTABLE_COLOR),
+]
 
 
 def metric_comparison_plot(
     data: pd.DataFrame,
     label_col: str,
     value_col: str,
-    orientation: str = 'horizontal',
+    orientation: str = "horizontal",
     sort_values: bool = False,
     ascending: bool = True,
     color_scheme: Optional[str] = None,
     reference_lines: Optional[List[Tuple[float, str, str]]] = None,
-    value_format: str = '{:.3f}',
+    value_format: str = "{:.3f}",
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (10, 6),
     title: Optional[str] = None,
     xlabel: Optional[str] = None,
     ylabel: Optional[str] = None,
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """绘制指标对比柱状图.
 
@@ -86,14 +99,14 @@ def metric_comparison_plot(
 
     >>> fig = metric_comparison_plot(iv_table, '特征', 'IV', color_scheme='iv')
     """
-    if orientation not in ('horizontal', 'vertical'):
+    if orientation not in ("horizontal", "vertical"):
         raise ValueError("orientation 必须是 horizontal 或 vertical")
     missing_cols = [col for col in (label_col, value_col) if col not in data.columns]
     if missing_cols:
         raise ValueError(f"data 缺少必要列: {missing_cols}")
 
     plot_data = data[[label_col, value_col]].copy()
-    plot_data[value_col] = pd.to_numeric(plot_data[value_col], errors='coerce')
+    plot_data[value_col] = pd.to_numeric(plot_data[value_col], errors="coerce")
     plot_data = plot_data.dropna(subset=[value_col])
     if plot_data.empty:
         raise ValueError("没有可绘制的指标数据")
@@ -102,33 +115,41 @@ def metric_comparison_plot(
 
     values = plot_data[value_col].to_numpy(dtype=float)
     labels = plot_data[label_col].astype(str).tolist()
-    if color_scheme == 'iv':
+    if color_scheme == "iv":
         colors = [
-            _IV_COLORS[0] if value < 0.02 else _IV_COLORS[1] if value < 0.10 else _IV_COLORS[2] if value < 0.30 else _IV_COLORS[3]
+            (
+                _IV_COLORS[0]
+                if value < 0.02
+                else _IV_COLORS[1] if value < 0.10 else _IV_COLORS[2] if value < 0.30 else _IV_COLORS[3]
+            )
             for value in values
         ]
         if reference_lines is None:
-            reference_lines = [(0.02, 'IV=0.02', _IV_COLORS[1]), (0.10, 'IV=0.10', _IV_COLORS[2]), (0.30, 'IV=0.30', _IV_COLORS[3])]
-    elif color_scheme == 'psi':
+            reference_lines = [
+                (0.02, "IV=0.02", _IV_COLORS[1]),
+                (0.10, "IV=0.10", _IV_COLORS[2]),
+                (0.30, "IV=0.30", _IV_COLORS[3]),
+            ]
+    elif color_scheme == "psi":
         colors = [get_psi_color(value) for value in values]
         if reference_lines is None:
-            reference_lines = [(0.10, '轻微偏移 0.10', CHANGING_COLOR), (0.25, '显著偏移 0.25', UNSTABLE_COLOR)]
+            reference_lines = [(0.10, "轻微偏移 0.10", CHANGING_COLOR), (0.25, "显著偏移 0.25", UNSTABLE_COLOR)]
     else:
         colors = get_series_colors(len(values))
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     positions = np.arange(len(labels))
-    if orientation == 'horizontal':
-        bars = ax.barh(positions, values, color=colors, alpha=0.85, edgecolor='white')
+    if orientation == "horizontal":
+        bars = ax.barh(positions, values, color=colors, alpha=0.85, edgecolor="white")
         ax.set_yticks(positions)
         ax.set_yticklabels(labels)
         ax.set_xlabel(xlabel or value_col)
         if ylabel:
             ax.set_ylabel(ylabel)
     else:
-        bars = ax.bar(positions, values, color=colors, alpha=0.85, edgecolor='white')
+        bars = ax.bar(positions, values, color=colors, alpha=0.85, edgecolor="white")
         ax.set_xticks(positions)
-        ax.set_xticklabels(labels, rotation=30, ha='right')
+        ax.set_xticklabels(labels, rotation=30, ha="right")
         ax.set_ylabel(ylabel or value_col)
         if xlabel:
             ax.set_xlabel(xlabel)
@@ -136,28 +157,30 @@ def metric_comparison_plot(
     max_abs = max(float(np.nanmax(np.abs(values))), 1e-12)
     for bar, value in zip(bars, values):
         text = value_format.format(value)
-        if orientation == 'horizontal':
-            ax.text(value + max_abs * 0.01, bar.get_y() + bar.get_height() / 2, text, va='center', fontsize=9)
+        if orientation == "horizontal":
+            ax.text(value + max_abs * 0.01, bar.get_y() + bar.get_height() / 2, text, va="center", fontsize=9)
         else:
-            ax.text(bar.get_x() + bar.get_width() / 2, value + max_abs * 0.01, text, ha='center', va='bottom', fontsize=9)
+            ax.text(
+                bar.get_x() + bar.get_width() / 2, value + max_abs * 0.01, text, ha="center", va="bottom", fontsize=9
+            )
 
     for value, label, color in reference_lines or []:
-        if orientation == 'horizontal':
-            ax.axvline(value, color=color, linestyle='--', linewidth=1, alpha=0.8, label=label)
+        if orientation == "horizontal":
+            ax.axvline(value, color=color, linestyle="--", linewidth=1, alpha=0.8, label=label)
         else:
-            ax.axhline(value, color=color, linestyle='--', linewidth=1, alpha=0.8, label=label)
+            ax.axhline(value, color=color, linestyle="--", linewidth=1, alpha=0.8, label=label)
     if reference_lines:
         ax.legend(fontsize=9)
 
-    ax.set_title(title or f'{value_col}对比', fontsize=13, fontweight='bold')
+    ax.set_title(title or f"{value_col}对比", fontsize=13, fontweight="bold")
     setup_axis_style(ax, hide_top_right=True)
-    ax.grid(True, alpha=0.3, axis='x' if orientation == 'horizontal' else 'y')
+    ax.grid(True, alpha=0.3, axis="x" if orientation == "horizontal" else "y")
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
     return fig
 
 
-@analysis_inputs('df', roles=())
+@analysis_inputs("df", roles=())
 def variable_iv_plot(
     df: pd.DataFrame,
     features: List[str],
@@ -165,9 +188,10 @@ def variable_iv_plot(
     top_n: int = 20,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (12, 8),
-    title: str = '特征IV值排名',
+    title: str = "特征IV值排名",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """特征IV值横向柱状图.
 
@@ -218,23 +242,22 @@ def variable_iv_plot(
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
 
     y_pos = np.arange(len(feat_names))
-    bars = ax.barh(y_pos, iv_values, color=bar_colors, edgecolor='white', height=0.7)
+    bars = ax.barh(y_pos, iv_values, color=bar_colors, edgecolor="white", height=0.7)
     ax.set_yticks(y_pos)
     ax.set_yticklabels(feat_names, fontsize=10)
     ax.invert_yaxis()
 
     # 参考线
-    for thresh, label in [(0.02, 'IV=0.02'), (0.10, 'IV=0.10'), (0.30, 'IV=0.30')]:
-        ax.axvline(thresh, color=NEUTRAL_COLOR, linestyle='--', linewidth=0.8, alpha=0.6)
-        ax.text(thresh + 0.002, -0.8, label, fontsize=8, color=NEUTRAL_COLOR, va='top')
+    for thresh, label in [(0.02, "IV=0.02"), (0.10, "IV=0.10"), (0.30, "IV=0.30")]:
+        ax.axvline(thresh, color=NEUTRAL_COLOR, linestyle="--", linewidth=0.8, alpha=0.6)
+        ax.text(thresh + 0.002, -0.8, label, fontsize=8, color=NEUTRAL_COLOR, va="top")
 
     # 数值标签
     for bar, v in zip(bars, iv_values):
-        ax.text(v + max(iv_values) * 0.01, bar.get_y() + bar.get_height() / 2,
-                f'{v:.4f}', va='center', fontsize=9)
+        ax.text(v + max(iv_values) * 0.01, bar.get_y() + bar.get_height() / 2, f"{v:.4f}", va="center", fontsize=9)
 
-    ax.set_xlabel('IV值', fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight='bold')
+    ax.set_xlabel("IV值", fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
@@ -248,7 +271,8 @@ def variable_woe_trend_plot(
     figsize: Tuple[float, float] = (10, 5),
     title: Optional[str] = None,
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """WOE折线图 + 坏率柱状图（双轴）.
 
@@ -270,9 +294,9 @@ def variable_woe_trend_plot(
     >>> fig = variable_woe_trend_plot(tbl, feature='age')
     """
     # 兼容列名
-    label_col = next((c for c in ['分箱标签', 'bin_label', 'Bin'] if c in bin_table.columns), None)
-    woe_col = next((c for c in ['分档WOE值', 'WOE', 'woe'] if c in bin_table.columns), None)
-    br_col = next((c for c in ['坏样本率', 'bad_rate', 'BadRate'] if c in bin_table.columns), None)
+    label_col = next((c for c in ["分箱标签", "bin_label", "Bin"] if c in bin_table.columns), None)
+    woe_col = next((c for c in ["分档WOE值", "WOE", "woe"] if c in bin_table.columns), None)
+    br_col = next((c for c in ["坏样本率", "bad_rate", "BadRate"] if c in bin_table.columns), None)
 
     if woe_col is None or br_col is None:
         raise ValueError("bin_table 必须含 WOE 和坏样本率列")
@@ -292,29 +316,27 @@ def variable_woe_trend_plot(
 
     # 柱状图：坏样本率
     bar_width = 0.6
-    ax1.bar(x, br_vals, width=bar_width, color=DEFAULT_COLORS[0],
-            alpha=0.35, label='坏样本率', zorder=2)
-    ax1.set_ylabel('坏样本率', color=DEFAULT_COLORS[0], fontsize=10)
-    ax1.tick_params(axis='y', labelcolor=DEFAULT_COLORS[0])
-    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:.1%}'))
+    ax1.bar(x, br_vals, width=bar_width, color=DEFAULT_COLORS[0], alpha=0.35, label="坏样本率", zorder=2)
+    ax1.set_ylabel("坏样本率", color=DEFAULT_COLORS[0], fontsize=10)
+    ax1.tick_params(axis="y", labelcolor=DEFAULT_COLORS[0])
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1%}"))
 
     # 折线图：WOE
-    ax2.plot(x, woe_vals, color=DEFAULT_COLORS[1], marker='o',
-             linewidth=2, markersize=6, label='WOE', zorder=3)
-    ax2.axhline(0, color=NEUTRAL_COLOR, linestyle='--', linewidth=0.8)
-    ax2.set_ylabel('WOE', color=DEFAULT_COLORS[1], fontsize=10)
-    ax2.tick_params(axis='y', labelcolor=DEFAULT_COLORS[1])
+    ax2.plot(x, woe_vals, color=DEFAULT_COLORS[1], marker="o", linewidth=2, markersize=6, label="WOE", zorder=3)
+    ax2.axhline(0, color=NEUTRAL_COLOR, linestyle="--", linewidth=0.8)
+    ax2.set_ylabel("WOE", color=DEFAULT_COLORS[1], fontsize=10)
+    ax2.tick_params(axis="y", labelcolor=DEFAULT_COLORS[1])
 
     ax1.set_xticks(x)
-    ax1.set_xticklabels(x_labels, rotation=30, ha='right', fontsize=9)
+    ax1.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=9)
 
-    feat_str = feature or ''
-    ax1.set_title(title or f'{feat_str} WOE & 坏率分布', fontsize=12, fontweight='bold')
+    feat_str = feature or ""
+    ax1.set_title(title or f"{feat_str} WOE & 坏率分布", fontsize=12, fontweight="bold")
 
     # 图例合并
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
-    ax1.legend(h1 + h2, l1 + l2, loc='upper right', fontsize=9)
+    ax1.legend(h1 + h2, l1 + l2, loc="upper right", fontsize=9)
 
     setup_axis_style(ax1, hide_top_right=False)
     fig.tight_layout()
@@ -326,9 +348,10 @@ def variable_psi_heatmap(
     psi_matrix: pd.DataFrame,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (14, 8),
-    title: str = '特征PSI热力图',
+    title: str = "特征PSI热力图",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """特征PSI矩阵热力图.
 
@@ -355,33 +378,33 @@ def variable_psi_heatmap(
 
     # 三段色：稳定→略变→不稳定（hscredit 统一蓝紫红风险色阶）
     cmap = mcolors.LinearSegmentedColormap.from_list(
-        'psi_cmap',
+        "psi_cmap",
         [(0.0, STABLE_COLOR), (0.1 / 0.5, CHANGING_COLOR), (1.0, UNSTABLE_COLOR)],
         N=256,
     )
-    im = ax.imshow(data, cmap=cmap, vmin=0.0, vmax=0.5, aspect='auto')
+    im = ax.imshow(data, cmap=cmap, vmin=0.0, vmax=0.5, aspect="auto")
 
     # 色条
     cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
-    cbar.set_label('PSI值', fontsize=10)
+    cbar.set_label("PSI值", fontsize=10)
     for thresh, label, _ in _PSI_THRESHOLDS:
-        if thresh < float('inf'):
-            cbar.ax.axhline(thresh, color='white', linewidth=1.5)
+        if thresh < float("inf"):
+            cbar.ax.axhline(thresh, color="white", linewidth=1.5)
 
     # 刻度
     ax.set_xticks(np.arange(n_cols))
     ax.set_yticks(np.arange(n_rows))
-    ax.set_xticklabels(psi_matrix.columns.tolist(), rotation=30, ha='right', fontsize=9)
+    ax.set_xticklabels(psi_matrix.columns.tolist(), rotation=30, ha="right", fontsize=9)
     ax.set_yticklabels(psi_matrix.index.tolist(), fontsize=9)
 
     # 格内数值
     for i in range(n_rows):
         for j in range(n_cols):
             v = data[i, j]
-            color = 'white' if v > 0.2 else 'black'
-            ax.text(j, i, f'{v:.3f}', ha='center', va='center', fontsize=8, color=color)
+            color = "white" if v > 0.2 else "black"
+            ax.text(j, i, f"{v:.3f}", ha="center", va="center", fontsize=8, color=color)
 
-    ax.set_title(title, fontsize=13, fontweight='bold')
+    ax.set_title(title, fontsize=13, fontweight="bold")
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
     return fig
@@ -389,15 +412,16 @@ def variable_psi_heatmap(
 
 def variable_importance_grouped_plot(
     importance_df: pd.DataFrame,
-    feature_col: str = 'feature',
-    value_col: str = 'importance',
-    group: Optional[str] = 'category',
+    feature_col: str = "feature",
+    value_col: str = "importance",
+    group: Optional[str] = "category",
     top_n: int = 30,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (12, 8),
-    title: str = '特征重要性（分类）',
+    title: str = "特征重要性（分类）",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """按特征类别分组的重要性横向柱状图.
 
@@ -439,36 +463,36 @@ def variable_importance_grouped_plot(
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
     y_pos = np.arange(len(feats))
-    bars = ax.barh(y_pos, vals, color=bar_colors, edgecolor='white', height=0.7)
+    bars = ax.barh(y_pos, vals, color=bar_colors, edgecolor="white", height=0.7)
     ax.set_yticks(y_pos)
     ax.set_yticklabels(feats, fontsize=9)
     ax.invert_yaxis()
 
     for bar, v in zip(bars, vals):
-        ax.text(v + max(vals) * 0.01, bar.get_y() + bar.get_height() / 2,
-                f'{v:.4f}', va='center', fontsize=8)
+        ax.text(v + max(vals) * 0.01, bar.get_y() + bar.get_height() / 2, f"{v:.4f}", va="center", fontsize=8)
 
     if legend_patches:
-        ax.legend(handles=legend_patches, fontsize=9, loc='lower right')
+        ax.legend(handles=legend_patches, fontsize=9, loc="lower right")
 
-    ax.set_xlabel('重要性', fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight='bold')
+    ax.set_xlabel("重要性", fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
     save_figure(fig, save, dpi=dpi)
     return fig
 
 
-@analysis_inputs('df', roles=())
+@analysis_inputs("df", roles=())
 def variable_missing_badrate_plot(
     df: pd.DataFrame,
     features: List[str],
     target: str,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (10, 7),
-    title: str = '缺失率 vs 坏账率（缺失样本）',
+    title: str = "缺失率 vs 坏账率（缺失样本）",
     save: Optional[str] = None,
-    dpi: int = 240, **kwargs,
+    dpi: int = 240,
+    **kwargs,
 ) -> Figure:
     """缺失率 vs 坏账率散点图.
 
@@ -499,43 +523,54 @@ def variable_missing_badrate_plot(
         if miss_rate == 0:
             continue
         miss_br = y[miss_mask].mean() if miss_mask.sum() > 0 else np.nan
-        rows.append({'特征': feat, '缺失率': miss_rate, '缺失坏率': miss_br})
+        rows.append({"特征": feat, "缺失率": miss_rate, "缺失坏率": miss_br})
 
     if not rows:
         fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-        ax.text(0.5, 0.5, '无缺失特征', ha='center', va='center', transform=ax.transAxes)
+        ax.text(0.5, 0.5, "无缺失特征", ha="center", va="center", transform=ax.transAxes)
         ax.set_title(title)
         return fig
 
     stat_df = pd.DataFrame(rows)
-    miss_rates = stat_df['缺失率'].values
-    miss_brs = stat_df['缺失坏率'].values
-    feat_names = stat_df['特征'].values
+    miss_rates = stat_df["缺失率"].values
+    miss_brs = stat_df["缺失坏率"].values
+    feat_names = stat_df["特征"].values
 
     # 颜色：缺失坏率与总体差异大的用红色标记
     diff = np.abs(miss_brs - overall_br)
 
     fig, ax = get_or_create_ax(figsize=figsize, ax=ax)
-    sc = ax.scatter(miss_rates, miss_brs, c=diff, cmap=make_risk_cmap("hscredit_missing_badrate"),
-                    s=80, alpha=0.8, edgecolors='white', linewidths=0.5)
-    ax.axhline(overall_br, color=NEUTRAL_COLOR, linestyle='--', linewidth=1,
-               label=f'总体坏率 {overall_br:.2%}')
+    sc = ax.scatter(
+        miss_rates,
+        miss_brs,
+        c=diff,
+        cmap=make_risk_cmap("hscredit_missing_badrate"),
+        s=80,
+        alpha=0.8,
+        edgecolors="white",
+        linewidths=0.5,
+    )
+    ax.axhline(overall_br, color=NEUTRAL_COLOR, linestyle="--", linewidth=1, label=f"总体坏率 {overall_br:.2%}")
 
     # 标注差异大的特征
     top_idx = np.argsort(diff)[::-1][:10]
     for i in top_idx:
-        ax.annotate(feat_names[i],
-                    (miss_rates[i], miss_brs[i]),
-                    textcoords='offset points', xytext=(5, 3),
-                    fontsize=7, alpha=0.8)
+        ax.annotate(
+            feat_names[i],
+            (miss_rates[i], miss_brs[i]),
+            textcoords="offset points",
+            xytext=(5, 3),
+            fontsize=7,
+            alpha=0.8,
+        )
 
     cbar = fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02)
-    cbar.set_label('|缺失坏率 - 总体坏率|', fontsize=9)
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:.0%}'))
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:.1%}'))
-    ax.set_xlabel('缺失率', fontsize=11)
-    ax.set_ylabel('缺失样本坏账率', fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight='bold')
+    cbar.set_label("|缺失坏率 - 总体坏率|", fontsize=9)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1%}"))
+    ax.set_xlabel("缺失率", fontsize=11)
+    ax.set_ylabel("缺失样本坏账率", fontsize=11)
+    ax.set_title(title, fontsize=13, fontweight="bold")
     ax.legend(fontsize=9)
     setup_axis_style(ax, hide_top_right=True)
     fig.tight_layout()
@@ -544,10 +579,10 @@ def variable_missing_badrate_plot(
 
 
 __all__ = [
-    'metric_comparison_plot',
-    'variable_iv_plot',
-    'variable_woe_trend_plot',
-    'variable_psi_heatmap',
-    'variable_importance_grouped_plot',
-    'variable_missing_badrate_plot',
+    "metric_comparison_plot",
+    "variable_iv_plot",
+    "variable_woe_trend_plot",
+    "variable_psi_heatmap",
+    "variable_importance_grouped_plot",
+    "variable_missing_badrate_plot",
 ]

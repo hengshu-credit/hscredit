@@ -20,12 +20,13 @@ def seed_everything(seed: int, freeze_torch: bool = False):
     >>> seed_everything(42, freeze_torch=True)
     """
     random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
 
     if freeze_torch:
         try:
             import torch
+
             torch.manual_seed(seed)
             torch.cuda.manual_seed(seed)
             torch.backends.cudnn.deterministic = True

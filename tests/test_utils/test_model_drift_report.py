@@ -12,14 +12,18 @@ class _ProbabilityModel:
 
 def test_model_drift_report_combines_score_and_feature_drift():
     rng = np.random.RandomState(7)
-    X_base = pd.DataFrame({
-        "x1": rng.normal(0, 1, 120),
-        "x2": rng.normal(1, 1, 120),
-    })
-    X_target = pd.DataFrame({
-        "x1": rng.normal(0.5, 1.2, 120),
-        "x2": rng.normal(1, 1, 120),
-    })
+    X_base = pd.DataFrame(
+        {
+            "x1": rng.normal(0, 1, 120),
+            "x2": rng.normal(1, 1, 120),
+        }
+    )
+    X_target = pd.DataFrame(
+        {
+            "x1": rng.normal(0.5, 1.2, 120),
+            "x2": rng.normal(1, 1, 120),
+        }
+    )
     y_base = (X_base["x1"] > 0.3).astype(int)
     y_target = (X_target["x1"] > 0.3).astype(int)
 

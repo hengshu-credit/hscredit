@@ -8,7 +8,6 @@ import pandas as pd
 from .base import BaseCalibrator
 from .methods import PlattCalibrator
 
-
 DEFAULT_COLORS = ["#2639E9", "#F76E6C", "#FE7715", "#2E8B57", "#9370DB", "#FF6347"]
 
 
@@ -72,9 +71,25 @@ def plot_reliability_diagram(
     reliability_ax.legend(loc="lower right", frameon=False)
     reliability_ax.grid(True, alpha=0.3, linestyle="--")
 
-    distribution_ax.hist(probabilities, bins=calibrator.n_bins, range=(0, 1), alpha=0.6, color=palette[0], label="校准前", edgecolor="white")
+    distribution_ax.hist(
+        probabilities,
+        bins=calibrator.n_bins,
+        range=(0, 1),
+        alpha=0.6,
+        color=palette[0],
+        label="校准前",
+        edgecolor="white",
+    )
     if calibrated is not None:
-        distribution_ax.hist(calibrated, bins=calibrator.n_bins, range=(0, 1), alpha=0.6, color=palette[1 % len(palette)], label="校准后", edgecolor="white")
+        distribution_ax.hist(
+            calibrated,
+            bins=calibrator.n_bins,
+            range=(0, 1),
+            alpha=0.6,
+            color=palette[1 % len(palette)],
+            label="校准后",
+            edgecolor="white",
+        )
     distribution_ax.set(xlabel="预测概率", ylabel="样本数", title="概率分布")
     distribution_ax.legend(frameon=False)
     distribution_ax.grid(True, alpha=0.3, linestyle="--")
@@ -89,8 +104,16 @@ def plot_reliability_diagram(
         keys = ["brier_score", "expected_calibration_error", "max_calibration_error"]
         positions = np.arange(len(keys))
         width = 0.35
-        metrics_ax.bar(positions - width / 2, [original_metrics[key] for key in keys], width, label="校准前", color=palette[0])
-        metrics_ax.bar(positions + width / 2, [calibrated_metrics[key] for key in keys], width, label="校准后", color=palette[1 % len(palette)])
+        metrics_ax.bar(
+            positions - width / 2, [original_metrics[key] for key in keys], width, label="校准前", color=palette[0]
+        )
+        metrics_ax.bar(
+            positions + width / 2,
+            [calibrated_metrics[key] for key in keys],
+            width,
+            label="校准后",
+            color=palette[1 % len(palette)],
+        )
         metrics_ax.set_xticks(positions)
         metrics_ax.set_xticklabels(metric_names)
         metrics_ax.legend(frameon=False)

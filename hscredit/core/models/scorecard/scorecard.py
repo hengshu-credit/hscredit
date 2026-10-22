@@ -45,18 +45,16 @@ logger = logging.getLogger(__name__)
 class _ScoreCardLoadDispatcher:
     """按访问方式分派 ScoreCard 的模型加载与规则加载接口."""
 
-    def __get__(self, instance: Optional['ScoreCard'], owner):
+    def __get__(self, instance: Optional["ScoreCard"], owner):
         if instance is not None:
             return instance.load_rules
 
-        def load_model(file: str, engine: str = 'auto', **kwargs):
+        def load_model(file: str, engine: str = "auto", **kwargs):
             return owner.load_pickle(file, engine=engine, **kwargs)
 
-        load_model.__name__ = 'load'
-        load_model.__qualname__ = f'{owner.__name__}.load'
-        load_model.__doc__ = (
-            "从持久化文件加载评分卡模型；在实例上调用 load(...) 时兼容加载评分规则。"
-        )
+        load_model.__name__ = "load"
+        load_model.__qualname__ = f"{owner.__name__}.load"
+        load_model.__doc__ = "从持久化文件加载评分卡模型；在实例上调用 load(...) 时兼容加载评分规则。"
         return load_model
 
 
@@ -128,16 +126,16 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         >>> from hscredit.core.models import ScoreCard
         >>> from hscredit.core.binning import OptimalBinning
-        >>> 
+        >>>
         >>> # 步骤1：分箱和 WOE 转换
         >>> binner = OptimalBinning(method='best_iv', max_n_bins=5)
         >>> binner.fit(X_train, y_train)
         >>> X_train_woe = binner.transform(X_train, metric='woe')
-        >>> 
+        >>>
         >>> # 步骤2：训练评分卡（传入 WOE 数据）
         >>> scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
         >>> scorecard.fit(X_train_woe, y_train)  # 默认 input_type='woe'
-        >>> 
+        >>>
         >>> # 步骤3：预测（传入原始数据，自动转换）
         >>> scores = scorecard.predict(X_test)  # 默认 input_type='raw'
 
@@ -175,7 +173,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         step: Optional[int] = None,
         lower: Optional[float] = None,
         upper: Optional[float] = None,
-        direction: str = 'descending',
+        direction: str = "descending",
         decimal: int = 2,
         lr_model: Optional[Any] = None,
         lr_kwargs: Optional[Dict[str, Any]] = None,
@@ -184,10 +182,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         pipeline: Optional[Any] = None,
         calculate_stats: bool = True,
         verbose: bool = False,
-        target: str = 'target',
+        target: str = "target",
         history_policy: str = "summary",
         max_history: int = 20,
-        **kwargs
+        **kwargs,
     ):
         self.kwargs = dict(kwargs)
         self.history_policy = history_policy
@@ -195,24 +193,23 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         # 构建父类参数，ScoreCard特有参数不传递给父类
         # 评分相关参数通过kwargs透传，允许用户覆盖默认值
         parent_kwargs = {
-            'lower': lower,
-            'upper': upper,
-            'direction': direction,
-            'base_odds': base_odds,
-            'base_score': base_score,
-            'pdo': pdo,
-            'rate': rate,
-            'step': step,
-            'decimal': decimal,
-            'clip': True,
-            **kwargs  # 用户传入的kwargs可以覆盖上述默认值
+            "lower": lower,
+            "upper": upper,
+            "direction": direction,
+            "base_odds": base_odds,
+            "base_score": base_score,
+            "pdo": pdo,
+            "rate": rate,
+            "step": step,
+            "decimal": decimal,
+            "clip": True,
+            **kwargs,  # 用户传入的kwargs可以覆盖上述默认值
         }
-
 
         # 调用父类 StandardScoreTransformer 的初始化
         # ScoreCard 使用 descending 方向（概率越低，分数越高，信用分模式）
         super().__init__(**parent_kwargs)
-        
+
         # ScoreCard 特有属性
         self.lr_model = lr_model
         self.lr_kwargs = lr_kwargs
@@ -224,13 +221,13 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self.target = target
         # 兼容旧版本 pickle：确保 decimal 属性存在
         self.decimal = decimal
-        
+
         # 评分参数通过 _compute_parameters 计算（ScoreCard 重写了此方法）
         # 正确处理 base_odds 的好坏比含义
         # B_ = pdo / ln(rate)
         # A_ = base_score + B_ × ln(actual_odds)
         self.A_, self.B_ = self._compute_parameters()
-        
+
         # 设置方向属性（父类 transform 方法需要）
         self.direction_ = self._determine_direction()
 
@@ -241,24 +238,24 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self.lr_model_ = None
         self._pipeline_components = {}
         self._loaded_deployment_defaults: Dict[str, Dict[str, float]] = {}
-        
+
         # 内部标志：binner 是否可以直接作为 WOE 转换器（hscredit 风格）
         self._binner_is_woe_transformer = False
-        
+
         # 检查外部传入的 binner 是否支持直接 WOE 转换
         if self.binner is not None:
             self._check_binner_woe_capability()
-        
+
         # 如果传入了预训练LR模型或pipeline，标记为跳过fit检查
         # 因为可以直接使用预训练模型进行predict
         self._skip_fit_check = (self.lr_model is not None) or (self.pipeline is not None)
-        
+
         # 如果传入了预训练模型，尝试生成规则
         # 即使未提供 binner，也会基于 LR 系数生成回退规则，
         # 确保 scorecard_points 能展示每个变量（而非仅基础分）
         if self.lr_model is not None:
             self._initialize_from_pretrained()
-        
+
         # 如果传入了 pipeline，立即提取组件
         # 这样可以在不调用 fit 的情况下直接使用 predict
         if self.pipeline is not None:
@@ -267,12 +264,14 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             if self.lr_model_ is not None and self.binner is not None:
                 self.lr_model = self.lr_model_  # 同步到 lr_model
                 self._initialize_from_pretrained()
-        
+
         if verbose:
             logger.info(f"ScoreCard 初始化: pdo={pdo}, rate={rate}, base_odds={base_odds}, base_score={base_score}")
             logger.info(f"  - A_ (offset)={self.A_:.4f}, B_ (factor)={self.B_:.4f}")
             if self.binner is not None:
-                logger.info(f"  - binner: {self.binner.__class__.__name__}, 支持WOE转换: {self._binner_is_woe_transformer}")
+                logger.info(
+                    f"  - binner: {self.binner.__class__.__name__}, 支持WOE转换: {self._binner_is_woe_transformer}"
+                )
 
     def _compute_parameters(self) -> Tuple[float, float]:
         """计算评分公式中的参数A和B.
@@ -306,18 +305,14 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
     def _check_fitted(self) -> None:
         """检查评分卡是否已具备可用的拟合/加载状态."""
-        if getattr(self, '_is_fitted', False):
+        if getattr(self, "_is_fitted", False):
             return
         if getattr(self, "training_summary_", {}).get("状态") in {"失败", "中断"}:
             raise NotFittedError("ScoreCard 最近一次训练失败，请重新 fit")
 
         # 兼容 fit 内部已训练 LR、传入已训练 LR 或已训练 pipeline 后直接使用的路径。
         lr_model = self._get_lr_model()
-        if (
-            lr_model is not None
-            and hasattr(lr_model, 'coef_')
-            and hasattr(lr_model, 'intercept_')
-        ):
+        if lr_model is not None and hasattr(lr_model, "coef_") and hasattr(lr_model, "intercept_"):
             return
 
         raise NotFittedError("ScoreCard 尚未拟合，请先调用 fit()、load() 或传入已训练的 lr_model")
@@ -334,26 +329,26 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         若无任何分箱信息，则基于 LR 系数生成回退规则，
         保证 scorecard_points 至少能展示每个变量及其系数贡献。
         """
-        if not hasattr(self.lr_model, 'coef_'):
+        if not hasattr(self.lr_model, "coef_"):
             return
-        if hasattr(self.lr_model, 'ensure_positive_woe_coefficients'):
+        if hasattr(self.lr_model, "ensure_positive_woe_coefficients"):
             self.lr_model.ensure_positive_woe_coefficients()
 
         n_features = len(self.lr_model.coef_[0])
 
         # 1. 解析特征名
         feature_names = None
-        if hasattr(self.lr_model, 'feature_names_in_'):
+        if hasattr(self.lr_model, "feature_names_in_"):
             feature_names = list(self.lr_model.feature_names_in_)
-        elif self.binner is not None and hasattr(self.binner, 'bin_tables_') and self.binner.bin_tables_:
+        elif self.binner is not None and hasattr(self.binner, "bin_tables_") and self.binner.bin_tables_:
             feature_names = list(self.binner.bin_tables_.keys())
-        elif self.binner is not None and hasattr(self.binner, 'splits_') and self.binner.splits_:
+        elif self.binner is not None and hasattr(self.binner, "splits_") and self.binner.splits_:
             feature_names = list(self.binner.splits_.keys())
         elif self._is_toad_like_combiner():
             feature_names = self._extract_external_binner_feature_names()
 
         if not feature_names or len(feature_names) < n_features:
-            feature_names = [f'feature_{i}' for i in range(n_features)]
+            feature_names = [f"feature_{i}" for i in range(n_features)]
 
         self._feature_names = feature_names[:n_features]
 
@@ -378,20 +373,18 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             if i >= len(self.coef_):
                 break
             coef = float(self.coef_[i]) * self._get_feature_woe_sign(i)
-            label = f'每单位WOE(系数={coef:.4f})'
+            label = f"每单位WOE(系数={coef:.4f})"
             self.rules_[col] = {
-                'bins': None,
-                'bin_labels': np.array([label], dtype=object),
-                'woe': np.array([np.nan]),
-                'scores': np.array([self._woe_to_point(1.0, coef)]),
-                'coef': coef,
-                'values': None,
+                "bins": None,
+                "bin_labels": np.array([label], dtype=object),
+                "woe": np.array([np.nan]),
+                "scores": np.array([self._woe_to_point(1.0, coef)]),
+                "coef": coef,
+                "values": None,
             }
 
         if self.rules_:
-            self.base_effect_ = pd.Series(
-                np.zeros(len(self._feature_names)), index=self._feature_names
-            )
+            self.base_effect_ = pd.Series(np.zeros(len(self._feature_names)), index=self._feature_names)
 
     def _get_lr_model(self) -> Optional[Any]:
         """获取当前生效的 LR 模型."""
@@ -405,7 +398,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if lr_model is None:
             return 1.0
 
-        signs = getattr(lr_model, 'woe_coef_signs_', None)
+        signs = getattr(lr_model, "woe_coef_signs_", None)
         if signs is None or feature_index >= len(signs):
             return 1.0
         return float(signs[feature_index])
@@ -413,7 +406,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _prepare_woe_for_scoring(self, X_woe: pd.DataFrame) -> pd.DataFrame:
         """按 LR 模型的 WOE 方向约定调整输入，保证评分与概率保持一致."""
         lr_model = self._get_lr_model()
-        if lr_model is None or not hasattr(lr_model, '_prepare_input_for_model'):
+        if lr_model is None or not hasattr(lr_model, "_prepare_input_for_model"):
             return X_woe
 
         prepared = lr_model._prepare_input_for_model(X_woe)
@@ -421,30 +414,30 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             return prepared
 
         return pd.DataFrame(prepared, columns=X_woe.columns, index=X_woe.index)
-    
+
     def _generate_rules_from_binner(self):
         """从binner生成评分卡规则（用于预训练模型）."""
         self.rules_ = {}
-        
+
         for i, col in enumerate(self._feature_names):
             if i >= len(self.coef_):
                 break
-                
+
             coef = self.coef_[i]
-            
+
             # 从 binner 获取分箱信息
             woe_values = None
             bins = None
             bin_labels = None
-            
+
             # hscredit 风格
-            if self.binner is not None and hasattr(self.binner, 'bin_tables_'):
+            if self.binner is not None and hasattr(self.binner, "bin_tables_"):
                 if col in self.binner.bin_tables_:
                     bin_table = self.binner.bin_tables_[col]
-                    if '分档WOE值' in bin_table.columns:
-                        woe_values = bin_table['分档WOE值'].values
-                        if '分箱标签' in bin_table.columns:
-                            bin_labels = bin_table['分箱标签'].values
+                    if "分档WOE值" in bin_table.columns:
+                        woe_values = bin_table["分档WOE值"].values
+                        if "分箱标签" in bin_table.columns:
+                            bin_labels = bin_table["分箱标签"].values
                             bins = self._parse_bin_labels(bin_labels)
                             if self.encoder is not None:
                                 woe_values = self._inference_encoder_woe(col, bin_labels)
@@ -457,24 +450,24 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                     bins = self._parse_bin_labels(bin_labels)
                     if ext_woe is not None:
                         woe_values = ext_woe
-            
+
             if woe_values is None:
                 continue
-                
+
             woe_values = np.asarray(woe_values) * self._get_feature_woe_sign(i)
-            
+
             # 计算每个 WOE 对应的分数
             scores = [self._woe_to_point(woe, coef) for woe in woe_values]
-            
+
             self.rules_[col] = {
-                'bins': bins,
-                'bin_labels': bin_labels,
-                'woe': woe_values,
-                'scores': np.array(scores),
-                'coef': coef,
-                'values': None
+                "bins": bins,
+                "bin_labels": bin_labels,
+                "woe": woe_values,
+                "scores": np.array(scores),
+                "coef": coef,
+                "values": None,
             }
-        
+
         self._rules_semantics_version_ = 2
         # 计算基础效应
         if self.rules_:
@@ -483,7 +476,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     @property
     def coef_(self) -> np.ndarray:
         """获取逻辑回归系数."""
-        if getattr(self, '_loaded_coef', None) is not None:
+        if getattr(self, "_loaded_coef", None) is not None:
             return self._loaded_coef
 
         # 如果传入了预训练模型但未调用fit，直接返回预训练模型的系数
@@ -501,7 +494,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     @property
     def intercept_(self) -> float:
         """获取逻辑回归截距."""
-        if getattr(self, '_loaded_intercept', None) is not None:
+        if getattr(self, "_loaded_intercept", None) is not None:
             return self._loaded_intercept
 
         # 如果传入了预训练模型但未调用fit，直接返回预训练模型的截距
@@ -521,7 +514,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """获取非零系数特征数量."""
         return (self.coef_ != 0).sum()
 
-    def get_feature_importances(self, importance_type: str = 'coef') -> pd.Series:
+    def get_feature_importances(self, importance_type: str = "coef") -> pd.Series:
         """获取特征重要性.
 
         基于底层逻辑回归模型的系数计算特征重要性。
@@ -537,19 +530,19 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         feature_names = self.feature_names_
         if not feature_names:
             n_features = len(self.coef_)
-            feature_names = [f'feature_{i}' for i in range(n_features)]
+            feature_names = [f"feature_{i}" for i in range(n_features)]
 
-        if importance_type == 'coef':
+        if importance_type == "coef":
             # 使用系数绝对值
             importances = np.abs(self.coef_)
-        elif importance_type == 'score_range':
+        elif importance_type == "score_range":
             # 使用评分卡中的分数范围（每个特征各分箱分数的极差 max-min）
-            if not hasattr(self, 'rules_') or not self.rules_:
+            if not hasattr(self, "rules_") or not self.rules_:
                 raise ValueError("评分卡规则未生成，无法使用score_range类型")
             importances = []
             for feature in feature_names:
                 rule = self.rules_.get(feature) if feature in self.rules_ else None
-                scores = np.asarray(rule['scores'], dtype=float) if rule and rule.get('scores') is not None else None
+                scores = np.asarray(rule["scores"], dtype=float) if rule and rule.get("scores") is not None else None
                 if scores is not None and len(scores) > 0:
                     importances.append(float(np.max(scores) - np.min(scores)))
                 else:
@@ -559,11 +552,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             raise ValueError(f"不支持的重要性类型: {importance_type}")
 
         # 创建Series
-        importance_series = pd.Series(
-            importances,
-            index=feature_names,
-            name='importance'
-        ).sort_values(ascending=False)
+        importance_series = pd.Series(importances, index=feature_names, name="importance").sort_values(ascending=False)
 
         self._feature_importances = importance_series
 
@@ -573,7 +562,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def feature_importances_(self) -> np.ndarray:
         """特征重要性属性 (兼容sklearn风格)."""
         self._check_fitted()
-        if not hasattr(self, '_feature_importances'):
+        if not hasattr(self, "_feature_importances"):
             self._feature_importances = self.get_feature_importances()
         return self._feature_importances.values
 
@@ -581,30 +570,30 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def feature_names_(self) -> list:
         """获取特征名列表."""
         # 已拟合状态下，优先从 rules_ 获取（确保与实际分箱数据一致）
-        if hasattr(self, 'rules_') and self.rules_:
+        if hasattr(self, "rules_") and self.rules_:
             return list(self.rules_.keys())
         if self._feature_names is not None:
             return self._feature_names
         # 优先从binner/encoder获取真实特征名（即使lr_model已训练）
         # 这确保使用load导入规则后能正确获取特征名
-        if self.binner is not None and hasattr(self.binner, 'splits_'):
+        if self.binner is not None and hasattr(self.binner, "splits_"):
             cols = list(self.binner.splits_.keys())
             if len(cols) > 0:
                 return cols
-        if self.encoder is not None and hasattr(self.encoder, 'mapping_'):
+        if self.encoder is not None and hasattr(self.encoder, "mapping_"):
             cols = list(self.encoder.mapping_.keys())
             if len(cols) > 0:
                 return cols
         # 如果 lr_model_ 或 lr_model 已设置，从模型获取特征数量
         lr_model = None
-        if hasattr(self, 'lr_model_') and self.lr_model_ is not None:
+        if hasattr(self, "lr_model_") and self.lr_model_ is not None:
             lr_model = self.lr_model_
-        elif hasattr(self, 'lr_model') and self.lr_model is not None:
+        elif hasattr(self, "lr_model") and self.lr_model is not None:
             lr_model = self.lr_model
-        
-        if lr_model is not None and hasattr(lr_model, 'coef_'):
+
+        if lr_model is not None and hasattr(lr_model, "coef_"):
             n_features = len(lr_model.coef_[0])
-            return [f'feature_{i}' for i in range(n_features)]
+            return [f"feature_{i}" for i in range(n_features)]
         return []
 
     # score_odds_reference 和 get_score_reference_by_prob 方法
@@ -612,16 +601,16 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
     def _validate_pipeline_components(self):
         """验证并提取 pipeline 组件.
-        
+
         识别 pipeline 中的 LR 模型、分箱器和 WOE 转换器。
         """
         # 首先检查外部传入的 binner
         self._check_binner_woe_capability()
-        
+
         if self.pipeline is None:
             return
 
-        steps = getattr(self.pipeline, 'steps', [])
+        steps = getattr(self.pipeline, "steps", [])
         if not steps:
             raise ValueError("pipeline 不能为空或需要 .steps 属性")
 
@@ -664,10 +653,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if obj is None:
             return False
         # scorecardpipeline.Combiner wraps toad.Combiner
-        if hasattr(obj, 'combiner') and hasattr(obj.combiner, 'format_bins'):
+        if hasattr(obj, "combiner") and hasattr(obj.combiner, "format_bins"):
             return True
         # toad.Combiner 直接
-        if hasattr(obj, 'format_bins') and hasattr(obj, 'rules') and isinstance(getattr(obj, 'rules', None), dict):
+        if hasattr(obj, "format_bins") and hasattr(obj, "rules") and isinstance(getattr(obj, "rules", None), dict):
             return True
         return False
 
@@ -678,10 +667,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if obj is None:
             return None
         # scorecardpipeline.Combiner wraps toad.Combiner
-        if hasattr(obj, 'combiner') and hasattr(obj.combiner, 'format_bins'):
+        if hasattr(obj, "combiner") and hasattr(obj.combiner, "format_bins"):
             return obj.combiner
         # toad.Combiner 直接
-        if hasattr(obj, 'format_bins'):
+        if hasattr(obj, "format_bins"):
             return obj
         return None
 
@@ -691,10 +680,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if enc is None:
             return None
         # scorecardpipeline.WOETransformer wraps toad.WOETransformer
-        if hasattr(enc, 'transformer') and hasattr(enc.transformer, '_rules'):
+        if hasattr(enc, "transformer") and hasattr(enc.transformer, "_rules"):
             return enc.transformer
         # toad.WOETransformer 直接
-        if hasattr(enc, '_rules') or (hasattr(enc, 'rules') and isinstance(getattr(enc, 'rules', None), dict)):
+        if hasattr(enc, "_rules") or (hasattr(enc, "rules") and isinstance(getattr(enc, "rules", None), dict)):
             return enc
         return None
 
@@ -729,10 +718,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         woe_enc = self._get_toad_woe_transformer()
         if woe_enc is not None and col in woe_enc.rules:
             woe_rule = woe_enc.rules[col]
-            if isinstance(woe_rule, dict) and 'value' in woe_rule and 'woe' in woe_rule:
+            if isinstance(woe_rule, dict) and "value" in woe_rule and "woe" in woe_rule:
                 # value 是 bin index（0,1,2...），woe 是对应的 WOE 值
-                val_arr = np.asarray(woe_rule['value'])
-                woe_arr = np.asarray(woe_rule['woe'])
+                val_arr = np.asarray(woe_rule["value"])
+                woe_arr = np.asarray(woe_rule["woe"])
                 # 按 bin index 排序，使 WOE 与 bin_labels 对齐
                 sort_idx = np.argsort(val_arr)
                 woe_values = woe_arr[sort_idx]
@@ -745,18 +734,18 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             return
 
         # 方法1：检查是否有 bin_tables_ 属性（hscredit 分箱器特征）
-        if hasattr(self.binner, 'bin_tables_'):
+        if hasattr(self.binner, "bin_tables_"):
             self._binner_is_woe_transformer = True
             if self.verbose:
                 logger.info("  - 分箱器支持直接 WOE 转换（hscredit 风格）")
             return
 
         # 方法2：检查 transform 是否支持 metric='woe' 参数
-        if hasattr(self.binner, 'transform'):
+        if hasattr(self.binner, "transform"):
             try:
                 sig = inspect.signature(self.binner.transform)
                 params = list(sig.parameters.keys())
-                if 'metric' in params:
+                if "metric" in params:
                     self._binner_is_woe_transformer = True
                     if self.verbose:
                         logger.info("  - 分箱器支持 metric='woe' 参数")
@@ -765,7 +754,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 pass
 
         # 方法3：检查是否有专门的方法用于 WOE 转换
-        if hasattr(self.binner, 'transform_woe') or hasattr(self.binner, 'woe_transform'):
+        if hasattr(self.binner, "transform_woe") or hasattr(self.binner, "woe_transform"):
             self._binner_is_woe_transformer = True
             if self.verbose:
                 logger.info("  - 分箱器有专门的 WOE 转换方法")
@@ -776,18 +765,18 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _is_lr_model(self, obj) -> bool:
         """判断对象是否为 LR 模型."""
         # 检查是否有 coef_ 和 intercept_ 属性
-        if hasattr(obj, 'coef_') and hasattr(obj, 'intercept_'):
+        if hasattr(obj, "coef_") and hasattr(obj, "intercept_"):
             return True
 
         # 检查类名
         class_name = obj.__class__.__name__.lower()
-        lr_keywords = ('logistic', 'logit', 'linear', 'sgd', 'passiveaggressive')
+        lr_keywords = ("logistic", "logit", "linear", "sgd", "passiveaggressive")
         if any(kw in class_name for kw in lr_keywords):
-            if hasattr(obj, 'predict') or hasattr(obj, 'predict_proba'):
+            if hasattr(obj, "predict") or hasattr(obj, "predict_proba"):
                 return True
 
         # 检查是否有决策函数
-        if hasattr(obj, 'decision_function') and hasattr(obj, 'classes_'):
+        if hasattr(obj, "decision_function") and hasattr(obj, "classes_"):
             return True
 
         return False
@@ -796,14 +785,21 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """判断对象是否为分箱器."""
         # 检查类名
         class_name = obj.__class__.__name__.lower()
-        binner_keywords = ('combiner', 'binner', 'binning', 'bins', 'chimerge', 
-                          'dtreebinner', 'optimalbinning', 'uniformbinning')
+        binner_keywords = (
+            "combiner",
+            "binner",
+            "binning",
+            "bins",
+            "chimerge",
+            "dtreebinner",
+            "optimalbinning",
+            "uniformbinning",
+        )
         if any(kw in class_name for kw in binner_keywords):
             return True
 
         # 检查是否有分箱相关属性
-        if any(hasattr(obj, attr) for attr in ['bins', 'bin_edges', 'binning_table', 
-                                                  'splits_', 'bin_tables_']):
+        if any(hasattr(obj, attr) for attr in ["bins", "bin_edges", "binning_table", "splits_", "bin_tables_"]):
             return True
 
         return False
@@ -812,12 +808,12 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """判断对象是否为 WOE 转换器."""
         # 检查类名
         class_name = obj.__class__.__name__.lower()
-        woe_keywords = ('woe', 'woetransformer', 'woeencoder', 'transfer')
+        woe_keywords = ("woe", "woetransformer", "woeencoder", "transfer")
         if any(kw in class_name for kw in woe_keywords):
             return True
 
         # 检查是否有 woe 相关属性
-        if any(hasattr(obj, attr) for attr in ['woe_map', '_woe_map', 'woe_dict']):
+        if any(hasattr(obj, attr) for attr in ["woe_map", "_woe_map", "woe_dict"]):
             return True
 
         return False
@@ -835,16 +831,12 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         # 3. 通过 lr_kwargs 传入参数
         if self.lr_kwargs is not None:
             lr_params = dict(self.lr_kwargs)
-            lr_params.setdefault('calculate_stats', self.calculate_stats)
-            lr_params.setdefault('positive_woe_coef', True)
+            lr_params.setdefault("calculate_stats", self.calculate_stats)
+            lr_params.setdefault("positive_woe_coef", True)
             return LogisticRegression(**lr_params)
 
         # 4. 使用默认参数
-        return LogisticRegression(
-            calculate_stats=self.calculate_stats,
-            positive_woe_coef=True,
-            max_iter=1000
-        )
+        return LogisticRegression(calculate_stats=self.calculate_stats, positive_woe_coef=True, max_iter=1000)
 
     def _transform_to_woe(self, X: pd.DataFrame) -> pd.DataFrame:
         """将原始数据转换为 WOE 数据.
@@ -864,12 +856,12 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         # 情况1：既有 binner 又有 encoder，优先使用显式 encoder 的训练口径
         if self.binner is not None and self.encoder is not None:
             try:
-                X_binned = self.binner.transform(X, metric='bins')
+                X_binned = self.binner.transform(X, metric="bins")
             except TypeError:
                 X_binned = self.binner.transform(X)
             X_woe = self.encoder.transform(X_binned)
             if isinstance(X_woe, pd.DataFrame):
-                X_woe.attrs['hscredit_encoding'] = 'woe'
+                X_woe.attrs["hscredit_encoding"] = "woe"
             if self.verbose:
                 logger.info(f"使用 binner + encoder 进行 WOE 转换")
             return self._validate_pipeline_representation(X, X_woe)
@@ -878,16 +870,16 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if self._binner_is_woe_transformer and self.binner is not None:
             try:
                 # 尝试使用 metric='woe' 参数
-                X_woe = self.binner.transform(X, metric='woe')
+                X_woe = self.binner.transform(X, metric="woe")
                 if isinstance(X_woe, pd.DataFrame):
-                    X_woe.attrs['hscredit_encoding'] = 'woe'
+                    X_woe.attrs["hscredit_encoding"] = "woe"
                 if self.verbose:
                     logger.info(f"使用 binner.transform(X, metric='woe') 进行 WOE 转换")
                 return self._validate_pipeline_representation(X, X_woe)
             except ValidationError:
                 raise
             except Exception as e:
-                if getattr(self.binner, 'handle_unknown', None) == 'raise':
+                if getattr(self.binner, "handle_unknown", None) == "raise":
                     raise
                 if self.verbose:
                     logger.info(f"binner.transform(X, metric='woe') 失败: {e}")
@@ -895,7 +887,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 try:
                     X_woe = self.binner.transform_woe(X)
                     if isinstance(X_woe, pd.DataFrame):
-                        X_woe.attrs['hscredit_encoding'] = 'woe'
+                        X_woe.attrs["hscredit_encoding"] = "woe"
                     if self.verbose:
                         logger.info(f"使用 binner.transform_woe(X) 进行 WOE 转换")
                     return self._validate_pipeline_representation(X, X_woe)
@@ -908,14 +900,13 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if self.encoder is not None:
             X_woe = self.encoder.transform(X)
             if isinstance(X_woe, pd.DataFrame):
-                X_woe.attrs['hscredit_encoding'] = 'woe'
+                X_woe.attrs["hscredit_encoding"] = "woe"
             if self.verbose:
                 logger.info(f"使用 encoder 进行 WOE 转换")
             return self._validate_pipeline_representation(X, X_woe)
 
         raise ValidationError(
-            "原始数据评分缺少可用的分箱器或WOE编码器；请配置 binner/encoder，"
-            "或对已转换数据显式使用 input_type='woe'"
+            "原始数据评分缺少可用的分箱器或WOE编码器；请配置 binner/encoder，" "或对已转换数据显式使用 input_type='woe'"
         )
 
     def _validate_pipeline_representation(self, X, X_woe):
@@ -932,7 +923,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             if all(name in candidate.columns for name in names):
                 candidate = candidate.loc[:, names]
         same_shape = np.shape(native_input) == np.shape(candidate)
-        if not same_shape or not np.allclose(np.asarray(native_input, dtype=float), np.asarray(candidate, dtype=float), equal_nan=True):
+        if not same_shape or not np.allclose(
+            np.asarray(native_input, dtype=float), np.asarray(candidate, dtype=float), equal_nan=True
+        ):
             raise ValidationError(
                 "pipeline 在 LR 前的输出与 WOE 不一致，无法转换为逐项评分卡；"
                 "请显式构造 WOE Pipeline，或使用 ProbabilityScoreCard(model=pipeline) 保留完整预处理"
@@ -945,9 +938,11 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         创建一个虚拟的分箱器，用于基于规则中的分箱信息对原始数据进行分箱。
         这样可以在不提供外部 binner 的情况下，对原始数据进行评分。
         """
+
         # 创建虚拟的分箱器对象
         class RuleBasedBinner:
             """基于规则的分箱器，用于离线规则评分."""
+
             def __init__(self, rules_dict, feature_names):
                 self.rules_dict = rules_dict
                 self.feature_names = feature_names
@@ -975,14 +970,14 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                     return False
 
                 if lower != -np.inf:
-                    if left_bracket == '[':
+                    if left_bracket == "[":
                         if val < lower:
                             return False
                     elif val <= lower:
                         return False
 
                 if upper != np.inf:
-                    if right_bracket == ']':
+                    if right_bracket == "]":
                         if val > upper:
                             return False
                     elif val >= upper:
@@ -996,21 +991,19 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                     return False
                 if isinstance(label, (list, tuple, np.ndarray)):
                     return any(
-                        not pd.isna(category)
-                        and type(value) is type(category)
-                        and value == category
+                        not pd.isna(category) and type(value) is type(category) and value == category
                         for category in label
                     )
-                if ScoreCard._normalize_rule_label(label) in ('missing', 'else'):
+                if ScoreCard._normalize_rule_label(label) in ("missing", "else"):
                     return False
                 value_str = str(value).strip()
                 label_str = str(label).strip()
                 if value_str == label_str:
                     return True
-                candidates = [part.strip() for part in label_str.split(',')]
+                candidates = [part.strip() for part in label_str.split(",")]
                 return value_str in candidates
 
-            def transform(self, X, metric='bins'):
+            def transform(self, X, metric="bins"):
                 # 复制输入
                 if not isinstance(X, pd.DataFrame):
                     X = pd.DataFrame(X)
@@ -1024,15 +1017,15 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                         continue
 
                     rule = self.rules_dict[col]
-                    bins = rule.get('bins', [])
-                    bin_labels = rule.get('bin_labels', [])
+                    bins = rule.get("bins", [])
+                    bin_labels = rule.get("bin_labels", [])
 
                     if bins is None or bin_labels is None or len(bins) == 0 or len(bin_labels) == 0:
                         continue
 
                     # 创建分箱函数
                     def get_bin_label(value):
-                        descriptors = rule.get('descriptors')
+                        descriptors = rule.get("descriptors")
                         if descriptors is not None:
                             # V2 规则以结构描述执行；稳定箱标识避免类别文字恰好叫
                             # missing/special 或包含逗号时与保留箱、展示标签碰撞。
@@ -1040,8 +1033,12 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                                 if isinstance(descriptor, (list, tuple, np.ndarray)):
                                     matched = any(
                                         (pd.isna(value) and pd.isna(category))
-                                        or (not pd.isna(value) and not pd.isna(category)
-                                            and type(value) is type(category) and value == category)
+                                        or (
+                                            not pd.isna(value)
+                                            and not pd.isna(category)
+                                            and type(value) is type(category)
+                                            and value == category
+                                        )
                                         for category in descriptor
                                     )
                                 elif ScoreCard._is_missing_descriptor(descriptor):
@@ -1052,22 +1049,27 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                                         or (not pd.isna(value) and not pd.isna(code) and value == code)
                                         for code in self.special_codes
                                     )
-                                elif ScoreCard._normalize_rule_label(descriptor) == 'else':
+                                elif ScoreCard._normalize_rule_label(descriptor) == "else":
                                     continue
                                 else:
-                                    matched = self._match_interval(value, descriptor) or self._match_category(value, descriptor)
+                                    matched = self._match_interval(value, descriptor) or self._match_category(
+                                        value, descriptor
+                                    )
                                 if matched:
                                     return bin_labels[index]
                             if pd.isna(value):
                                 if col in self.missing_raise_features and col not in self.missing_default_features:
                                     raise ValueError(f"特征 '{col}' 的缺失值在实际编码器中属于未知类别")
-                                return 'missing'
+                                return "missing"
                             for index, descriptor in enumerate(descriptors):
-                                if not isinstance(descriptor, (list, tuple, np.ndarray)) and ScoreCard._normalize_rule_label(descriptor) == 'else':
+                                if (
+                                    not isinstance(descriptor, (list, tuple, np.ndarray))
+                                    and ScoreCard._normalize_rule_label(descriptor) == "else"
+                                ):
                                     return bin_labels[index]
-                            if self.handle_unknown == 'raise' or col in self.unknown_raise_features:
+                            if self.handle_unknown == "raise" or col in self.unknown_raise_features:
                                 raise ValueError(f"特征 '{col}' 在 transform 中出现训练期未知类别: {[value]}")
-                            return '其他'
+                            return "其他"
                         if pd.isna(value):
                             if len(bins) == len(bin_labels):
                                 for index, descriptor in enumerate(bins):
@@ -1076,9 +1078,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                                     ):
                                         return bin_labels[index]
                             for label in bin_labels:
-                                if ScoreCard._normalize_rule_label(label) == 'missing':
+                                if ScoreCard._normalize_rule_label(label) == "missing":
                                     return label
-                            return '缺失值'
+                            return "缺失值"
 
                         # 优先按导出的完整标签匹配，避免只依赖解析出的切分点导致中间箱丢失。
                         has_structured_categories = len(bins) == len(bin_labels) and any(
@@ -1090,12 +1092,12 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                                 return label
 
                         for label in bin_labels:
-                            if ScoreCard._normalize_rule_label(label) == 'else':
+                            if ScoreCard._normalize_rule_label(label) == "else":
                                 return label
 
-                        if self.handle_unknown == 'raise' or col in self.unknown_raise_features:
+                        if self.handle_unknown == "raise" or col in self.unknown_raise_features:
                             raise ValueError(f"特征 '{col}' 在 transform 中出现训练期未知类别: {[value]}")
-                        return '其他'
+                        return "其他"
 
                     X[col] = X[col].apply(get_bin_label)
 
@@ -1103,29 +1105,30 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         # 设置虚拟 binner，并恢复部署导出需要的特征语义。
         self._rule_binner = RuleBasedBinner(self.rules_, self.feature_names_)
-        feature_types = dict(getattr(self, '_loaded_feature_types', {}))
-        categorical_bins = dict(getattr(self, '_loaded_categorical_bins', {}))
+        feature_types = dict(getattr(self, "_loaded_feature_types", {}))
+        categorical_bins = dict(getattr(self, "_loaded_categorical_bins", {}))
         for feature, rule in self.rules_.items():
             if feature not in feature_types or feature_types[feature] is None:
-                labels = rule.get('bin_labels', [])
-                bins = rule.get('bins', [])
+                labels = rule.get("bin_labels", [])
+                bins = rule.get("bins", [])
                 has_interval = any(self._parse_interval_label(label) is not None for label in labels)
                 has_structured_categories = len(bins) > 0 and isinstance(bins[0], (list, tuple, np.ndarray))
-                feature_types[feature] = 'categorical' if has_structured_categories or not has_interval else 'numerical'
-            if feature_types[feature] == 'categorical' and feature not in categorical_bins:
-                bins = rule.get('bins', [])
+                feature_types[feature] = "categorical" if has_structured_categories or not has_interval else "numerical"
+            if feature_types[feature] == "categorical" and feature not in categorical_bins:
+                bins = rule.get("bins", [])
                 if len(bins) > 0 and all(isinstance(group, (list, tuple, np.ndarray)) for group in bins):
                     categorical_bins[feature] = [list(group) for group in bins]
 
         self._rule_binner.feature_types_ = feature_types
         self._rule_binner._cat_bins_ = categorical_bins
-        self._rule_binner.special_codes = list(getattr(self, '_loaded_special_codes', []))
-        self._rule_binner.handle_unknown = getattr(self, '_loaded_handle_unknown', -3)
-        self._rule_binner.unknown_raise_features = set(getattr(self, '_loaded_unknown_raise_features', []))
-        self._rule_binner.missing_raise_features = set(getattr(self, '_loaded_missing_raise_features', []))
+        self._rule_binner.special_codes = list(getattr(self, "_loaded_special_codes", []))
+        self._rule_binner.handle_unknown = getattr(self, "_loaded_handle_unknown", -3)
+        self._rule_binner.unknown_raise_features = set(getattr(self, "_loaded_unknown_raise_features", []))
+        self._rule_binner.missing_raise_features = set(getattr(self, "_loaded_missing_raise_features", []))
         self._rule_binner.missing_default_features = {
-            feature for feature, defaults in getattr(self, '_loaded_deployment_defaults', {}).items()
-            if 'missing_score' in defaults
+            feature
+            for feature, defaults in getattr(self, "_loaded_deployment_defaults", {}).items()
+            if "missing_score" in defaults
         }
         self.binner = self._rule_binner
         self._binner_is_woe_transformer = False
@@ -1138,7 +1141,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """判断是否应走离线规则分箱到分数的评分路径."""
         if self._has_real_lr_model() or not self.rules_:
             return False
-        if input_type == 'woe' or (input_type == 'auto' and is_woe_data):
+        if input_type == "woe" or (input_type == "auto" and is_woe_data):
             return False
         return True
 
@@ -1148,37 +1151,49 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             X = pd.DataFrame(X)
 
         # 如果有外部 binner，优先使用
-        if self.binner is not None and not hasattr(self, '_rule_binner'):
-            if self.rules_ and all(rule.get('bin_ids') is not None for rule in self.rules_.values()) and hasattr(self.binner, 'bin_tables_'):
-                indices = self.binner.transform(X, metric='indices')
+        if self.binner is not None and not hasattr(self, "_rule_binner"):
+            if (
+                self.rules_
+                and all(rule.get("bin_ids") is not None for rule in self.rules_.values())
+                and hasattr(self.binner, "bin_tables_")
+            ):
+                indices = self.binner.transform(X, metric="indices")
                 output = indices.copy()
                 for feature, rule in self.rules_.items():
-                    mapping = dict(zip(rule['bin_ids'], rule['bin_labels']))
+                    mapping = dict(zip(rule["bin_ids"], rule["bin_labels"]))
                     labels = indices[feature].map(mapping)
                     unknown = labels.isna() & ~indices[feature].eq(-1)
                     if unknown.any() and self._feature_raises_on_unknown(feature):
                         raise ValueError(f"特征 '{feature}' 在 transform 中出现训练期未知类别")
-                    if (labels.isna() & indices[feature].eq(-1)).any() and feature in getattr(self, '_loaded_missing_raise_features', []) and self._get_feature_missing_score(feature) is None:
+                    if (
+                        (labels.isna() & indices[feature].eq(-1)).any()
+                        and feature in getattr(self, "_loaded_missing_raise_features", [])
+                        and self._get_feature_missing_score(feature) is None
+                    ):
                         raise ValueError(f"特征 '{feature}' 的缺失值在实际编码器中属于未知类别")
-                    labels = labels.mask(labels.isna() & indices[feature].eq(-1), 'missing')
-                    output[feature] = labels.fillna('其他')
+                    labels = labels.mask(labels.isna() & indices[feature].eq(-1), "missing")
+                    output[feature] = labels.fillna("其他")
                 return output
             try:
-                return self.binner.transform(X, metric='bins')
+                return self.binner.transform(X, metric="bins")
             except Exception:
                 # 如果外部 binner 不支持，尝试基于规则的转换
                 pass
 
         # 如果有基于规则的 binner，使用它
-        if hasattr(self, '_rule_binner'):
+        if hasattr(self, "_rule_binner"):
             try:
-                return self._rule_binner.transform(X, metric='bins')
+                return self._rule_binner.transform(X, metric="bins")
             except Exception as exc:
-                if getattr(self._rule_binner, 'handle_unknown', None) == 'raise' or getattr(self._rule_binner, 'unknown_raise_features', set()):
+                if getattr(self._rule_binner, "handle_unknown", None) == "raise" or getattr(
+                    self._rule_binner, "unknown_raise_features", set()
+                ):
                     raise
                 raise ValueError("基于规则的分箱失败") from exc
 
-        raise ValueError("当前评分卡仅加载了规则，predict(input_type='raw') 需要提供支持 transform(metric='bins') 的 binner")
+        raise ValueError(
+            "当前评分卡仅加载了规则，predict(input_type='raw') 需要提供支持 transform(metric='bins') 的 binner"
+        )
 
     @record_training
     def fit(
@@ -1186,8 +1201,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
-        input_type: str = 'woe',
-    ) -> 'ScoreCard':
+        input_type: str = "woe",
+    ) -> "ScoreCard":
         """训练评分卡模型.
 
         支持两种调用方式:
@@ -1227,7 +1242,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             logger.info("ScoreCard.fit() 开始训练")
             logger.info(f"输入数据类型: {type(X).__name__}, input_type={input_type}")
 
-        if input_type not in ['woe', 'raw']:
+        if input_type not in ["woe", "raw"]:
             raise ValueError(f"input_type 必须是 'woe' 或 'raw'，当前为: {input_type}")
         X, y = extract_target(X, y, self.target)
         sample_weight = validate_sample_weight(sample_weight, len(y))
@@ -1240,11 +1255,11 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         # 转换为 DataFrame
         if not isinstance(X, pd.DataFrame):
             # 如果已配置binner或encoder，优先使用其特征名
-            if self.binner is not None and hasattr(self.binner, 'splits_'):
+            if self.binner is not None and hasattr(self.binner, "splits_"):
                 cols = list(self.binner.splits_.keys())
                 if len(cols) == X.shape[1]:
                     X = pd.DataFrame(X, columns=cols)
-            elif self.encoder is not None and hasattr(self.encoder, 'mapping_'):
+            elif self.encoder is not None and hasattr(self.encoder, "mapping_"):
                 cols = list(self.encoder.mapping_.keys())
                 if len(cols) == X.shape[1]:
                     X = pd.DataFrame(X, columns=cols)
@@ -1260,7 +1275,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self._validate_pipeline_components()
 
         # 2. 根据 input_type 处理数据
-        if input_type == 'raw':
+        if input_type == "raw":
             # 需要将原始数据转换为 WOE 数据
             if self.verbose:
                 logger.info("将原始数据转换为 WOE 数据...")
@@ -1277,7 +1292,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self.lr_model_ = self._build_lr_model()
 
         # 如果 LR 模型未训练，则训练
-        if not hasattr(self.lr_model_, 'coef_'):
+        if not hasattr(self.lr_model_, "coef_"):
             if self.verbose:
                 logger.info("训练 LR 模型...")
             self.lr_model_.fit(X, y, sample_weight=sample_weight)
@@ -1285,7 +1300,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             if self.verbose:
                 logger.info("使用预训练的 LR 模型")
 
-        if hasattr(self.lr_model_, 'ensure_positive_woe_coefficients'):
+        if hasattr(self.lr_model_, "ensure_positive_woe_coefficients"):
             self.lr_model_.ensure_positive_woe_coefficients()
 
         # 5. 生成评分卡规则
@@ -1293,11 +1308,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         # 6. 计算基础效应
         sub_scores = self._woe_to_score(X)
-        self.base_effect_ = pd.Series(
-            np.median(sub_scores, axis=0),
-            index=self.feature_names_
-        )
-        
+        self.base_effect_ = pd.Series(np.median(sub_scores, axis=0), index=self.feature_names_)
+
         self._is_fitted = True
 
         if self.verbose:
@@ -1309,16 +1321,16 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
     def _inference_encoder_woe(self, feature, bin_labels):
         """通过真实编码器转换小型分箱标签探针，不读取内部哨兵或训练折映射。"""
-        columns = list(getattr(self.encoder, 'cols_', None) or self._feature_names)
+        columns = list(getattr(self.encoder, "cols_", None) or self._feature_names)
         if feature not in columns:
             raise ValidationError(f"实际 WOE 编码器没有拟合字段: {feature}")
-        tables = getattr(self.binner, 'bin_tables_', {})
+        tables = getattr(self.binner, "bin_tables_", {})
         probe = {}
         for column in columns:
             table = tables.get(column)
-            if table is None or table.empty or '分箱标签' not in table:
+            if table is None or table.empty or "分箱标签" not in table:
                 raise ValidationError(f"缺少字段 {column} 的分箱标签，无法验证实际编码器映射")
-            probe[column] = list(bin_labels) if column == feature else [table['分箱标签'].iloc[0]] * len(bin_labels)
+            probe[column] = list(bin_labels) if column == feature else [table["分箱标签"].iloc[0]] * len(bin_labels)
         transformed = self.encoder.transform(pd.DataFrame(probe))
         if isinstance(transformed, pd.DataFrame):
             values = transformed[feature].to_numpy(dtype=float)
@@ -1330,7 +1342,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
     def _generate_rules(self, X: pd.DataFrame):
         """生成评分卡规则.
-        
+
         支持从分箱器获取完整的分箱信息，包括:
         - 数值特征的正常分箱区间
         - 缺失值分箱（标记为 'missing' 或 np.nan）
@@ -1348,13 +1360,13 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             values = None
 
             # 从 hscredit 的 binner 获取分箱信息
-            if self.binner is not None and hasattr(self.binner, 'bin_tables_'):
+            if self.binner is not None and hasattr(self.binner, "bin_tables_"):
                 if col in self.binner.bin_tables_:
                     bin_table = self.binner.bin_tables_[col]
-                    if '分档WOE值' in bin_table.columns:
-                        woe_values = bin_table['分档WOE值'].values
-                        if '分箱标签' in bin_table.columns:
-                            bin_labels = bin_table['分箱标签'].values
+                    if "分档WOE值" in bin_table.columns:
+                        woe_values = bin_table["分档WOE值"].values
+                        if "分箱标签" in bin_table.columns:
+                            bin_labels = bin_table["分箱标签"].values
                             bins = self._parse_bin_labels(bin_labels)
                             if self.encoder is not None:
                                 woe_values = self._inference_encoder_woe(col, bin_labels)
@@ -1372,8 +1384,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             if woe_values is None and self.encoder is not None and col in self.encoder:
                 encoder_rule = self.encoder[col]
                 if isinstance(encoder_rule, dict):
-                    woe_raw = encoder_rule.get('woe')
-                    values_raw = encoder_rule.get('value')
+                    woe_raw = encoder_rule.get("woe")
+                    values_raw = encoder_rule.get("value")
                     if woe_raw is not None and values_raw is not None:
                         val_arr = np.asarray(values_raw)
                         woe_arr = np.asarray(woe_raw)
@@ -1391,12 +1403,15 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
             # 最终兜底：如果仍然没有分箱标签，尝试从 binner 获取
             if bin_labels is None and self.binner is not None:
-                if hasattr(self.binner, 'bin_tables_') and col in getattr(self.binner, 'bin_tables_', {}):
+                if hasattr(self.binner, "bin_tables_") and col in getattr(self.binner, "bin_tables_", {}):
                     bt = self.binner.bin_tables_[col]
-                    if '分箱标签' in bt.columns and '分档WOE值' in bt.columns:
-                        bin_labels = bt['分箱标签'].values
-                        woe_values = (self._inference_encoder_woe(col, bin_labels)
-                                      if self.encoder is not None else bt['分档WOE值'].values)
+                    if "分箱标签" in bt.columns and "分档WOE值" in bt.columns:
+                        bin_labels = bt["分箱标签"].values
+                        woe_values = (
+                            self._inference_encoder_woe(col, bin_labels)
+                            if self.encoder is not None
+                            else bt["分档WOE值"].values
+                        )
                         woe_values = np.asarray(woe_values) * self._get_feature_woe_sign(i)
                         bins = self._parse_bin_labels(bin_labels)
 
@@ -1404,49 +1419,49 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             scores = [self._woe_to_point(woe, coef) for woe in woe_values]
 
             self.rules_[col] = {
-                'bins': bins,
-                'bin_labels': bin_labels,
-                'woe': woe_values,
-                'scores': np.array(scores),
-                'coef': coef,
-                'values': values
+                "bins": bins,
+                "bin_labels": bin_labels,
+                "woe": woe_values,
+                "scores": np.array(scores),
+                "coef": coef,
+                "values": values,
             }
         self._rules_semantics_version_ = 2
 
     def _parse_bin_labels(self, bin_labels: np.ndarray) -> list:
         """解析分箱标签为切分点或类别组.
-        
+
         保留完整的分箱标签列表，包括:
         - 数值区间分箱
         - 缺失值分箱（标记为 'missing'）
         - 特殊值分箱（标记为 'special'）
         """
         parsed_labels = []
-        
+
         for label in bin_labels:
             label_str = str(label)
-            
-            # 检查是否为缺失值或特殊值标记
-            if label_str.lower() in ('missing', '缺失', 'nan', 'null'):
 
-                parsed_labels.append('missing')
+            # 检查是否为缺失值或特殊值标记
+            if label_str.lower() in ("missing", "缺失", "nan", "null"):
+
+                parsed_labels.append("missing")
                 continue
-            elif label_str.lower() in ('special', '特殊'):
-                parsed_labels.append('special')
+            elif label_str.lower() in ("special", "特殊"):
+                parsed_labels.append("special")
                 continue
-            
+
             # 匹配数值区间: (a, b]、[a ~ b) 或 [负无穷 , 正无穷)
             if self._parse_interval_label(label_str) is not None:
                 parsed_labels.append(label_str)
             else:
                 # 类别值
                 parsed_labels.append(label_str)
-        
+
         return parsed_labels
 
     def _woe_to_point(self, woe: float, coef: float) -> float:
         """将 WOE 值转换为分数.
-        
+
         基于 StandardScoreTransformer 的参数:
             score = -B_ * coef * woe
         """
@@ -1454,10 +1469,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
     def _woe_to_score(self, X: pd.DataFrame, feature_names: Optional[List[str]] = None) -> np.ndarray:
         """将 WOE 数据转换为分数矩阵.
-        
+
         基于 StandardScoreTransformer 的参数:
             score_i = -B_ * coef_i * woe_i
-            
+
         :param X: WOE 数据
         :param feature_names: 特征名列表，默认使用 self.feature_names_
         :return: 分数矩阵
@@ -1466,14 +1481,14 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             feature_names = self.feature_names_
 
         X_effective = self._prepare_woe_for_scoring(X)
-        
+
         scores = np.zeros((X.shape[0], len(feature_names)))
-        
+
         for i, col in enumerate(feature_names):
             if col in X_effective.columns:
                 coef = self.coef_[i]
                 scores[:, i] = -self.B_ * coef * X_effective[col].values
-        
+
         return scores
 
     def _score_flip_constant(self) -> float:
@@ -1485,7 +1500,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _apply_score_direction(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """将统一的 descending 线性分数转换为当前评分方向。"""
         values = np.asarray(scores, dtype=float)
-        if self.direction_ == 'ascending':
+        if self.direction_ == "ascending":
             return self._score_flip_constant() - values
         return values
 
@@ -1511,10 +1526,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _normalize_interval_bound(bound: Any) -> float:
         """将外部评分卡区间边界统一为浮点数，支持 toad/scp 的中英文无穷符号."""
         text = str(bound).strip().lower()
-        text = text.replace('−', '-').replace('∞', 'inf')
-        if text in ('-inf', '-infinity', '-np.inf', '负无穷', '负无穷大'):
+        text = text.replace("−", "-").replace("∞", "inf")
+        if text in ("-inf", "-infinity", "-np.inf", "负无穷", "负无穷大"):
             return -np.inf
-        if text in ('+inf', 'inf', 'infinity', '+infinity', 'np.inf', '+np.inf', '正无穷', '正无穷大'):
+        if text in ("+inf", "inf", "infinity", "+infinity", "np.inf", "+np.inf", "正无穷", "正无穷大"):
             return np.inf
         return float(text)
 
@@ -1526,7 +1541,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         ``[负无穷 , b)`` 等格式；非区间标签返回 ``None``。
         """
         label_str = str(label).strip()
-        match = re.match(r'^([\[(])\s*(.*?)\s*(?:,|~)\s*(.*?)\s*([\])])$', label_str)
+        match = re.match(r"^([\[(])\s*(.*?)\s*(?:,|~)\s*(.*?)\s*([\])])$", label_str)
         if not match:
             return None
 
@@ -1545,27 +1560,27 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         label_str = str(label).strip()
         label_lower = label_str.lower()
 
-        if label_lower in ('missing', '缺失值', '缺失', 'nan', 'null'):
-            return 'missing'
+        if label_lower in ("missing", "缺失值", "缺失", "nan", "null"):
+            return "missing"
 
-        if label_lower in ('special', '特殊值', '特殊'):
-            return 'special'
+        if label_lower in ("special", "特殊值", "特殊"):
+            return "special"
 
-        if label_lower in ('else', 'other', 'others', '其他'):
-            return 'else'
+        if label_lower in ("else", "other", "others", "其他"):
+            return "else"
 
-        if label_str.startswith(('(', '[')):
+        if label_str.startswith(("(", "[")):
             interval = ScoreCard._parse_interval_label(label_str)
             if interval is not None:
                 _, lower, upper, _ = interval
-                lower_text = '-inf' if lower == -np.inf else f'{lower:g}'
-                upper_text = '+inf' if upper == np.inf else f'{upper:g}'
-                return f'interval:{lower_text}:{upper_text}'
+                lower_text = "-inf" if lower == -np.inf else f"{lower:g}"
+                upper_text = "+inf" if upper == np.inf else f"{upper:g}"
+                return f"interval:{lower_text}:{upper_text}"
 
-            return re.sub(r',\s*', ', ', label_str)
+            return re.sub(r",\s*", ", ", label_str)
 
-        if ',' in label_str:
-            return ','.join(part.strip() for part in label_str.split(',') if part.strip())
+        if "," in label_str:
+            return ",".join(part.strip() for part in label_str.split(",") if part.strip())
 
         return label_str
 
@@ -1581,18 +1596,17 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 continue
 
             rule = self.rules_[col]
-            rule_labels = rule.get('bin_labels')
+            rule_labels = rule.get("bin_labels")
             if rule_labels is None:
-                rule_labels = rule.get('bins', [])
+                rule_labels = rule.get("bins", [])
 
             score_map = {
-                self._normalize_rule_label(label): float(score)
-                for label, score in zip(rule_labels, rule['scores'])
+                self._normalize_rule_label(label): float(score) for label, score in zip(rule_labels, rule["scores"])
             }
-            display_labels = list(rule.get('display_labels', []))
+            display_labels = list(rule.get("display_labels", []))
             if display_labels:
                 normalized_display = [self._normalize_rule_label(label) for label in display_labels]
-                for label, score in zip(normalized_display, rule['scores']):
+                for label, score in zip(normalized_display, rule["scores"]):
                     if normalized_display.count(label) == 1:
                         score_map[label] = float(score)
                 ambiguous = {label for label in normalized_display if normalized_display.count(label) > 1}
@@ -1603,9 +1617,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             mapped_scores = label_series.map(score_map)
             missing_score = self._get_feature_missing_score(col)
             if missing_score is not None:
-                missing_mask = label_series.eq('missing') & mapped_scores.isna()
+                missing_mask = label_series.eq("missing") & mapped_scores.isna()
                 mapped_scores.loc[missing_mask] = float(missing_score)
-            fallback_bins = list(zip(rule_labels, rule['scores']))
+            fallback_bins = list(zip(rule_labels, rule["scores"]))
             default_score = self._get_deployment_default_score(fallback_bins, feature=col)
             scores[:, i] = mapped_scores.fillna(default_score).to_numpy()
 
@@ -1615,7 +1629,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         proba: Optional[Union[np.ndarray, pd.Series]] = None,
-        input_type: str = 'auto',
+        input_type: str = "auto",
     ) -> np.ndarray:
         """预测评分（通过LR模型概率）。
 
@@ -1648,11 +1662,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         # 调用父类的transform方法将概率转换为评分
         return self.transform(proba)
 
-    def predict(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        input_type: str = 'raw'
-    ) -> np.ndarray:
+    def predict(self, X: Union[pd.DataFrame, np.ndarray], input_type: str = "raw") -> np.ndarray:
         """预测评分（基于WOE特征的线性评分卡公式）。
 
         与 predict_score 不同，此方法使用评分卡公式：
@@ -1682,7 +1692,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         # 如果未传入预训练模型且未调用fit，则报错
         if not self._skip_fit_check or getattr(self, "training_summary_", {}).get("状态") in {"失败", "中断"}:
             self._check_fitted()
-        elif not hasattr(self, '_is_fitted') or not self._is_fitted:
+        elif not hasattr(self, "_is_fitted") or not self._is_fitted:
             # 传入了预训练模型但未调用fit，使用预训练模型进行预测
             if self.verbose:
                 logger.info("使用预训练模型进行预测（未调用fit）")
@@ -1700,7 +1710,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             X_bins = X_bins[feature_names]
             sub_scores = self._bin_labels_to_score(X_bins, feature_names)
         else:
-            if input_type == 'auto':
+            if input_type == "auto":
                 # 自动检测
                 if is_woe_data:
                     if self.verbose:
@@ -1710,10 +1720,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                     if self.verbose:
                         logger.info("检测到输入为原始数据，进行 WOE 转换")
                     X_woe = self._transform_to_woe(X)
-            elif input_type == 'raw':
+            elif input_type == "raw":
                 # 强制作为原始数据处理
                 X_woe = self._transform_to_woe(X)
-            elif input_type == 'woe':
+            elif input_type == "woe":
                 # 强制作为 WOE 数据
                 X_woe = X
             else:
@@ -1721,7 +1731,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
             # 确保列顺序一致
             # 如果传入了预训练模型但未fit，使用输入数据的列名
-            if self._skip_fit_check and not getattr(self, '_is_fitted', False):
+            if self._skip_fit_check and not getattr(self, "_is_fitted", False):
                 # 未fit，直接使用输入数据的列
                 feature_names = X_woe.columns.tolist()
             else:
@@ -1741,7 +1751,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
     def _detect_input_type(self, X: pd.DataFrame) -> bool:
         """检测输入数据是否为 WOE 数据.
-        
+
         :param X: 输入数据
         :return: True 如果是 WOE 数据，False 如果是原始数据
         """
@@ -1760,7 +1770,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         # 方法2：检查是否有整数列（原始数据常见）
         for col in X.columns:
-            if X[col].dtype in ['int64', 'int32']:
+            if X[col].dtype in ["int64", "int32"]:
                 # 如果是整数，可能是原始数据
                 if X[col].nunique() > 10:  # 唯一值较多，可能是原始数值
                     return False
@@ -1771,23 +1781,23 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _prepare_lr_input(
         self,
         X: Union[pd.DataFrame, np.ndarray],
-        input_type: str = 'auto',
+        input_type: str = "auto",
     ) -> pd.DataFrame:
         """按显式输入类型准备底层 LR 模型所需的 WOE 特征."""
-        if input_type not in ['auto', 'raw', 'woe']:
+        if input_type not in ["auto", "raw", "woe"]:
             raise ValueError(f"input_type 必须是 'auto'/'raw'/'woe' 之一，当前为: {input_type}")
 
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        if input_type == 'raw':
+        if input_type == "raw":
             X_woe = self._transform_to_woe(X)
-        elif input_type == 'woe':
+        elif input_type == "woe":
             X_woe = X
         else:
             X_woe = X if self._detect_input_type(X) else self._transform_to_woe(X)
 
-        if not (self._skip_fit_check and not getattr(self, '_is_fitted', False)):
+        if not (self._skip_fit_check and not getattr(self, "_is_fitted", False)):
             feature_names = self.feature_names_
             X_woe = X_woe[feature_names]
         return X_woe
@@ -1795,7 +1805,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def predict_proba(
         self,
         X: Union[pd.DataFrame, np.ndarray],
-        input_type: str = 'auto',
+        input_type: str = "auto",
     ) -> np.ndarray:
         """预测样本属于各类别的概率（使用底层 LR 模型）。
 
@@ -1812,7 +1822,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         >>> proba_bad = scorecard.predict_proba(X_test)[:, 1]   # 坏样本概率
         """
         self._check_fitted()
-        lr_model = self.lr_model_ if hasattr(self, 'lr_model_') and self.lr_model_ is not None else self.lr_model
+        lr_model = self.lr_model_ if hasattr(self, "lr_model_") and self.lr_model_ is not None else self.lr_model
         if lr_model is None:
             raise NotFittedError("未找到LR模型，当前评分卡无法 predict_proba")
 
@@ -1828,27 +1838,27 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         base_odds_remark = (
             "好坏比（好:坏），内部换算实际 odds = 1/base_odds"
-            if self.base_odds >= 1 else "坏样本率 / 坏好比，直接作为实际 odds"
+            if self.base_odds >= 1
+            else "坏样本率 / 坏好比，直接作为实际 odds"
         )
         formula_info = self.score_formula()
         score_direction = "越大越好" if self.direction_ == "descending" else "越小越好"
-        return pd.DataFrame([
-            {"刻度项": "base_odds", "刻度值": self.base_odds, "备注": base_odds_remark},
-            {"刻度项": "base_score", "刻度值": self.base_score,
-             "备注": "基础 odds 对应的分数"},
-            {"刻度项": "rate", "刻度值": self.rate,
-             "备注": "odds 增加的倍率"},
-            {"刻度项": "pdo", "刻度值": self.pdo,
-             "备注": f"odds 增加 {self.rate} 倍时分数变化量"},
-            {"刻度项": "B", "刻度值": self.B_,
-             "备注": f"pdo / ln({self.rate})"},
-            {"刻度项": "A", "刻度值": self.A_,
-             "备注": "base_score + B * ln(实际odds)，实际odds 见 base_odds 备注"},
-            {"刻度项": "direction", "刻度值": score_direction,
-             "备注": f"direction={self.direction_}"},
-            {"刻度项": "formula", "刻度值": formula_info["公式"],
-             "备注": "评分卡转换公式，odds = P(坏) / P(好)（同 score_formula 的「公式」）"},
-        ])
+        return pd.DataFrame(
+            [
+                {"刻度项": "base_odds", "刻度值": self.base_odds, "备注": base_odds_remark},
+                {"刻度项": "base_score", "刻度值": self.base_score, "备注": "基础 odds 对应的分数"},
+                {"刻度项": "rate", "刻度值": self.rate, "备注": "odds 增加的倍率"},
+                {"刻度项": "pdo", "刻度值": self.pdo, "备注": f"odds 增加 {self.rate} 倍时分数变化量"},
+                {"刻度项": "B", "刻度值": self.B_, "备注": f"pdo / ln({self.rate})"},
+                {"刻度项": "A", "刻度值": self.A_, "备注": "base_score + B * ln(实际odds)，实际odds 见 base_odds 备注"},
+                {"刻度项": "direction", "刻度值": score_direction, "备注": f"direction={self.direction_}"},
+                {
+                    "刻度项": "formula",
+                    "刻度值": formula_info["公式"],
+                    "备注": "评分卡转换公式，odds = P(坏) / P(好)（同 score_formula 的「公式」）",
+                },
+            ]
+        )
 
     def score_formula(self, decimal: int = 4) -> Dict[str, Any]:
         """输出评分卡的评分转换公式（人类可读 + 可编程使用）.
@@ -1868,10 +1878,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         intercept_score = round(float(self.A_ - self.B_ * self.intercept_), decimal)
 
         formula = f"Score = {A} - {B} × ln(odds)，其中 odds = P(坏) / P(好)"
-        woe_formula = (
-            f"Score = 截距分数({intercept_score}) "
-            f"+ Σ(-B × coef_i × WOE_i)，B = {B}"
-        )
+        woe_formula = f"Score = 截距分数({intercept_score}) " f"+ Σ(-B × coef_i × WOE_i)，B = {B}"
 
         return {
             "公式": formula,
@@ -1886,20 +1893,16 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             "direction": self.direction_,
         }
 
-    def scorecard_points(
-        self,
-        feature_map: Optional[Dict[str, str]] = None,
-        decimal: int = 4
-    ) -> pd.DataFrame:
+    def scorecard_points(self, feature_map: Optional[Dict[str, str]] = None, decimal: int = 4) -> pd.DataFrame:
         """输出评分卡分箱信息及其对应的分数.
-        
+
         支持从分箱器获取完整的分箱信息，包括:
         - 基础分（截距项对应的分数）
         - 数值特征分箱（区间格式）
         - 类别特征分箱
         - 缺失值分箱（标记为 'missing'）
         - 特殊值分箱（标记为 'special'）
-        
+
         参考 scorecardpipeline 的实现方式，确保与分箱器格式兼容。
 
         :param feature_map: 特征名到中文含义的映射字典
@@ -1911,34 +1914,36 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             feature_map = {}
 
         rows = []
-        
+
         # 首先添加基础分（截距项）
         # 截距分数 = A_ - B_ * intercept
         intercept_score = self.A_ - self.B_ * self.intercept_
-        rows.append({
-            '变量名称': '基础分',
-            '变量含义': '截距项（基准分数）',
-            '变量分箱': '-',
-            '对应分数': round(float(intercept_score), decimal),
-            'WOE值': None
-        })
-        
+        rows.append(
+            {
+                "变量名称": "基础分",
+                "变量含义": "截距项（基准分数）",
+                "变量分箱": "-",
+                "对应分数": round(float(intercept_score), decimal),
+                "WOE值": None,
+            }
+        )
+
         # 使用 lr 模型的特征名（与训练时一致）
         feature_names = self.feature_names_
-        
+
         for col in feature_names:
             if col not in self.rules_:
                 continue
-                
+
             rule = self.rules_[col]
-            scores = rule['scores']
+            scores = rule["scores"]
 
             # 优先使用 bin_labels（完整的分箱标签）
-            bin_labels = rule.get('display_labels', rule.get('bin_labels'))
-            bins = rule.get('bins')
+            bin_labels = rule.get("display_labels", rule.get("bin_labels"))
+            bins = rule.get("bins")
             # WOE 值可能缺失（如离线规则加载后无 woe），单独处理，
             # 不能放进 zip 否则空/短的 woe 会把整张分箱表截断为 0 行
-            woe_values = rule.get('woe')
+            woe_values = rule.get("woe")
             woe_list = list(woe_values) if woe_values is not None else []
 
             # 确定要使用的分箱标签
@@ -1948,10 +1953,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 labels_to_use = bins
             elif woe_list:
                 # 无分箱标签，使用 WOE 值格式化为标签
-                labels_to_use = [f'WOE: {w:.4f}' for w in woe_list]
+                labels_to_use = [f"WOE: {w:.4f}" for w in woe_list]
             else:
                 # 无标签也无 WOE，用箱序号兜底
-                labels_to_use = [f'箱{i}' for i in range(len(scores))]
+                labels_to_use = [f"箱{i}" for i in range(len(scores))]
 
             if len(labels_to_use) != len(scores):
                 # 如果标签和分数数量不匹配，重新生成标签
@@ -1963,61 +1968,65 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 display_label = self._format_bin_display(bin_label)
                 woe = woe_list[idx] if idx < len(woe_list) else None
 
-                rows.append({
-                    '变量名称': col,
-                    '变量含义': feature_map.get(col, ''),
-                    '变量分箱': display_label,
-                    '对应分数': round(float(score), decimal),
-                    'WOE值': round(float(woe), 4) if woe is not None and not pd.isna(woe) else None
-                })
+                rows.append(
+                    {
+                        "变量名称": col,
+                        "变量含义": feature_map.get(col, ""),
+                        "变量分箱": display_label,
+                        "对应分数": round(float(score), decimal),
+                        "WOE值": round(float(woe), 4) if woe is not None and not pd.isna(woe) else None,
+                    }
+                )
 
         if not rows:
-            return pd.DataFrame(columns=['变量名称', '变量含义', '变量分箱', '对应分数', 'WOE值'])
-            
+            return pd.DataFrame(columns=["变量名称", "变量含义", "变量分箱", "对应分数", "WOE值"])
+
         return pd.DataFrame(rows)
-    
+
     def _format_bin_labels(self, bins, n_scores):
         """根据分箱信息格式化为显示标签."""
         labels = []
-        
+
         for i in range(n_scores):
             if i < len(bins):
                 bin_val = bins[i]
                 if isinstance(bin_val, str):
-                    if bin_val.lower() in ('missing', '缺失'):
-                        labels.append('缺失值')
-                    elif bin_val.lower() in ('special', '特殊'):
-                        labels.append('特殊值')
+                    if bin_val.lower() in ("missing", "缺失"):
+                        labels.append("缺失值")
+                    elif bin_val.lower() in ("special", "特殊"):
+                        labels.append("特殊值")
                     else:
                         labels.append(bin_val)
                 else:
                     labels.append(str(bin_val))
             else:
-                labels.append(f'箱{i}')
-        
+                labels.append(f"箱{i}")
+
         return labels
-    
+
     def _format_bin_display(self, bin_label):
         """格式化分箱标签用于显示."""
         if isinstance(bin_label, str):
-            if bin_label.lower() in ('missing', '缺失'):
-                return '缺失值'
-            elif bin_label.lower() in ('special', '特殊'):
-                return '特殊值'
-            elif bin_label.lower() in ('nan', 'null'):
+            if bin_label.lower() in ("missing", "缺失"):
+                return "缺失值"
+            elif bin_label.lower() in ("special", "特殊"):
+                return "特殊值"
+            elif bin_label.lower() in ("nan", "null"):
 
-                return '缺失值'
+                return "缺失值"
         return str(bin_label)
 
     @staticmethod
     def _format_score_interval(interval: Any, decimal: int = 4, closed: Optional[str] = None) -> str:
         """格式化评分区间，避免 pandas Interval 暴露浮点尾差."""
-        if hasattr(interval, 'left') and hasattr(interval, 'right'):
-            left_bracket = '[' if getattr(interval, 'closed_left', False) else '('
-            right_bracket = ']' if getattr(interval, 'closed_right', False) else ')'
-            if closed == 'both':
-                left_bracket, right_bracket = '[', ']'
-            return f"{left_bracket}{float(interval.left):.{decimal}f}, {float(interval.right):.{decimal}f}{right_bracket}"
+        if hasattr(interval, "left") and hasattr(interval, "right"):
+            left_bracket = "[" if getattr(interval, "closed_left", False) else "("
+            right_bracket = "]" if getattr(interval, "closed_right", False) else ")"
+            if closed == "both":
+                left_bracket, right_bracket = "[", "]"
+            return (
+                f"{left_bracket}{float(interval.left):.{decimal}f}, {float(interval.right):.{decimal}f}{right_bracket}"
+            )
 
         return str(interval)
 
@@ -2026,7 +2035,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         scores: np.ndarray,
         y: np.ndarray,
         max_n_bins: int = 10,
-        method: str = 'quantile',
+        method: str = "quantile",
         score_decimal: int = 4,
     ) -> pd.DataFrame:
         """生成评分分箱对应坏样本率、Odds、KS 的对照表（评分卡校验/划档常用）。
@@ -2051,48 +2060,55 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         >>> s = scorecard.predict(X_test)
         >>> scorecard.score_to_bad_rate_table(s, y_test, max_n_bins=10)
         """
-        df = pd.DataFrame({'score': scores, 'y': y})
+        df = pd.DataFrame({"score": scores, "y": y})
 
         if len(df) == 0:
-            return pd.DataFrame(columns=[
-                '评分区间', '样本数', '坏样本数', '坏样本率',
-                '好样本数', 'Odds', '累计好样本占比', '累计坏样本占比', 'KS'
-            ])
+            return pd.DataFrame(
+                columns=[
+                    "评分区间",
+                    "样本数",
+                    "坏样本数",
+                    "坏样本率",
+                    "好样本数",
+                    "Odds",
+                    "累计好样本占比",
+                    "累计坏样本占比",
+                    "KS",
+                ]
+            )
 
-        if df['score'].nunique(dropna=True) <= 1:
-            score_value = float(df['score'].dropna().iloc[0]) if df['score'].notna().any() else np.nan
-            df['score_bin'] = f"[{score_value:.{score_decimal}f}, {score_value:.{score_decimal}f}]"
-        elif method == 'quantile':
-            df['score_bin'] = pd.qcut(df['score'], q=max_n_bins, duplicates='drop')
+        if df["score"].nunique(dropna=True) <= 1:
+            score_value = float(df["score"].dropna().iloc[0]) if df["score"].notna().any() else np.nan
+            df["score_bin"] = f"[{score_value:.{score_decimal}f}, {score_value:.{score_decimal}f}]"
+        elif method == "quantile":
+            df["score_bin"] = pd.qcut(df["score"], q=max_n_bins, duplicates="drop")
         else:
-            df['score_bin'] = pd.cut(df['score'], bins=max_n_bins)
-        
-        stats = df.groupby('score_bin', observed=False).agg({
-            'y': ['count', 'sum', 'mean']
-        }).reset_index()
-        
-        stats.columns = ['评分区间', '样本数', '坏样本数', '坏样本率']
-        stats['评分区间'] = stats['评分区间'].apply(
+            df["score_bin"] = pd.cut(df["score"], bins=max_n_bins)
+
+        stats = df.groupby("score_bin", observed=False).agg({"y": ["count", "sum", "mean"]}).reset_index()
+
+        stats.columns = ["评分区间", "样本数", "坏样本数", "坏样本率"]
+        stats["评分区间"] = stats["评分区间"].apply(
             lambda interval: self._format_score_interval(interval, decimal=score_decimal)
         )
-        stats['好样本数'] = stats['样本数'] - stats['坏样本数']
-        stats['Odds'] = stats['好样本数'] / stats['坏样本数'].replace(0, np.nan)
-        stats['累计好样本占比'] = stats['好样本数'].cumsum() / stats['好样本数'].sum()
-        stats['累计坏样本占比'] = stats['坏样本数'].cumsum() / stats['坏样本数'].sum()
-        stats['KS'] = abs(stats['累计坏样本占比'] - stats['累计好样本占比'])
-        
-        stats['坏样本率'] = stats['坏样本率'].apply(lambda x: f'{x:.2%}')
-        stats['Odds'] = stats['Odds'].apply(lambda x: f'{x:.2f}' if x != np.inf else 'inf')
-        stats['KS'] = stats['KS'].apply(lambda x: f'{x:.4f}')
-        
+        stats["好样本数"] = stats["样本数"] - stats["坏样本数"]
+        stats["Odds"] = stats["好样本数"] / stats["坏样本数"].replace(0, np.nan)
+        stats["累计好样本占比"] = stats["好样本数"].cumsum() / stats["好样本数"].sum()
+        stats["累计坏样本占比"] = stats["坏样本数"].cumsum() / stats["坏样本数"].sum()
+        stats["KS"] = abs(stats["累计坏样本占比"] - stats["累计好样本占比"])
+
+        stats["坏样本率"] = stats["坏样本率"].apply(lambda x: f"{x:.2%}")
+        stats["Odds"] = stats["Odds"].apply(lambda x: f"{x:.2f}" if x != np.inf else "inf")
+        stats["KS"] = stats["KS"].apply(lambda x: f"{x:.4f}")
+
         return stats
 
     def save_pickle(
         self,
         file: str,
-        engine: str = 'joblib',
+        engine: str = "joblib",
         compression: Optional[str] = None,
-        compression_level: Optional[int] = None
+        compression_level: Optional[int] = None,
     ) -> str:
         """保存模型.
 
@@ -2110,24 +2126,13 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if file_dir and not os.path.exists(file_dir):
             os.makedirs(file_dir, exist_ok=True)
 
-        _save_pickle(
-            self,
-            file,
-            engine=engine,
-            compression=compression,
-            compression_level=compression_level
-        )
+        _save_pickle(self, file, engine=engine, compression=compression, compression_level=compression_level)
 
         logger.info("模型已保存至: %s", file)
         return file
 
     @classmethod
-    def load_pickle(
-        cls,
-        file: str,
-        engine: str = 'auto',
-        compression: Optional[str] = None
-    ) -> 'ScoreCard':
+    def load_pickle(cls, file: str, engine: str = "auto", compression: Optional[str] = None) -> "ScoreCard":
         """加载模型.
 
         使用 utils.io.load_pickle 进行持久化读取，支持多种序列化引擎和压缩格式。
@@ -2150,8 +2155,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         score_sign = 1.0
         base_score = intercept_score
 
-        if self.direction_ == 'ascending':
-            flip_constant = self.lower + self.upper if self.lower is not None and self.upper is not None else 2 * self.base_score
+        if self.direction_ == "ascending":
+            flip_constant = (
+                self.lower + self.upper if self.lower is not None and self.upper is not None else 2 * self.base_score
+            )
             base_score = float(flip_constant - intercept_score)
             score_sign = -1.0
 
@@ -2162,27 +2169,21 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         rule = self.rules_.get(feature)
         if not rule:
             return None
-        scores = np.asarray(rule.get('scores', []), dtype=float)
+        scores = np.asarray(rule.get("scores", []), dtype=float)
         if len(scores) == 0:
             return None
 
-        bin_tables = getattr(self.binner, 'bin_tables_', {}) if self.binner is not None else {}
+        bin_tables = getattr(self.binner, "bin_tables_", {}) if self.binner is not None else {}
         bin_table = bin_tables.get(feature)
-        if (
-            bin_table is not None
-            and '分箱' in bin_table.columns
-            and len(bin_table) == len(scores)
-        ):
-            positions = np.flatnonzero(
-                bin_table['分箱'].astype(int).to_numpy() == int(bin_index)
-            )
+        if bin_table is not None and "分箱" in bin_table.columns and len(bin_table) == len(scores):
+            positions = np.flatnonzero(bin_table["分箱"].astype(int).to_numpy() == int(bin_index))
             if len(positions) == 1:
                 return float(scores[int(positions[0])])
 
-        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
-        cat_bins = getattr(self.binner, '_cat_bins_', {}) if self.binner is not None else {}
+        feature_types = getattr(self.binner, "feature_types_", {}) if self.binner is not None else {}
+        cat_bins = getattr(self.binner, "_cat_bins_", {}) if self.binner is not None else {}
         if (
-            feature_types.get(feature) == 'categorical'
+            feature_types.get(feature) == "categorical"
             and feature in cat_bins
             and len(cat_bins[feature]) == len(scores)
             and 0 <= int(bin_index) < len(scores)
@@ -2192,44 +2193,39 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
     def _get_feature_unknown_score(self, feature: str) -> Optional[float]:
         """获取未知类别按指定已有箱回退时的贡献分."""
-        loaded = getattr(self, '_loaded_deployment_defaults', {}).get(feature, {})
-        if 'unknown_score' in loaded:
-            return float(loaded['unknown_score'])
+        loaded = getattr(self, "_loaded_deployment_defaults", {}).get(feature, {})
+        if "unknown_score" in loaded:
+            return float(loaded["unknown_score"])
 
-        handle_unknown = getattr(self.binner, 'handle_unknown', -3) if self.binner is not None else -3
+        handle_unknown = getattr(self.binner, "handle_unknown", -3) if self.binner is not None else -3
         if isinstance(handle_unknown, (int, np.integer)) and int(handle_unknown) != -3:
             return self._get_rule_score_for_bin_index(feature, int(handle_unknown))
         return None
 
     def _get_feature_missing_score(self, feature: str) -> Optional[float]:
         """获取 missing_separate=False 学到的缺失值目标箱贡献分."""
-        loaded = getattr(self, '_loaded_deployment_defaults', {}).get(feature, {})
-        if 'missing_score' in loaded:
-            return float(loaded['missing_score'])
+        loaded = getattr(self, "_loaded_deployment_defaults", {}).get(feature, {})
+        if "missing_score" in loaded:
+            return float(loaded["missing_score"])
 
-        missing_targets = (
-            getattr(self.binner, '_missing_bin_targets_', {})
-            if self.binner is not None
-            else {}
-        )
-        target = getattr(self.binner, '_user_missing_bin_targets_', {}).get(feature, missing_targets.get(feature))
+        missing_targets = getattr(self.binner, "_missing_bin_targets_", {}) if self.binner is not None else {}
+        target = getattr(self.binner, "_user_missing_bin_targets_", {}).get(feature, missing_targets.get(feature))
         if target is None:
             return None
         return self._get_rule_score_for_bin_index(feature, int(target))
 
     def _feature_raises_on_unknown(self, feature: str) -> bool:
         """判断类别特征是否要求对未知类别直接报错."""
-        if feature in getattr(self, '_loaded_unknown_raise_features', []):
+        if feature in getattr(self, "_loaded_unknown_raise_features", []):
             return True
-        if getattr(self.encoder, 'handle_unknown', None) == 'error':
+        if getattr(self.encoder, "handle_unknown", None) == "error":
             return True
         if self.binner is None:
             return False
-        feature_types = getattr(self.binner, 'feature_types_', {})
-        return (
-            feature_types.get(feature) == 'categorical'
-            and (getattr(self.binner, 'handle_unknown', None) == 'raise'
-                 or getattr(self.encoder, 'handle_unknown', None) == 'error')
+        feature_types = getattr(self.binner, "feature_types_", {})
+        return feature_types.get(feature) == "categorical" and (
+            getattr(self.binner, "handle_unknown", None) == "raise"
+            or getattr(self.encoder, "handle_unknown", None) == "error"
         )
 
     def _features_raising_on_unknown(self) -> List[str]:
@@ -2240,9 +2236,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """拒绝目标格式无法表达的未知类别 raise 策略."""
         features = self._features_raising_on_unknown()
         if features:
-            raise ValidationError(
-                f"{target} 无法表达未知类别 handle_unknown='raise' 策略，涉及特征: {features}"
-            )
+            raise ValidationError(f"{target} 无法表达未知类别 handle_unknown='raise' 策略，涉及特征: {features}")
 
     def _get_export_deployment_defaults(self) -> Dict[str, Dict[str, float]]:
         """导出规则重载后仍需保留的逐特征回退分."""
@@ -2252,23 +2246,25 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             unknown_score = self._get_feature_unknown_score(feature)
             missing_score = self._get_feature_missing_score(feature)
             if unknown_score is not None:
-                feature_defaults['unknown_score'] = float(unknown_score)
+                feature_defaults["unknown_score"] = float(unknown_score)
             if missing_score is not None:
-                feature_defaults['missing_score'] = float(missing_score)
+                feature_defaults["missing_score"] = float(missing_score)
             if feature_defaults:
                 defaults[feature] = feature_defaults
         return defaults
 
     def _ensure_deployment_rule_semantics(self):
         """旧完整评分卡必须重建显式编码器规则，不能把旧缓存静默标为 V2。"""
-        version = getattr(self, '_rules_semantics_version_', 0)
+        version = getattr(self, "_rules_semantics_version_", 0)
         if version not in (0, 1, 2):
             raise ValidationError(f"不支持的评分规则语义版本: {version}")
         if version == 2 or self.encoder is None:
             return
-        tables = getattr(self.binner, 'bin_tables_', {})
+        tables = getattr(self.binner, "bin_tables_", {})
         if not self._has_real_lr_model() or not tables or any(feature not in tables for feature in self.feature_names_):
-            raise ValidationError("旧评分卡的显式编码器映射无法完整验证，请保留 binner/encoder/LR 后重建或重新拟合，不能直接导出")
+            raise ValidationError(
+                "旧评分卡的显式编码器映射无法完整验证，请保留 binner/encoder/LR 后重建或重新拟合，不能直接导出"
+            )
         old_rules, old_effect = self.rules_, self.base_effect_
         try:
             self._generate_rules_from_binner()
@@ -2276,35 +2272,39 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 raise ValidationError("旧评分卡重建后缺少入模特征规则")
         except Exception as exc:
             self.rules_, self.base_effect_ = old_rules, old_effect
-            self.__dict__.pop('_rules_semantics_version_', None)
+            self.__dict__.pop("_rules_semantics_version_", None)
             raise ValidationError("旧评分卡无法按实际推理映射重建，请重新拟合后导出") from exc
         self.base_effect_ = old_effect
         self.rule_migration_ = "已从保留的分箱器、实际编码器及模型系数重建部署规则"
 
     def _deployment_descriptors(self, feature, rule, size):
         """使用真实箱号/切点/类别集合，避免显示精度和特殊箱改变执行语义。"""
-        if rule.get('descriptors') is not None and len(rule['descriptors']) == size:
-            return rule['descriptors']
-        table = getattr(self.binner, 'bin_tables_', {}).get(feature)
-        feature_type = getattr(self.binner, 'feature_types_', {}).get(feature)
-        groups = getattr(self.binner, '_cat_bins_', {}).get(feature)
-        if table is not None and len(table) == size and '分箱' in table and '分箱标签' in table:
+        if rule.get("descriptors") is not None and len(rule["descriptors"]) == size:
+            return rule["descriptors"]
+        table = getattr(self.binner, "bin_tables_", {}).get(feature)
+        feature_type = getattr(self.binner, "feature_types_", {}).get(feature)
+        groups = getattr(self.binner, "_cat_bins_", {}).get(feature)
+        if table is not None and len(table) == size and "分箱" in table and "分箱标签" in table:
             descriptors = []
-            splits = np.asarray(getattr(self.binner, 'splits_', {}).get(feature, [])) if feature_type == 'numerical' else None
-            for bin_id, label in zip(table['分箱'], table['分箱标签']):
+            splits = (
+                np.asarray(getattr(self.binner, "splits_", {}).get(feature, []))
+                if feature_type == "numerical"
+                else None
+            )
+            for bin_id, label in zip(table["分箱"], table["分箱标签"]):
                 index = int(bin_id)
-                if feature_type == 'categorical' and groups is not None and 0 <= index < len(groups):
+                if feature_type == "categorical" and groups is not None and 0 <= index < len(groups):
                     descriptors.append(list(groups[index]))
-                elif feature_type == 'numerical' and 0 <= index <= len(splits):
-                    lower = '-inf' if index == 0 else repr(float(splits[index - 1]))
-                    upper = '+inf' if index == len(splits) else repr(float(splits[index]))
-                    descriptors.append(f'[{lower}, {upper})')
+                elif feature_type == "numerical" and 0 <= index <= len(splits):
+                    lower = "-inf" if index == 0 else repr(float(splits[index - 1]))
+                    upper = "+inf" if index == len(splits) else repr(float(splits[index]))
+                    descriptors.append(f"[{lower}, {upper})")
                 else:
                     descriptors.append(label)
             return descriptors
-        if feature_type == 'categorical' and groups is not None and len(groups) == size:
+        if feature_type == "categorical" and groups is not None and len(groups) == size:
             return groups
-        for name in ('bin_labels', 'bins'):
+        for name in ("bin_labels", "bins"):
             if rule.get(name) is not None and len(rule[name]) == size:
                 return rule[name]
         return None
@@ -2313,40 +2313,38 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """获取部署导出时使用的精确规则定义."""
         self._ensure_deployment_rule_semantics()
         deployment_rules: Dict[str, List[Tuple[Any, float]]] = {}
-        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
-        cat_bins = getattr(self.binner, '_cat_bins_', {}) if self.binner is not None else {}
+        feature_types = getattr(self.binner, "feature_types_", {}) if self.binner is not None else {}
+        cat_bins = getattr(self.binner, "_cat_bins_", {}) if self.binner is not None else {}
 
         for feature in self.feature_names_:
             rule = self.rules_.get(feature)
             if not rule:
                 continue
 
-            scores = rule['scores']
+            scores = rule["scores"]
             descriptors = self._deployment_descriptors(feature, rule, len(scores))
 
             if descriptors is None:
                 continue
 
             feature_rules = [
-                (descriptor, round(float(score), decimal))
-                for descriptor, score in zip(descriptors, scores)
+                (descriptor, round(float(score), decimal)) for descriptor, score in zip(descriptors, scores)
             ]
-            if feature_types.get(feature) == 'numerical':
+            if feature_types.get(feature) == "numerical":
                 feature_rules.sort(key=lambda item: not self._is_special_descriptor(item[0]))
             missing_score = self._get_feature_missing_score(feature)
-            if (
-                missing_score is not None
-                and not any(self._is_missing_descriptor(descriptor) for descriptor, _ in feature_rules)
+            if missing_score is not None and not any(
+                self._is_missing_descriptor(descriptor) for descriptor, _ in feature_rules
             ):
-                feature_rules.append(('missing', round(float(missing_score), decimal)))
+                feature_rules.append(("missing", round(float(missing_score), decimal)))
 
             unknown_score = self._get_feature_unknown_score(feature)
             if (
-                feature_types.get(feature) == 'categorical'
+                feature_types.get(feature) == "categorical"
                 and unknown_score is not None
-                and not any(self._normalize_rule_label(descriptor) == 'else' for descriptor, _ in feature_rules)
+                and not any(self._normalize_rule_label(descriptor) == "else" for descriptor, _ in feature_rules)
             ):
-                feature_rules.append(('else', round(float(unknown_score), decimal)))
+                feature_rules.append(("else", round(float(unknown_score), decimal)))
 
             deployment_rules[feature] = feature_rules
 
@@ -2356,13 +2354,11 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """确保每个入模特征都有完整、非空的可部署规则."""
         expected_features = (
             list(self._feature_names)
-            if getattr(self, '_feature_names', None) is not None
+            if getattr(self, "_feature_names", None) is not None
             else list(self.feature_names_)
         )
         missing_features = [
-            feature
-            for feature in expected_features
-            if feature not in deployment_rules or not deployment_rules[feature]
+            feature for feature in expected_features if feature not in deployment_rules or not deployment_rules[feature]
         ]
         if missing_features:
             raise ValidationError(
@@ -2374,7 +2370,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _deployment_descriptor_to_export_label(descriptor: Any) -> str:
         """将结构化部署描述符转换为外部评分卡规则标签."""
         if isinstance(descriptor, (list, tuple, np.ndarray)):
-            return ', '.join(str(value) for value in descriptor)
+            return ", ".join(str(value) for value in descriptor)
         return str(descriptor)
 
     def _build_external_compatibility_card(self, decimal: int) -> Dict[str, Dict[str, float]]:
@@ -2402,9 +2398,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                     decimal,
                 )
                 if label in feature_rules and feature_rules[label] != transformed_score:
-                    raise ValidationError(
-                        f"特征 '{feature}' 的外部兼容规则标签发生冲突: {label!r}"
-                    )
+                    raise ValidationError(f"特征 '{feature}' 的外部兼容规则标签发生冲突: {label!r}")
                 feature_rules[label] = transformed_score
 
             has_missing = False
@@ -2413,27 +2407,23 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 normalized = self._normalize_rule_label(descriptor)
                 if isinstance(descriptor, (list, tuple, np.ndarray)):
                     regular_values = [value for value in descriptor if not pd.isna(value)]
-                    ambiguous_values = [
-                        value
-                        for value in regular_values
-                        if isinstance(value, str) and ',' in value
-                    ]
+                    ambiguous_values = [value for value in regular_values if isinstance(value, str) and "," in value]
                     if ambiguous_values:
                         raise ValidationError(
                             f"特征 '{feature}' 的类别值包含逗号，toad/scorecardpipeline "
                             f"兼容格式无法无损表达: {ambiguous_values}"
                         )
                     if len(regular_values) != len(descriptor):
-                        add_rule('missing', score)
+                        add_rule("missing", score)
                         has_missing = True
                     if regular_values:
-                        add_rule(', '.join(str(value) for value in regular_values), score)
+                        add_rule(", ".join(str(value) for value in regular_values), score)
                     continue
 
-                if normalized == 'special':
+                if normalized == "special":
                     for code in special_codes:
                         if pd.isna(code):
-                            add_rule('missing', score)
+                            add_rule("missing", score)
                             has_missing = True
                         else:
                             add_rule(str(code), score)
@@ -2441,25 +2431,20 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
                 label = self._deployment_descriptor_to_export_label(descriptor)
                 add_rule(label, score)
-                has_missing = has_missing or normalized == 'missing'
-                has_else = has_else or normalized == 'else'
+                has_missing = has_missing or normalized == "missing"
+                has_else = has_else or normalized == "else"
 
             if not has_missing:
-                add_rule('missing', 0.0)
+                add_rule("missing", 0.0)
             if not has_else:
                 add_rule(
-                    'else',
+                    "else",
                     self._get_deployment_default_score(bins, feature=feature),
                 )
             card[feature] = feature_rules
         return card
 
-    def export_pmml(
-        self,
-        pmml_file: str = 'scorecard.pmml',
-        decimal: int = 12,
-        debug: bool = False
-    ):
+    def export_pmml(self, pmml_file: str = "scorecard.pmml", decimal: int = 12, debug: bool = False):
         """导出 PMML 文件.
 
         :param pmml_file: PMML 文件保存路径，默认 'scorecard.pmml'
@@ -2483,13 +2468,11 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 LookupTransformer,
             )
         except ImportError as exc:
-            raise DependencyError(
-                "PMML 导出需要安装依赖: pip install hscredit[pmml] 或安装 sklearn2pmml"
-            ) from exc
+            raise DependencyError("PMML 导出需要安装依赖: pip install hscredit[pmml] 或安装 sklearn2pmml") from exc
 
         base_score, score_sign = self._get_deployment_base_score_and_sign()
         special_codes = self._get_deployment_special_codes()
-        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+        feature_types = getattr(self.binner, "feature_types_", {}) if self.binner is not None else {}
 
         mapper = []
         samples = {}
@@ -2499,12 +2482,14 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         for var, bins in deployment_rules.items():
             feature_type = feature_types.get(var)
-            default_score = self._get_deployment_default_score(bins, feature=var) if feature_type == 'categorical' else 0.0
+            default_score = (
+                self._get_deployment_default_score(bins, feature=var) if feature_type == "categorical" else 0.0
+            )
 
             if bins is None or len(bins) == 0:
                 continue
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 lookup_mapping, missing_score = self._build_pmml_categorical_lookup_mapping(
                     bins,
                     special_codes=special_codes,
@@ -2515,13 +2500,13 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
                 domain = CategoricalDomain(
                     with_data=False,
-                    invalid_value_treatment='as_is',
-                    missing_value_treatment='as_value' if missing_score is not None else 'as_is',
+                    invalid_value_treatment="as_is",
+                    missing_value_treatment="as_value" if missing_score is not None else "as_is",
                     missing_value_replacement=missing_replacement if missing_score is not None else None,
                 )
                 transformer = LookupTransformer(lookup_mapping, default_value=float(default_score))
                 input_columns = [var]
-                transformer_steps = [('prepare', ConcatTransformer())]
+                transformer_steps = [("prepare", ConcatTransformer())]
             else:
                 expression_string = self._build_pmml_expression_from_rules(
                     bins,
@@ -2530,33 +2515,35 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 )
                 domain = ContinuousDomain(
                     with_data=False,
-                    invalid_value_treatment='as_is',
-                    missing_value_treatment='as_is',
+                    invalid_value_treatment="as_is",
+                    missing_value_treatment="as_is",
                 )
                 transformer = ExpressionTransformer(expression_string)
                 # ExpressionTransformer treats a single-column DataFrame as 1D. Aggregating a
                 # single numeric value with ``min`` is an identity operation that keeps the
                 # intermediate output two-dimensional without duplicating the source column.
                 input_columns = [var]
-                transformer_steps = [('prepare', AggregateTransformer('min'))]
+                transformer_steps = [("prepare", AggregateTransformer("min"))]
 
-            mapper.append((
-                f'score_{len(mapper)}',
-                Pipeline(
-                    [('domain', domain)]
-                    + transformer_steps
-                    + [('score', Alias(transformer, f'__score_{var}', prefit=True))]
-                ),
-                input_columns,
-            ))
+            mapper.append(
+                (
+                    f"score_{len(mapper)}",
+                    Pipeline(
+                        [("domain", domain)]
+                        + transformer_steps
+                        + [("score", Alias(transformer, f"__score_{var}", prefit=True))]
+                    ),
+                    input_columns,
+                )
+            )
 
-            if feature_type == 'categorical':
+            if feature_type == "categorical":
                 sample_value = None
                 for lookup_key in lookup_mapping:
-                    if lookup_key != '__MISSING__':
+                    if lookup_key != "__MISSING__":
                         sample_value = lookup_key
                         break
-                samples[var] = [sample_value if sample_value is not None else 'UNKNOWN'] * 20
+                samples[var] = [sample_value if sample_value is not None else "UNKNOWN"] * 20
             else:
                 samples[var] = np.random.random(20) * 100
 
@@ -2565,21 +2552,23 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         scorecard_mapper = ColumnTransformer(
             mapper,
-            remainder='drop',
+            remainder="drop",
             verbose_feature_names_out=False,
         )
 
-        pipeline = PMMLPipeline([
-            ('preprocessing', scorecard_mapper),
-            ('scorecard', LinearRegression(fit_intercept=True)),
-        ])
+        pipeline = PMMLPipeline(
+            [
+                ("preprocessing", scorecard_mapper),
+                ("scorecard", LinearRegression(fit_intercept=True)),
+            ]
+        )
 
         sample_df = pd.DataFrame(samples)
-        sample_y = pd.Series(np.random.randint(0, 2, 20), name='score')
+        sample_y = pd.Series(np.random.randint(0, 2, 20), name="score")
         pipeline.fit(sample_df, sample_y)
-        
-        pipeline.named_steps['scorecard'].coef_ = np.full(len(mapper), score_sign, dtype=float)
-        pipeline.named_steps['scorecard'].intercept_ = float(base_score)
+
+        pipeline.named_steps["scorecard"].coef_ = np.full(len(mapper), score_sign, dtype=float)
+        pipeline.named_steps["scorecard"].intercept_ = float(base_score)
 
         import tempfile
 
@@ -2587,8 +2576,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         destination_dir = os.path.dirname(destination)
         os.makedirs(destination_dir, exist_ok=True)
         file_descriptor, temporary_file = tempfile.mkstemp(
-            prefix=f'.{os.path.basename(destination)}.',
-            suffix='.pmml',
+            prefix=f".{os.path.basename(destination)}.",
+            suffix=".pmml",
             dir=destination_dir,
         )
         os.close(file_descriptor)
@@ -2632,74 +2621,74 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         tree = ET.parse(pmml_file)
         root = tree.getroot()
-        namespace = root.tag.partition('}')[0].lstrip('{') if root.tag.startswith('{') else ''
+        namespace = root.tag.partition("}")[0].lstrip("{") if root.tag.startswith("{") else ""
         if namespace:
-            ET.register_namespace('', namespace)
+            ET.register_namespace("", namespace)
 
         def qualified(name: str) -> str:
-            return f'{{{namespace}}}{name}' if namespace else name
+            return f"{{{namespace}}}{name}" if namespace else name
 
         model = root.find(f'.//{qualified("RegressionModel")}')
         if model is None:
             raise RuntimeError("PMML 中未找到可应用评分边界的 RegressionModel")
 
-        output = model.find(qualified('Output'))
+        output = model.find(qualified("Output"))
         if output is None:
-            output = ET.Element(qualified('Output'))
+            output = ET.Element(qualified("Output"))
             children = list(model)
-            mining_schema = model.find(qualified('MiningSchema'))
+            mining_schema = model.find(qualified("MiningSchema"))
             insert_at = children.index(mining_schema) + 1 if mining_schema is not None else 0
             model.insert(insert_at, output)
 
-        reserved_names = {'__hscredit_raw_score', 'predicted_score'}
+        reserved_names = {"__hscredit_raw_score", "predicted_score"}
         for field in list(output):
-            if field.get('name') in reserved_names:
+            if field.get("name") in reserved_names:
                 output.remove(field)
 
         ET.SubElement(
             output,
-            qualified('OutputField'),
+            qualified("OutputField"),
             {
-                'name': '__hscredit_raw_score',
-                'optype': 'continuous',
-                'dataType': 'double',
-                'feature': 'predictedValue',
-                'targetField': 'score',
+                "name": "__hscredit_raw_score",
+                "optype": "continuous",
+                "dataType": "double",
+                "feature": "predictedValue",
+                "targetField": "score",
             },
         )
         clipped_field = ET.SubElement(
             output,
-            qualified('OutputField'),
+            qualified("OutputField"),
             {
-                'name': 'predicted_score',
-                'optype': 'continuous',
-                'dataType': 'double',
-                'feature': 'transformedValue',
+                "name": "predicted_score",
+                "optype": "continuous",
+                "dataType": "double",
+                "feature": "transformedValue",
             },
         )
 
-        expression = ET.Element(qualified('FieldRef'), {'field': '__hscredit_raw_score'})
+        expression = ET.Element(qualified("FieldRef"), {"field": "__hscredit_raw_score"})
         if self.lower is not None:
-            lower_apply = ET.Element(qualified('Apply'), {'function': 'max'})
-            lower_constant = ET.SubElement(lower_apply, qualified('Constant'), {'dataType': 'double'})
+            lower_apply = ET.Element(qualified("Apply"), {"function": "max"})
+            lower_constant = ET.SubElement(lower_apply, qualified("Constant"), {"dataType": "double"})
             lower_constant.text = repr(float(self.lower))
             lower_apply.append(expression)
             expression = lower_apply
         if self.upper is not None:
-            upper_apply = ET.Element(qualified('Apply'), {'function': 'min'})
-            upper_constant = ET.SubElement(upper_apply, qualified('Constant'), {'dataType': 'double'})
+            upper_apply = ET.Element(qualified("Apply"), {"function": "min"})
+            upper_constant = ET.SubElement(upper_apply, qualified("Constant"), {"dataType": "double"})
             upper_constant.text = repr(float(self.upper))
             upper_apply.append(expression)
             expression = upper_apply
         clipped_field.append(expression)
 
-        tree.write(pmml_file, encoding='utf-8', xml_declaration=True)
+        tree.write(pmml_file, encoding="utf-8", xml_declaration=True)
 
     def export_deployment_code(
         self,
-        language: str = 'python',
+        language: str = "python",
         output_file: Optional[str] = None,
-        function_name: str = 'calculate_score',
+        function_name: str = "calculate_score",
         decimal: int = 12,
     ) -> str:
         """导出评分卡部署代码.
@@ -2723,9 +2712,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """
         self._check_fitted()
         language_normalized = language.lower()
-        if language_normalized in ('python', 'java'):
+        if language_normalized in ("python", "java"):
             self._validate_deployment_function_name(function_name, language_normalized)
-        if language_normalized == 'sql':
+        if language_normalized == "sql":
             self._validate_unknown_raise_support("SQL 部署")
 
         card = self._get_deployment_rules(decimal=decimal)
@@ -2733,21 +2722,22 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         base_score, score_sign = self._get_deployment_base_score_and_sign()
         base_score = round(float(base_score), decimal)
 
-        if language_normalized == 'sql':
+        if language_normalized == "sql":
             code = self._generate_sql(card, base_score, function_name, score_sign=score_sign)
-        elif language_normalized == 'python':
+        elif language_normalized == "python":
             code = self._generate_python(card, base_score, function_name, score_sign=score_sign)
-        elif language_normalized == 'java':
+        elif language_normalized == "java":
             code = self._generate_java(card, base_score, function_name, score_sign=score_sign)
         else:
             raise ValueError(f"不支持的语言: {language}，可选: sql/python/java")
 
         if output_file:
             import os
+
             dir_path = os.path.dirname(output_file)
             if dir_path and not os.path.exists(dir_path):
                 os.makedirs(dir_path, exist_ok=True)
-            with open(output_file, 'w', encoding='utf-8') as f:
+            with open(output_file, "w", encoding="utf-8") as f:
                 f.write(code)
 
         return code
@@ -2756,21 +2746,68 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _validate_deployment_function_name(function_name: str, language: str) -> None:
         """验证会直接写入生成代码的函数名."""
         name = str(function_name)
-        if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name) is None:
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None:
             raise ValueError(f"{language} 函数名必须是合法标识符: {function_name!r}")
-        if language == 'python':
+        if language == "python":
             import keyword
 
             if keyword.iskeyword(name):
                 raise ValueError(f"python 函数名不能使用关键字: {function_name!r}")
-        elif language == 'java':
+        elif language == "java":
             java_keywords = {
-                'abstract', 'assert', 'boolean', 'break', 'byte', 'case', 'catch', 'char', 'class',
-                'const', 'continue', 'default', 'do', 'double', 'else', 'enum', 'extends', 'final',
-                'finally', 'float', 'for', 'goto', 'if', 'implements', 'import', 'instanceof', 'int',
-                'interface', 'long', 'native', 'new', 'package', 'private', 'protected', 'public',
-                'return', 'short', 'static', 'strictfp', 'super', 'switch', 'synchronized', 'this',
-                'throw', 'throws', 'transient', 'try', 'void', 'volatile', 'while', 'true', 'false', 'null',
+                "abstract",
+                "assert",
+                "boolean",
+                "break",
+                "byte",
+                "case",
+                "catch",
+                "char",
+                "class",
+                "const",
+                "continue",
+                "default",
+                "do",
+                "double",
+                "else",
+                "enum",
+                "extends",
+                "final",
+                "finally",
+                "float",
+                "for",
+                "goto",
+                "if",
+                "implements",
+                "import",
+                "instanceof",
+                "int",
+                "interface",
+                "long",
+                "native",
+                "new",
+                "package",
+                "private",
+                "protected",
+                "public",
+                "return",
+                "short",
+                "static",
+                "strictfp",
+                "super",
+                "switch",
+                "synchronized",
+                "this",
+                "throw",
+                "throws",
+                "transient",
+                "try",
+                "void",
+                "volatile",
+                "while",
+                "true",
+                "false",
+                "null",
             }
             if name in java_keywords:
                 raise ValueError(f"java 函数名不能使用关键字: {function_name!r}")
@@ -2784,22 +2821,24 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _generate_sql(self, card: dict, base_score: float, func_name: str, score_sign: float = 1.0) -> str:
         """生成 SQL CASE WHEN 评分卡代码."""
         special_codes = self._get_deployment_special_codes()
-        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+        feature_types = getattr(self.binner, "feature_types_", {}) if self.binner is not None else {}
 
         expression_lines = [f"    {base_score}"]
 
         for feature, bins in card.items():
             feature_type = feature_types.get(feature)
-            default_score = self._get_deployment_default_score(bins, feature=feature) if feature_type == 'categorical' else 0.0
+            default_score = (
+                self._get_deployment_default_score(bins, feature=feature) if feature_type == "categorical" else 0.0
+            )
             expression_lines.append(f"    + CASE")
             for bin_descriptor, score in bins:
-                if self._normalize_rule_label(bin_descriptor) == 'else':
+                if self._normalize_rule_label(bin_descriptor) == "else":
                     continue
                 cond = self._bin_label_to_sql_condition(feature, bin_descriptor, special_codes=special_codes)
                 adjusted_score = self._format_deployment_score(score, score_sign)
                 expression_lines.append(f"        WHEN {cond} THEN {adjusted_score}")
             expression_lines.append(f"        ELSE {self._format_deployment_score(default_score, score_sign)}")
-            feature_comment = str(feature).replace('\r', ' ').replace('\n', ' ')
+            feature_comment = str(feature).replace("\r", " ").replace("\n", " ")
             expression_lines.append(f"      END  -- {feature_comment}")
 
         raw_query = ["SELECT", *expression_lines, "    AS raw_score", "FROM your_table"]
@@ -2808,7 +2847,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             raw_query[-2] = "    AS score"
             lines.extend(raw_query)
             lines[-1] += ";"
-            return '\n'.join(lines)
+            return "\n".join(lines)
 
         lines.extend(["SELECT", "    CASE"])
         if self.lower is not None:
@@ -2818,169 +2857,169 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         lines.extend(["        ELSE raw_score", "    END AS score", "FROM ("])
         lines.extend(f"    {line}" for line in raw_query)
         lines.append(") AS scorecard_raw;")
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def _generate_python(self, card: dict, base_score: float, func_name: str, score_sign: float = 1.0) -> str:
         """生成 Python 评分卡函数代码."""
         special_codes = self._get_deployment_special_codes()
-        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+        feature_types = getattr(self.binner, "feature_types_", {}) if self.binner is not None else {}
         feature_names = list(self.feature_names_)
-        direction = getattr(self, 'direction_', self.direction)
+        direction = getattr(self, "direction_", self.direction)
 
         lines = [
             f'"""评分卡 Python 部署代码（自动生成）"""',
-            f'import numpy as np',
-            f'import pandas as pd',
-            f'',
-            f'# 评分卡元数据，可在 import/exec 部署代码后直接读取',
-            f'feature_name_in_ = {feature_names!r}',
-            f'feature_names_in_ = feature_name_in_',
-            f'n_features_in_ = {len(feature_names)}',
-            f'pdo = {self.pdo!r}',
-            f'rate = {self.rate!r}',
-            f'base_odds = {self.base_odds!r}',
-            f'base_score = {self.base_score!r}',
-            f'step = {self.step!r}',
-            f'lower = {self.lower!r}',
-            f'upper = {self.upper!r}',
-            f'direction = {direction!r}',
-            f'decimal = {self.decimal!r}',
-            f'A_ = {float(self.A_)!r}',
-            f'B_ = {float(self.B_)!r}',
-            f'intercept_score = {base_score!r}',
-            f'deployment_base_score = intercept_score',
-            f'score_sign = {float(score_sign)!r}',
-            f'',
-            f'def {func_name}(row: dict) -> float:',
+            f"import numpy as np",
+            f"import pandas as pd",
+            f"",
+            f"# 评分卡元数据，可在 import/exec 部署代码后直接读取",
+            f"feature_name_in_ = {feature_names!r}",
+            f"feature_names_in_ = feature_name_in_",
+            f"n_features_in_ = {len(feature_names)}",
+            f"pdo = {self.pdo!r}",
+            f"rate = {self.rate!r}",
+            f"base_odds = {self.base_odds!r}",
+            f"base_score = {self.base_score!r}",
+            f"step = {self.step!r}",
+            f"lower = {self.lower!r}",
+            f"upper = {self.upper!r}",
+            f"direction = {direction!r}",
+            f"decimal = {self.decimal!r}",
+            f"A_ = {float(self.A_)!r}",
+            f"B_ = {float(self.B_)!r}",
+            f"intercept_score = {base_score!r}",
+            f"deployment_base_score = intercept_score",
+            f"score_sign = {float(score_sign)!r}",
+            f"",
+            f"def {func_name}(row: dict) -> float:",
             f'    """计算单条样本的评分卡分数.',
-            f'',
-            f'    :param row: 样本特征字典',
-            f'    :return: 评分',
+            f"",
+            f"    :param row: 样本特征字典",
+            f"    :return: 评分",
             f'    """',
-            f'    missing_features = [feature for feature in feature_names_in_ if feature not in row]',
-            f'    if missing_features:',
+            f"    missing_features = [feature for feature in feature_names_in_ if feature not in row]",
+            f"    if missing_features:",
             f'        raise KeyError(f"缺少必需特征: {{missing_features}}")',
-            f'    score = {base_score}  # base_score',
+            f"    score = {base_score}  # base_score",
         ]
 
         for feature, bins in card.items():
             feature_type = feature_types.get(feature)
-            default_score = self._get_deployment_default_score(bins, feature=feature) if feature_type == 'categorical' else 0.0
-            lines.append(f'')
-            feature_comment = str(feature).replace('\r', ' ').replace('\n', ' ')
-            lines.append(f'    # {feature_comment}')
-            lines.append(f'    val = row.get({feature!r})')
+            default_score = (
+                self._get_deployment_default_score(bins, feature=feature) if feature_type == "categorical" else 0.0
+            )
+            lines.append(f"")
+            feature_comment = str(feature).replace("\r", " ").replace("\n", " ")
+            lines.append(f"    # {feature_comment}")
+            lines.append(f"    val = row.get({feature!r})")
             first = True
             for bin_descriptor, sc in bins:
-                if self._normalize_rule_label(bin_descriptor) == 'else':
+                if self._normalize_rule_label(bin_descriptor) == "else":
                     continue
-                prefix = 'if' if first else 'elif'
-                cond = self._bin_label_to_python_condition('val', bin_descriptor, special_codes=special_codes)
+                prefix = "if" if first else "elif"
+                cond = self._bin_label_to_python_condition("val", bin_descriptor, special_codes=special_codes)
                 adjusted_score = self._format_deployment_score(sc, score_sign)
-                lines.append(f'    {prefix} {cond}:')
-                lines.append(f'        score += {adjusted_score}')
+                lines.append(f"    {prefix} {cond}:")
+                lines.append(f"        score += {adjusted_score}")
                 first = False
             if self._feature_raises_on_unknown(feature):
                 if first:
                     lines.append(f'    raise ValueError("特征 {feature_comment} 出现训练期未知类别")')
                 else:
-                    lines.append(f'    else:')
+                    lines.append(f"    else:")
                     lines.append(f'        raise ValueError("特征 {feature_comment} 出现训练期未知类别")')
             elif first:
-                lines.append(f'    score += {self._format_deployment_score(default_score, score_sign)}')
+                lines.append(f"    score += {self._format_deployment_score(default_score, score_sign)}")
             else:
-                lines.append(f'    else:')
-                lines.append(f'        score += {self._format_deployment_score(default_score, score_sign)}')
+                lines.append(f"    else:")
+                lines.append(f"        score += {self._format_deployment_score(default_score, score_sign)}")
 
         if self.clip and self.lower is not None:
-            lines.append(f'    score = max({float(self.lower)!r}, score)')
+            lines.append(f"    score = max({float(self.lower)!r}, score)")
         if self.clip and self.upper is not None:
-            lines.append(f'    score = min({float(self.upper)!r}, score)')
-        lines.append(f'')
-        lines.append(f'    return score')
-        lines.append(f'')
-        lines.append(f'')
-        lines.append(f'def batch_{func_name}(df: pd.DataFrame) -> pd.Series:')
+            lines.append(f"    score = min({float(self.upper)!r}, score)")
+        lines.append(f"")
+        lines.append(f"    return score")
+        lines.append(f"")
+        lines.append(f"")
+        lines.append(f"def batch_{func_name}(df: pd.DataFrame) -> pd.Series:")
         lines.append(f'    """批量计算评分."""')
-        lines.append(f'    return df.apply(lambda row: {func_name}(row.to_dict()), axis=1)')
-        return '\n'.join(lines)
+        lines.append(f"    return df.apply(lambda row: {func_name}(row.to_dict()), axis=1)")
+        return "\n".join(lines)
 
     def _generate_java(self, card: dict, base_score: float, func_name: str, score_sign: float = 1.0) -> str:
         """生成 Java 评分卡方法代码."""
         special_codes = self._get_deployment_special_codes()
-        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+        feature_types = getattr(self.binner, "feature_types_", {}) if self.binner is not None else {}
 
         lines = [
-            f'import java.util.Map;',
-            f'',
-            f'/**',
-            f' * 评分卡 Java 部署代码（自动生成）',
-            f' */',
-            f'public class ScoreCard {{',
-            f'',
-            f'    public static double {func_name}(Map<String, Object> row) {{',
+            f"import java.util.Map;",
+            f"",
+            f"/**",
+            f" * 评分卡 Java 部署代码（自动生成）",
+            f" */",
+            f"public class ScoreCard {{",
+            f"",
+            f"    public static double {func_name}(Map<String, Object> row) {{",
         ]
 
         for feature in self.feature_names_:
             feature_literal = self._java_string_literal(feature)
             message_literal = self._java_string_literal(f"缺少必需特征: {feature}")
-            lines.append(f'        if (!row.containsKey({feature_literal})) {{')
-            lines.append(f'            throw new IllegalArgumentException({message_literal});')
-            lines.append(f'        }}')
-        lines.append(f'        double score = {base_score};  // base_score')
+            lines.append(f"        if (!row.containsKey({feature_literal})) {{")
+            lines.append(f"            throw new IllegalArgumentException({message_literal});")
+            lines.append(f"        }}")
+        lines.append(f"        double score = {base_score};  // base_score")
 
         for feature_index, (feature, bins) in enumerate(card.items()):
             feature_type = feature_types.get(feature)
-            default_score = self._get_deployment_default_score(bins, feature=feature) if feature_type == 'categorical' else 0.0
-            java_var = self._safe_java_var(f'feature_{feature_index}_{feature}')
-            lines.append(f'')
-            feature_comment = str(feature).replace('\r', ' ').replace('\n', ' ')
-            lines.append(f'        // {feature_comment}')
-            lines.append(
-                f'        Object {java_var} = row.get({self._java_string_literal(feature)});'
+            default_score = (
+                self._get_deployment_default_score(bins, feature=feature) if feature_type == "categorical" else 0.0
             )
+            java_var = self._safe_java_var(f"feature_{feature_index}_{feature}")
+            lines.append(f"")
+            feature_comment = str(feature).replace("\r", " ").replace("\n", " ")
+            lines.append(f"        // {feature_comment}")
+            lines.append(f"        Object {java_var} = row.get({self._java_string_literal(feature)});")
             first = True
             for bin_descriptor, sc in bins:
-                if self._normalize_rule_label(bin_descriptor) == 'else':
+                if self._normalize_rule_label(bin_descriptor) == "else":
                     continue
-                prefix = 'if' if first else 'else if'
-                cond = self._bin_label_to_java_condition(
-                    java_var, bin_descriptor, special_codes=special_codes
-                )
+                prefix = "if" if first else "else if"
+                cond = self._bin_label_to_java_condition(java_var, bin_descriptor, special_codes=special_codes)
                 adjusted_score = self._format_deployment_score(sc, score_sign)
-                lines.append(f'        {prefix} ({cond}) {{')
-                lines.append(f'            score += {adjusted_score};')
-                lines.append(f'        }}')
+                lines.append(f"        {prefix} ({cond}) {{")
+                lines.append(f"            score += {adjusted_score};")
+                lines.append(f"        }}")
                 first = False
             if self._feature_raises_on_unknown(feature):
                 if first:
                     lines.append(
-                        f'        throw new IllegalArgumentException('
+                        f"        throw new IllegalArgumentException("
                         f'{self._java_string_literal(f"特征 {feature_comment} 出现训练期未知类别")});'
                     )
                 else:
-                    lines.append(f'        else {{')
+                    lines.append(f"        else {{")
                     lines.append(
-                        f'            throw new IllegalArgumentException('
+                        f"            throw new IllegalArgumentException("
                         f'{self._java_string_literal(f"特征 {feature_comment} 出现训练期未知类别")});'
                     )
-                    lines.append(f'        }}')
+                    lines.append(f"        }}")
             elif first:
-                lines.append(f'        score += {self._format_deployment_score(default_score, score_sign)};')
+                lines.append(f"        score += {self._format_deployment_score(default_score, score_sign)};")
             else:
-                lines.append(f'        else {{')
-                lines.append(f'            score += {self._format_deployment_score(default_score, score_sign)};')
-                lines.append(f'        }}')
+                lines.append(f"        else {{")
+                lines.append(f"            score += {self._format_deployment_score(default_score, score_sign)};")
+                lines.append(f"        }}")
 
         if self.clip and self.lower is not None:
-            lines.append(f'        score = Math.max({float(self.lower)!r}, score);')
+            lines.append(f"        score = Math.max({float(self.lower)!r}, score);")
         if self.clip and self.upper is not None:
-            lines.append(f'        score = Math.min({float(self.upper)!r}, score);')
-        lines.append(f'')
-        lines.append(f'        return score;')
-        lines.append(f'    }}')
-        lines.append(f'}}')
-        return '\n'.join(lines)
+            lines.append(f"        score = Math.min({float(self.upper)!r}, score);")
+        lines.append(f"")
+        lines.append(f"        return score;")
+        lines.append(f"    }}")
+        lines.append(f"}}")
+        return "\n".join(lines)
 
     @staticmethod
     def _bin_label_to_sql_condition(feature: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
@@ -3000,9 +3039,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             return value_condition
 
         label = str(label).strip()
-        if label in ('缺失值', 'missing', 'nan', 'null', 'None'):
+        if label in ("缺失值", "missing", "nan", "null", "None"):
             return f"{feature_sql} IS NULL"
-        if label in ('特殊值', 'special'):
+        if label in ("特殊值", "special"):
             if special_codes:
                 comparisons = []
                 for code in special_codes:
@@ -3010,19 +3049,19 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                         comparisons.append(f"{feature_sql} IS NULL")
                     else:
                         comparisons.append(f"{feature_sql} = {ScoreCard._sql_literal(code)}")
-                return ' OR '.join(comparisons)
-            return '1=0 /* no special codes configured */'
+                return " OR ".join(comparisons)
+            return "1=0 /* no special codes configured */"
         interval = ScoreCard._parse_interval_label(label)
         if interval is not None:
             left_bracket, lower, upper, right_bracket = interval
             conds = [f"{feature_sql} IS NOT NULL"]
             if np.isfinite(lower):
-                op = '>=' if left_bracket == '[' else '>'
+                op = ">=" if left_bracket == "[" else ">"
                 conds.append(f"{feature_sql} {op} {float(lower)!r}")
             if np.isfinite(upper):
-                op = '<=' if right_bracket == ']' else '<'
+                op = "<=" if right_bracket == "]" else "<"
                 conds.append(f"{feature_sql} {op} {float(upper)!r}")
-            return ' AND '.join(conds)
+            return " AND ".join(conds)
         return f"{feature_sql} = {ScoreCard._sql_literal(label)}"
 
     @staticmethod
@@ -3033,9 +3072,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             if len(label) > 0 and all(pd.isna(v) for v in label):
                 return f"pd.isna({var})"
             value_exprs = [
-                repr(value.item() if isinstance(value, np.generic) else value)
-                for value in label
-                if not pd.isna(value)
+                repr(value.item() if isinstance(value, np.generic) else value) for value in label if not pd.isna(value)
             ]
             missing_cond = f"pd.isna({var})" if any(pd.isna(value) for value in label) else None
             if value_exprs and missing_cond:
@@ -3049,9 +3086,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             return f"{var} == {value_exprs[0]}"
 
         label = str(label).strip()
-        if label in ('缺失值', 'missing', 'nan', 'null', 'None'):
+        if label in ("缺失值", "missing", "nan", "null", "None"):
             return f"pd.isna({var})"
-        if label in ('特殊值', 'special'):
+        if label in ("特殊值", "special"):
             if special_codes:
                 comparisons = []
                 for code in special_codes:
@@ -3059,19 +3096,19 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                         comparisons.append(f"pd.isna({var})")
                     else:
                         comparisons.append(f"{var} == {code!r}")
-                return ' or '.join(comparisons)
-            return 'False'
+                return " or ".join(comparisons)
+            return "False"
         interval = ScoreCard._parse_interval_label(label)
         if interval is not None:
             left_bracket, lower, upper, right_bracket = interval
             conds = [f"not pd.isna({var})"]
             if np.isfinite(lower):
-                op = '>=' if left_bracket == '[' else '>'
+                op = ">=" if left_bracket == "[" else ">"
                 conds.append(f"{var} {op} {float(lower)!r}")
             if np.isfinite(upper):
-                op = '<=' if right_bracket == ']' else '<'
+                op = "<=" if right_bracket == "]" else "<"
                 conds.append(f"{var} {op} {float(upper)!r}")
-            return ' and '.join(conds)
+            return " and ".join(conds)
         return f"{var} == {label!r}"
 
     @staticmethod
@@ -3088,39 +3125,39 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             conditions = [ScoreCard._java_value_condition(var, value) for value in values]
             if contains_missing:
                 conditions.insert(0, f"{var} == null")
-            return '(' + ' || '.join(conditions) + ')' if len(conditions) > 1 else conditions[0]
+            return "(" + " || ".join(conditions) + ")" if len(conditions) > 1 else conditions[0]
 
         label = str(label).strip()
-        if label in ('缺失值', 'missing', 'nan', 'null', 'None'):
+        if label in ("缺失值", "missing", "nan", "null", "None"):
             return f"{var} == null"
-        if label in ('特殊值', 'special'):
+        if label in ("特殊值", "special"):
             if special_codes:
                 conditions = []
                 for code in special_codes:
                     if pd.isna(code):
                         conditions.append(f"{var} == null")
                     elif isinstance(code, str):
-                        escaped_code = code.replace('\\', '\\\\').replace('"', '\\"')
-                        conditions.append(f"\"{escaped_code}\".equals({var})")
+                        escaped_code = code.replace("\\", "\\\\").replace('"', '\\"')
+                        conditions.append(f'"{escaped_code}".equals({var})')
                     else:
                         conditions.append(
                             f"({var} instanceof Number && ((Number){var}).doubleValue() == {float(code)!r})"
                         )
-                return '(' + ' || '.join(conditions) + ')'
-            return 'false'
+                return "(" + " || ".join(conditions) + ")"
+            return "false"
         interval = ScoreCard._parse_interval_label(label)
         if interval is not None:
             left_bracket, lower, upper, right_bracket = interval
             conds = [f"{var} instanceof Number"]
             if np.isfinite(lower):
-                op = '>=' if left_bracket == '[' else '>'
+                op = ">=" if left_bracket == "[" else ">"
                 conds.append(f"((Number){var}).doubleValue() {op} {float(lower)!r}")
             if np.isfinite(upper):
-                op = '<=' if right_bracket == ']' else '<'
+                op = "<=" if right_bracket == "]" else "<"
                 conds.append(f"((Number){var}).doubleValue() {op} {float(upper)!r}")
-            return ' && '.join(conds)
-        escaped_label = label.replace('\\', '\\\\').replace('"', '\\"')
-        return f"\"{escaped_label}\".equals({var})"
+            return " && ".join(conds)
+        escaped_label = label.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped_label}".equals({var})'
 
     @staticmethod
     def _quote_sql_identifier(name: Any) -> str:
@@ -3133,9 +3170,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if isinstance(value, np.generic):
             value = value.item()
         if pd.isna(value):
-            return 'NULL'
+            return "NULL"
         if isinstance(value, (bool, np.bool_)):
-            return 'TRUE' if value else 'FALSE'
+            return "TRUE" if value else "FALSE"
         if isinstance(value, (int, float, np.integer, np.floating)):
             return repr(value)
         return "'" + str(value).replace("'", "''") + "'"
@@ -3143,7 +3180,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     @staticmethod
     def _java_string_literal(value: Any) -> str:
         """生成安全的 Java 字符串字面量."""
-        escaped = str(value).replace('\\', '\\\\').replace('"', '\\"').replace('\r', '\\r').replace('\n', '\\n')
+        escaped = str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\r", "\\r").replace("\n", "\\n")
         return f'"{escaped}"'
 
     @staticmethod
@@ -3159,18 +3196,19 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _safe_java_var(name: str) -> str:
         """将特征名转为合法的 Java 变量名."""
         import re
-        safe = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+
+        safe = re.sub(r"[^a-zA-Z0-9_]", "_", name)
         if not safe:
-            safe = 'feature'
+            safe = "feature"
         if safe[0].isdigit():
-            safe = 'f_' + safe
+            safe = "f_" + safe
         return safe
 
     def _get_deployment_special_codes(self) -> List[Any]:
         """获取部署导出时需要识别的特殊值编码."""
         if self.binner is None:
             return []
-        special_codes = getattr(self.binner, 'special_codes', None)
+        special_codes = getattr(self.binner, "special_codes", None)
         return list(special_codes) if special_codes else []
 
     @staticmethod
@@ -3179,8 +3217,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if isinstance(descriptor, (list, np.ndarray)):
             return len(descriptor) == 0 or all(pd.isna(value) for value in descriptor)
         label = str(descriptor).strip().lower()
-        return label in ('missing', '缺失值', '缺失', 'nan', 'null')
-
+        return label in ("missing", "缺失值", "缺失", "nan", "null")
 
     @staticmethod
     def _is_special_descriptor(descriptor: Any) -> bool:
@@ -3188,7 +3225,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if isinstance(descriptor, (list, np.ndarray)):
             return False
         label = str(descriptor).strip().lower()
-        return label in ('special', '特殊值', '特殊')
+        return label in ("special", "特殊值", "特殊")
 
     def _get_deployment_default_score(
         self,
@@ -3200,7 +3237,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         显式 ``else`` 规则优先；否则未知类别沿用分箱器的 WOE=0 语义，贡献分为 0。
         """
         for descriptor, score in bins:
-            if self._normalize_rule_label(descriptor) == 'else':
+            if self._normalize_rule_label(descriptor) == "else":
                 return float(score)
         if feature is not None:
             unknown_score = self._get_feature_unknown_score(feature)
@@ -3218,9 +3255,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         expression = repr(float(default_score))
 
         for descriptor, score in reversed(bins):
-            if self._normalize_rule_label(descriptor) == 'else':
+            if self._normalize_rule_label(descriptor) == "else":
                 continue
-            condition = self._bin_label_to_pmml_condition('X[0]', descriptor, special_codes=special_codes)
+            condition = self._bin_label_to_pmml_condition("X[0]", descriptor, special_codes=special_codes)
             expression = f"({float(score)!r}) if ({condition}) else ({expression})"
 
         return expression
@@ -3245,8 +3282,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             existing_source = key_sources.get(key)
             if existing_source is not None and existing_source != source:
                 raise ValidationError(
-                    "PMML 类别键发生类型冲突: "
-                    f"{key!r} 同时来自 {existing_source[1]} 和 {source[1]}"
+                    "PMML 类别键发生类型冲突: " f"{key!r} 同时来自 {existing_source[1]} 和 {source[1]}"
                 )
             if key in mapping and not np.isclose(mapping[key], float(score), rtol=0, atol=0):
                 raise ValidationError(f"PMML 类别键发生分数冲突: {key!r}")
@@ -3254,7 +3290,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             mapping[key] = float(score)
 
         for descriptor, score in bins:
-            if self._normalize_rule_label(descriptor) == 'else':
+            if self._normalize_rule_label(descriptor) == "else":
                 continue
             if isinstance(descriptor, (list, np.ndarray)):
                 contains_missing = False
@@ -3287,13 +3323,13 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     @staticmethod
     def _choose_pmml_missing_replacement(mapping: Dict[str, float]) -> str:
         """选择不会覆盖真实类别的 PMML 缺失值替代哨兵."""
-        base = '__HSCREDIT_MISSING__'
+        base = "__HSCREDIT_MISSING__"
         if base not in mapping:
             return base
         suffix = 1
-        while f'{base}_{suffix}' in mapping:
+        while f"{base}_{suffix}" in mapping:
             suffix += 1
-        return f'{base}_{suffix}'
+        return f"{base}_{suffix}"
 
     @staticmethod
     def _bin_label_to_pmml_condition(var: str, label: Any, special_codes: Optional[List[Any]] = None) -> str:
@@ -3303,9 +3339,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             if len(label) > 0 and all(pd.isna(v) for v in label):
                 return f"pandas.isnull({var})"
             value_exprs = [
-                repr(value.item() if isinstance(value, np.generic) else value)
-                for value in label
-                if not pd.isna(value)
+                repr(value.item() if isinstance(value, np.generic) else value) for value in label if not pd.isna(value)
             ]
             missing_cond = f"pandas.isnull({var})" if any(pd.isna(value) for value in label) else None
             if value_exprs and missing_cond:
@@ -3321,11 +3355,10 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         label = str(label).strip()
         label_lower = label.lower()
 
-        if label_lower in ('missing', '缺失值', '缺失', 'nan', 'null'):
+        if label_lower in ("missing", "缺失值", "缺失", "nan", "null"):
             return f"pandas.isnull({var})"
 
-
-        if label_lower in ('special', '特殊值', '特殊'):
+        if label_lower in ("special", "特殊值", "特殊"):
             if special_codes:
                 comparisons = []
                 for code in special_codes:
@@ -3333,20 +3366,20 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                         comparisons.append(f"pandas.isnull({var})")
                     else:
                         comparisons.append(f"{var} == {code!r}")
-                return ' or '.join(comparisons)
-            return 'False'
+                return " or ".join(comparisons)
+            return "False"
 
         interval = ScoreCard._parse_interval_label(label)
         if interval is not None:
             left_bracket, lower, upper, right_bracket = interval
             conditions = [f"not pandas.isnull({var})"]
             if np.isfinite(lower):
-                operator = '>=' if left_bracket == '[' else '>'
+                operator = ">=" if left_bracket == "[" else ">"
                 conditions.append(f"{var} {operator} {float(lower)!r}")
             if np.isfinite(upper):
-                operator = '<=' if right_bracket == ']' else '<'
+                operator = "<=" if right_bracket == "]" else "<"
                 conditions.append(f"{var} {operator} {float(upper)!r}")
-            return ' and '.join(conditions)
+            return " and ".join(conditions)
 
         return f"{var} == {label!r}"
 
@@ -3359,9 +3392,14 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         mapping: Dict[str, float] = {}
         default_value = 0.0
         default_labels = {
-            'missing', '缺失值', '缺失', 'nan', 'null',
-
-            'special', '特殊值', '特殊',
+            "missing",
+            "缺失值",
+            "缺失",
+            "nan",
+            "null",
+            "special",
+            "特殊值",
+            "特殊",
         }
 
         for bin_value, score in zip(bins, scores):
@@ -3382,7 +3420,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _build_pmml_expression(self, bins: Union[np.ndarray, list], scores: np.ndarray) -> str:
         """构建 PMML 表达式字符串."""
         bins = np.asarray(bins)
-        
+
         expression = ""
         has_empty = len(bins) > 0 and pd.isna(bins[-1])
 
@@ -3417,11 +3455,11 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _extract_numeric_bins(self, bin_labels: list) -> Optional[list]:
         """从格式化的分箱标签中提取数值边界."""
         numeric_bins = []
-        
+
         for label in bin_labels:
             if not isinstance(label, str):
                 continue
-            matches = re.findall(r'[-+]?\d*\.?\d+', label)
+            matches = re.findall(r"[-+]?\d*\.?\d+", label)
             for match in matches:
                 try:
                     num = float(match)
@@ -3429,7 +3467,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                         numeric_bins.append(num)
                 except (ValueError, TypeError):
                     pass
-        
+
         if numeric_bins:
             return sorted(list(set(numeric_bins)))
         return None
@@ -3450,11 +3488,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """
         self._check_fitted()
 
-        return pd.DataFrame({
-            'feature': self.feature_names_,
-            'coef': self.coef_,
-            'importance': np.abs(self.coef_)
-        }).sort_values('importance', ascending=False)
+        return pd.DataFrame(
+            {"feature": self.feature_names_, "coef": self.coef_, "importance": np.abs(self.coef_)}
+        ).sort_values("importance", ascending=False)
 
     def get_reason_codes(
         self,
@@ -3474,20 +3510,26 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         reason_map = reason_map or {}
         rows = []
         for position, sample_id in enumerate(raw.index):
-            order = [idx for idx in np.argsort(diffs[position], kind='stable') if diffs[position, idx] < 0][:keep]
+            order = [idx for idx in np.argsort(diffs[position], kind="stable") if diffs[position, idx] < 0][:keep]
             if not order:
-                rows.append({'样本索引': sample_id, '原因状态': '无不利贡献'})
+                rows.append({"样本索引": sample_id, "原因状态": "无不利贡献"})
                 continue
             for rank, idx in enumerate(order, 1):
                 feature = self.feature_names_[idx]
                 mapping = reason_map.get(feature, {})
-                rows.append({
-                    '样本索引': sample_id, '原因排名': rank, '特征': feature,
-                    '业务特征名': feature_map.get(feature, feature), '特征值': raw.iloc[position].get(feature, np.nan),
-                    '分数影响': float(diffs[position, idx]), '原因码': mapping.get('code', f'SCORE_{idx + 1:03d}'),
-                    '原因描述': mapping.get('description', f'{feature_map.get(feature, feature)}拉低评分'),
-                    '原因状态': '存在不利贡献',
-                })
+                rows.append(
+                    {
+                        "样本索引": sample_id,
+                        "原因排名": rank,
+                        "特征": feature,
+                        "业务特征名": feature_map.get(feature, feature),
+                        "特征值": raw.iloc[position].get(feature, np.nan),
+                        "分数影响": float(diffs[position, idx]),
+                        "原因码": mapping.get("code", f"SCORE_{idx + 1:03d}"),
+                        "原因描述": mapping.get("description", f"{feature_map.get(feature, feature)}拉低评分"),
+                        "原因状态": "存在不利贡献",
+                    }
+                )
         return pd.DataFrame(rows)
 
     def get_reason(self, X: Union[pd.DataFrame, np.ndarray], keep: int = 3) -> pd.DataFrame:
@@ -3507,10 +3549,12 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """
         raw = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=self.feature_names_)
         codes = self.get_reason_codes(raw, keep=keep)
-        grouped = codes.dropna(subset=['特征']).groupby('样本索引', sort=False).apply(
-            lambda group: '; '.join(f"{row.特征}(降低{abs(row.分数影响):.1f}分)" for row in group.itertuples())
+        grouped = (
+            codes.dropna(subset=["特征"])
+            .groupby("样本索引", sort=False)
+            .apply(lambda group: "; ".join(f"{row.特征}(降低{abs(row.分数影响):.1f}分)" for row in group.itertuples()))
         )
-        return pd.DataFrame({'reason': [grouped.get(index, '') for index in raw.index]})
+        return pd.DataFrame({"reason": [grouped.get(index, "") for index in raw.index]})
 
     def score_to_probability_table(
         self,
@@ -3518,8 +3562,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         y: Optional[np.ndarray] = None,
         max_n_bins: int = 10,
-        method: str = 'quantile',
-        score_bins: Optional[list] = None
+        method: str = "quantile",
+        score_bins: Optional[list] = None,
     ) -> pd.DataFrame:
         """生成评分区间与理论逾期率（坏样本概率）对照表。
 
@@ -3556,22 +3600,20 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         score_series = pd.Series(scores)
 
         if len(scores) == 0:
-            return pd.DataFrame(columns=[
-                '评分区间', '评分中位数', '理论逾期率', '理论Odds', '样本数'
-            ])
-        if method == 'custom' and score_bins is not None:
+            return pd.DataFrame(columns=["评分区间", "评分中位数", "理论逾期率", "理论Odds", "样本数"])
+        if method == "custom" and score_bins is not None:
             bins = pd.IntervalIndex.from_breaks(score_bins)
             score_bin = pd.cut(score_series, bins=bins, include_lowest=True)
         elif score_series.nunique(dropna=True) <= 1:
             score_value = float(score_series.dropna().iloc[0]) if score_series.notna().any() else np.nan
             score_bin = pd.Series([f"[{score_value:.2f}, {score_value:.2f}]"] * len(score_series))
-        elif method == 'uniform':
+        elif method == "uniform":
             score_bin = pd.cut(score_series, bins=max_n_bins, include_lowest=True)
         else:
-            score_bin = pd.qcut(score_series, q=max_n_bins, duplicates='drop')
+            score_bin = pd.qcut(score_series, q=max_n_bins, duplicates="drop")
 
         result = []
-        categories = score_bin.cat.categories if hasattr(score_bin, 'cat') else pd.Series(score_bin).unique()
+        categories = score_bin.cat.categories if hasattr(score_bin, "cat") else pd.Series(score_bin).unique()
 
         for interval in categories:
             mask = score_bin == interval
@@ -3585,16 +3627,16 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             prob_theoretical = odds_theoretical / (1 + odds_theoretical)
             interval_label = (
                 f"[{interval.left:.0f}, {interval.right:.0f})"
-                if hasattr(interval, 'left') and hasattr(interval, 'right')
+                if hasattr(interval, "left") and hasattr(interval, "right")
                 else str(interval)
             )
 
             row = {
-                '评分区间': interval_label,
-                '评分中位数': round(score_median, 2),
-                '理论逾期率': f"{prob_theoretical:.2%}",
-                '理论Odds': f"{odds_theoretical:.2f}",
-                '样本数': len(bin_scores),
+                "评分区间": interval_label,
+                "评分中位数": round(score_median, 2),
+                "理论逾期率": f"{prob_theoretical:.2%}",
+                "理论Odds": f"{odds_theoretical:.2f}",
+                "样本数": len(bin_scores),
             }
 
             if y is not None:
@@ -3606,12 +3648,14 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 prob_actual = n_bad / n_samples if n_samples > 0 else 0
                 odds_actual = n_good / n_bad if n_bad > 0 else np.inf
 
-                row.update({
-                    '坏样本数': n_bad,
-                    '好样本数': n_good,
-                    '实际逾期率': f"{prob_actual:.2%}",
-                    '实际Odds': f"{odds_actual:.2f}" if odds_actual != np.inf else "inf",
-                })
+                row.update(
+                    {
+                        "坏样本数": n_bad,
+                        "好样本数": n_good,
+                        "实际逾期率": f"{prob_actual:.2%}",
+                        "实际Odds": f"{odds_actual:.2f}" if odds_actual != np.inf else "inf",
+                    }
+                )
 
             result.append(row)
 
@@ -3621,7 +3665,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self,
         X: Union[pd.DataFrame, np.ndarray],
         sample_idx: Optional[Union[int, list]] = None,
-        include_reason: bool = True
+        include_reason: bool = True,
     ) -> pd.DataFrame:
         """输出样本级评分明细：基础分 + 各特征贡献分 + 总分（可附主要原因）。
 
@@ -3657,21 +3701,21 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         total_scores = intercept_score + sub_scores.sum(axis=1)
 
         data_dict = {
-            ('样本信息', '样本索引'): [],
-            ('样本信息', '总分'): [],
-            ('样本信息', '截距分数'): [],
+            ("样本信息", "样本索引"): [],
+            ("样本信息", "总分"): [],
+            ("样本信息", "截距分数"): [],
         }
 
         for col in self.feature_names_:
-            data_dict[(col, '原始值')] = []
-            data_dict[(col, '分箱')] = []
-            data_dict[(col, 'WOE')] = []
-            data_dict[(col, '分数')] = []
+            data_dict[(col, "原始值")] = []
+            data_dict[(col, "分箱")] = []
+            data_dict[(col, "WOE")] = []
+            data_dict[(col, "分数")] = []
 
         for i, (idx, row) in enumerate(X.iterrows()):
-            data_dict[('样本信息', '样本索引')].append(idx)
-            data_dict[('样本信息', '总分')].append(round(total_scores[i], 2))
-            data_dict[('样本信息', '截距分数')].append(round(intercept_score, 2))
+            data_dict[("样本信息", "样本索引")].append(idx)
+            data_dict[("样本信息", "总分")].append(round(total_scores[i], 2))
+            data_dict[("样本信息", "截距分数")].append(round(intercept_score, 2))
 
             for j, col in enumerate(self.feature_names_):
                 rule = self.rules_[col]
@@ -3679,43 +3723,43 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 score = sub_scores[i, j]
                 bin_label = self._find_bin_label(col, row[col], rule)
 
-                data_dict[(col, '原始值')].append(row[col])
-                data_dict[(col, '分箱')].append(bin_label)
-                data_dict[(col, 'WOE')].append(round(woe_value, 4))
-                data_dict[(col, '分数')].append(round(score, 2))
+                data_dict[(col, "原始值")].append(row[col])
+                data_dict[(col, "分箱")].append(bin_label)
+                data_dict[(col, "WOE")].append(round(woe_value, 4))
+                data_dict[(col, "分数")].append(round(score, 2))
 
         result_df = pd.DataFrame(data_dict)
         result_df.columns = pd.MultiIndex.from_tuples(result_df.columns)
 
         if include_reason:
             reasons = self._generate_reasons(X_woe, sub_scores, n_reasons=3)
-            result_df[('评分分析', '评分原因')] = reasons
+            result_df[("评分分析", "评分原因")] = reasons
 
         return result_df
 
     def _find_bin_label(self, feature: str, value, rule: dict) -> str:
         """根据特征值查找对应的分箱标签."""
-        bins = rule['bins']
+        bins = rule["bins"]
 
         if bins is None or len(bins) == 0:
-            return '未知'
+            return "未知"
 
         if isinstance(bins[0], (list, np.ndarray)):
             for bin_vals in bins:
                 if value in bin_vals or str(value) in [str(v) for v in bin_vals]:
-                    return ', '.join([str(v) for v in bin_vals])
-            return '其他'
+                    return ", ".join([str(v) for v in bin_vals])
+            return "其他"
 
         try:
             numeric_bins = [b for b in bins if not pd.isna(b)]
             if len(numeric_bins) == 0:
-                return '未知'
+                return "未知"
 
             if not isinstance(numeric_bins[0], (int, float, np.number)):
-                return str(bins[0]) if len(bins) > 0 else '未知'
+                return str(bins[0]) if len(bins) > 0 else "未知"
 
             if pd.isna(value):
-                return '缺失值'
+                return "缺失值"
 
             value = float(value)
 
@@ -3724,19 +3768,19 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                     continue
                 bin_edge = float(bin_edge)
                 if i == 0 and value < bin_edge:
-                    return f'[-inf, {bin_edge})'
+                    return f"[-inf, {bin_edge})"
                 elif i > 0:
-                    prev_edge = bins[i-1]
+                    prev_edge = bins[i - 1]
                     if not pd.isna(prev_edge):
                         prev_edge = float(prev_edge)
                         if prev_edge <= value < bin_edge:
-                            return f'[{prev_edge}, {bin_edge})'
+                            return f"[{prev_edge}, {bin_edge})"
 
             last_edge = bins[-1]
             if not pd.isna(last_edge):
-                return f'[{float(last_edge)}, +inf)'
+                return f"[{float(last_edge)}, +inf)"
 
-            return '未知'
+            return "未知"
         except (TypeError, ValueError):
             return str(value)
 
@@ -3765,7 +3809,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 else:
                     reasons.append(f"{feature}提升{abs(diff):.1f}分(当前{score:.1f}分)")
 
-            reasons_list.append('; '.join(reasons))
+            reasons_list.append("; ".join(reasons))
 
         return reasons_list
 
@@ -3821,11 +3865,11 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         >>> scp_card.load(scp_rules)
         """
         import json
-        
+
         self._check_fitted()
 
         if compatibility is not None:
-            if str(compatibility).lower() not in ('toad', 'scorecardpipeline'):
+            if str(compatibility).lower() not in ("toad", "scorecardpipeline"):
                 raise ValueError("compatibility 仅支持 'toad' 或 'scorecardpipeline'")
             include_meta = False
 
@@ -3839,9 +3883,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             card = {}
             for col in self.feature_names_:
                 rule = self.rules_[col]
-                bins = rule['bins']
-                bin_labels = rule.get('display_labels', rule.get('bin_labels'))
-                scores = rule['scores']
+                bins = rule["bins"]
+                bin_labels = rule.get("display_labels", rule.get("bin_labels"))
+                scores = rule["scores"]
 
                 feature_rules = {}
                 if bin_labels is not None and len(bin_labels) == len(scores):
@@ -3849,13 +3893,11 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                         feature_rules[str(bin_label)] = round(float(score), decimal)
                 elif isinstance(bins[0], (list, np.ndarray)):
                     for bin_vals, score in zip(bins, scores):
-                        bin_label = ', '.join([str(v) for v in bin_vals])
+                        bin_label = ", ".join([str(v) for v in bin_vals])
                         feature_rules[bin_label] = round(float(score), decimal)
                 else:
                     has_string_bins = (
-                        len(bins) > 0
-                        and isinstance(bins[0], str)
-                        and ('[' in str(bins[0]) or '(' in str(bins[0]))
+                        len(bins) > 0 and isinstance(bins[0], str) and ("[" in str(bins[0]) or "(" in str(bins[0]))
                     )
 
                     if has_string_bins:
@@ -3864,175 +3906,171 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                     else:
                         for i, score in enumerate(scores):
                             if i == 0:
-                                bin_label = f'[-inf, {bins[0]})' if len(bins) > 0 else '[-inf, +inf)'
+                                bin_label = f"[-inf, {bins[0]})" if len(bins) > 0 else "[-inf, +inf)"
                             elif i == len(scores) - 1:
-                                bin_label = f'[{bins[-1]}, +inf)' if len(bins) > 0 else '[-inf, +inf)'
+                                bin_label = f"[{bins[-1]}, +inf)" if len(bins) > 0 else "[-inf, +inf)"
                             else:
-                                bin_label = f'[{bins[i-1]}, {bins[i]})'
+                                bin_label = f"[{bins[i-1]}, {bins[i]})"
                             feature_rules[bin_label] = round(float(score), decimal)
 
                 card[col] = feature_rules
 
         if include_meta:
             intercept_score = float(self.A_ - self.B_ * self.intercept_)
-            feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
+            feature_types = getattr(self.binner, "feature_types_", {}) if self.binner is not None else {}
             special_codes = self._get_deployment_special_codes()
-            handle_unknown = getattr(self.binner, 'handle_unknown', -3) if self.binner is not None else -3
-            card['__meta__'] = {
-                'format': 'hscredit-scorecard-rules',
-                'version': 2,
-                'intercept_score': intercept_score,
-                'base_score': float(self.base_score),
-                'direction': self.direction_,
-                'pdo': self.pdo,
-                'rate': self.rate,
-                'base_odds': self.base_odds,
-                'step': self.step,
-                'lower': self.lower,
-                'upper': self.upper,
-                'clip': self.clip,
-                'decimal': self.decimal,
-                'score_decimal': decimal,
-                'A': float(self.A_),
-                'B': float(self.B_),
-                'feature_names': list(self.feature_names_),
-                'feature_types': {feature: feature_types.get(feature) for feature in self.feature_names_},
-                'coef': [
-                    float(coef * self._get_feature_woe_sign(i))
-                    for i, coef in enumerate(self.coef_)
-                ],
-                'categorical_bins': self._get_export_categorical_bins(),
-                'special_codes': [
-                    value.item() if isinstance(value, np.generic) else value
-                    for value in special_codes
-                ],
-                'handle_unknown': handle_unknown,
-                'unknown_raise_features': self._features_raising_on_unknown(),
-                'missing_raise_features': (
-                    list(self.feature_names_) if getattr(self.encoder, 'handle_unknown', None) == 'error'
-                    else list(getattr(self, '_loaded_missing_raise_features', []))
+            handle_unknown = getattr(self.binner, "handle_unknown", -3) if self.binner is not None else -3
+            card["__meta__"] = {
+                "format": "hscredit-scorecard-rules",
+                "version": 2,
+                "intercept_score": intercept_score,
+                "base_score": float(self.base_score),
+                "direction": self.direction_,
+                "pdo": self.pdo,
+                "rate": self.rate,
+                "base_odds": self.base_odds,
+                "step": self.step,
+                "lower": self.lower,
+                "upper": self.upper,
+                "clip": self.clip,
+                "decimal": self.decimal,
+                "score_decimal": decimal,
+                "A": float(self.A_),
+                "B": float(self.B_),
+                "feature_names": list(self.feature_names_),
+                "feature_types": {feature: feature_types.get(feature) for feature in self.feature_names_},
+                "coef": [float(coef * self._get_feature_woe_sign(i)) for i, coef in enumerate(self.coef_)],
+                "categorical_bins": self._get_export_categorical_bins(),
+                "special_codes": [value.item() if isinstance(value, np.generic) else value for value in special_codes],
+                "handle_unknown": handle_unknown,
+                "unknown_raise_features": self._features_raising_on_unknown(),
+                "missing_raise_features": (
+                    list(self.feature_names_)
+                    if getattr(self.encoder, "handle_unknown", None) == "error"
+                    else list(getattr(self, "_loaded_missing_raise_features", []))
                 ),
-                'deployment_defaults': self._get_export_deployment_defaults(),
-                'rule_records': self._structured_rule_records(decimal),
+                "deployment_defaults": self._get_export_deployment_defaults(),
+                "rule_records": self._structured_rule_records(decimal),
             }
 
         # 保存到 JSON 文件
         if to_json is not None:
             import os
+
             dir_path = os.path.dirname(to_json)
             if dir_path and not os.path.exists(dir_path):
                 os.makedirs(dir_path, exist_ok=True)
 
-            with open(to_json, 'w', encoding='utf-8') as f:
+            with open(to_json, "w", encoding="utf-8") as f:
                 json.dump(card, f, ensure_ascii=False, indent=2)
 
         # 返回 DataFrame 格式
         if to_frame:
             rows = []
             for name in card:
-                if name == '__meta__':
+                if name == "__meta__":
                     continue
                 for value, score in card[name].items():
-                    rows.append({
-                        'name': name,
-                        'value': value,
-                        'score': score,
-                    })
+                    rows.append(
+                        {
+                            "name": name,
+                            "value": value,
+                            "score": score,
+                        }
+                    )
             frame = pd.DataFrame(rows)
             if include_meta:
-                frame.attrs['scorecard_meta'] = dict(card['__meta__'])
+                frame.attrs["scorecard_meta"] = dict(card["__meta__"])
             return frame
 
         return card
 
     def _structured_rule_records(self, decimal):
         """完整规则记录不以中文展示标签作字典键，保留重复/逗号类别。"""
+
         def plain(value):
             if isinstance(value, np.generic):
                 return value.item()
             if isinstance(value, (list, tuple, np.ndarray)):
                 return [plain(item) for item in value]
             return value
+
         records = {}
         for feature in self.feature_names_:
             rule = self.rules_[feature]
-            descriptors = self._deployment_descriptors(feature, rule, len(rule['scores']))
+            descriptors = self._deployment_descriptors(feature, rule, len(rule["scores"]))
             if descriptors is None:
                 continue
-            labels = rule.get('display_labels', rule.get('bin_labels', descriptors))
-            table = getattr(self.binner, 'bin_tables_', {}).get(feature)
-            bin_ids = rule.get('bin_ids')
-            if bin_ids is None and table is not None and len(table) == len(rule['scores']) and '分箱' in table:
-                bin_ids = table['分箱'].astype(int).tolist()
+            labels = rule.get("display_labels", rule.get("bin_labels", descriptors))
+            table = getattr(self.binner, "bin_tables_", {}).get(feature)
+            bin_ids = rule.get("bin_ids")
+            if bin_ids is None and table is not None and len(table) == len(rule["scores"]) and "分箱" in table:
+                bin_ids = table["分箱"].astype(int).tolist()
             records[feature] = [
-                {'label': str(label), 'descriptor': plain(descriptor), 'score': round(float(score), decimal)}
-                for label, descriptor, score in zip(labels, descriptors, rule['scores'])
+                {"label": str(label), "descriptor": plain(descriptor), "score": round(float(score), decimal)}
+                for label, descriptor, score in zip(labels, descriptors, rule["scores"])
             ]
             if bin_ids is not None:
                 for record, bin_id in zip(records[feature], bin_ids):
-                    record['bin_id'] = int(bin_id)
+                    record["bin_id"] = int(bin_id)
         return records
 
     def _apply_export_metadata(self, meta: Dict[str, Any]) -> None:
         """应用导出文件中的评分卡元数据."""
-        format_name = meta.get('format')
-        if format_name == 'hscredit-scorecard-rules' and meta.get('version', 1) not in (1, 2):
+        format_name = meta.get("format")
+        if format_name == "hscredit-scorecard-rules" and meta.get("version", 1) not in (1, 2):
             raise ValueError(f"不支持的评分卡规则版本: {meta.get('version')}")
 
-        self.pdo = meta.get('pdo', self.pdo)
-        self.rate = meta.get('rate', self.rate)
-        self.base_odds = meta.get('base_odds', self.base_odds)
-        self.base_score = meta.get('base_score', self.base_score)
-        self.step = meta.get('step', self.step)
-        self.lower = meta.get('lower', self.lower)
-        self.upper = meta.get('upper', self.upper)
-        self.clip = meta.get('clip', self.clip)
-        self.decimal = meta.get('decimal', self.decimal)
+        self.pdo = meta.get("pdo", self.pdo)
+        self.rate = meta.get("rate", self.rate)
+        self.base_odds = meta.get("base_odds", self.base_odds)
+        self.base_score = meta.get("base_score", self.base_score)
+        self.step = meta.get("step", self.step)
+        self.lower = meta.get("lower", self.lower)
+        self.upper = meta.get("upper", self.upper)
+        self.clip = meta.get("clip", self.clip)
+        self.decimal = meta.get("decimal", self.decimal)
         self.precision = self.decimal
 
-        direction = meta.get('direction')
+        direction = meta.get("direction")
         if direction is not None:
             self.direction = direction
 
         self.A_, self.B_ = self._compute_parameters()
         self.direction_ = self._determine_direction()
 
-        intercept_score = meta.get('intercept_score')
+        intercept_score = meta.get("intercept_score")
         if intercept_score is not None:
             self._loaded_intercept = (self.A_ - float(intercept_score)) / self.B_
 
-        coef = meta.get('coef')
+        coef = meta.get("coef")
         if coef is not None:
             self._loaded_coef = np.asarray(coef, dtype=float)
 
-        feature_names = meta.get('feature_names')
+        feature_names = meta.get("feature_names")
         if feature_names is not None:
             self._feature_names = list(feature_names)
 
-        self._loaded_feature_types = dict(meta.get('feature_types', {}))
-        self._loaded_categorical_bins = dict(meta.get('categorical_bins', {}))
-        self._loaded_special_codes = list(meta.get('special_codes', []))
-        self._loaded_handle_unknown = validate_handle_unknown(meta.get('handle_unknown', -3))
-        self._loaded_unknown_raise_features = list(meta.get('unknown_raise_features', []))
-        self._loaded_missing_raise_features = list(meta.get('missing_raise_features', []))
+        self._loaded_feature_types = dict(meta.get("feature_types", {}))
+        self._loaded_categorical_bins = dict(meta.get("categorical_bins", {}))
+        self._loaded_special_codes = list(meta.get("special_codes", []))
+        self._loaded_handle_unknown = validate_handle_unknown(meta.get("handle_unknown", -3))
+        self._loaded_unknown_raise_features = list(meta.get("unknown_raise_features", []))
+        self._loaded_missing_raise_features = list(meta.get("missing_raise_features", []))
         self._loaded_deployment_defaults = {
-            str(feature): {
-                str(name): float(score)
-                for name, score in feature_defaults.items()
-            }
-            for feature, feature_defaults in meta.get('deployment_defaults', {}).items()
+            str(feature): {str(name): float(score) for name, score in feature_defaults.items()}
+            for feature, feature_defaults in meta.get("deployment_defaults", {}).items()
         }
 
     def _get_export_categorical_bins(self) -> Dict[str, List[List[Any]]]:
         """获取可 JSON 序列化且不丢失逗号类别的结构化类别规则。"""
-        cat_bins = getattr(self.binner, '_cat_bins_', {}) if self.binner is not None else {}
+        cat_bins = getattr(self.binner, "_cat_bins_", {}) if self.binner is not None else {}
         result = {}
         for feature, groups in cat_bins.items():
             if feature not in self.feature_names_:
                 continue
             result[feature] = [
-                [value.item() if isinstance(value, np.generic) else value for value in group]
-                for group in groups
+                [value.item() if isinstance(value, np.generic) else value for value in group] for group in groups
             ]
         return result
 
@@ -4040,21 +4078,23 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
     def _coerce_scorecard_rules(data: Any) -> Dict[str, Any]:
         """将外部导出的评分卡数据统一为 feature -> {bin: score} 字典."""
         if isinstance(data, pd.DataFrame):
-            card = ScoreCard._scorecard_records_to_dict(data.to_dict('records'))
-            meta = data.attrs.get('scorecard_meta')
+            card = ScoreCard._scorecard_records_to_dict(data.to_dict("records"))
+            meta = data.attrs.get("scorecard_meta")
             if meta is not None:
-                card['__meta__'] = dict(meta)
+                card["__meta__"] = dict(meta)
             return card
 
         if isinstance(data, list):
             return ScoreCard._scorecard_records_to_dict(data)
 
         if isinstance(data, dict):
-            if {'name', 'value', 'score'}.issubset(data.keys()) or {'变量名称', '变量分箱', '对应分数'}.issubset(data.keys()):
-                return ScoreCard._scorecard_records_to_dict(pd.DataFrame(data).to_dict('records'))
-            if {'columns', 'data'}.issubset(data.keys()):
+            if {"name", "value", "score"}.issubset(data.keys()) or {"变量名称", "变量分箱", "对应分数"}.issubset(
+                data.keys()
+            ):
+                return ScoreCard._scorecard_records_to_dict(pd.DataFrame(data).to_dict("records"))
+            if {"columns", "data"}.issubset(data.keys()):
                 try:
-                    records = pd.DataFrame(data['data'], columns=data['columns']).to_dict('records')
+                    records = pd.DataFrame(data["data"], columns=data["columns"]).to_dict("records")
                     return ScoreCard._scorecard_records_to_dict(records)
                 except Exception:
                     pass
@@ -4070,14 +4110,14 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             if not isinstance(record, dict):
                 raise ValueError("评分卡记录列表中的每一项都必须是字典")
 
-            feature = record.get('name', record.get('变量名称', record.get('变量名')))
-            value = record.get('value', record.get('变量分箱', record.get('分箱')))
-            score = record.get('score', record.get('对应分数', record.get('分数')))
+            feature = record.get("name", record.get("变量名称", record.get("变量名")))
+            value = record.get("value", record.get("变量分箱", record.get("分箱")))
+            score = record.get("score", record.get("对应分数", record.get("分数")))
 
             if feature is None or value is None or score is None:
                 raise ValueError("评分卡记录必须包含 name/value/score 或 变量名称/变量分箱/对应分数")
 
-            if str(feature) == '基础分':
+            if str(feature) == "基础分":
                 continue
 
             card.setdefault(str(feature), {})[str(value)] = float(score)
@@ -4095,8 +4135,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             for item in feature_rules:
                 if not isinstance(item, dict):
                     raise ValueError(f"特征 {feature} 的规则列表必须由字典组成")
-                value = item.get('value', item.get('变量分箱', item.get('分箱')))
-                score = item.get('score', item.get('对应分数', item.get('分数')))
+                value = item.get("value", item.get("变量分箱", item.get("分箱")))
+                score = item.get("score", item.get("对应分数", item.get("分数")))
                 if value is None or score is None:
                     raise ValueError(f"特征 {feature} 的规则记录必须包含 value/score")
                 converted[str(value)] = float(score)
@@ -4113,21 +4153,18 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             return True, None if upper == np.inf else upper
 
         normalized = ScoreCard._normalize_rule_label(bin_label)
-        if normalized in ('missing', 'special', 'else'):
+        if normalized in ("missing", "special", "else"):
             return False, normalized
 
         label_str = str(bin_label)
-        if ',' in label_str:
-            return False, [v.strip() for v in label_str.split(',') if v.strip()]
+        if "," in label_str:
+            return False, [v.strip() for v in label_str.split(",") if v.strip()]
 
         return False, [label_str]
 
     def load_rules(
-        self,
-        from_json: Union[str, os.PathLike, Dict],
-        update: bool = False,
-        binner: Optional[Any] = None
-    ) -> 'ScoreCard':
+        self, from_json: Union[str, os.PathLike, Dict], update: bool = False, binner: Optional[Any] = None
+    ) -> "ScoreCard":
         """加载评分卡规则，兼容 hscredit/toad/scorecardpipeline 格式.
 
         从字典或 JSON 文件加载评分卡规则，支持 toad 和 scorecardpipeline 导出的格式。
@@ -4174,7 +4211,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         if isinstance(from_json, (str, os.PathLike)):
             # 从文件加载
-            with open(from_json, 'r', encoding='utf-8') as f:
+            with open(from_json, "r", encoding="utf-8") as f:
                 card = self._coerce_scorecard_rules(json.load(f))
         else:
             # 直接使用字典、DataFrame 或 records
@@ -4182,7 +4219,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
         meta = None
         if isinstance(card, dict):
-            meta = card.pop('__meta__', None)
+            meta = card.pop("__meta__", None)
 
         if not update:
             self.rules_ = {}
@@ -4198,7 +4235,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             self._pipeline_components = {}
             self.binner = None
             self._binner_is_woe_transformer = False
-            if hasattr(self, '_rule_binner'):
+            if hasattr(self, "_rule_binner"):
                 del self._rule_binner
             self._loaded_intercept = None
             self._loaded_coef = None
@@ -4217,19 +4254,19 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
             self.pipeline = None
             self._pipeline_components = {}
 
-        categorical_bins = meta.get('categorical_bins', {}) if meta else {}
-        structured_records = meta.get('rule_records', {}) if meta else {}
+        categorical_bins = meta.get("categorical_bins", {}) if meta else {}
+        structured_records = meta.get("rule_records", {}) if meta else {}
         if meta:
             self._apply_export_metadata(meta)
-            if meta.get('format') == 'hscredit-scorecard-rules' and meta.get('version') == 2:
-                expected = {feature for feature in card if feature != '基础分'}
+            if meta.get("format") == "hscredit-scorecard-rules" and meta.get("version") == 2:
+                expected = {feature for feature in card if feature != "基础分"}
                 if not isinstance(structured_records, dict) or not expected <= set(structured_records):
                     raise ValueError("V2 评分卡制品缺少完整结构化规则，不能按展示标签降级加载")
 
         # 解析规则
         for feature, feature_rules in card.items():
             # 兼容历史导出文件：'基础分'（截距项）不是特征，跳过以免污染特征列表
-            if feature == '基础分':
+            if feature == "基础分":
                 continue
             feature_rules = self._coerce_feature_rules(str(feature), feature_rules)
             if self._feature_names is None:
@@ -4239,28 +4276,36 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
             if feature in structured_records:
                 records = list(structured_records[feature])
-                if not records or any(not isinstance(record, dict) or not {'label', 'descriptor', 'score'} <= record.keys() for record in records):
+                if not records or any(
+                    not isinstance(record, dict) or not {"label", "descriptor", "score"} <= record.keys()
+                    for record in records
+                ):
                     raise ValueError(f"字段 {feature} 的结构化评分规则不完整")
                 records = [dict(record) for record in records]
-                labels = [str(record['label']) for record in records]
+                labels = [str(record["label"]) for record in records]
                 for record in records:
-                    label = str(record['label'])
+                    label = str(record["label"])
                     # 无歧义的旧风格分数字典仍可直接调整分值；结构记录只负责
                     # 保留边界/类别类型。碰撞标签不能靠一项字典值覆盖多个箱。
                     if labels.count(label) == 1 and label in feature_rules:
-                        record['score'] = feature_rules[label]
-                if self._loaded_feature_types.get(feature) == 'numerical':
-                    records.sort(key=lambda record: not self._is_special_descriptor(record['descriptor']))
-                descriptors = [record['descriptor'] for record in records]
-                scores = np.asarray([record['score'] for record in records], dtype=float)
+                        record["score"] = feature_rules[label]
+                if self._loaded_feature_types.get(feature) == "numerical":
+                    records.sort(key=lambda record: not self._is_special_descriptor(record["descriptor"]))
+                descriptors = [record["descriptor"] for record in records]
+                scores = np.asarray([record["score"] for record in records], dtype=float)
                 if not np.isfinite(scores).all():
                     raise ValueError(f"字段 {feature} 的评分规则必须为有限分值")
                 self.rules_[feature] = {
-                    'bins': descriptors, 'descriptors': descriptors,
-                    'bin_labels': np.asarray([f'__hscredit_bin_{i}__' for i in range(len(records))], dtype=object),
-                    'display_labels': np.asarray([record['label'] for record in records], dtype=object),
-                    'bin_ids': [int(record['bin_id']) for record in records] if all('bin_id' in record for record in records) else None,
-                    'scores': scores,
+                    "bins": descriptors,
+                    "descriptors": descriptors,
+                    "bin_labels": np.asarray([f"__hscredit_bin_{i}__" for i in range(len(records))], dtype=object),
+                    "display_labels": np.asarray([record["label"] for record in records], dtype=object),
+                    "bin_ids": (
+                        [int(record["bin_id"]) for record in records]
+                        if all("bin_id" in record for record in records)
+                        else None
+                    ),
+                    "scores": scores,
                 }
                 continue
 
@@ -4295,17 +4340,17 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
                 )
 
             self.rules_[feature] = {
-                'bins': splits,
-                'bin_labels': np.array(bin_labels, dtype=object),
-                'scores': np.array(scores),
+                "bins": splits,
+                "bin_labels": np.array(bin_labels, dtype=object),
+                "scores": np.array(scores),
             }
 
-        if meta is None and getattr(self, '_loaded_intercept', None) is None and self.rules_:
+        if meta is None and getattr(self, "_loaded_intercept", None) is None and self.rules_:
             # toad/scorecardpipeline export 的分箱分数已经包含截距分摊，导入后直接累加各分箱分。
             self._loaded_intercept = self.A_ / self.B_
 
         # 计算基础效应
-        if not hasattr(self, 'base_effect_') or self.base_effect_ is None:
+        if not hasattr(self, "base_effect_") or self.base_effect_ is None:
             self.base_effect_ = np.zeros(len(self.feature_names_))
 
         # 如果提供了 binner，保存并设置标志
@@ -4364,20 +4409,20 @@ class RoundScoreCard(ScoreCard):
         step: Optional[int] = None,
         lower: Optional[float] = None,
         upper: Optional[float] = None,
-        direction: str = 'descending',
+        direction: str = "descending",
         decimal: int = 2,
         lr_model: Optional[Any] = None,
         lr_kwargs: Optional[Dict[str, Any]] = None,
         binner: Optional[Any] = None,
         encoder: Optional[Any] = None,
         pipeline: Optional[Any] = None,
-        scorecard: Optional['ScoreCard'] = None,
+        scorecard: Optional["ScoreCard"] = None,
         calculate_stats: bool = True,
         verbose: bool = False,
-        target: str = 'target',
+        target: str = "target",
         history_policy: str = "summary",
         max_history: int = 20,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             pdo=pdo,
@@ -4399,7 +4444,7 @@ class RoundScoreCard(ScoreCard):
             target=target,
             history_policy=history_policy,
             max_history=max_history,
-            **kwargs
+            **kwargs,
         )
         self.decimal = decimal
         self.scorecard = scorecard
@@ -4408,7 +4453,7 @@ class RoundScoreCard(ScoreCard):
         if scorecard is not None:
             self._copy_from_scorecard(scorecard)
 
-    def _copy_from_scorecard(self, scorecard: 'ScoreCard') -> None:
+    def _copy_from_scorecard(self, scorecard: "ScoreCard") -> None:
         """从传入的 ScoreCard 对象复制必要属性，实现即插即用.
 
         复制以下属性：
@@ -4436,12 +4481,12 @@ class RoundScoreCard(ScoreCard):
         self._feature_names = scorecard._feature_names  # 使用内部属性
         # intercept_ 和 coef_ 是只读属性，通过 lr_model 或 _loaded_intercept 设置
         # 尝试从 lr_model 获取
-        if hasattr(scorecard, 'lr_model') and scorecard.lr_model is not None:
+        if hasattr(scorecard, "lr_model") and scorecard.lr_model is not None:
             self.lr_model = scorecard.lr_model
-        elif hasattr(scorecard, 'lr_model_') and scorecard.lr_model_ is not None:
+        elif hasattr(scorecard, "lr_model_") and scorecard.lr_model_ is not None:
             self.lr_model_ = scorecard.lr_model_
         # 如果有 _loaded_intercept（从 load 方法设置），也会被 intercept_ property 正确获取
-        if hasattr(scorecard, '_loaded_intercept'):
+        if hasattr(scorecard, "_loaded_intercept"):
             self._loaded_intercept = scorecard._loaded_intercept
 
         self.A_ = scorecard.A_
@@ -4452,19 +4497,19 @@ class RoundScoreCard(ScoreCard):
         self.upper = scorecard.upper
 
         # 复制分箱器（如果有）
-        if hasattr(scorecard, 'binner') and scorecard.binner is not None:
+        if hasattr(scorecard, "binner") and scorecard.binner is not None:
             self.binner = scorecard.binner
             # 根据 binner 类型设置标志
-            if hasattr(scorecard, '_binner_is_woe_transformer'):
+            if hasattr(scorecard, "_binner_is_woe_transformer"):
                 self._binner_is_woe_transformer = scorecard._binner_is_woe_transformer
             else:
                 # 默认为 WOE 转换器模式
                 self._binner_is_woe_transformer = True
 
         # 复制逻辑回归模型（如果有）
-        if hasattr(scorecard, 'lr_model_') and scorecard.lr_model_ is not None:
+        if hasattr(scorecard, "lr_model_") and scorecard.lr_model_ is not None:
             self.lr_model_ = scorecard.lr_model_
-        elif hasattr(scorecard, 'lr_model') and scorecard.lr_model is not None:
+        elif hasattr(scorecard, "lr_model") and scorecard.lr_model is not None:
             self.lr_model_ = scorecard.lr_model
 
         # 设置必要标志
@@ -4472,17 +4517,17 @@ class RoundScoreCard(ScoreCard):
         self._skip_fit_check = True
 
         # 设置评分方向相关属性
-        if hasattr(scorecard, 'base_score'):
+        if hasattr(scorecard, "base_score"):
             self.base_score = scorecard.base_score
-        if hasattr(scorecard, 'pdo'):
+        if hasattr(scorecard, "pdo"):
             self.pdo = scorecard.pdo
-        if hasattr(scorecard, 'rate'):
+        if hasattr(scorecard, "rate"):
             self.rate = scorecard.rate
-        if hasattr(scorecard, 'base_odds'):
+        if hasattr(scorecard, "base_odds"):
             self.base_odds = scorecard.base_odds
-        if hasattr(scorecard, 'step'):
+        if hasattr(scorecard, "step"):
             self.step = scorecard.step
-        if hasattr(scorecard, 'target'):
+        if hasattr(scorecard, "target"):
             self.target = scorecard.target
 
     def _round_score_value(self, value: float, decimal: Optional[int] = None) -> float:
@@ -4508,29 +4553,28 @@ class RoundScoreCard(ScoreCard):
 
     def _get_score_sign(self) -> float:
         """获取当前评分方向对应的子分符号."""
-        return -1.0 if self.direction_ == 'ascending' else 1.0
+        return -1.0 if self.direction_ == "ascending" else 1.0
 
     def _get_rounded_base_score(self, decimal: Optional[int] = None) -> float:
         """获取按评分卡精度调整后的基础分."""
         base_score = float(self.A_ - self.B_ * self.intercept_)
-        if self.direction_ == 'ascending':
-            flip_constant = self.lower + self.upper if self.lower is not None and self.upper is not None else 2 * self.base_score
+        if self.direction_ == "ascending":
+            flip_constant = (
+                self.lower + self.upper if self.lower is not None and self.upper is not None else 2 * self.base_score
+            )
             base_score = float(flip_constant - base_score)
         return self._round_score_value(base_score, decimal)
 
     def _get_rounded_rule_scores(self, rule: Dict[str, Any], decimal: Optional[int] = None) -> np.ndarray:
         """获取按评分卡精度调整后的规则分数."""
         score_sign = self._get_score_sign()
-        return np.array([
-            self._round_score_value(score_sign * float(score), decimal)
-            for score in rule.get('scores', [])
-        ], dtype=float)
+        return np.array(
+            [self._round_score_value(score_sign * float(score), decimal) for score in rule.get("scores", [])],
+            dtype=float,
+        )
 
     def _round_sub_scores_from_woe(
-        self,
-        X_woe: pd.DataFrame,
-        feature_names: Optional[List[str]] = None,
-        decimal: Optional[int] = None
+        self, X_woe: pd.DataFrame, feature_names: Optional[List[str]] = None, decimal: Optional[int] = None
     ) -> np.ndarray:
         """基于 WOE 数据计算按评分卡精度调整后的子分矩阵."""
         if feature_names is None:
@@ -4549,10 +4593,7 @@ class RoundScoreCard(ScoreCard):
         return scores
 
     def _bin_labels_to_rounded_score(
-        self,
-        X_bins: pd.DataFrame,
-        feature_names: Optional[List[str]] = None,
-        decimal: Optional[int] = None
+        self, X_bins: pd.DataFrame, feature_names: Optional[List[str]] = None, decimal: Optional[int] = None
     ) -> np.ndarray:
         """将分箱标签数据映射为按评分卡精度调整后的子分矩阵."""
         if feature_names is None:
@@ -4565,21 +4606,20 @@ class RoundScoreCard(ScoreCard):
                 continue
 
             rule = self.rules_[col]
-            rule_labels = rule.get('bin_labels')
+            rule_labels = rule.get("bin_labels")
             if rule_labels is None:
-                rule_labels = rule.get('bins', [])
+                rule_labels = rule.get("bins", [])
 
             rounded_scores = self._get_rounded_rule_scores(rule, decimal=decimal)
             score_map = {
-                self._normalize_rule_label(label): float(score)
-                for label, score in zip(rule_labels, rounded_scores)
+                self._normalize_rule_label(label): float(score) for label, score in zip(rule_labels, rounded_scores)
             }
 
             label_series = X_bins[col].map(self._normalize_rule_label)
             mapped_scores = label_series.map(score_map)
             missing_score = self._get_feature_missing_score(col)
             if missing_score is not None:
-                missing_mask = label_series.eq('missing') & mapped_scores.isna()
+                missing_mask = label_series.eq("missing") & mapped_scores.isna()
                 mapped_scores.loc[missing_mask] = self._round_score_value(
                     self._get_score_sign() * missing_score,
                     decimal,
@@ -4589,7 +4629,7 @@ class RoundScoreCard(ScoreCard):
                 (
                     float(score)
                     for descriptor, score in fallback_bins
-                    if self._normalize_rule_label(descriptor) == 'else'
+                    if self._normalize_rule_label(descriptor) == "else"
                 ),
                 None,
             )
@@ -4610,9 +4650,7 @@ class RoundScoreCard(ScoreCard):
         return scores
 
     def _resolve_round_scoring_inputs(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        input_type: str = 'raw'
+        self, X: Union[pd.DataFrame, np.ndarray], input_type: str = "raw"
     ) -> Dict[str, Any]:
         """统一解析 RoundScoreCard 评分时需要的输入数据."""
         if not isinstance(X, pd.DataFrame):
@@ -4626,30 +4664,30 @@ class RoundScoreCard(ScoreCard):
             X_bins = self._transform_to_bins(X)[feature_names]
             sub_scores = self._bin_labels_to_rounded_score(X_bins, feature_names)
             return {
-                'X_raw': X,
-                'X_woe': None,
-                'X_bins': X_bins,
-                'feature_names': feature_names,
-                'sub_scores': sub_scores,
+                "X_raw": X,
+                "X_woe": None,
+                "X_bins": X_bins,
+                "feature_names": feature_names,
+                "sub_scores": sub_scores,
             }
 
-        if input_type == 'auto':
+        if input_type == "auto":
             X_woe = X if is_woe_data else self._transform_to_woe(X)
-        elif input_type == 'raw':
+        elif input_type == "raw":
             X_woe = self._transform_to_woe(X)
-        elif input_type == 'woe':
+        elif input_type == "woe":
             X_woe = X
         else:
             raise ValueError(f"input_type 必须是 'auto'/'raw'/'woe' 之一，当前为: {input_type}")
 
-        if self._skip_fit_check and not getattr(self, '_is_fitted', False):
+        if self._skip_fit_check and not getattr(self, "_is_fitted", False):
             feature_names = X_woe.columns.tolist()
         else:
             feature_names = self.feature_names_
             X_woe = X_woe[feature_names]
 
         X_bins = None
-        if input_type == 'raw' or (input_type == 'auto' and not is_woe_data):
+        if input_type == "raw" or (input_type == "auto" and not is_woe_data):
             try:
                 X_bins = self._transform_to_bins(X)
                 X_bins = X_bins[feature_names]
@@ -4659,11 +4697,11 @@ class RoundScoreCard(ScoreCard):
         sub_scores = self._round_sub_scores_from_woe(X_woe, feature_names)
 
         return {
-            'X_raw': X,
-            'X_woe': X_woe,
-            'X_bins': X_bins,
-            'feature_names': feature_names,
-            'sub_scores': sub_scores,
+            "X_raw": X,
+            "X_woe": X_woe,
+            "X_bins": X_bins,
+            "feature_names": feature_names,
+            "sub_scores": sub_scores,
         }
 
     def _get_base_effect_values(self, feature_names: List[str]) -> np.ndarray:
@@ -4682,10 +4720,10 @@ class RoundScoreCard(ScoreCard):
     def _find_bin_label_from_woe(self, feature: str, woe_value: float) -> str:
         """根据 WOE 值查找对应的分箱标签."""
         rule = self.rules_.get(feature, {})
-        woe_values = rule.get('woe')
-        bin_labels = rule.get('bin_labels')
+        woe_values = rule.get("woe")
+        bin_labels = rule.get("bin_labels")
         if woe_values is None or bin_labels is None:
-            return '未知'
+            return "未知"
 
         candidates = [woe_value]
         if feature in self.feature_names_:
@@ -4702,16 +4740,15 @@ class RoundScoreCard(ScoreCard):
                         return self._format_bin_display(label)
                 except (TypeError, ValueError):
                     continue
-        return '未知'
-
+        return "未知"
 
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
-        input_type: str = 'woe',
-    ) -> 'RoundScoreCard':
+        input_type: str = "woe",
+    ) -> "RoundScoreCard":
         """训练评分卡（计分口径取整一致）。
 
         流程同 :meth:`ScoreCard.fit`（参数 ``X`` / ``y`` / ``sample_weight`` / ``input_type``
@@ -4724,13 +4761,18 @@ class RoundScoreCard(ScoreCard):
 
         result = super().fit(X, y=y, sample_weight=sample_weight, input_type=input_type)
 
-        if isinstance(X_for_base_effect, pd.DataFrame) and y is None and self.target is not None and self.target in X_for_base_effect.columns:
+        if (
+            isinstance(X_for_base_effect, pd.DataFrame)
+            and y is None
+            and self.target is not None
+            and self.target in X_for_base_effect.columns
+        ):
             X_for_base_effect = X_for_base_effect.drop(columns=[self.target])
 
         if not isinstance(X_for_base_effect, pd.DataFrame):
             X_for_base_effect = pd.DataFrame(X_for_base_effect)
 
-        if input_type == 'raw':
+        if input_type == "raw":
             X_woe = self._transform_to_woe(X_for_base_effect)
         else:
             X_woe = X_for_base_effect
@@ -4742,9 +4784,7 @@ class RoundScoreCard(ScoreCard):
         return result
 
     def scorecard_points(
-        self,
-        feature_map: Optional[Dict[str, str]] = None,
-        decimal: Optional[int] = None
+        self, feature_map: Optional[Dict[str, str]] = None, decimal: Optional[int] = None
     ) -> pd.DataFrame:
         """输出取整后的评分卡明细表（变量/分箱/分数/WOE）。
 
@@ -4760,13 +4800,15 @@ class RoundScoreCard(ScoreCard):
 
         digits = self.decimal if decimal is None else decimal
         feature_map = feature_map or {}
-        rows = [{
-            '变量名称': '基础分',
-            '变量含义': '截距项（基准分数）',
-            '变量分箱': '-',
-            '对应分数': self._get_rounded_base_score(digits),
-            'WOE值': None,
-        }]
+        rows = [
+            {
+                "变量名称": "基础分",
+                "变量含义": "截距项（基准分数）",
+                "变量分箱": "-",
+                "对应分数": self._get_rounded_base_score(digits),
+                "WOE值": None,
+            }
+        ]
 
         for col in self.feature_names_:
             if col not in self.rules_:
@@ -4774,10 +4816,10 @@ class RoundScoreCard(ScoreCard):
 
             rule = self.rules_[col]
             rounded_scores = self._get_rounded_rule_scores(rule, decimal=digits)
-            bin_labels = rule.get('display_labels', rule.get('bin_labels'))
-            bins = rule.get('bins')
+            bin_labels = rule.get("display_labels", rule.get("bin_labels"))
+            bins = rule.get("bins")
             # WOE 可能缺失（离线规则加载），单独取值，避免 zip 截断分箱行
-            woe_values = rule.get('woe')
+            woe_values = rule.get("woe")
             woe_list = list(woe_values) if woe_values is not None else []
 
             if bin_labels is not None and len(bin_labels) > 0:
@@ -4785,22 +4827,24 @@ class RoundScoreCard(ScoreCard):
             elif bins is not None and len(bins) > 0:
                 labels_to_use = bins
             elif woe_list:
-                labels_to_use = [f'WOE: {w:.4f}' for w in woe_list]
+                labels_to_use = [f"WOE: {w:.4f}" for w in woe_list]
             else:
-                labels_to_use = [f'箱{i}' for i in range(len(rounded_scores))]
+                labels_to_use = [f"箱{i}" for i in range(len(rounded_scores))]
 
             if len(labels_to_use) != len(rounded_scores):
                 labels_to_use = self._format_bin_labels(bins if bins else labels_to_use, len(rounded_scores))
 
             for idx, (bin_label, score) in enumerate(zip(labels_to_use, rounded_scores)):
                 woe = woe_list[idx] if idx < len(woe_list) else None
-                rows.append({
-                    '变量名称': col,
-                    '变量含义': feature_map.get(col, ''),
-                    '变量分箱': self._format_bin_display(bin_label),
-                    '对应分数': self._round_score_value(score, digits),
-                    'WOE值': round(float(woe), 4) if woe is not None and not pd.isna(woe) else None,
-                })
+                rows.append(
+                    {
+                        "变量名称": col,
+                        "变量含义": feature_map.get(col, ""),
+                        "变量分箱": self._format_bin_display(bin_label),
+                        "对应分数": self._round_score_value(score, digits),
+                        "WOE值": round(float(woe), 4) if woe is not None and not pd.isna(woe) else None,
+                    }
+                )
 
         return pd.DataFrame(rows)
 
@@ -4808,7 +4852,7 @@ class RoundScoreCard(ScoreCard):
         self,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         proba: Optional[Union[np.ndarray, pd.Series]] = None,
-        input_type: str = 'auto'
+        input_type: str = "auto",
     ) -> np.ndarray:
         """预测评分（取整一致）。
 
@@ -4831,11 +4875,7 @@ class RoundScoreCard(ScoreCard):
         scores = self._clip_scores(scores)
         return self._round_score_array(scores)
 
-    def predict(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        input_type: str = 'raw'
-    ) -> np.ndarray:
+    def predict(self, X: Union[pd.DataFrame, np.ndarray], input_type: str = "raw") -> np.ndarray:
         """预测评分（基于取整后的评分卡规则计分）。
 
         同 :meth:`ScoreCard.predict`，但以"基础分 + 各特征取整后分箱分"求和得到总分，
@@ -4847,12 +4887,12 @@ class RoundScoreCard(ScoreCard):
         """
         if not self._skip_fit_check:
             self._check_fitted()
-        elif not hasattr(self, '_is_fitted') or not self._is_fitted:
+        elif not hasattr(self, "_is_fitted") or not self._is_fitted:
             if self.verbose:
                 logger.info("使用预训练模型进行预测（未调用fit）")
 
         resolved = self._resolve_round_scoring_inputs(X, input_type=input_type)
-        total_score = self._get_rounded_base_score() + resolved['sub_scores'].sum(axis=1)
+        total_score = self._get_rounded_base_score() + resolved["sub_scores"].sum(axis=1)
         total_score = self._clip_scores(total_score)
         return self._round_score_array(total_score)
 
@@ -4865,28 +4905,34 @@ class RoundScoreCard(ScoreCard):
     ) -> pd.DataFrame:
         """返回与取整后最终计分一致的不利原因码。"""
         self._check_fitted()
-        resolved = self._resolve_round_scoring_inputs(X, input_type='auto')
-        raw = resolved['X_raw']
-        names = resolved['feature_names']
-        diffs = resolved['sub_scores'] - self._get_base_effect_values(names)
+        resolved = self._resolve_round_scoring_inputs(X, input_type="auto")
+        raw = resolved["X_raw"]
+        names = resolved["feature_names"]
+        diffs = resolved["sub_scores"] - self._get_base_effect_values(names)
         feature_map = feature_map or {}
         reason_map = reason_map or {}
         rows = []
         for position, sample_id in enumerate(raw.index):
-            order = [idx for idx in np.argsort(diffs[position], kind='stable') if diffs[position, idx] < 0][:keep]
+            order = [idx for idx in np.argsort(diffs[position], kind="stable") if diffs[position, idx] < 0][:keep]
             if not order:
-                rows.append({'样本索引': sample_id, '原因状态': '无不利贡献'})
+                rows.append({"样本索引": sample_id, "原因状态": "无不利贡献"})
                 continue
             for rank, idx in enumerate(order, 1):
                 feature = names[idx]
                 mapping = reason_map.get(feature, {})
-                rows.append({
-                    '样本索引': sample_id, '原因排名': rank, '特征': feature,
-                    '业务特征名': feature_map.get(feature, feature), '特征值': raw.iloc[position].get(feature, np.nan),
-                    '分数影响': float(diffs[position, idx]), '原因码': mapping.get('code', f'SCORE_{idx + 1:03d}'),
-                    '原因描述': mapping.get('description', f'{feature_map.get(feature, feature)}拉低评分'),
-                    '原因状态': '存在不利贡献',
-                })
+                rows.append(
+                    {
+                        "样本索引": sample_id,
+                        "原因排名": rank,
+                        "特征": feature,
+                        "业务特征名": feature_map.get(feature, feature),
+                        "特征值": raw.iloc[position].get(feature, np.nan),
+                        "分数影响": float(diffs[position, idx]),
+                        "原因码": mapping.get("code", f"SCORE_{idx + 1:03d}"),
+                        "原因描述": mapping.get("description", f"{feature_map.get(feature, feature)}拉低评分"),
+                        "原因状态": "存在不利贡献",
+                    }
+                )
         return pd.DataFrame(rows)
 
     def get_reason(self, X: Union[pd.DataFrame, np.ndarray], keep: int = 3) -> pd.DataFrame:
@@ -4900,18 +4946,22 @@ class RoundScoreCard(ScoreCard):
         """
         raw = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=self.feature_names_)
         codes = self.get_reason_codes(raw, keep=keep)
-        grouped = codes.dropna(subset=['特征']).groupby('样本索引', sort=False).apply(
-            lambda group: '; '.join(
-                f"{row.特征}(降低{self._format_score_text(abs(row.分数影响))}分)" for row in group.itertuples()
+        grouped = (
+            codes.dropna(subset=["特征"])
+            .groupby("样本索引", sort=False)
+            .apply(
+                lambda group: "; ".join(
+                    f"{row.特征}(降低{self._format_score_text(abs(row.分数影响))}分)" for row in group.itertuples()
+                )
             )
         )
-        return pd.DataFrame({'reason': [grouped.get(index, '') for index in raw.index]})
+        return pd.DataFrame({"reason": [grouped.get(index, "") for index in raw.index]})
 
     def get_detailed_score(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         sample_idx: Optional[Union[int, list]] = None,
-        include_reason: bool = True
+        include_reason: bool = True,
     ) -> pd.DataFrame:
         """输出样本级评分明细（基于取整后评分卡）。
 
@@ -4933,31 +4983,31 @@ class RoundScoreCard(ScoreCard):
                 sample_idx = [sample_idx]
             X = X.iloc[sample_idx]
 
-        resolved = self._resolve_round_scoring_inputs(X, input_type='auto')
-        feature_names = resolved['feature_names']
-        X_raw = resolved['X_raw']
-        X_woe = resolved['X_woe']
-        X_bins = resolved['X_bins']
-        sub_scores = resolved['sub_scores']
+        resolved = self._resolve_round_scoring_inputs(X, input_type="auto")
+        feature_names = resolved["feature_names"]
+        X_raw = resolved["X_raw"]
+        X_woe = resolved["X_woe"]
+        X_bins = resolved["X_bins"]
+        sub_scores = resolved["sub_scores"]
         base_score = self._get_rounded_base_score()
         total_scores = self._round_score_array(base_score + sub_scores.sum(axis=1))
 
         data_dict = {
-            ('样本信息', '样本索引'): [],
-            ('样本信息', '总分'): [],
-            ('样本信息', '截距分数'): [],
+            ("样本信息", "样本索引"): [],
+            ("样本信息", "总分"): [],
+            ("样本信息", "截距分数"): [],
         }
 
         for col in feature_names:
-            data_dict[(col, '原始值')] = []
-            data_dict[(col, '分箱')] = []
-            data_dict[(col, 'WOE')] = []
-            data_dict[(col, '分数')] = []
+            data_dict[(col, "原始值")] = []
+            data_dict[(col, "分箱")] = []
+            data_dict[(col, "WOE")] = []
+            data_dict[(col, "分数")] = []
 
         for i, (idx, row) in enumerate(X_raw.iterrows()):
-            data_dict[('样本信息', '样本索引')].append(idx)
-            data_dict[('样本信息', '总分')].append(self._round_score_value(total_scores[i]))
-            data_dict[('样本信息', '截距分数')].append(self._get_rounded_base_score())
+            data_dict[("样本信息", "样本索引")].append(idx)
+            data_dict[("样本信息", "总分")].append(self._round_score_value(total_scores[i]))
+            data_dict[("样本信息", "截距分数")].append(self._get_rounded_base_score())
 
             for j, col in enumerate(feature_names):
                 raw_value = row[col] if col in row.index else np.nan
@@ -4966,23 +5016,22 @@ class RoundScoreCard(ScoreCard):
                 elif X_bins is not None and col in X_bins.columns:
                     bin_label = self._format_bin_display(X_bins.iloc[i][col])
                 else:
-                    bin_label = '未知'
-
+                    bin_label = "未知"
 
                 woe_value = X_woe.iloc[i][col] if X_woe is not None and col in X_woe.columns else None
                 score = sub_scores[i, j]
 
-                data_dict[(col, '原始值')].append(raw_value)
-                data_dict[(col, '分箱')].append(bin_label)
-                data_dict[(col, 'WOE')].append(round(float(woe_value), 4) if woe_value is not None else None)
-                data_dict[(col, '分数')].append(self._round_score_value(score))
+                data_dict[(col, "原始值")].append(raw_value)
+                data_dict[(col, "分箱")].append(bin_label)
+                data_dict[(col, "WOE")].append(round(float(woe_value), 4) if woe_value is not None else None)
+                data_dict[(col, "分数")].append(self._round_score_value(score))
 
         result_df = pd.DataFrame(data_dict)
         result_df.columns = pd.MultiIndex.from_tuples(result_df.columns)
 
         if include_reason:
             reasons = self._generate_reasons(X_woe, sub_scores, n_reasons=3)
-            result_df[('评分分析', '评分原因')] = reasons
+            result_df[("评分分析", "评分原因")] = reasons
 
         return result_df
 
@@ -5011,7 +5060,7 @@ class RoundScoreCard(ScoreCard):
                         f"{feature}提升{self._format_score_text(abs(diff))}分(当前{self._format_score_text(score)}分)"
                     )
 
-            reasons_list.append('; '.join(reasons))
+            reasons_list.append("; ".join(reasons))
 
         return reasons_list
 
@@ -5023,8 +5072,8 @@ class RoundScoreCard(ScoreCard):
         """获取基于调整后评分卡的部署规则定义."""
         self._ensure_deployment_rule_semantics()
         deployment_rules: Dict[str, List[Tuple[Any, float]]] = {}
-        feature_types = getattr(self.binner, 'feature_types_', {}) if self.binner is not None else {}
-        cat_bins = getattr(self.binner, '_cat_bins_', {}) if self.binner is not None else {}
+        feature_types = getattr(self.binner, "feature_types_", {}) if self.binner is not None else {}
+        cat_bins = getattr(self.binner, "_cat_bins_", {}) if self.binner is not None else {}
 
         for feature in self.feature_names_:
             rule = self.rules_.get(feature)
@@ -5037,20 +5086,16 @@ class RoundScoreCard(ScoreCard):
             if descriptors is None:
                 continue
 
-            feature_rules = [
-                (descriptor, float(score))
-                for descriptor, score in zip(descriptors, rounded_scores)
-            ]
-            if feature_types.get(feature) == 'numerical':
+            feature_rules = [(descriptor, float(score)) for descriptor, score in zip(descriptors, rounded_scores)]
+            if feature_types.get(feature) == "numerical":
                 feature_rules.sort(key=lambda item: not self._is_special_descriptor(item[0]))
             missing_score = self._get_feature_missing_score(feature)
-            if (
-                missing_score is not None
-                and not any(self._is_missing_descriptor(descriptor) for descriptor, _ in feature_rules)
+            if missing_score is not None and not any(
+                self._is_missing_descriptor(descriptor) for descriptor, _ in feature_rules
             ):
                 feature_rules.append(
                     (
-                        'missing',
+                        "missing",
                         self._round_score_value(
                             self._get_score_sign() * missing_score,
                             self.decimal,
@@ -5060,13 +5105,13 @@ class RoundScoreCard(ScoreCard):
 
             unknown_score = self._get_feature_unknown_score(feature)
             if (
-                feature_types.get(feature) == 'categorical'
+                feature_types.get(feature) == "categorical"
                 and unknown_score is not None
-                and not any(self._normalize_rule_label(descriptor) == 'else' for descriptor, _ in feature_rules)
+                and not any(self._normalize_rule_label(descriptor) == "else" for descriptor, _ in feature_rules)
             ):
                 feature_rules.append(
                     (
-                        'else',
+                        "else",
                         self._round_score_value(
                             self._get_score_sign() * unknown_score,
                             self.decimal,
@@ -5112,9 +5157,9 @@ class RoundScoreCard(ScoreCard):
         # 展示分，load 后会在 ascending 模式下发生第二次翻转。
         if include_meta and compatibility is None:
             if isinstance(exported, pd.DataFrame):
-                exported.attrs['scorecard_meta']['rounded_scorecard'] = True
+                exported.attrs["scorecard_meta"]["rounded_scorecard"] = True
             else:
-                exported['__meta__']['rounded_scorecard'] = True
+                exported["__meta__"]["rounded_scorecard"] = True
 
         if to_json is not None:
             import json
@@ -5125,7 +5170,7 @@ class RoundScoreCard(ScoreCard):
             payload = exported
             if isinstance(exported, pd.DataFrame):
                 payload = self._coerce_scorecard_rules(exported)
-            with open(to_json, 'w', encoding='utf-8') as handle:
+            with open(to_json, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, ensure_ascii=False, indent=2)
 
         return exported

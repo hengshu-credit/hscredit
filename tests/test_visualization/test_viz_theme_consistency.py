@@ -45,10 +45,7 @@ def test_reference_color_matches_semantic_baseline_and_bin_plot_line():
     assert REFERENCE_COLOR == SEMANTIC_COLORS["overall_baseline"]
 
     fig = bin_plot(_feature_table())
-    reference_lines = [
-        line for ax in fig.axes for line in ax.lines
-        if line.get_label() == "整体坏样本率"
-    ]
+    reference_lines = [line for ax in fig.axes for line in ax.lines if line.get_label() == "整体坏样本率"]
 
     assert reference_lines
     assert to_hex(reference_lines[0].get_color(), keep_alpha=False).lower() == REFERENCE_COLOR.lower()

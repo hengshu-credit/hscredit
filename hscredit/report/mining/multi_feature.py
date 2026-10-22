@@ -3,6 +3,7 @@
 支持双特征交叉分析，生成交叉矩阵和交叉规则。
 支持hscredit所有分箱方法。
 """
+
 from hscredit.utils.arguments import analysis_inputs
 from hscredit.utils.arguments import normalize_features
 
@@ -53,21 +54,17 @@ def _multi_feature_pair_worker(task):
     )
     pair = (feature1, feature2)
     pair_state = miner.cross_results_.get(pair)
-    binners = {
-        feature: miner._binner_instances_[feature]
-        for feature in pair
-        if feature in miner._binner_instances_
-    }
+    binners = {feature: miner._binner_instances_[feature] for feature in pair if feature in miner._binner_instances_}
     return pair, rules, pair_state, binners
 
 
 class MultiFeatureRuleMiner(BaseRuleMiner):
     """多特征交叉规则挖掘器.
-    
+
     生成双特征交叉分析结果，支持hscredit所有分箱方法。
-    
+
     代码风格参考hscredit的binning模块，fit方法兼容scorecardpipeline风格。
-    
+
     :param target: 目标变量列名，默认为'target'
     :param exclude_cols: 需要排除的列名列表
     :param features: 参与挖掘的字段名或字段名列表，默认None（使用全部候选字段）
@@ -86,7 +83,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     :param random_state: 随机种子，默认None
     :param verbose: 是否输出详细信息，默认False
     :param binning_kwargs: 分箱方法的其他参数，通过**kwargs传入
-    
+
     **参考样例**
 
     >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='quantile', max_n_bins=5)  # 等频分箱：双特征交叉规则挖掘
@@ -96,14 +93,14 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     >>> miner = MultiFeatureRuleMiner(target='ISBAD', method='chi', max_n_bins=4)  # 卡方分箱：自动合并坏率相近的交叉箱
     >>> miner.fit(df)
     """
-    
+
     VALID_METHODS = OptimalBinning.VALID_METHODS
-    
+
     def __init__(
         self,
-        target: str = 'target',
+        target: str = "target",
         exclude_cols: Optional[List[str]] = None,
-        method: str = 'quantile',
+        method: str = "quantile",
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
@@ -120,7 +117,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         parallel_config: Optional[Dict[str, Any]] = None,
         features: FeatureNames = None,
         feature_map: Optional[Dict[str, str]] = None,
-        **binning_kwargs
+        **binning_kwargs,
     ):
         super().__init__(
             target=target,
@@ -131,7 +128,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             features=features,
             feature_map=feature_map,
         )
-        
+
         # 仅校验不归一化：sklearn clone 要求构造参数按对象原样保存，
         # 大小写/空白归一化推迟到 fit 时统一进行
         OptimalBinning.validate_method(method)
@@ -148,7 +145,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         self.random_state = random_state
         self.verbose = verbose
         self.binning_kwargs = binning_kwargs
-        
+
         self._features_explicit_ = False
         self.features_ = []
         self.numerical_features_ = []
@@ -158,17 +155,17 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         self._binner_instances_ = {}
         self._prepared_features_ = {}
         self._feature_specs_ = {}
-    
-    @analysis_inputs('X', roles=())
+
+    @analysis_inputs("X", roles=())
     def fit(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         features: FeatureNames = None,
-        **kwargs
-    ) -> 'MultiFeatureRuleMiner':
+        **kwargs,
+    ) -> "MultiFeatureRuleMiner":
         """拟合挖掘器.
-        
+
         :param X: 训练数据
         :param y: 目标变量（可选）
         :param features: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
@@ -193,10 +190,10 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
         if y is None:
             raise ValueError("多特征规则挖掘需要目标变量y")
-        
+
         working.X_ = X
         working.y_ = y
-        
+
         # 分类特征
         working.numerical_features_ = working._get_numeric_features(X)
         working.categorical_features_ = working._get_categorical_features(X)
@@ -205,49 +202,45 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             if working._features_explicit_
             else working.numerical_features_ + working.categorical_features_
         )
-        
+
         # 计算整体坏账率
         working.overall_badrate_ = y.mean()
-        
+
         working._is_fitted = True
         self._commit_fitted_state(working)
         return self
-    
+
     def _get_binning_instance(self, **override_params) -> OptimalBinning:
         """获取分箱器实例.
-        
+
         :param override_params: 覆盖参数
         :return: hscredit分箱器实例
         """
         # 构建分箱器参数
         bin_params = {
-            'target': self.target,
-            'method': self.method,
-            'max_n_bins': self.max_n_bins,
-            'min_n_bins': self.min_n_bins,
-            'min_bin_size': self.min_bin_size,
-            'max_bin_size': self.max_bin_size,
-            'monotonic': self.monotonic,
-            'special_codes': self.special_codes,
-            'cat_cutoff': self.cat_cutoff,
-            'random_state': self.random_state,
-            'verbose': self.verbose,
-            'n_jobs': -1,
-            'parallel_backend': self.parallel_backend,
-            'parallel_config': self.parallel_config,
+            "target": self.target,
+            "method": self.method,
+            "max_n_bins": self.max_n_bins,
+            "min_n_bins": self.min_n_bins,
+            "min_bin_size": self.min_bin_size,
+            "max_bin_size": self.max_bin_size,
+            "monotonic": self.monotonic,
+            "special_codes": self.special_codes,
+            "cat_cutoff": self.cat_cutoff,
+            "random_state": self.random_state,
+            "verbose": self.verbose,
+            "n_jobs": -1,
+            "parallel_backend": self.parallel_backend,
+            "parallel_config": self.parallel_config,
             **self.binning_kwargs,
-            **override_params
+            **override_params,
         }
-        
+
         return OptimalBinning(**bin_params)
-    
-    def _prepare_feature(
-        self,
-        feature: str,
-        custom_splits: Optional[List[float]] = None
-    ) -> pd.Series:
+
+    def _prepare_feature(self, feature: str, custom_splits: Optional[List[float]] = None) -> pd.Series:
         """准备特征，对取值多的特征进行分箱.
-        
+
         :param feature: 特征名
         :param custom_splits: 自定义分箱切分点
         :return: 处理后的特征值
@@ -263,10 +256,13 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         unique_count = values.nunique(dropna=False)
         specs = {}
         if feature in self.numerical_features_ and (custom_splits is not None or unique_count > self.max_n_bins):
-            binner = self._get_binning_instance(**(
-                {"user_splits": {feature: list(custom_splits)[1:-1]}, "user_splits_fixed": True}
-                if custom_splits is not None else {}
-            ))
+            binner = self._get_binning_instance(
+                **(
+                    {"user_splits": {feature: list(custom_splits)[1:-1]}, "user_splits_fixed": True}
+                    if custom_splits is not None
+                    else {}
+                )
+            )
             binner.fit(self.X_[[feature]], self.y_)
             self._binner_instances_[feature] = binner
             codes = binner.transform(self.X_[[feature]])[feature].astype(int)
@@ -290,16 +286,16 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         if custom_splits is None:
             self._prepared_features_[feature] = codes
         return codes
-    
+
     def _bin_feature(self, feature: str) -> pd.Series:
         """使用hscredit分箱方法对特征分箱.
-        
+
         :param feature: 特征名
         :return: 分箱后的区间
         """
         # 创建分箱器
         binner = self._get_binning_instance()
-        
+
         # 准备数据
         X_feature = self.X_[[feature]].copy()
         valid_mask = X_feature[feature].notna()
@@ -317,29 +313,30 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         X_binned = binner.transform(X_feature)
 
         # 获取分箱标签
-        if hasattr(binner, 'get_bin_table'):
+        if hasattr(binner, "get_bin_table"):
             bin_table = binner.get_bin_table(feature)
-            if bin_table is not None and '分箱标签' in bin_table.columns:
+            if bin_table is not None and "分箱标签" in bin_table.columns:
                 # 创建映射
-                bin_labels = bin_table['分箱标签'].values
+                bin_labels = bin_table["分箱标签"].values
                 result = pd.Series(index=self.X_.index, dtype=object)
                 for i, label in enumerate(bin_labels):
                     result[X_binned[feature] == i] = label
                 return result
 
         # 回退：使用数值分箱索引
-        return X_binned[feature].astype(str).replace('nan', '缺失')
-    
+        return X_binned[feature].astype(str).replace("nan", "缺失")
+
     def generate_cross_matrix(
         self,
         x1: str = None,
         x2: str = None,
         custom_splits1: Optional[List[float]] = None,
         custom_splits2: Optional[List[float]] = None,
-        features=None, **kwargs
+        features=None,
+        **kwargs,
     ) -> pd.DataFrame:
         """生成双特征交叉矩阵.
-        
+
         :param feature1: 第一个特征
         :param feature2: 第二个特征
         :param custom_splits1: 特征1的自定义分箱切分点
@@ -351,7 +348,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         """
         feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         self._check_fitted()
-        
+
         # 更新参数
         for key, value in kwargs.items():
             if hasattr(self, key):
@@ -359,11 +356,11 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         if kwargs:
             self._prepared_features_ = {}
             self._feature_specs_ = {}
-        
+
         # 准备特征
         f1_prepared = self._prepare_feature(feature1, custom_splits1)
         f2_prepared = self._prepare_feature(feature2, custom_splits2)
-        
+
         # 整数联合编码一次扫描统计，避免每个 cell 重复扫描全量样本。
         row_ids, row_levels = pd.factorize(f1_prepared, sort=True)
         col_ids, col_levels = pd.factorize(f2_prepared, sort=True)
@@ -371,88 +368,91 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         joint = row_ids * width + col_ids
         shape = (len(row_levels), width)
         counts = np.bincount(joint, minlength=shape[0] * shape[1]).reshape(shape)
-        bad_counts = np.bincount(joint, weights=self.y_.to_numpy(dtype=float),
-                                 minlength=shape[0] * shape[1]).reshape(shape)
-        count_matrix = pd.DataFrame(counts, index=pd.Index(row_levels, name=feature1),
-                                    columns=pd.Index(col_levels, name=feature2))
+        bad_counts = np.bincount(joint, weights=self.y_.to_numpy(dtype=float), minlength=shape[0] * shape[1]).reshape(
+            shape
+        )
+        count_matrix = pd.DataFrame(
+            counts, index=pd.Index(row_levels, name=feature1), columns=pd.Index(col_levels, name=feature2)
+        )
         bad_count_matrix = pd.DataFrame(bad_counts, index=count_matrix.index, columns=count_matrix.columns)
-        
+
         # 坏账率矩阵
         badrate_matrix = bad_count_matrix / count_matrix
         badrate_matrix = badrate_matrix.fillna(0)
-        
+
         # 样本占比矩阵
         total_samples = count_matrix.sum().sum()
         sample_ratio_matrix = count_matrix / total_samples if total_samples > 0 else count_matrix * 0
-        
+
         # lift矩阵
         lift_matrix = badrate_matrix / self.overall_badrate_ if self.overall_badrate_ > 0 else badrate_matrix * 0
         lift_matrix = lift_matrix.fillna(0)
-        
+
         total_bad = float(self.y_.sum())
         total_good = len(self.y_) - total_bad
         # 二值命中分数的 KS 可由同一组计数直接计算。
-        ks_matrix = (bad_count_matrix / total_bad - (count_matrix - bad_count_matrix) / total_good).abs() \
-            if total_bad > 0 and total_good > 0 else count_matrix.astype(float) * 0
-        
-        # 构建MultiIndex DataFrame
-        metrics = ['count', 'bad_count', 'badrate', 'sample_ratio', 'lift']
-        if ks_matrix is not None:
-            metrics.append('ks')
-        
-        cols = pd.MultiIndex.from_product(
-            [count_matrix.columns, metrics],
-            names=[feature2, 'metric']
+        ks_matrix = (
+            (bad_count_matrix / total_bad - (count_matrix - bad_count_matrix) / total_good).abs()
+            if total_bad > 0 and total_good > 0
+            else count_matrix.astype(float) * 0
         )
-        
+
+        # 构建MultiIndex DataFrame
+        metrics = ["count", "bad_count", "badrate", "sample_ratio", "lift"]
+        if ks_matrix is not None:
+            metrics.append("ks")
+
+        cols = pd.MultiIndex.from_product([count_matrix.columns, metrics], names=[feature2, "metric"])
+
         result = pd.DataFrame(index=count_matrix.index, columns=cols)
-        
+
         for f2_val in count_matrix.columns:
-            result[(f2_val, 'count')] = count_matrix[f2_val]
-            result[(f2_val, 'bad_count')] = bad_count_matrix[f2_val]
-            result[(f2_val, 'badrate')] = badrate_matrix[f2_val]
-            result[(f2_val, 'sample_ratio')] = sample_ratio_matrix[f2_val]
-            result[(f2_val, 'lift')] = lift_matrix[f2_val]
+            result[(f2_val, "count")] = count_matrix[f2_val]
+            result[(f2_val, "bad_count")] = bad_count_matrix[f2_val]
+            result[(f2_val, "badrate")] = badrate_matrix[f2_val]
+            result[(f2_val, "sample_ratio")] = sample_ratio_matrix[f2_val]
+            result[(f2_val, "lift")] = lift_matrix[f2_val]
             if ks_matrix is not None:
-                result[(f2_val, 'ks')] = ks_matrix[f2_val]
+                result[(f2_val, "ks")] = ks_matrix[f2_val]
 
         # 对外保留可读标签，对内箱号通过 attrs 传递，不反向解析标签。
         def display_labels(feature, ids):
             labels = [self._feature_specs_[feature][int(value)].label() for value in ids]
             duplicates = {label for label in labels if labels.count(label) > 1}
             return [f"{label}（箱{int(value)}）" if label in duplicates else label for value, label in zip(ids, labels)]
+
         row_labels = display_labels(feature1, count_matrix.index)
         column_labels = display_labels(feature2, count_matrix.columns)
         result.index = pd.Index(row_labels, name=feature1)
-        result.columns = pd.MultiIndex.from_product([column_labels, metrics], names=[feature2, 'metric'])
-        result.attrs['行箱号'] = dict(zip(row_labels, count_matrix.index.tolist()))
-        result.attrs['列箱号'] = dict(zip(column_labels, count_matrix.columns.tolist()))
-        
+        result.columns = pd.MultiIndex.from_product([column_labels, metrics], names=[feature2, "metric"])
+        result.attrs["行箱号"] = dict(zip(row_labels, count_matrix.index.tolist()))
+        result.attrs["列箱号"] = dict(zip(column_labels, count_matrix.columns.tolist()))
+
         # 保存结果供后续使用
         key = (feature1, feature2)
         self.cross_results_[key] = {
-            'matrix': result,
-            'count': count_matrix,
-            'badrate': badrate_matrix,
-            'lift': lift_matrix,
-            'sample_ratio': sample_ratio_matrix,
-            'ks': ks_matrix
+            "matrix": result,
+            "count": count_matrix,
+            "badrate": badrate_matrix,
+            "lift": lift_matrix,
+            "sample_ratio": sample_ratio_matrix,
+            "ks": ks_matrix,
         }
-        
+
         return result
-    
 
     def get_cross_rules(
         self,
         x1: str = None,
         x2: str = None,
         top_n: int = 10,
-        metric: str = 'lift',
+        metric: str = "lift",
         min_samples: Optional[int] = None,
         min_lift: Optional[float] = None,
         datasets: Optional[pd.DataFrame] = None,
-        target: Optional[str] = None, features=None
-) -> pd.DataFrame:
+        target: Optional[str] = None,
+        features=None,
+    ) -> pd.DataFrame:
         """获取双特征交叉的top规则（使用rule_expr+Rule.report命中结果）."""
         feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         min_samples = self.min_samples if min_samples is None else min_samples
@@ -461,8 +461,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         # 生成交叉矩阵并转长表
         cross_matrix = self.generate_cross_matrix(feature1, feature2)
         long_df = self._matrix_to_long(cross_matrix, feature1, feature2)
-        long_df = long_df[long_df['count'] >= min_samples]
-        long_df = long_df[long_df['lift'] >= min_lift]
+        long_df = long_df[long_df["count"] >= min_samples]
+        long_df = long_df[long_df["lift"] >= min_lift]
 
         if metric in long_df.columns:
             long_df = long_df.sort_values(by=metric, ascending=False)
@@ -476,99 +476,93 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         feature_map = resolve_feature_map(self.feature_map)
         input_fields = f"{feature1} × {feature2}"
         field_meanings = (
-            f"{feature_map.get(feature1, '')} × {feature_map.get(feature2, '')}"
-            if feature_map is not None
-            else ""
+            f"{feature_map.get(feature1, '')} × {feature_map.get(feature2, '')}" if feature_map is not None else ""
         )
         for _, row in long_df.head(top_n).iterrows():
-            v1, v2 = row['feature1_value'], row['feature2_value']
+            v1, v2 = row["feature1_value"], row["feature2_value"]
             spec1, spec2 = self._feature_specs_[feature1][int(v1)], self._feature_specs_[feature2][int(v2)]
             expr = f"({spec1.to_expression()}) & ({spec2.to_expression()})"
             artifact = RuleArtifact(expr, bins=(spec1, spec2), target_spec={"目标列": target_col})
             rule = artifact.to_rule(name=expr, description=expr, weight=1.0)
 
             report_df = rule.report(datasets=datasets, target=target_col)
-            hit_rows = report_df[report_df['分箱'] == '命中'] if '分箱' in report_df.columns else pd.DataFrame()
+            hit_rows = report_df[report_df["分箱"] == "命中"] if "分箱" in report_df.columns else pd.DataFrame()
             hit = hit_rows.iloc[0].to_dict() if not hit_rows.empty else {}
 
             report_row = {
-                '规则表达式': rule.expr,
-                '规则名称': rule.name,
-                'feature1_value': spec1.label(),
-                'feature2_value': spec2.label(),
-                '特征1箱号': int(v1),
-                '特征2箱号': int(v2),
-                '规则制品': artifact,
-                '命中样本数': hit.get('样本总数'),
-                '命中样本占比': hit.get('样本占比'),
-                '命中坏样本数': hit.get('坏样本数'),
-                '命中坏样本率': hit.get('坏样本率'),
-                '命中LIFT值': hit.get('LIFT值'),
-                '坏账改善': hit.get('坏账改善'),
-                '规则报告': report_df,
+                "规则表达式": rule.expr,
+                "规则名称": rule.name,
+                "feature1_value": spec1.label(),
+                "feature2_value": spec2.label(),
+                "特征1箱号": int(v1),
+                "特征2箱号": int(v2),
+                "规则制品": artifact,
+                "命中样本数": hit.get("样本总数"),
+                "命中样本占比": hit.get("样本占比"),
+                "命中坏样本数": hit.get("坏样本数"),
+                "命中坏样本率": hit.get("坏样本率"),
+                "命中LIFT值": hit.get("LIFT值"),
+                "坏账改善": hit.get("坏账改善"),
+                "规则报告": report_df,
             }
             if feature_map is not None:
-                report_row = {'入参字段': input_fields, '字段含义': field_meanings, **report_row}
+                report_row = {"入参字段": input_fields, "字段含义": field_meanings, **report_row}
             rows.append(report_row)
 
         result_df = pd.DataFrame(rows)
         if not result_df.empty:
             sort_map = {
-                'lift': '命中LIFT值',
-                'badrate': '命中坏样本率',
-                'sample_ratio': '命中样本占比',
-                'count': '命中样本数',
+                "lift": "命中LIFT值",
+                "badrate": "命中坏样本率",
+                "sample_ratio": "命中样本占比",
+                "count": "命中样本数",
             }
             sort_col = sort_map.get(metric, metric)
             if sort_col in result_df.columns:
                 result_df = result_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
         return result_df
 
-    def _matrix_to_long(
-
-        self,
-        matrix: pd.DataFrame,
-        feature1: str,
-        feature2: str
-    ) -> pd.DataFrame:
+    def _matrix_to_long(self, matrix: pd.DataFrame, feature1: str, feature2: str) -> pd.DataFrame:
         """将交叉矩阵转换为长格式.
-        
+
         :param matrix: 交叉矩阵
         :param feature1: 特征1名称
         :param feature2: 特征2名称
         :return: 长格式DataFrame
         """
         rows = []
-        
-        metrics = ['count', 'bad_count', 'badrate', 'sample_ratio', 'lift']
-        if (matrix.columns.get_level_values(0)[0], 'ks') in matrix.columns:
-            metrics.append('ks')
-        
+
+        metrics = ["count", "bad_count", "badrate", "sample_ratio", "lift"]
+        if (matrix.columns.get_level_values(0)[0], "ks") in matrix.columns:
+            metrics.append("ks")
+
         for f1_val in matrix.index:
             for f2_val in matrix.columns.get_level_values(0).unique():
-                row = {'feature1_value': matrix.attrs.get('行箱号', {}).get(f1_val, f1_val),
-                       'feature2_value': matrix.attrs.get('列箱号', {}).get(f2_val, f2_val)}
-                
+                row = {
+                    "feature1_value": matrix.attrs.get("行箱号", {}).get(f1_val, f1_val),
+                    "feature2_value": matrix.attrs.get("列箱号", {}).get(f2_val, f2_val),
+                }
+
                 for metric in metrics:
                     try:
                         row[metric] = matrix.loc[f1_val, (f2_val, metric)]
                     except KeyError:
                         row[metric] = 0
-                
+
                 rows.append(row)
-        
+
         return pd.DataFrame(rows)
-    
+
     def get_all_cross_rules(
         self,
         top_n: int = 10,
-        metric: str = 'lift',
+        metric: str = "lift",
         max_feature_pairs: int = 50,
         min_samples: Optional[int] = None,
-        min_lift: Optional[float] = None
+        min_lift: Optional[float] = None,
     ) -> pd.DataFrame:
         """获取所有特征对的交叉规则.
-        
+
         :param top_n: 每对特征的返回规则数
         :param metric: 排序指标
         :param max_feature_pairs: 最大特征对数量
@@ -577,33 +571,27 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         :return: 所有交叉规则DataFrame
         """
         self._check_fitted()
-        
+
         all_features = self.features_
-        
+
         # 选择信息价值最高的特征对
         if self._features_explicit_:
             selected_features = all_features
         elif len(all_features) > 10:
             # 数值特征按方差排序；日期、类别等非数值字段不能直接计算方差。
-            numeric_variance = (
-                self.X_[self.numerical_features_]
-                .var(numeric_only=True)
-                .sort_values(ascending=False)
-            )
+            numeric_variance = self.X_[self.numerical_features_].var(numeric_only=True).sort_values(ascending=False)
             selected_features = numeric_variance.head(10).index.tolist()
 
             # 数值特征不足 10 个时，按类别基数补足候选特征。
             remaining = 10 - len(selected_features)
             if remaining > 0:
                 categorical_cardinality = (
-                    self.X_[self.categorical_features_]
-                    .nunique(dropna=False)
-                    .sort_values(ascending=False)
+                    self.X_[self.categorical_features_].nunique(dropna=False).sort_values(ascending=False)
                 )
                 selected_features.extend(categorical_cardinality.head(remaining).index.tolist())
         else:
             selected_features = all_features
-        
+
         if not isinstance(max_feature_pairs, int) or max_feature_pairs < 0:
             raise ValueError("max_feature_pairs 必须为非负整数")
         feature_pairs = list(islice(combinations(selected_features, 2), max_feature_pairs))
@@ -616,8 +604,10 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         uncached = [feature for feature in required if feature not in working._prepared_features_]
         if uncached:
             prepared = working._parallel_execute(
-                _prepare_cross_feature_worker, ((working, feature) for feature in uncached),
-                task_labels=uncached, default_backend="threading",
+                _prepare_cross_feature_worker,
+                ((working, feature) for feature in uncached),
+                task_labels=uncached,
+                default_backend="threading",
                 workload=_mining_workload(self.X_, len(uncached), operation="交叉规则逐列准备"),
             )
             for feature, values, specs, binner in prepared:
@@ -625,7 +615,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
                 working._feature_specs_[feature] = specs
                 if binner is not None:
                     working._binner_instances_[feature] = binner
-        
+
         tasks = [
             (
                 working,
@@ -663,48 +653,41 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             next_binners.update(binners)
             if not rules.empty:
                 rules = rules.copy()
-                rules['特征组合'] = f"{f1} × {f2}"
+                rules["特征组合"] = f"{f1} × {f2}"
                 all_rules.append(rules)
 
         self.cross_results_ = next_cross_results
         self._binner_instances_ = next_binners
         self._prepared_features_ = working._prepared_features_
         self._feature_specs_ = working._feature_specs_
-        
+
         if not all_rules:
             return pd.DataFrame()
-        
+
         combined = pd.concat(all_rules, ignore_index=True)
         sort_map = {
-            'lift': '命中LIFT值',
-            'badrate': '命中坏样本率',
-            'sample_ratio': '命中样本占比',
-            'count': '命中样本数',
+            "lift": "命中LIFT值",
+            "badrate": "命中坏样本率",
+            "sample_ratio": "命中样本占比",
+            "count": "命中样本数",
         }
         sort_col = sort_map.get(metric, metric)
         if sort_col in combined.columns:
             combined = combined.sort_values(by=sort_col, ascending=False, kind="mergesort")
         return combined
 
-
-
     def get_rules(
         self,
         top_n: int = 10,
-        metric: str = 'lift',
+        metric: str = "lift",
         target: Optional[str] = None,
         datasets: Optional[pd.DataFrame] = None,
         min_samples: Optional[int] = None,
-        min_lift: Optional[float] = None
+        min_lift: Optional[float] = None,
     ) -> List[Rule]:
         """获取挖掘的交叉规则（只使用Rule.expr，并基于Rule.report命中结果）."""
         reuse_report = datasets is None and (target is None or target == self.target)
-        rules_df = self.get_all_cross_rules(
-            top_n=top_n,
-            metric=metric,
-            min_samples=min_samples,
-            min_lift=min_lift
-        )
+        rules_df = self.get_all_cross_rules(top_n=top_n, metric=metric, min_samples=min_samples, min_lift=min_lift)
 
         if rules_df.empty:
             return []
@@ -716,105 +699,100 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
         rule_objects = []
         for _, row in rules_df.iterrows():
-            expr = row['规则表达式'] if '规则表达式' in row else None
+            expr = row["规则表达式"] if "规则表达式" in row else None
             if not expr:
-                feature_pair = row.get('特征组合', '')
-                if ' × ' not in feature_pair:
+                feature_pair = row.get("特征组合", "")
+                if " × " not in feature_pair:
                     continue
-                f1, f2 = feature_pair.split(' × ')
-                v1, v2 = row['feature1_value'], row['feature2_value']
+                f1, f2 = feature_pair.split(" × ")
+                v1, v2 = row["feature1_value"], row["feature2_value"]
                 f1_expr = f"`{f1}`" if not str(f1).isidentifier() else str(f1)
                 f2_expr = f"`{f2}`" if not str(f2).isidentifier() else str(f2)
 
-                if pd.isna(v1) or v1 == '缺失':
+                if pd.isna(v1) or v1 == "缺失":
                     c1 = f"({f1_expr} != {f1_expr})"
                 else:
                     c1 = f"({f1_expr} == {repr(v1)})"
 
-                if pd.isna(v2) or v2 == '缺失':
+                if pd.isna(v2) or v2 == "缺失":
                     c2 = f"({f2_expr} != {f2_expr})"
                 else:
                     c2 = f"({f2_expr} == {repr(v2)})"
 
                 expr = f"{c1} & {c2}"
 
-            rule = Rule(expr=expr, name=row.get('规则名称', expr), description=expr, weight=1.0)
-            rule.artifact_ = row.get('规则制品')
-            report_df = row['规则报告'] if reuse_report else rule.report(datasets=datasets, target=target_col)
-            hit_rows = report_df[report_df['分箱'] == '命中'] if '分箱' in report_df.columns else pd.DataFrame()
+            rule = Rule(expr=expr, name=row.get("规则名称", expr), description=expr, weight=1.0)
+            rule.artifact_ = row.get("规则制品")
+            report_df = row["规则报告"] if reuse_report else rule.report(datasets=datasets, target=target_col)
+            hit_rows = report_df[report_df["分箱"] == "命中"] if "分箱" in report_df.columns else pd.DataFrame()
             hit = hit_rows.iloc[0].to_dict() if not hit_rows.empty else {}
 
             metadata = {
-                '规则表达式': rule.expr,
-                '规则报告': report_df,
-                '命中样本数': hit.get('样本总数'),
-                '命中样本占比': hit.get('样本占比'),
-                '命中坏样本数': hit.get('坏样本数'),
-                '命中坏样本率': hit.get('坏样本率'),
-                '命中LIFT值': hit.get('LIFT值'),
-                '坏账改善': hit.get('坏账改善'),
+                "规则表达式": rule.expr,
+                "规则报告": report_df,
+                "命中样本数": hit.get("样本总数"),
+                "命中样本占比": hit.get("样本占比"),
+                "命中坏样本数": hit.get("坏样本数"),
+                "命中坏样本率": hit.get("坏样本率"),
+                "命中LIFT值": hit.get("LIFT值"),
+                "坏账改善": hit.get("坏账改善"),
             }
-            if '入参字段' in row:
-                metadata.update({'入参字段': row['入参字段'], '字段含义': row['字段含义']})
+            if "入参字段" in row:
+                metadata.update({"入参字段": row["入参字段"], "字段含义": row["字段含义"]})
             rule.metadata_ = metadata
-            rule.metric_score_ = metadata.get('命中LIFT值', 0)
+            rule.metric_score_ = metadata.get("命中LIFT值", 0)
             rule_objects.append(rule)
 
         return rule_objects
 
     def get_rule_objects(
-
-
         self,
         top_n: int = 10,
-        metric: str = 'lift',
+        metric: str = "lift",
         target: Optional[str] = None,
         datasets: Optional[pd.DataFrame] = None,
         min_samples: Optional[int] = None,
-        min_lift: Optional[float] = None
+        min_lift: Optional[float] = None,
     ) -> List[Rule]:
         """获取Rule对象列表（与get_rules保持一致）."""
         return self.get_rules(
-            top_n=top_n,
-            metric=metric,
-            target=target,
-            datasets=datasets,
-            min_samples=min_samples,
-            min_lift=min_lift
+            top_n=top_n, metric=metric, target=target, datasets=datasets, min_samples=min_samples, min_lift=min_lift
         )
 
     def get_binning_table(self, feature: str) -> Optional[pd.DataFrame]:
         """获取特征的分箱统计表（如果使用了hscredit分箱方法）.
-        
+
         :param feature: 特征名
         :return: 分箱统计表或None
         """
         self._check_fitted()
-        
+
         if feature not in self._binner_instances_:
             return None
-        
+
         binner = self._binner_instances_[feature]
-        if hasattr(binner, 'get_bin_table'):
+        if hasattr(binner, "get_bin_table"):
             return binner.get_bin_table(feature)
-        elif hasattr(binner, 'bin_tables_') and feature in binner.bin_tables_:
+        elif hasattr(binner, "bin_tables_") and feature in binner.bin_tables_:
             return binner.bin_tables_[feature]
-        
+
         return None
-    
+
     def plot_cross_heatmap(
         self,
         x1: str = None,
         x2: str = None,
-        metric: str = 'lift',
+        metric: str = "lift",
         figsize: Tuple[int, int] = (12, 10),
         title: Optional[str] = None,
         save: Optional[str] = None,
-        cmap: Optional[str] = None, features=None, *,
+        cmap: Optional[str] = None,
+        features=None,
+        *,
         dpi: int = 240,
     ):
         """绘制交叉热力图.
-        
+
         :param feature1: 特征1
         :param feature2: 特征2
         :param metric: 指标
@@ -830,55 +808,49 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             import seaborn as sns
         except ImportError:
             raise ImportError("需要安装matplotlib和seaborn")
-        
+
         from ...core.viz.utils import setup_axis_style
-        
+
         cross_matrix = self.generate_cross_matrix(feature1, feature2)
-        
+
         # 提取指标矩阵
-        metric_matrix = cross_matrix.xs(metric, level='metric', axis=1)
-        
+        metric_matrix = cross_matrix.xs(metric, level="metric", axis=1)
+
         fig, ax = plt.subplots(figsize=figsize)
-        
+
         # 默认颜色映射
         if cmap is None:
-            cmap = 'RdYlGn' if metric in ['lift', 'badrate'] else 'Blues'
-        
+            cmap = "RdYlGn" if metric in ["lift", "badrate"] else "Blues"
+
         # 中心值（lift以1为中心）
-        center = 1.0 if metric == 'lift' else None
-        
-        sns.heatmap(
-            metric_matrix,
-            annot=True,
-            fmt='.2f',
-            cmap=cmap,
-            center=center,
-            ax=ax,
-            linewidths=0.5
-        )
-        
+        center = 1.0 if metric == "lift" else None
+
+        sns.heatmap(metric_matrix, annot=True, fmt=".2f", cmap=cmap, center=center, ax=ax, linewidths=0.5)
+
         # 设置样式
         setup_axis_style(ax)
-        
-        plot_title = title or f'{feature1} x {feature2} - {metric.upper()} 热力图'
+
+        plot_title = title or f"{feature1} x {feature2} - {metric.upper()} 热力图"
         ax.set_title(plot_title)
-        
+
         plt.tight_layout()
-        
+
         if save:
-            fig.savefig(save, dpi=dpi, bbox_inches='tight')
-        
+            fig.savefig(save, dpi=dpi, bbox_inches="tight")
+
         return fig
 
     def plot_2d_binning(
         self,
         x1: str = None,
         x2: str = None,
-        metric: str = 'lift',
+        metric: str = "lift",
         figsize: Tuple[int, int] = (14, 10),
         title: Optional[str] = None,
         save: Optional[str] = None,
-        cmap: Optional[str] = None, features=None, *,
+        cmap: Optional[str] = None,
+        features=None,
+        *,
         dpi: int = 240,
     ):
         """绘制二维分箱图（主图+上下文分箱轴）.
@@ -898,75 +870,70 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         from ...core.viz.utils import setup_axis_style
 
         cross_matrix = self.generate_cross_matrix(feature1, feature2)
-        metric_matrix = cross_matrix.xs(metric, level='metric', axis=1)
+        metric_matrix = cross_matrix.xs(metric, level="metric", axis=1)
 
         # 数值化，避免object类型导致热力图显示异常
-        metric_matrix = metric_matrix.apply(pd.to_numeric, errors='coerce').fillna(0)
+        metric_matrix = metric_matrix.apply(pd.to_numeric, errors="coerce").fillna(0)
 
         if cmap is None:
-            cmap = 'RdYlGn' if metric in ['lift', 'badrate'] else 'Blues'
+            cmap = "RdYlGn" if metric in ["lift", "badrate"] else "Blues"
 
         fig = plt.figure(figsize=figsize)
         gs = gridspec.GridSpec(
-            nrows=2,
-            ncols=2,
-            height_ratios=[0.9, 8.0],
-            width_ratios=[8.0, 1.4],
-            hspace=0.02,
-            wspace=0.02
+            nrows=2, ncols=2, height_ratios=[0.9, 8.0], width_ratios=[8.0, 1.4], hspace=0.02, wspace=0.02
         )
 
         ax_top = fig.add_subplot(gs[0, 0])
         ax_main = fig.add_subplot(gs[1, 0], sharex=ax_top)
         ax_right = fig.add_subplot(gs[1, 1], sharey=ax_main)
 
-        center = 1.0 if metric == 'lift' else None
+        center = 1.0 if metric == "lift" else None
         hm = sns.heatmap(
             metric_matrix,
             annot=True,
-            fmt='.2f',
+            fmt=".2f",
             cmap=cmap,
             center=center,
             ax=ax_main,
             linewidths=0.5,
             cbar=True,
-            cbar_kws={'shrink': 0.9, 'pad': 0.02}
+            cbar_kws={"shrink": 0.9, "pad": 0.02},
         )
 
         # 明确标注主图数值含义，避免看不出来是lift
         cbar = hm.collections[0].colorbar
-        cbar.set_label(f'{metric.upper()} value', rotation=90)
+        cbar.set_label(f"{metric.upper()} value", rotation=90)
         ax_main.text(
             0.005,
             1.02,
-            f'Cell number = {metric.upper()}',
+            f"Cell number = {metric.upper()}",
             transform=ax_main.transAxes,
             fontsize=10,
-            va='bottom',
-            ha='left'
+            va="bottom",
+            ha="left",
         )
 
         # 顶部分箱轴：复用主图x轴（按列格对齐）
         n_cols = metric_matrix.shape[1]
         for i, label in enumerate(metric_matrix.columns):
-            ax_top.add_patch(plt.Rectangle((i, 0), 1, 1, facecolor='#E8EEF7', edgecolor='white', linewidth=1.0))
-            ax_top.text(i + 0.5, 0.5, str(label), ha='center', va='center', fontsize=8, rotation=0)
+            ax_top.add_patch(plt.Rectangle((i, 0), 1, 1, facecolor="#E8EEF7", edgecolor="white", linewidth=1.0))
+            ax_top.text(i + 0.5, 0.5, str(label), ha="center", va="center", fontsize=8, rotation=0)
         ax_top.set_xlim(0, n_cols)
         ax_top.set_ylim(0, 1)
         ax_top.set_xticks([])
         ax_top.set_yticks([])
-        ax_top.set_ylabel(f'{feature2}\n分箱', fontsize=9)
+        ax_top.set_ylabel(f"{feature2}\n分箱", fontsize=9)
 
         # 右侧分箱轴：复用主图y轴（按行格对齐）
         n_rows = metric_matrix.shape[0]
         for i, label in enumerate(metric_matrix.index):
-            ax_right.add_patch(plt.Rectangle((0, i), 1, 1, facecolor='#E8EEF7', edgecolor='white', linewidth=1.0))
-            ax_right.text(0.5, i + 0.5, str(label), ha='center', va='center', fontsize=8, rotation=0)
+            ax_right.add_patch(plt.Rectangle((0, i), 1, 1, facecolor="#E8EEF7", edgecolor="white", linewidth=1.0))
+            ax_right.text(0.5, i + 0.5, str(label), ha="center", va="center", fontsize=8, rotation=0)
         ax_right.set_xlim(0, 1)
         ax_right.set_ylim(0, n_rows)
         ax_right.set_xticks([])
         ax_right.set_yticks([])
-        ax_right.set_xlabel(f'{feature1} 分箱', fontsize=9)
+        ax_right.set_xlabel(f"{feature1} 分箱", fontsize=9)
 
         # 统一样式
         setup_axis_style(ax_main)
@@ -974,7 +941,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             for spine in a.spines.values():
                 spine.set_visible(False)
 
-        plot_title = title or f'{feature1} x {feature2} - {metric.upper()} 二维分箱图'
+        plot_title = title or f"{feature1} x {feature2} - {metric.upper()} 二维分箱图"
         ax_main.set_title(plot_title)
         ax_main.set_xlabel(feature2)
         ax_main.set_ylabel(feature1)
@@ -982,10 +949,10 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         plt.tight_layout()
 
         if save:
-            fig.savefig(save, dpi=dpi, bbox_inches='tight')
+            fig.savefig(save, dpi=dpi, bbox_inches="tight")
 
         return fig
-    
+
     def _check_fitted(self):
         """检查是否已拟合."""
         if not self._is_fitted:
