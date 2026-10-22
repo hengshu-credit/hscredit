@@ -720,8 +720,10 @@ class TestModelReportOverdueDpdsSeparate:
         )
 
         dataset = report._datasets["样本"]
-        assert dataset.X.index.tolist() == [0, 2]
-        assert dataset.y.tolist() == [0, 1]
+        # 保留原行供外部 date/group/amount 对齐；监督统计视图再同步剔灰。
+        assert dataset.X.index.tolist() == [0, 1, 2, 3]
+        assert dataset.y.isna().tolist() == [False, True, False, True]
+        assert report._primary_dataset_view("样本").y.tolist() == [0, 1]
         metrics = report.get_metrics().set_index("统计项")
         assert metrics.loc["样本数", "样本"] == 2
         assert metrics.loc["坏样本率", "样本"] == pytest.approx(0.5)

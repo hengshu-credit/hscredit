@@ -34,9 +34,29 @@
 
 数据在筛选、分组和剔灰之前绑定，随后与原始行一起筛选、排序，不修改调用方的 DataFrame，也不覆盖同名但值不同的字段。
 
+`freq` 使用 pandas 日期 offset / `Grouper` 的分组规则，兼容 pandas 新旧频率写法，不再受 `Period` 支持范围限制：
+
+| 含义 | 旧写法 | 新写法 |
+| --- | --- | --- |
+| 月末、业务月末、半月末 | `M`、`BM`、`SM` | `ME`、`BME`、`SME` |
+| 季末、业务季末 | `Q`、`BQ` | `QE`、`BQE` |
+| 年末、业务年末 | `A/Y`、`BA/BY` | `YE`、`BYE` |
+| 年初、业务年初 | `AS`、`BAS` | `YS`、`BYS` |
+| 小时、分钟、秒 | `H`、`T`、`S` | `h`、`min`、`s` |
+| 毫秒、微秒、纳秒 | `L`、`U`、`N` | `ms`、`us`、`ns` |
+| 业务小时、自定义业务小时 | `BH`、`CBH` | `bh`、`cbh` |
+
+同样支持 `MS`、`QS-APR`、`YS-JUL`、`BMS`、`B`、`W-MON`、`WOM-2MON` 等频率，保留倍数、锚点和组合，例如 `2ME`、`2W-MON`、`15min`、`2h30min`、`1.5h`。`MS`（月初）与 `ms`（毫秒）严格区分。也可传入 pandas 可用于时间分组的 `DateOffset` / `Timedelta` 对象；自定义工作日对象的节假日及工作周配置会被保留。
+
+分组采用 pandas 默认的 `closed/label/origin` 边界，`2ME` 等倍数频率形成实际的不重叠分组。固定间隔的统计只计算已有样本所属的桶，避免稀疏高频数据展开大量空桶；分布图保留原生 resample 的空桶行为。原有年月周展示格式保留，其他频率显示相应时间边界，小时、分钟、亚秒和时区信息不会被截断为日期。
+
+非法、非正或 pandas 本身不能用于当前日期分组的频率会抛出中文错误。支持结构化执行状态的报告仍会记录频率失败，严格模式禁止发布不完整报告。新旧别名对应关系参见 [pandas 日期频率](https://pandas.pydata.org/docs/user_guide/timeseries.html#offset-aliases) 与 [2.2 版本迁移说明](https://pandas.pydata.org/docs/whatsnew/v2.2.0.html#deprecate-aliases-m-q-y-etc-in-favour-of-me-qe-ye-etc-for-offsets)。
+
 多维分组入口同样使用 `group`，包括特征分组摘要、规则流报告和分箱趋势图。它们还支持字段列表和按组名定义的数据字典，例如 `group=["客群", "渠道"]` 或 `group={"客群": customer_groups, "渠道": channels}`。一维字符串列表恰好全部是现有列名时解释为字段集合；要明确传入逐行字符串分组数据，可以使用 Series。
 
 `ModelReport.get_bin_table`、`get_feature_bin_table` 和 `to_excel` 支持辅助数据。多数据集导出可按数据集名称提供字典，例如 `date={"train": train_dates, "test": test_dates}`。临时数据和派生缓存不会覆盖原报告的数据集。
+
+单标签剔灰也保留数据集的原始行和索引，外部日期、分组、金额数据仍按原始数据对齐；计算指标时再同步应用有效标签掩码。`Rule.report` 和 `ruleset_analysis` 同样在规则筛选前绑定外部金额数据。
 
 置换分析中，金额同时作用于实际和参考数据。传入一份数据时需要同时匹配两个作用数据集；也可使用 `amount={"swap_df": actual_amounts, "reference_df": reference_amounts}`。`rule_swap_analysis` 对应的字典键为 `data` 与 `reference_data`。
 
@@ -44,7 +64,7 @@
 
 分箱器参数继续使用 `min_n_bins`、`min_bin_size`、`max_bin_size`、`missing_separate`、`prebinning`、`prebinning_params`、`special_codes` 等原有名称。直方图箱数、校准桶数、预分箱数量不与最终风险分箱数混为同一参数。
 
-`feature_bin_stats`、`feature_bin_stats_2d`、`bin_plot`、`psi_plot`、分箱趋势图和二维分箱图支持 `bin_params`。这些入口的优先级为：显式参数 > `bin_params` > 函数默认值。多方法汇总中的按方法配置仍用于覆盖各方法的公共设置。
+分箱统计、方法比较、绘图、特征摘要（含 DataFrame/Series 扩展）、效率分析、预估器和置换分析统一支持 `bin_params`。优先级为：显式参数 > `bin_params` > 函数默认值。预估器保留配置字典，克隆后配置仍一致。多方法汇总中的按方法配置用于覆盖各方法的公共设置。
 
 报告规则使用 `rules`，分箱器构造使用 `user_splits`。规则的边界格式仍遵循对应入口的语义：固定分箱表的内部切点与含无穷边界的区间定义不能不经转换直接混用。
 

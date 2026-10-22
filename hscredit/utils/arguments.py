@@ -8,6 +8,7 @@ from functools import wraps
 
 import numpy as np
 import pandas as pd
+from .dates import normalize_freq
 
 
 def normalize_features(features=None, *, feature=None, x1=None, x2=None, size=None, required=False):
@@ -107,7 +108,14 @@ def bind_groups(data, value):
 
 
 def analysis_inputs(
-    data_parameter, *, roles=(), feature_alias=False, dimensions=None, shared_frames=(), multi_group=False
+    data_parameter,
+    *,
+    roles=(),
+    feature_alias=False,
+    dimensions=None,
+    shared_frames=(),
+    multi_group=False,
+    normalize_frequency=True,
 ):
     """在任何投影、排序和筛选之前解析公开字段参数，保留原函数签名。"""
 
@@ -118,6 +126,8 @@ def analysis_inputs(
         def wrapped(*args, **kwargs):
             bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
+            if normalize_frequency and "freq" in signature.parameters and bound.arguments["freq"] is not None:
+                bound.arguments["freq"] = normalize_freq(bound.arguments["freq"])
             if "features" in signature.parameters:
                 selected = normalize_features(
                     bound.arguments.get("features"),
@@ -232,8 +242,10 @@ def report_inputs(function):
     return wrapped
 
 
-def binning_options(function):
+def binning_options(function=None, *, keep_config=False):
     """合并分箱配置：显式参数优先于 bin_params，后者优先于函数默认值。"""
+    if function is None:
+        return lambda wrapped: binning_options(wrapped, keep_config=keep_config)
     signature = inspect.signature(function)
     extra_name = next(
         (name for name, parameter in signature.parameters.items() if parameter.kind == inspect.Parameter.VAR_KEYWORD),
@@ -254,9 +266,10 @@ def binning_options(function):
                     bound.arguments.setdefault(name, value)
                 elif extra_name is not None:
                     bound.arguments.setdefault(extra_name, {}).setdefault(name, value)
-                else:
+                elif not keep_config:
                     raise TypeError(f"不支持的分箱参数: {name}")
-            bound.arguments["bin_params"] = None
+            if not keep_config:
+                bound.arguments["bin_params"] = None
         extra = bound.arguments.get(extra_name, {})
         aliases = {
             "n_bins": "max_n_bins",
@@ -272,9 +285,14 @@ def binning_options(function):
             "feature_names": "features",
             "binning_params": "bin_params",
             "binner_kwargs": "bin_params",
+            "auto_kwargs": "bin_params",
+            "auto_method": "method",
+            "hscredit_methods": "methods",
+            "manual_rules": "rules",
+            "custom_bins": "rules",
         }
         for old, new in aliases.items():
-            if old in extra and new in signature.parameters:
+            if (old in extra or (keep_config and old in (options or {}))) and new in signature.parameters:
                 raise TypeError(f"{old} 参数已移除，请使用 {new}")
         return function(*bound.args, **bound.kwargs)
 

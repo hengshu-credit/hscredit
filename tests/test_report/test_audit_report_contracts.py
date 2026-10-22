@@ -18,6 +18,7 @@ from hscredit.report.result import ReportGenerationError, ReportResult
 @pytest.mark.parametrize("direction", ["high", "low"])
 def test_strategy_prefix_matches_independent_masks(direction):
     data = pd.DataFrame({"score": [100, 100, 200, 300], "y": [0, 1, 1, 0], "amount": ["100", "200", "300", "400"]})
+    original = data.copy(deep=True)
     thresholds = [100, 300, 0, 100, 999]
     actual = score_strategy_simulation(data, "score", "y", thresholds, amount="amount", score_low_risk=direction)
     for i, threshold in enumerate(thresholds):
@@ -26,7 +27,7 @@ def test_strategy_prefix_matches_independent_masks(direction):
         assert actual.loc[i, "通过金额"] == data.loc[mask, "amount"].astype(float).sum()
         assert actual.loc[i, "通过人群坏账金额"] == data.loc[mask & data.y.eq(1), "amount"].astype(float).sum()
     pd.testing.assert_series_equal(actual.iloc[0], actual.iloc[3], check_names=False)
-    assert data.amount.dtype == object
+    pd.testing.assert_frame_equal(data, original)
 
 
 def test_strategy_string_amount_regression():

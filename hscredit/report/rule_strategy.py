@@ -1,5 +1,6 @@
 """拒绝规则策略文档表格转换工具."""
 
+from hscredit.utils.dates import date_groups
 from hscredit.utils.arguments import analysis_inputs
 
 from ..utils.targets import TargetInput, bind_targets, target_count, reject_legacy_target_keywords
@@ -556,10 +557,8 @@ def _resolve_group_labels(
     else:
         if date not in data.columns:
             raise ValueError(f"数据集缺少日期列: {date}")
-        if freq not in _FREQ_LABELS:
-            raise ValueError("freq必须是'D'/'W'/'M'/'Q'之一")
         parsed = pd.to_datetime(data[date], errors="coerce")
-        labels = parsed.dt.to_period(freq).astype(str)
+        labels = date_groups(parsed, freq)
         labels = labels.where(parsed.notna(), other=np.nan)
 
     labels = pd.Series(labels, index=data.index)

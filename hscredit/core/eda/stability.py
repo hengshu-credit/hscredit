@@ -9,6 +9,7 @@ PSI（群体稳定性指标）/ CSI（特征稳定性指标）的定义与分级
 0.1~0.25 关注、>0.25 显著漂移）见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
 """
 
+from hscredit.utils.dates import date_groups
 from hscredit.utils.arguments import analysis_inputs
 
 import numpy as np
@@ -314,12 +315,7 @@ def time_psi_tracking(df: pd.DataFrame,
     df[date] = pd.to_datetime(df[date])
     
     # 创建时间周期
-    if freq == 'M':
-        df['时间周期'] = df[date].dt.to_period('M').astype(str)
-    elif freq == 'W':
-        df['时间周期'] = df[date].dt.to_period('W').astype(str)
-    elif freq == 'Q':
-        df['时间周期'] = df[date].dt.to_period('Q').astype(str)
+    df['时间周期'] = date_groups(df[date], freq)
     
     # 获取所有周期
     periods = sorted(df['时间周期'].unique())
@@ -504,16 +500,7 @@ def psi_cross_analysis(
         df[date] = pd.to_datetime(df[date])
         
         # 根据频率创建分组
-        if freq == 'D':
-            df['_psi_group'] = df[date].dt.date.astype(str)
-        elif freq == 'W':
-            df['_psi_group'] = df[date].dt.to_period('W').astype(str)
-        elif freq == 'M':
-            df['_psi_group'] = df[date].dt.to_period('M').astype(str)
-        elif freq == 'Q':
-            df['_psi_group'] = df[date].dt.to_period('Q').astype(str)
-        else:
-            raise ValueError("freq 必须是 'D'/'W'/'M'/'Q' 之一")
+        df['_psi_group'] = date_groups(df[date], freq)
         
         group = '_psi_group'
     else:

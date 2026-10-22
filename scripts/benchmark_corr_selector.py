@@ -142,7 +142,7 @@ def _run_once(frame, weights, *, n_jobs, backend, method, block_size, identities
             threshold=0.7,
             method=method,
             weights=weights,
-            binning_params=None,
+            bin_params=None,
             n_jobs=n_jobs,
             parallel_backend=backend,
             corr_block_size=block_size,

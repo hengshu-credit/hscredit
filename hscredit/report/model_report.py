@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from hscredit.utils.arguments import analysis_inputs, report_inputs
+from hscredit.utils.dates import date_groups, frequency_name
+from hscredit.utils.arguments import analysis_inputs, report_inputs, normalize_freq
 
 from ..utils.targets import TargetInput, bind_targets, validate_target_mode, reject_legacy_target_keywords
 
@@ -614,6 +615,9 @@ class ModelReport:
             validate_overdue_operator(overdue_operator)
         validate_target_mode(target, overdue, dpds)
         reject_legacy_target_keywords(kwargs)
+        for old, new in (("feature_names", "features"), ("method", "prediction_method"), ("method_kwargs", "prediction_kwargs")):
+            if old in kwargs:
+                raise TypeError(f"{old} 参数已移除，请使用 {new}")
         self.overdue, self.dpds = overdue, dpds
         self.model = model
         self.explain_config = normalize_explain_config(explain_config)
@@ -1020,10 +1024,8 @@ class ModelReport:
             X_df = _ensure_dataframe(X_raw, features=self._feature_names)
             if y_raw is None:
                 y_s, y_dict = self._build_y(X_df, self._target_cfg, dataset_name=name)
-                if not y_dict:
-                    valid = y_s.notna()
-                    X_df = X_df.loc[valid].copy()
-                    y_s = y_s.loc[valid].astype(int)
+                if not y_dict and y_s.notna().all():
+                    y_s = y_s.astype(int)
             else:
                 y_s = _ensure_series(y_raw, name=self._target_name)
                 y_dict = None
@@ -1089,10 +1091,8 @@ class ModelReport:
         # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
         if y is None:
             y, y_dict = self._build_y(X, self._target_cfg, dataset_name=key)
-            if not y_dict:
-                valid = y.notna()
-                X = X.loc[valid].copy()
-                y = y.loc[valid].astype(int)
+            if not y_dict and y.notna().all():
+                y = y.astype(int)
         else:
             y_dict = None
         y = _ensure_series(y, name=self._target_name)
@@ -1288,6 +1288,21 @@ class ModelReport:
 
     # ---------- 2. 评分分箱效果表 ----------
 
+    def _bin_table_with_available_target(self, data, parameters, y_dict):
+        """单类标签复用同一数据集中可拟合标签的公共分箱，仍按自身标签统计。"""
+        from .feature_analyzer import feature_bin_stats
+
+        targets = parameters["target"]
+        if parameters.get("binner") is None and y_dict and not any(
+            values.dropna().nunique() >= 2 for values in targets.y_map(data).values()
+        ):
+            available = {name: values for name, values in y_dict.items() if pd.Series(values).dropna().nunique() >= 2}
+            if available:
+                fitting = dict(parameters, target=available, del_grey=True, return_binner=True)
+                _, binners = feature_bin_stats(data, **fitting)
+                parameters = dict(parameters, binner=binners)
+        return feature_bin_stats(data, **parameters)
+
     @report_inputs
     def get_bin_table(
         self,
@@ -1331,7 +1346,6 @@ class ModelReport:
         :param label: 多标签模式下指定单个标签名
         :param labels: 多标签合并模式，传入标签名列表，返回 MultiIndex 列合并表
         """
-        from .feature_analyzer import feature_bin_stats
 
         dataset = self._resolve_dataset_key(dataset)
         ds = self._datasets[dataset]
@@ -1374,7 +1388,7 @@ class ModelReport:
         if amount and amount in df.columns:
             kw["amount"] = amount
 
-        table = feature_bin_stats(df, **kw)
+        table = self._bin_table_with_available_target(df, kw, ds.y_dict)
         if isinstance(table, tuple):
             table = table[0]
         return _drop_bin_meta_cols(table)
@@ -2053,7 +2067,6 @@ class ModelReport:
         :param label: 多标签模式下指定单个标签名
         :param labels: 多标签合并模式，传入标签名列表，返回 MultiIndex 列合并表
         """
-        from .feature_analyzer import feature_bin_stats
 
         dataset = self._resolve_dataset_key(dataset)
         ds = self._datasets[dataset]
@@ -2081,7 +2094,7 @@ class ModelReport:
         if amount and amount in df.columns:
             kw["amount"] = amount
 
-        table = feature_bin_stats(df, **kw)
+        table = self._bin_table_with_available_target(df, kw, ds.y_dict)
         if isinstance(table, tuple):
             table = table[0]
         return _drop_bin_meta_cols(table)
@@ -3560,7 +3573,7 @@ class ModelReport:
             end_row, _ = dataframe2excel(stat_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=stat_pct_cols)
 
         # 1.4 样本分布情况
-        freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年"}
+        freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年", "ME": "月", "QE": "季度", "YE": "年"}
         if date or group:
             end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"})
 
@@ -3606,17 +3619,18 @@ class ModelReport:
 
             # 时间分布
             if date:
-                resolved_freq = freq or "M"
-                period_col_name = freq_label_map.get(resolved_freq, resolved_freq)
+                try:
+                    resolved_freq = normalize_freq(freq or "M")
+                except ValueError as exc:
+                    self._report_warning("日期频率 %s 无效，回退为月频: %s", freq, exc)
+                    resolved_freq = "M"
+                period_col_name = freq_label_map.get(frequency_name(resolved_freq).split("-")[0], frequency_name(resolved_freq))
 
                 def _period_of(ds_key, ds, _freq=resolved_freq):
                     if date not in ds.X.columns:
                         return None
                     dates = pd.to_datetime(ds.X[date])
-                    try:
-                        return dates.dt.to_period(_freq).astype(str).values
-                    except Exception:
-                        return dates.dt.to_period("M").astype(str).values
+                    return date_groups(dates, _freq).to_numpy()
 
                 ret = _write_distribution(_period_of, title=f"{period_col_name}度分布")
                 if ret is not None:

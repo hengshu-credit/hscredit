@@ -287,7 +287,7 @@ def test_encoder_clone_and_pickle_preserve_parallel_configuration():
     """sklearn clone 与 pickle 必须保留并行配置值。"""
     config = {"batch_size": 8}
     encoder = _CloneableEncoder(
-        cols=["类别"], n_jobs=0.5, parallel_backend="threading", parallel_config=config
+        features=["类别"], n_jobs=0.5, parallel_backend="threading", parallel_config=config
     )
 
     cloned = clone(encoder)
@@ -470,7 +470,7 @@ def test_base_binning_feature_loop_uses_shared_parallel_configuration():
 def test_base_encoder_parallel_parameters_do_not_change_dual_api(passthrough_target):
     frame = pd.DataFrame({"类别": ["甲", "乙"], "FPD": [0, 1]})
     encoder = _CloneableEncoder(
-        cols=["类别"], target="FPD", n_jobs=None, parallel_config={"batch_size": 1},
+        features=["类别"], target="FPD", n_jobs=None, parallel_config={"batch_size": 1},
         passthrough_target=passthrough_target,
     )
     expected = frame if passthrough_target else frame.drop(columns=['FPD'])

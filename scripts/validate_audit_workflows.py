@@ -183,7 +183,7 @@ def validate(args, run_dir):
     def categorical_encoders():
         train, test = state["train"], state["test"]
         cv = KFold(3, shuffle=True, random_state=42)
-        encoder = TargetEncoder(cols=[CATEGORY], training_mode="oof", cv=cv, n_jobs=1, random_state=42)
+        encoder = TargetEncoder(features=[CATEGORY], training_mode="oof", cv=cv, n_jobs=1, random_state=42)
         encoded = encoder.fit_transform(train[[CATEGORY]], train[TARGET])
         require(
             encoder.oof_coverage_.all() and np.isfinite(encoded.to_numpy()).all(),
@@ -191,12 +191,12 @@ def validate(args, run_dir):
         )
         for fit_indices, valid_indices in cv.split(train):
             reference = (
-                TargetEncoder(cols=[CATEGORY], n_jobs=1)
+                TargetEncoder(features=[CATEGORY], n_jobs=1)
                 .fit(train[[CATEGORY]].iloc[fit_indices], train[TARGET].iloc[fit_indices])
                 .transform(train[[CATEGORY]].iloc[valid_indices])
             )
             np.testing.assert_allclose(encoded.iloc[valid_indices], reference)
-        onehot = OneHotEncoder(cols=[CATEGORY], sparse_output=True, return_df=False, min_frequency=2, n_jobs=1)
+        onehot = OneHotEncoder(features=[CATEGORY], sparse_output=True, return_df=False, min_frequency=2, n_jobs=1)
         train_sparse, test_sparse = onehot.fit_transform(train[[CATEGORY]]), None
         test_sparse = onehot.transform(test[[CATEGORY]])
         require(sparse.isspmatrix_csr(train_sparse) and sparse.isspmatrix_csr(test_sparse), "独热输出不是CSR")
@@ -211,7 +211,7 @@ def validate(args, run_dir):
         train, data = state['train'], state['data']
         features = [*FEATURES, CATEGORY]
         binner = OptimalBinning(method='quantile', max_n_bins=5, n_jobs=1).fit(train[features], train[TARGET])
-        encoder = WOEEncoder(cols=features, regularization=50, training_mode='oof', cv=3, n_jobs=1)
+        encoder = WOEEncoder(features=features, regularization=50, training_mode='oof', cv=3, n_jobs=1)
         encoded = encoder.fit_transform(binner.transform(train[features], metric='bins'), train[TARGET])
         require(TARGET not in encoded.columns, '评分卡编码输出包含目标列')
         card = ScoreCard(binner=binner, encoder=encoder, calculate_stats=False, decimal=8, clip=False,
@@ -356,7 +356,7 @@ def validate(args, run_dir):
         model_result = report.to_excel(
             str(run_dir / "strict_model_report.xlsx"),
             with_plots=False,
-            n_bins=5,
+            max_n_bins=5,
             mode="strict",
             return_result=True,
             transactional=True,

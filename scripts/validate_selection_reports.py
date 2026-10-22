@@ -57,7 +57,7 @@ def validate(input_path, directory):
         (s.StabilityAwareSelector(oot_df=X.iloc[cut:], random_state=42, **common), X.iloc[:cut], y.iloc[:cut]),
         (
             s.CorrSelector(
-                weights={name: len(NUMERIC) - i for i, name in enumerate(NUMERIC)}, binning_params=None, **common
+                weights={name: len(NUMERIC) - i for i, name in enumerate(NUMERIC)}, bin_params=None, **common
             ),
             model_X,
             y,

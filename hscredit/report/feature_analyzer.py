@@ -4,6 +4,7 @@
 多逾期天数组合分析以及 Excel 报告生成。
 """
 
+from hscredit.utils.dates import date_groups, frequency_name
 from hscredit.utils.arguments import analysis_inputs, binning_options
 
 from ..utils.targets import TargetInput, BoundTargets, bind_targets, reject_legacy_target_keywords
@@ -1045,7 +1046,7 @@ def feature_group_binning_summary(
         **kwargs,
     }
 
-    group_field = group or f"{date}@{freq}"
+    group_field = group or f"{date}@{frequency_name(freq)}"
     binning_tables: Dict[str, Dict[str, Dict[str, pd.DataFrame]]] = {name: {method: {} for method in normalized_methods} for name in features}
     summary_rows = []
     single_target_name = target.names("at")[0]
@@ -1929,6 +1930,7 @@ def feature_bin_stats_2d(
     return final_table
 
 
+@binning_options
 def benchmark_binning_methods(
     data: pd.DataFrame,
     feature: str,
@@ -1959,6 +1961,7 @@ def benchmark_binning_methods(
     *,
     target: Optional[TargetInput] = None,
     overdue_operator: str = ">",
+    bin_params: Optional[Dict[str, Any]] = None,
     **kwargs,
 ) -> pd.DataFrame:
     """逐方法对比 hscredit 内部分箱效果。
@@ -2266,6 +2269,7 @@ def _prepare_efficiency_dataset(
     return working_data, plot_data, actual_target
 
 
+@binning_options(keep_config=True)
 @analysis_inputs('data', roles=('date', 'group', 'amount'), multi_group=True)
 def feature_efficiency_analysis(
     data: pd.DataFrame,
@@ -2453,7 +2457,7 @@ def feature_efficiency_analysis(
     )
     table_tasks = [
         ("manual", {**common_call, "rules": manual_rules_list}),
-        ("auto", {**common_call, "method": method, "return_rules": True, **bin_params}),
+        ("auto", {**bin_params, **common_call, "method": method, "return_rules": True}),
     ]
     has_parallel_children = _binning_has_parallel_children(method, table_tasks[1][1])
     table_results = dict(
@@ -2612,7 +2616,7 @@ def feature_efficiency_analysis(
     }
 
 
-@analysis_inputs('data', roles=('date', 'amount'))
+@analysis_inputs('data', roles=('date', 'amount'), normalize_frequency=False)
 def auto_feature_analysis(
     data: pd.DataFrame,
     features=None,
@@ -2846,11 +2850,11 @@ def _auto_feature_analysis_impl(
     if date is not None and date in data.columns:
         dates = pd.to_datetime(data[date], errors="coerce")
         try:
-            period_values = dates.dt.to_period(freq).astype(str).values
+            period_values = date_groups(dates, freq).to_numpy()
         except Exception as exc:
             if _report_result is not None:
                 _report_result.failure("时间频率回退", f"日期频率 {freq} 无效，回退为月频: {exc}")
-            period_values = dates.dt.to_period("M").astype(str).values
+            period_values = date_groups(dates, "M").to_numpy()
         time_distribution, time_percent_cols = build_group_distribution_table(
             dataset_labels,
             [target_y_map],

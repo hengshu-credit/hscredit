@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import pandas as pd
+from .arguments import binning_options
 
 logger = logging.getLogger(__name__)
 import numpy as np
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
+@binning_options(keep_config=True)
 def _summary_method(
     self,
     features: List[str] = None,
@@ -98,8 +100,8 @@ def _summary_method(
     :param n_jobs: 并行工作数，-1为保守自动推断
     :param show_progress: 是否显示字段级处理进度
     :param method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
-    :param bin_params: 传给OptimalBinning的完整参数；内层method覆盖外层binning_method，
-        max_n_bins、random_state等重复键也直接覆盖外层参数。user_splits字典按原DataFrame字段名配置
+    :param bin_params: 传给OptimalBinning的完整参数；显式参数优先于配置，配置优先于默认值。
+        user_splits字典按原DataFrame字段名配置
     :return: 综合特征描述DataFrame或字典
 
     Example:
@@ -145,6 +147,7 @@ def _summary_method(
     return result
 
 
+@binning_options(keep_config=True)
 def _series_summary_method(
     self,
     y: Optional[Union[pd.Series, np.ndarray, List, Tuple]] = None,
@@ -173,8 +176,8 @@ def _series_summary_method(
     """Series 单字段综合摘要统计。
 
     y 支持数组、列表、元组或 Series。IV、趋势和 PSI 默认共用 quantile 等频
-    10 分箱；bin_params 中的重复键会直接覆盖 method、max_n_bins
-    和 random_state，user_splits 字典使用当前 Series 名称作为字段键。
+    10 分箱；显式参数优先于 bin_params，配置优先于默认值。
+    user_splits 字典使用当前 Series 名称作为字段键。
     """
     if isinstance(y, str):
         raise ValueError("Series.summary 的 y 不支持列名，请直接传入数组、列表或 Series")

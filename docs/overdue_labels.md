@@ -94,6 +94,7 @@ table = feature_bin_stats(data, "评分", margins=True, **params)
 
 - 分箱和规则复用现有多级表头；长表继续使用 `逾期标签` 列，自定义名称原样显示。
 - 公共分箱在首个可拟合标签上学习一次，其余标签复用分箱重新统计。某标签缺少的箱不会导致其它标签丢箱。
+- 模型报告单独查看只有一个类别的标签时，若同一数据集有其它可拟合标签，评分及特征分箱复用其箱边界，统计仍使用当前标签；没有可拟合标签时不虚构训练标签。
 - 自定义多标签的单标签视图默认使用首标签，不自动做 OR。原逾期多标签的 combined 继续使用 OR，并排除全部标签无效的行。
 - 效率分析支持多个标签，返回 `targets`、`comparison_figures` 及带标签列的 `manual_table/auto_table` 汇总长表。
 - `auto_feature_analysis`、`OverduePredictor`、`rule_swap_analysis` 的显式 `del_grey/overdue_operator` 优先于 `bin_params`，缺省时沿用配置。

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from hscredit.utils.dates import date_groups
 from hscredit.utils.arguments import analysis_inputs, normalize_features
 
 from typing import List, Optional, Tuple
@@ -234,7 +235,7 @@ def feature_trend_by_time(
     """
     df = df.copy()
     df[date] = pd.to_datetime(df[date])
-    df['_period'] = df[date].dt.to_period(freq).astype(str)
+    df['_period'] = date_groups(df[date], freq)
     periods = sorted(df['_period'].unique())
     base_vals = df[df['_period'] == periods[0]][feature].dropna().values if periods else np.array([])
 

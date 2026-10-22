@@ -986,7 +986,7 @@ sklearn_clf.fit(df_train[feature_list], df_train[target])
 
 mte_from_sklearn = ManualTreeExtractor.from_sklearn(
     sklearn_clf,
-    feature_names=feature_list,
+    features=feature_list,
     target=target,
 )
 mte_from_sklearn.manual_split(

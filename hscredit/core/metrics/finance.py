@@ -692,7 +692,7 @@ def badrate_trend(y_true: Union[np.ndarray, pd.Series],
         - 环比变化: 与上一期坏账率的差值
         - 累积坏账率: 截至该时间段的累积坏账率
     :raises ValueError: y_true和date长度不一致时
-    :raises ValueError: freq不在'D'/'W'/'M'/'Q'范围内时
+    :raises ValueError: freq 不是 pandas 支持的正日期分组频率时
 
     **参考样例**
 
@@ -713,16 +713,9 @@ def badrate_trend(y_true: Union[np.ndarray, pd.Series],
 
     df = pd.DataFrame({'date': date, 'y_true': y_true})
 
-    if freq == 'D':
-        df['period'] = df['date'].dt.date
-    elif freq == 'W':
-        df['period'] = df['date'].dt.to_period('W').astype(str)
-    elif freq == 'M':
-        df['period'] = df['date'].dt.to_period('M').astype(str)
-    elif freq == 'Q':
-        df['period'] = df['date'].dt.to_period('Q').astype(str)
-    else:
-        raise ValueError("freq必须是'D'/'W'/'M'/'Q'之一")
+    from ...utils.dates import date_groups
+
+    df['period'] = date_groups(df['date'], freq)
 
     results = []
     cum_good = 0

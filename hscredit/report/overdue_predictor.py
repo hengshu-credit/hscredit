@@ -17,6 +17,7 @@
 """
 
 from ..utils.targets import TargetInput, bind_targets, validate_target_mode, reject_legacy_target_keywords
+from ..utils.arguments import binning_options
 
 import numpy as np
 import pandas as pd
@@ -134,6 +135,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
     >>> result2 = predictor2.transform(test_df)
     """
 
+    @binning_options(keep_config=True)
     def __init__(
         self,
         feature: str,
@@ -283,20 +285,21 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         self.target_names_ = targets.names()
 
         # 调用 feature_bin_stats 生成分箱表
-        bin_kwargs = {
-            'method': self.method,
-            'max_n_bins': self.max_n_bins,
-            'min_bin_size': self.min_bin_size,
-            'missing_separate': self.missing_separate,
-            'margins': True,
-        }
+        bin_kwargs = dict(self.bin_params or {})
+        bin_kwargs.update(
+            method=self.method,
+            max_n_bins=self.max_n_bins,
+            min_bin_size=self.min_bin_size,
+            missing_separate=self.missing_separate,
+        )
+        bin_kwargs.setdefault('margins', True)
         if self.rules is not None:
             bin_kwargs['rules'] = self.rules
-        if self.bin_params:
-            bin_kwargs.update(self.bin_params)
         if self.binner is not None:
             bin_kwargs['binner'] = self.binner
         bin_kwargs.pop('return_rules', None)
+        for name in ('n_jobs', 'parallel_backend', 'parallel_config', 'desc'):
+            bin_kwargs.pop(name, None)
         bin_kwargs['return_binner'] = True
         if self.del_grey is not None:
             bin_kwargs['del_grey'] = bool(self.del_grey)
@@ -1041,6 +1044,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             return output
 
 
+@binning_options
 def overdue_prediction_report(
     data: pd.DataFrame,
     feature: str,
@@ -1064,6 +1068,7 @@ def overdue_prediction_report(
     *,
     del_grey: Optional[bool] = None,
     overdue_operator: Optional[str] = None,
+    bin_params: Optional[Dict] = None,
     **kwargs,
 ) -> pd.DataFrame:
     """逾期率预估报告便捷函数.
@@ -1088,6 +1093,7 @@ def overdue_prediction_report(
     :param desc: 特征描述
     :param excel_writer: Excel文件路径或ExcelWriter对象（可选），用于输出报告
     :param sheet: Excel工作表名称
+    :param bin_params: 扩展分箱配置；显式参数优先于配置，配置优先于默认值
     :return: 包含预估结果的DataFrame
 
     **参考样例**

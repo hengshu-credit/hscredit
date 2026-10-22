@@ -241,3 +241,137 @@ def test_skill_plot_resolves_date_data(frame, tmp_path):
         objects={"data": frame, "date": frame.month},
     )
     assert result["status"] == "success"
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_predictor_binning_priority_survives_clone(frame, explicit):
+    from sklearn.base import clone
+    from hscredit.report import OverduePredictor
+
+    config = {"method": "uniform", "max_n_bins": 3, "min_bin_size": 0.01}
+    options = {"method": "quantile", "max_n_bins": 4} if explicit else {}
+    predictor = OverduePredictor("score", target="target", bin_params=config, n_jobs=1, **options)
+    expected_method, expected_bins = ("quantile", 4) if explicit else ("uniform", 3)
+    assert predictor.method == expected_method
+    assert predictor.max_n_bins == expected_bins
+    copied = clone(predictor)
+    predictor.fit(frame)
+    copied.fit(frame)
+    assert_frame_equal(copied.bin_table_, predictor.bin_table_)
+    assert config == {"method": "uniform", "max_n_bins": 3, "min_bin_size": 0.01}
+    assert predictor.binner_.method == expected_method
+
+
+@pytest.mark.parametrize("alias, canonical", [("ME", "M"), ("QE", "Q"), ("YE", "Y"), ("2ME", "2M")])
+def test_frequency_aliases_match_across_reports_and_plots(frame, alias, canonical):
+    options = dict(date="month", target="target")
+    assert_frame_equal(bad_rate_trend(frame, freq=alias, **options), bad_rate_trend(frame, freq=canonical, **options))
+    assert_frame_equal(
+        rule_group_compare(frame, rule="score > 100", freq=alias, n_jobs=1, **options),
+        rule_group_compare(frame, rule="score > 100", freq=canonical, n_jobs=1, **options),
+    )
+    try:
+        actual = distribution_plot(frame, freq=alias, result=True, **options)
+        expected = distribution_plot(frame, freq=canonical, result=True, **options)
+        assert_frame_equal(actual, expected)
+    finally:
+        plt.close("all")
+
+
+@pytest.mark.parametrize("freq", ["D", "Y"])
+def test_feature_stability_accepts_common_frequencies(frame, freq):
+    from hscredit.core.eda.feature import feature_stability_over_time
+    from hscredit.core.eda.stability import time_psi_tracking
+
+    data = frame.copy()
+    data["month"] = pd.date_range("2023-01-01", periods=len(data), freq="7D")
+    stats = feature_stability_over_time(data, features="score", date="month", freq=freq, n_jobs=1)
+    assert stats.iloc[0]["统计期数"] == data.month.dt.to_period(freq).nunique()
+    psi = time_psi_tracking(data, features="score", date="month", freq=freq, n_jobs=1)
+    assert len(psi) == data.month.dt.to_period(freq).nunique() - 1
+
+
+@pytest.mark.parametrize("function", [bad_rate_trend, distribution_plot])
+def test_invalid_frequency_fails_instead_of_changing_grouping(frame, function):
+    with pytest.raises(ValueError, match="freq"):
+        function(frame, date="month", target="target", freq="invalid")
+
+
+def test_prediction_report_resolves_bin_params_before_defaults(frame):
+    from hscredit.report.overdue_predictor import overdue_prediction_report
+
+    expected = overdue_prediction_report(frame, "score", target="target", method="quantile", max_n_bins=3, n_jobs=1)
+    actual = overdue_prediction_report(
+        frame, "score", target="target", bin_params={"method": "quantile", "max_n_bins": 3}, n_jobs=1
+    )
+    assert_frame_equal(actual, expected)
+
+
+def test_swap_bin_params_do_not_override_explicit_method(frame):
+    actual = frame.assign(swap_type=["in_in", "in_out", "out_in", "out_out"] * (len(frame) // 4))
+    config = {"method": "uniform", "max_n_bins": 3}
+    report = swap_analysis(actual, frame, score_col="score", target="target", bin_params=config, n_jobs=1)
+    assert report.config.method == "uniform"
+    overridden = swap_analysis(
+        actual, frame, score_col="score", target="target", method="quantile", bin_params=config, n_jobs=1
+    )
+    assert overridden.config.method == "quantile"
+
+
+def test_model_report_invalid_frequency_cannot_publish_complete_report(frame, tmp_path):
+    from hscredit.report.result import ReportGenerationError
+
+    model = LogisticRegression().fit(frame[["score"]], frame.target)
+    report = ModelReport(model, datasets={"train": frame}, target="target", features="score", n_jobs=1)
+    path = tmp_path / "report.xlsx"
+    path.write_bytes(b"previous-report")
+    with pytest.raises(ReportGenerationError):
+        report.to_excel(path, date="month", freq="invalid", with_plots=False, mode="strict")
+    assert path.read_bytes() == b"previous-report"
+
+
+@pytest.mark.parametrize("keyword", ["feature_names", "method", "method_kwargs"])
+def test_model_report_rejects_removed_keywords_before_prediction(frame, keyword):
+    model = LogisticRegression().fit(frame[["score"]], frame.target)
+    with pytest.raises(TypeError, match=f"{keyword}.*已移除"):
+        ModelReport(model, datasets={"train": frame}, target="target", **{keyword: "ignored"})
+
+
+def test_benchmark_rejects_removed_method_list_keyword(frame):
+    from hscredit.report.feature_analyzer import benchmark_binning_methods
+
+    with pytest.raises(TypeError, match="hscredit_methods.*methods"):
+        benchmark_binning_methods(frame, "score", target="target", hscredit_methods=["quantile"], n_jobs=1)
+
+
+@pytest.mark.parametrize("entry", ["function", "dataframe", "series"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_summary_binning_priority_matches_direct_configuration(frame, entry, explicit):
+    from hscredit.core.eda import feature_summary
+
+    options = {"method": "quantile", "max_n_bins": 4} if explicit else {}
+    config = {"method": "uniform", "max_n_bins": 3}
+    expected = feature_summary(
+        frame, features="score", y="target", force_numeric=["score"], n_jobs=1, **{**config, **options}
+    )
+    common = dict(force_numeric=["score"], n_jobs=1, bin_params=config, **options)
+    if entry == "function":
+        actual = feature_summary(frame, features="score", y="target", **common)
+    elif entry == "dataframe":
+        actual = frame.summary(features="score", y="target", **common)
+    else:
+        actual = frame.score.summary(y=frame.target, **common)
+    assert_frame_equal(actual, expected)
+    assert config == {"method": "uniform", "max_n_bins": 3}
+
+
+def test_efficiency_analysis_uses_explicit_binning_options(frame):
+    from hscredit.report import feature_efficiency_analysis
+
+    options = dict(feature="score", target="target", method="quantile", max_n_bins=4, n_jobs=1)
+    try:
+        expected = feature_efficiency_analysis(frame, **options)
+        actual = feature_efficiency_analysis(frame, bin_params={"method": "uniform", "max_n_bins": 3}, **options)
+        assert_frame_equal(actual["auto_table"], expected["auto_table"])
+    finally:
+        plt.close("all")

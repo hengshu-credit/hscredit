@@ -4,7 +4,8 @@
 主要复用 hscredit.utils.describe 的功能.
 """
 
-from hscredit.utils.arguments import analysis_inputs
+from hscredit.utils.dates import date_groups
+from hscredit.utils.arguments import analysis_inputs, binning_options
 
 import numpy as np
 import pandas as pd
@@ -189,6 +190,7 @@ def missing_analysis(df: pd.DataFrame, threshold: float = 0.0, features: List[st
     return result_df
 
 
+@binning_options(keep_config=True)
 @analysis_inputs('df', roles=('date', 'group'))
 def feature_summary(
     df: pd.DataFrame,
@@ -842,16 +844,7 @@ def population_stability_monitor(expected: pd.DataFrame, actual: pd.DataFrame, s
 
     if date and date in actual.columns:
         actual_copy[date] = pd.to_datetime(actual_copy[date])
-        if freq == "M":
-            actual_copy["_period"] = actual_copy[date].dt.to_period("M").astype(str)
-        elif freq == "W":
-            actual_copy["_period"] = actual_copy[date].dt.to_period("W").astype(str)
-        elif freq == "Q":
-            actual_copy["_period"] = actual_copy[date].dt.to_period("Q").astype(str)
-        elif freq == "D":
-            actual_copy["_period"] = actual_copy[date].dt.date.astype(str)
-        else:
-            actual_copy["_period"] = actual_copy[date].dt.to_period("M").astype(str)
+        actual_copy["_period"] = date_groups(actual_copy[date], freq)
         monitor_dims.append(("date", "_period"))
 
     if group and group in actual.columns:
@@ -1167,18 +1160,7 @@ def feature_group_analysis(
         df = df.copy()
         df[date] = pd.to_datetime(df[date])
 
-        if freq == "M":
-            df["_time_group"] = df[date].dt.to_period("M").astype(str)
-        elif freq == "W":
-            df["_time_group"] = df[date].dt.to_period("W").astype(str)
-        elif freq == "Q":
-            df["_time_group"] = df[date].dt.to_period("Q").astype(str)
-        elif freq == "Y":
-            df["_time_group"] = df[date].dt.to_period("Y").astype(str)
-        elif freq == "D":
-            df["_time_group"] = df[date].dt.date.astype(str)
-        else:
-            df["_time_group"] = df[date].dt.to_period("M").astype(str)
+        df["_time_group"] = date_groups(df[date], freq)
 
         group_keys.append("_time_group")
 

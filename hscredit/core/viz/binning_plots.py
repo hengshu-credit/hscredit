@@ -7,6 +7,7 @@
 注：分箱统计计算已统一收口到hscredit.core.metrics.compute_bin_stats
 """
 
+from hscredit.utils.dates import date_groups, format_time_labels, normalize_freq
 from hscredit.utils.arguments import analysis_inputs, binning_options
 
 from ...utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
@@ -1739,19 +1740,14 @@ def distribution_plot(data, date="date", target: Optional[TargetInput] = None, s
     if 'time' not in str(df[date].dtype):
         df[date] = pd.to_datetime(df[date])
 
-    resample_freq = {
-        'M': pd.offsets.MonthEnd(),
-        'Q': pd.offsets.QuarterEnd(),
-        'Y': pd.offsets.YearEnd(),
-        'A': pd.offsets.YearEnd(),
-    }.get(freq.upper(), freq) if isinstance(freq, str) else freq
+    resample_freq = normalize_freq(freq)
 
     # ---------- 多逾期口径模式 ----------
     if targets.mode == "overdue" or len(targets) > 1:
         # 按日期聚合样本总数
         df_indexed = df.set_index(date)
         total_counts = df_indexed.resample(resample_freq).size()
-        total_counts.index = [i.strftime("%Y-%m-%d") for i in total_counts.index]
+        total_counts.index = format_time_labels(total_counts.index, freq, period=False)
 
         fig, ax1 = plt.subplots(1, 1, figsize=figsize)
         total_counts.plot(kind='bar', ax=ax1, color=colors[0],
@@ -1780,7 +1776,7 @@ def distribution_plot(data, date="date", target: Optional[TargetInput] = None, s
             df_temp = df_indexed.copy()
             df_temp['_bad'] = y_target.values
             bad_rate = df_temp.resample(resample_freq)['_bad'].mean()
-            bad_rate.index = [idx.strftime("%Y-%m-%d") for idx in bad_rate.index]
+            bad_rate.index = format_time_labels(bad_rate.index, freq, period=False)
 
             style = line_styles[i % len(line_styles)]
             color = line_colors[i % len(line_colors)]
@@ -1825,7 +1821,7 @@ def distribution_plot(data, date="date", target: Optional[TargetInput] = None, s
         坏样本=lambda x: (x[target] == 1).astype(int),
     ).resample(resample_freq).agg({"好样本": "sum", "坏样本": "sum"})
 
-    temp.index = [i.strftime("%Y-%m-%d") for i in temp.index]
+    temp.index = format_time_labels(temp.index, freq, period=False)
 
     fig, ax1 = plt.subplots(1, 1, figsize=figsize)
     temp.plot(kind='bar', stacked=True, ax=ax1, color=colors[:2], 
@@ -2316,14 +2312,7 @@ def _prepare_bin_trend_panels(
         working = data.copy()
         if not pd.api.types.is_datetime64_any_dtype(working[date]):
             working[date] = pd.to_datetime(working[date])
-        try:
-            if freq == 'D':
-                working['_date_group'] = working[date].dt.strftime('%Y-%m-%d')
-            else:
-                working['_date_group'] = working[date].dt.to_period(freq).astype(str)
-        except Exception:
-            warnings.warn(f"无法识别 freq={freq}，已回退为按月分组")
-            working['_date_group'] = working[date].dt.to_period('M').astype(str)
+        working['_date_group'] = date_groups(working[date], freq)
         dimensions.append('_date_group')
 
     if dimensions:

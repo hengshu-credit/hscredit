@@ -50,7 +50,7 @@ CASES = [
         "code": '''
 summary = df.summary(
     features=features + ["商品类别"], y="FPD",
-    max_n_bins=4, psi_method="date_col", psi_date_col="放款时间", n_jobs=1,
+    max_n_bins=4, psi_method="date", date="放款时间", n_jobs=1,
 )
 display(summary)
 ''',
@@ -61,7 +61,7 @@ display(summary)
         "description": "在相同数据、目标和最大箱数下比较等频、CART 和最优 IV；summary 的指标聚合由 feature_binning_summary 原生完成。",
         "code": '''
 method_tables, method_summary = feature_binning_summary(
-    df, feature=features, methods=["quantile", "cart", "best_iv"],
+    df, features=features, methods=["quantile", "cart", "best_iv"],
     target="FPD", max_n_bins=4, margins=True, random_state=42, n_jobs=1,
 )
 display(method_summary)
@@ -82,7 +82,7 @@ for feature_name, by_method in method_tables.items():
         "description": "MOB1 与 7、3、0 三个阈值在同一次调用中展开；amount 加入放款金额口径，margins=True 保留方法生成的合计。",
         "code": '''
 multi_dpd_table = feature_bin_stats(
-    df, feature=features, overdue=["MOB1"], dpds=[7, 3, 0],
+    df, features=features, overdue=["MOB1"], dpds=[7, 3, 0],
     amount="放款金额", method="quantile", max_n_bins=4, margins=True, n_jobs=1,
 )
 category_table = feature_bin_stats(
@@ -99,12 +99,12 @@ display(category_table)
         "description": "同一特征和方法在全量数据上拟合一次，各月份或商品类别复用切点，完整返回每组明细与汇总。",
         "code": '''
 monthly_tables, monthly_summary = feature_group_binning_summary(
-    df, feature=features, methods=["quantile", "cart"],
-    date_col="放款时间", freq="M", target="FPD",
+    df, features=features, methods=["quantile", "cart"],
+    date="放款时间", freq="M", target="FPD",
     max_n_bins=4, margins=True, random_state=42, n_jobs=1,
 )
 category_tables, category_summary = feature_group_binning_summary(
-    df, feature=features, methods="quantile", group_col="商品类别", target="FPD",
+    df, features=features, methods="quantile", group="商品类别", target="FPD",
     max_n_bins=4, margins=True, n_jobs=1,
 )
 display(monthly_summary)
@@ -142,7 +142,7 @@ display(figure)
 figure = bin_2d_plot(
     df, features=["衡枢鉴真分老客版", "近六个月非银多头机构数"],
     target="FPD", method="quantile", max_n_bins=4,
-    binner_kwargs={"n_jobs": 1}, save=str(ASSET_DIR / "bin-2d.png"),
+    bin_params={"n_jobs": 1}, save=str(ASSET_DIR / "bin-2d.png"),
 )
 display(figure)
 ''',
@@ -153,7 +153,7 @@ display(figure)
         "description": "保留方法默认分箱行为和完整月份，不缩减分组或二次调整图片；各月份的实际切点以原图标签为准。",
         "code": '''
 figure = bin_trend_plot(
-    df, feature="衡枢鉴真分老客版", target="FPD", date_col="放款时间",
+    df, feature="衡枢鉴真分老客版", target="FPD", date="放款时间",
     method="quantile", max_n_bins=4, n_jobs=1,
     save=str(ASSET_DIR / "bin-trend.png"),
 )
@@ -183,8 +183,8 @@ display(figure)
         "description": "手工规则未传入时使用方法内置分位数切点；自动分箱最多四箱。返回两张完整统计表、原始规则、2×2 对比图及两张月份趋势图。",
         "code": '''
 efficiency = feature_efficiency_analysis(
-    df, feature="衡枢鉴真分老客版", target="FPD", auto_method="quantile",
-    max_n_bins=4, date_col="放款时间", margins=True, n_jobs=1,
+    df, feature="衡枢鉴真分老客版", target="FPD", method="quantile",
+    max_n_bins=4, date="放款时间", margins=True, n_jobs=1,
     trend_kwargs={"n_jobs": 1}, output_dir=str(ASSET_DIR / "efficiency"),
 )
 display(efficiency["manual_table"])

@@ -19,6 +19,7 @@
 采用函数式API设计，与hscredit.core.viz模块风格保持一致。
 """
 
+from hscredit.utils.dates import date_groups
 from hscredit.utils.arguments import analysis_inputs
 
 from ...utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
@@ -1251,7 +1252,7 @@ def approval_rate_trend_plot(
         raise ValueError("必须提供decision_col或(score_col+threshold)")
     
     # 按时间聚合
-    df['_period'] = df[date].dt.to_period(freq)
+    df['_period'] = date_groups(df[date], freq, timestamps=True)
     
     # 仅当提供 target 时才聚合逾期率，避免对 None 列聚合导致 KeyError
     agg_spec = {'_approved': ['count', 'sum', 'mean']}
@@ -1263,7 +1264,7 @@ def approval_rate_trend_plot(
         trend_data.columns = ['period', 'total', 'approved_count', 'approval_rate', 'bad_rate']
     else:
         trend_data.columns = ['period', 'total', 'approved_count', 'approval_rate']
-    trend_data['period'] = trend_data['period'].dt.to_timestamp()
+    trend_data['period'] = pd.to_datetime(trend_data['period'])
     
     # 绘制审批率
     ax.plot(trend_data['period'], trend_data['approval_rate'] * 100,
@@ -1407,10 +1408,7 @@ def bad_rate_trend_plot(
     if date not in df.columns:
         raise ValueError(f"数据集缺少日期列: {date}")
     df[date] = pd.to_datetime(df[date])
-    freq = str(freq).upper()
-    if freq not in {'D', 'W', 'M', 'Q'}:
-        raise ValueError("freq 必须是 'D'/'W'/'M'/'Q' 之一")
-    df['_period'] = df[date].dt.to_period(freq)
+    df['_period'] = date_groups(df[date], freq)
     periods = sorted(df['_period'].dropna().unique())
     positions = np.arange(len(periods))
 

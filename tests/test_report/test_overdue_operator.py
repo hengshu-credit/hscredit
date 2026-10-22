@@ -142,7 +142,7 @@ def test_model_report_multilabel_counts_labels_and_config_roundtrip(data, op):
 
 
 def test_model_target_dict_is_explicit_labels_and_not_overdue_configuration(data):
-    kwargs = dict(model=ProbabilityModel(), datasets={"样本": data}, feature_names=["评分"], n_jobs=1)
+    kwargs = dict(model=ProbabilityModel(), datasets={"样本": data}, features=["评分"], n_jobs=1)
     with pytest.raises(TypeError):
         ModelReport(**kwargs, target={"overdue": "MOB 1", "dpds": 3, "overdue_operator": "<="})
     report = ModelReport(**kwargs, target={"自定义": lambda frame: frame["MOB 1"].le(3)})
@@ -600,7 +600,7 @@ def test_efficiency_auto_kwargs_cannot_override_label_definition(data, op):
 def test_benchmark_accepts_scalar_decimal_threshold(data):
     from hscredit.report.feature_analyzer import benchmark_binning_methods
 
-    params = dict(overdue="MOB 1", overdue_operator=">=", del_grey=True, hscredit_methods=["quantile"], n_jobs=1)
+    params = dict(overdue="MOB 1", overdue_operator=">=", del_grey=True, methods=["quantile"], n_jobs=1)
     scalar = benchmark_binning_methods(data, "评分", dpds=0.5, **params)
     sequence = benchmark_binning_methods(data, "评分", dpds=[0.5], **params)
     assert_frame_equal(scalar, sequence)

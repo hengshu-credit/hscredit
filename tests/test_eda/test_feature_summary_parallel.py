@@ -243,7 +243,7 @@ def test_invalid_binning_config_is_rejected_before_feature_work(bin_params):
     """最终生效的非法分箱配置应在进入字段任务前给出中文错误。"""
     df = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0]})
 
-    with pytest.raises(ValueError, match="分箱"):
+    with pytest.raises((ValueError, TypeError), match="分箱|已移除"):
         feature_summary(
             df,
             y=[0, 0, 1, 1],

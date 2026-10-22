@@ -1,6 +1,7 @@
 """生产规则流转一致性校验."""
 
 from hscredit.utils.arguments import analysis_inputs
+from hscredit.utils.dates import date_groups
 
 import copy
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -478,10 +479,7 @@ class RuleFlow(ParallelizableMixin):
             if date not in data.columns:
                 raise ValueError(f"数据集缺少日期列: {date}")
             parsed = pd.to_datetime(data[date], errors="coerce")
-            try:
-                period = parsed.dt.to_period(freq).astype(str)
-            except ValueError as exc:
-                raise ValueError(f"freq={freq!r} 无法转换为 pandas Period 频率") from exc
+            period = date_groups(parsed, freq)
             group_keys["统计周期"] = period.where(parsed.notna(), other=np.nan)
 
         if group is not None:
@@ -602,7 +600,7 @@ class RuleFlow(ParallelizableMixin):
 
         :param data: 生产拼表后的变量取值明细
         :param date: 日期列名，传入后按 ``freq`` 生成 ``统计周期`` 分组
-        :param freq: pandas Period 频率，默认 ``"M"`` 月
+        :param freq: pandas 日期频率，兼容新旧别名，默认 ``"M"`` 月
         :param group: 类别分组字段，支持单列或多列；可与 ``date`` 同时使用
         :param dropna: 是否丢弃分组字段缺失样本，默认为 True；False 时归入 ``"缺失"``
         :return: 规则级流转命中报表

@@ -22,7 +22,7 @@
 Author: hscredit
 """
 
-from hscredit.utils.arguments import analysis_inputs, bind_column
+from hscredit.utils.arguments import analysis_inputs, bind_column, binning_options
 
 from ..utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
 
@@ -1173,6 +1173,7 @@ def _apply_swap_type_rule_sets(
     return result
 
 
+@binning_options
 @analysis_inputs('swap_df', roles=('amount',), shared_frames=('reference_df',))
 def swap_analysis(
     swap_df: pd.DataFrame,
@@ -1200,6 +1201,7 @@ def swap_analysis(
     method: str = "quantile",
     max_n_bins: int = 10,
     rules=None,
+    bin_params=None,
     **kwargs
 ) -> SwapAnalysisResult:
     """统一的Swap分析入口函数.

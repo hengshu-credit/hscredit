@@ -662,7 +662,7 @@ def test_auto_model_report_writes_a_real_workbook(tmp_path, credit_frame):
             "model": {"kind": "object_ref", "ref": "model:lr"},
             "train": {"kind": "object_ref", "ref": "data:credit"},
         },
-        "parameters": {"datasets": {"训练集": "train"}, "target": "target", "feature_names": ["score", "age"], "with_plots": False, "verbose": False, "n_jobs": 1},
+        "parameters": {"datasets": {"训练集": "train"}, "target": "target", "features": ["score", "age"], "with_plots": False, "verbose": False, "n_jobs": 1},
         "output": {"directory": str(tmp_path), "name": "model_report", "overwrite": False},
         "environment": {"mode": "current", "install_missing": False},
     }

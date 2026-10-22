@@ -21,6 +21,7 @@
 """
 
 from ...utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
+from ...utils.arguments import analysis_inputs
 
 import ast
 import copy
@@ -467,6 +468,7 @@ class Rule(ParallelizableMixin):
         prediction = self.predict(X)
         return X[prediction]
 
+    @analysis_inputs("datasets", roles=("amount",))
     def report(self, datasets: pd.DataFrame, target: Optional[TargetInput] = None, overdue: Optional[Union[str, List[str]]] = None, dpds: Optional[Union[int, float, List[Union[int, float]]]] = None, del_grey: bool = False, desc: str = "", filter_cols: Optional[List[str]] = None, prior_rules: Optional["Rule"] = None, amount: Optional[str] = None, margins: bool = False, *, overdue_operator: str = ">", **kwargs) -> pd.DataFrame:
         """规则效果报告表格输出。
 

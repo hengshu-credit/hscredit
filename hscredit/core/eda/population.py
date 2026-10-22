@@ -11,6 +11,7 @@
 - feature_cross_segment_effectiveness: 特征在不同客群下的有效性矩阵
 """
 
+from hscredit.utils.dates import date_groups
 from hscredit.utils.arguments import analysis_inputs
 
 import warnings
@@ -266,9 +267,7 @@ def population_profile(
     if segment_col is not None and segment_col in df.columns:
         group = segment_col
     elif date is not None and date in df.columns:
-        freq_map = {'M': 'M', 'Q': 'Q', 'Y': 'A'}
-        pf = freq_map.get(freq, 'M')
-        df['__period__'] = pd.to_datetime(df[date]).dt.to_period(pf).astype(str)
+        df['__period__'] = date_groups(df[date], freq)
         group = '__period__'
 
     pct_labels = [f'p{int(p * 100)}' for p in percentiles]
@@ -600,9 +599,7 @@ def segment_drift_analysis(
     validate_dataframe(df, required_cols=[date, segment_col] + features)
 
     df = df.copy()
-    freq_map = {'M': 'M', 'Q': 'Q', 'Y': 'A'}
-    pf = freq_map.get(freq, 'M')
-    df['__period__'] = pd.to_datetime(df[date]).dt.to_period(pf).astype(str)
+    df['__period__'] = date_groups(df[date], freq)
 
     all_periods = sorted(df['__period__'].unique())
     if base_period is None:

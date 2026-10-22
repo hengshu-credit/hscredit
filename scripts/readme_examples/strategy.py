@@ -161,7 +161,7 @@ strategy_writer = swap_out_report(
     rules=[risk_score, high_multi, phone_multi],
     background="比较衡枢风险分、近六个月多头和手机号近期多头规则的覆盖与风险表现。",
     target="FPD", overdue=["MOB1"], dpds=[7, 3, 0],
-    amount="放款金额", date_col="放款时间", freq="M",
+    amount="放款金额", date="放款时间", freq="M",
     features=features, methods="quantile",
     bin_params={"max_n_bins": 4},
     current_pass_rate=0.70, n_jobs=1,

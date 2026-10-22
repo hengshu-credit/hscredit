@@ -3,7 +3,7 @@
 提供规则集综合评估与多标签规则分析功能，以及规则置入置出分析。
 """
 
-from hscredit.utils.arguments import analysis_inputs
+from hscredit.utils.arguments import analysis_inputs, binning_options
 
 from ..utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords, validate_target_mode
 
@@ -969,6 +969,7 @@ def _make_swap_row(
     return row
 
 
+@analysis_inputs('datasets', roles=('amount',))
 def ruleset_analysis(
     datasets: pd.DataFrame,
     rules: List[Rule],
@@ -1218,6 +1219,7 @@ def _merge_label_tables(tables: List[pd.DataFrame], label_names: List[str]) -> p
     return base_table
 
 
+@binning_options(keep_config=True)
 @analysis_inputs('data', roles=('amount',), shared_frames=('reference_data',))
 def rule_swap_analysis(
     data: pd.DataFrame,

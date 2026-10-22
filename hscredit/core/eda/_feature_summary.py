@@ -1,5 +1,6 @@
 """综合特征摘要的输入归一化与并行计算实现。"""
 
+from hscredit.utils.dates import date_groups
 from hscredit.utils.arguments import analysis_inputs
 
 import math
@@ -613,14 +614,7 @@ def _prepare_psi_context(
     if psi_method == "date" and date is not None and date in df.columns:
         try:
             dates = pd.to_datetime(df[date])
-            if freq == "M":
-                periods = dates.dt.to_period("M").astype(str)
-            elif freq == "W":
-                periods = dates.dt.to_period("W").astype(str)
-            elif freq == "Q":
-                periods = dates.dt.to_period("Q").astype(str)
-            else:
-                periods = dates.dt.date.astype(str)
+            periods = date_groups(dates, freq)
             ordered_periods = sorted(periods.dropna().unique().tolist())
             positions = _positions_by_value(periods, ordered_periods)
             pairs = [(positions[first], positions[second]) for index, first in enumerate(ordered_periods) for second in ordered_periods[index + 1 :]]

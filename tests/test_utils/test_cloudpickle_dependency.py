@@ -40,11 +40,11 @@ report = ModelReport(
     DummyClassifier(),
     X_train=frame,
     y_train=pd.Series([0, 1, 0], name="标签"),
-    method=lambda self, x: x["金额"].to_numpy() * factor,
+    prediction_method=lambda self, x: x["金额"].to_numpy() * factor,
     n_jobs=1,
 )
 restored = pickle.loads(pickle.dumps(report))
-assert restored.method(restored, frame).tolist() == [2.0, 4.0, 6.0]
+assert restored.prediction_method(restored, frame).tolist() == [2.0, 4.0, 6.0]
 """
 
     completed = subprocess.run(

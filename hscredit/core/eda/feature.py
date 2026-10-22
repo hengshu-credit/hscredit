@@ -3,6 +3,7 @@
 提供特征分布、异常值检测、集中度分析等功能.
 """
 
+from hscredit.utils.dates import date_groups
 from hscredit.utils.arguments import analysis_inputs
 
 import numpy as np
@@ -444,12 +445,7 @@ def feature_stability_over_time(df: pd.DataFrame,
     
     # 创建时间周期
     period_col = '时间周期'
-    if freq == 'M':
-        df[period_col] = df[date].dt.to_period('M').astype(str)
-    elif freq == 'W':
-        df[period_col] = df[date].dt.to_period('W').astype(str)
-    elif freq == 'Q':
-        df[period_col] = df[date].dt.to_period('Q').astype(str)
+    df[period_col] = date_groups(df[date], freq)
     
     valid_features = [
         col for col in features

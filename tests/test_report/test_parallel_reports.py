@@ -1339,7 +1339,7 @@ def test_model_report_computes_each_dataset_prediction_once():
 @pytest.mark.parametrize("backend", ["threading", "loky"])
 def test_model_report_parallel_tables_match_serial_exactly(backend):
     datasets = _task11_datasets()
-    kwargs = dict(datasets=datasets, overdue="MOB1", dpds=[7, 3, 0], feature_names=["f0", "f1"])
+    kwargs = dict(datasets=datasets, overdue="MOB1", dpds=[7, 3, 0], features=["f0", "f1"])
     serial = ModelReport(_CountingProbabilityModel(), n_jobs=1, **kwargs)
     parallel = ModelReport(
         _CountingProbabilityModel(),

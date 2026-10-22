@@ -4,6 +4,7 @@
 专注于金融风控场景.
 """
 
+from hscredit.utils.dates import date_groups
 from hscredit.utils.arguments import analysis_inputs
 
 from ...utils.targets import TargetInput, bind_targets
@@ -241,10 +242,8 @@ def bad_rate_trend(
 
     validate_dataframe(df, required_cols=[date])
     frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
-    if freq not in ("D", "W", "M", "Q"):
-        raise ValueError("freq必须是'D'/'W'/'M'/'Q'之一")
     dates = pd.to_datetime(frame[date])
-    periods = dates.dt.date if freq == "D" else dates.dt.to_period(freq).astype(str)
+    periods = date_groups(dates, freq)
     results = {}
     for name, values in targets.y_map(frame, "plain").items():
         grouped = values.groupby(periods).agg(["count", "sum", "mean"]).reset_index()
@@ -344,7 +343,7 @@ def sample_distribution(
             return table
         return {name: convert(table) for name, table in result.items()} if isinstance(result, dict) else convert(result)
     dates = pd.to_datetime(df[date])
-    periods = dates.dt.date if freq == "D" else dates.dt.to_period(freq).astype(str)
+    periods = date_groups(dates, freq)
     table = periods.groupby(periods).size().reset_index(name="样本数")
     table.columns = ["时间周期", "样本数"]
     table["样本环比(%)"] = (table["样本数"].pct_change() * 100).round(2)
