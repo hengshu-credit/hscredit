@@ -83,12 +83,12 @@ class TuningObjective:
         return _calc_ks(y, p, weight)
 
     @staticmethod
-    def auc(y_true, y_prob, score_direction="auto", **kwargs):
-        """按统一评分方向计算 AUC，兼容既有字符串目标的自动方向。
+    def auc(y_true, y_prob, score_direction="higher_risk", **kwargs):
+        """按固定坏样本概率方向计算 AUC，可显式指定兼容方向。
 
         :param y_true: 0/1标签；必须同时包含有效好、坏样本。
         :param y_prob: [0, 1] 内的预测值。
-        :param score_direction: auto（默认，兼容原有评分方向）、higher_risk（越大风险越高）
+        :param score_direction: higher_risk（默认，越大风险越高）、auto（显式兼容自动方向）
             或 higher_safe（越大风险越低）。固定坏样本概率评价可显式使用 higher_risk，
             或直接传入不会自动翻向的 AUCMetric 指标对象。
         :param kwargs: 可传 sample_weight。
@@ -292,9 +292,8 @@ class Metric:
     **属性**
 
     name、direction、scorer；``log_loss`` 为正交叉熵，默认最小化。
-    旧名 ``logloss`` 保留负交叉熵最大化语义，便于旧 Study 继续使用。
-    字符串 ``auc`` 沿用 ``score_direction='auto'``；传入 ``AUCMetric()``
-    或绑定 ``score_direction='higher_risk'`` 的目标时，保持显式风险方向。
+    ``logloss`` 与 ``log_loss`` 都是正交叉熵、默认最小化；负交叉熵使用 ``neg_log_loss``。
+    字符串 ``auc`` 与 ``AUCMetric()`` 均保留坏样本概率方向。
 
     **参考样例**
 
@@ -309,7 +308,7 @@ class Metric:
         "ks": {"direction": "maximize"},
         "ks_diff": {"direction": "minimize"},
         "log_loss": {"direction": "minimize"},
-        "logloss": {"direction": "maximize"},
+        "logloss": {"direction": "minimize"},
         "neg_log_loss": {"direction": "maximize"},
         "brier": {"direction": "minimize"},
         **{key: {"direction": "maximize"} for key in ("accuracy", "precision", "recall", "f1")},
@@ -383,7 +382,7 @@ class Metric:
         :param y_train_pred: ks_diff 所需的训练概率。
         :param sample_weight: 显式验证权重；默认不加权。
         :param train_sample_weight: ks_diff 所需训练评估权重。
-        :return: float；优化方向只决定选优，不改变数值符号，旧 logloss 除外。
+        :return: float；优化方向只决定选优，只有显式 neg_log_loss 返回负交叉熵。
 
         >>> round(Metric("log_loss")([0, 1], [0.1, 0.9]), 3)
         0.105
@@ -400,7 +399,7 @@ class Metric:
             value = getattr(TuningObjective, key)(y, p, **({"sample_weight": weight} if weight is not None else {}))
         elif key in {"logloss", "log_loss", "neg_log_loss"}:
             value = float(log_loss(y, p, sample_weight=weight, labels=[0, 1]))
-            if key != "log_loss":
+            if key == "neg_log_loss":
                 value = -value
         elif key == "brier":
             value = float(np.average((y - p) ** 2, weights=weight))

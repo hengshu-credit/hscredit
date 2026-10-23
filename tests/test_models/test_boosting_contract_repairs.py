@@ -414,6 +414,15 @@ def test_catboost_auto_split_slices_baseline_and_uses_weighted_eval_pool(monkeyp
             self.y = y
             self.kwargs = kwargs
 
+        def get_label(self):
+            return self.y
+
+        def get_weight(self):
+            return self.kwargs.get("weight", [])
+
+        def __len__(self):
+            return len(self.y)
+
     class FakeCatBoostClassifier(_ProbabilityFake):
         instance = None
 

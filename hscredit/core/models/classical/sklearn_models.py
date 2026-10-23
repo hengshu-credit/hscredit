@@ -111,10 +111,40 @@ class SklearnRiskModel(BaseRiskModel):
         支持两种调用方式:
         1. 常规方式: fit(X, y)
         2. scorecardpipeline风格: fit(X) 在init中指定target
+
+        eval_set 支持 (X, y) 列表、具名字典及含 target 的 DataFrame 列表，
+        仅用于训练后的评估，不改变训练样本范围。
+        eval_metric 可在构造器或 fit 中指定名称、BaseMetric 或列表；fit 配置优先。
+        eval_sample_weight 为评估权重，多数据集使用 {数据集名称: 权重} 字典。
+        GradientBoosting 通过逐轮预测记录外部评估指标；原生 n_iter_no_change 仍使用内部留出早停。
+
+        **参数补充**
+
+        :param X: 二维特征或包含目标列的 DataFrame；与训练阶段使用相同字段和输入表示。
+        :param y: 一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征。
+        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
+        :param fit_params: 传给底层 fit 的参数。eval_metric 可覆盖构造器指标；sklearn 模型可传 eval_sample_weight。原生参数须与后端一致。
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> metric = get_metric('classification_cost', fn_cost=5, fp_cost=1)
+        >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
+        >>> final_values = model.get_eval_results()
         """
+        from .._workflow import record_eval_results
+        from ..losses.base import BaseLoss
+
+        objective = self.kwargs.get("objective", self.objective)
+        if isinstance(objective, BaseLoss) or callable(objective):
+            raise ValueError(f"{type(self).__name__} 的训练器不支持自定义 objective；请用 loss.metric() 评估或调参选模")
+        eval_metric = fit_params.pop("eval_metric", self.kwargs.get("eval_metric", self.eval_metric))
+        eval_sample_weight = fit_params.pop("eval_sample_weight", None)
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         self._validate_probability_scorecard_labels(y)
+        eval_set = self._prepare_eval_set(eval_set)
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
@@ -132,6 +162,8 @@ class SklearnRiskModel(BaseRiskModel):
 
         # 扩展参数需由原生构造器校验，避免拼写错误被静默忽略。
         for name, value in self.kwargs.items():
+            if name in {"objective", "eval_metric"}:
+                continue
             if name not in params:
                 params[name] = value
 
@@ -154,12 +186,9 @@ class SklearnRiskModel(BaseRiskModel):
 
         # 保存评估结果
         self._evals_result = {}
-        if eval_set:
-            for i, (X_val, y_val) in enumerate(eval_set):
-                scores = self.evaluate(X_val, y_val)
-                self._evals_result[f"validation_{i}"] = scores
+        record_eval_results(self, eval_set, metrics=eval_metric, eval_sample_weight=eval_sample_weight, staged=True)
 
-        for attr, dataset in (("train_score_", "train"), ("validation_score_", "validation")):
+        for attr, dataset in (("train_score_", "train"), ("validation_score_", "internal_validation")):
             values = getattr(self._model, attr, None)
             if values is not None and len(values):
                 self._evals_result[dataset] = {"loss": np.asarray(values).tolist()}
@@ -284,6 +313,11 @@ class RandomForest(SklearnRiskModel):
     :param random_state: 随机种子，默认None
     :param n_jobs: 并行任务数，默认-1
     :param verbose: 是否输出详细信息，默认False
+
+    **参数补充**
+
+    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
     def __init__(
@@ -354,6 +388,11 @@ class ExtraTrees(SklearnRiskModel):
     :param random_state: 随机种子，默认None
     :param n_jobs: 并行任务数，默认-1
     :param verbose: 是否输出详细信息，默认False
+
+    **参数补充**
+
+    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
     def __init__(
@@ -422,6 +461,14 @@ class GradientBoosting(SklearnRiskModel):
     :param criterion: 分裂标准，默认'friedman_mse'
     :param random_state: 随机种子，默认None
     :param verbose: 是否输出详细信息，默认False
+
+    **参数补充**
+
+    :param validation_fraction: 内部验证比例；GradientBoosting 仅在 n_iter_no_change 非 None 时启用，外部 eval_set 不替换该原生早停划分。
+    :param n_iter_no_change: 原生内部早停耐心轮数，None 禁用；ModelTuner 最终 full_data=True 重训会关闭。
+    :param n_jobs: 统一并行预算；-1 自动使用可用资源，1为串行，不传给原生不支持该参数的算法。
+    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
     def __init__(
@@ -437,6 +484,7 @@ class GradientBoosting(SklearnRiskModel):
         validation_fraction: float = 0.1,
         n_iter_no_change: Optional[int] = None,
         random_state: Optional[int] = None,
+        n_jobs: int = 1,
         verbose: bool = False,
         scorecard_params: Optional[Dict[str, Any]] = None,
         **kwargs,
@@ -444,7 +492,7 @@ class GradientBoosting(SklearnRiskModel):
         super().__init__(
             estimator_class=GradientBoostingClassifier,
             random_state=random_state,
-            n_jobs=1,  # GBT不支持n_jobs
+            n_jobs=n_jobs,  # 统一预算；不向原生 GBT 传递其不支持的 n_jobs。
             verbose=verbose,
             scorecard_params=scorecard_params,
             **kwargs,
@@ -490,6 +538,21 @@ class GradientBoosting(SklearnRiskModel):
         支持两种调用方式:
         1. 常规方式: fit(X, y)
         2. scorecardpipeline风格: fit(X) 在init中指定target
+
+        **参数补充**
+
+        :param X: 二维特征或包含目标列的 DataFrame；与训练阶段使用相同字段和输入表示。
+        :param y: 一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征。
+        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
+        :param fit_params: 传给底层 fit 的参数。eval_metric 可覆盖构造器指标；sklearn 模型可传 eval_sample_weight。原生参数须与后端一致。
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> metric = get_metric('classification_cost', fn_cost=5, fp_cost=1)
+        >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
+        >>> final_values = model.get_eval_results()
         """
         return super().fit(X, y, sample_weight, eval_set, **fit_params)
 
@@ -521,6 +584,15 @@ class SVM(SklearnRiskModel):
     >>> model = SVM(C=1.0, kernel="rbf", random_state=42)
     >>> model.fit(X_train, y_train)
     >>> probability = model.predict_proba(X_test)[:, 1]
+
+    **参数补充**
+
+    :param coef0: SVM 的 poly/sigmoid 核常数项，默认0.0。
+    :param shrinking: 是否使用 SVM shrinking 启发式，默认 True。
+    :param tol: 原生求解器的收敛容差；越小通常需要更多迭代。
+    :param max_iter: 求解器迭代上限；SVM 的 -1 表示不设上限。
+    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
     def __init__(
@@ -611,6 +683,11 @@ class DecisionTreeClassifier(SklearnRiskModel):
     >>> model = DecisionTreeClassifier(max_depth=4, min_samples_leaf=20, random_state=42)
     >>> model.fit(X_train, y_train)
     >>> probability = model.predict_proba(X_test)[:, 1]
+
+    **参数补充**
+
+    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
     def __init__(

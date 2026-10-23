@@ -9,7 +9,7 @@ include Makefile
 
 recursive-include hscredit *.py *.xlsx *.csv *.ttf py.typed
 recursive-include docs *.md
-recursive-include examples *.ipynb *.py
+recursive-include examples *.ipynb
 recursive-include scripts *.py
 
 # 私有演示数据与本地审计材料不进入发布包。

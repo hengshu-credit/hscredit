@@ -23,6 +23,7 @@
 
 from .base import BaseLoss, BaseMetric, LossMetric
 from .functional import CallableMetric, make_metric
+from .registry import get_loss, get_metric, list_losses, list_metrics
 from .focal_loss import FocalLoss
 from .asymmetric_focal_loss import AsymmetricFocalLoss
 from .balanced_focal_loss import BalancedFocalLoss
@@ -59,6 +60,10 @@ __all__ = [
     "LossMetric",
     "CallableMetric",
     "make_metric",
+    "get_loss",
+    "get_metric",
+    "list_losses",
+    "list_metrics",
     "AUCMetric",
     "TopKCaptureMetric",
     "TopKLiftMetric",

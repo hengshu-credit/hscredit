@@ -10,6 +10,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.utils.validation import check_is_fitted
 
 from .base import BaseCalibrator
+from .._lifecycle import record_training
 
 
 class PlattCalibrator(BaseCalibrator):
@@ -25,8 +26,21 @@ class PlattCalibrator(BaseCalibrator):
         if hasattr(self, "C") and (not np.isscalar(self.C) or not np.isfinite(self.C) or self.C <= 0):
             raise ValueError("C必须是有限正数")
 
+    @record_training
     def fit(self, y_prob: Union[np.ndarray, pd.Series], y_true: Union[np.ndarray, pd.Series]):
-        """拟合 Platt Scaling 并返回自身。"""
+        """拟合 Platt Scaling 并返回自身。
+
+        **参数补充**
+
+        :param y_prob: 一维原始坏样本概率，取值在[0,1]；不是信用分或 raw margin。
+        :param y_true: 与概率等长的0/1真实标签，1表示坏样本。
+
+        **参考样例**
+
+        >>> from hscredit import PlattCalibrator
+        >>> calibrator = PlattCalibrator().fit(p_train, y_train)
+        >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+        """
         self._validate_configuration()
         probabilities, labels = self._validate_fit_data(y_prob, y_true, require_both_classes=True)
         probabilities = np.clip(probabilities, 1e-15, 1 - 1e-15)
@@ -54,8 +68,21 @@ class IsotonicCalibrator(BaseCalibrator):
         if hasattr(self, "out_of_bounds") and self.out_of_bounds not in {"clip", "nan", "raise"}:
             raise ValueError("out_of_bounds必须是'clip'、'nan'或'raise'")
 
+    @record_training
     def fit(self, y_prob, y_true):
-        """拟合保序回归并返回自身。"""
+        """拟合保序回归并返回自身。
+
+        **参数补充**
+
+        :param y_prob: 一维原始坏样本概率，取值在[0,1]；不是信用分或 raw margin。
+        :param y_true: 与概率等长的0/1真实标签，1表示坏样本。
+
+        **参考样例**
+
+        >>> from hscredit import IsotonicCalibrator
+        >>> calibrator = IsotonicCalibrator().fit(p_train, y_train)
+        >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+        """
         self._validate_configuration()
         probabilities, labels = self._validate_fit_data(y_prob, y_true, require_both_classes=True)
         self.iso_ = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds=self.out_of_bounds)
@@ -71,8 +98,21 @@ class IsotonicCalibrator(BaseCalibrator):
 class BetaCalibrator(BaseCalibrator):
     """使用 ``log(p)`` 与 ``-log(1-p)`` 特征拟合 Beta 校准。"""
 
+    @record_training
     def fit(self, y_prob, y_true):
-        """拟合 Beta 校准逻辑回归并返回自身。"""
+        """拟合 Beta 校准逻辑回归并返回自身。
+
+        **参数补充**
+
+        :param y_prob: 一维原始坏样本概率，取值在[0,1]；不是信用分或 raw margin。
+        :param y_true: 与概率等长的0/1真实标签，1表示坏样本。
+
+        **参考样例**
+
+        >>> from hscredit import BetaCalibrator
+        >>> calibrator = BetaCalibrator().fit(p_train, y_train)
+        >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+        """
         self._validate_configuration()
         probabilities, labels = self._validate_fit_data(y_prob, y_true, require_both_classes=True)
         probabilities = np.clip(probabilities, 1e-15, 1 - 1e-15)
@@ -95,8 +135,21 @@ class HistogramCalibrator(BaseCalibrator):
     def __init__(self, n_bins: int = 10, strategy: str = "quantile"):
         super().__init__(n_bins=n_bins, strategy=strategy)
 
+    @record_training
     def fit(self, y_prob, y_true):
-        """拟合直方图边界和箱内频率并返回自身。"""
+        """拟合直方图边界和箱内频率并返回自身。
+
+        **参数补充**
+
+        :param y_prob: 一维原始坏样本概率，取值在[0,1]；不是信用分或 raw margin。
+        :param y_true: 与概率等长的0/1真实标签，1表示坏样本。
+
+        **参考样例**
+
+        >>> from hscredit import HistogramCalibrator
+        >>> calibrator = HistogramCalibrator().fit(p_train, y_train)
+        >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+        """
         self._validate_configuration()
         probabilities, labels = self._validate_fit_data(y_prob, y_true)
         if self.strategy == "quantile":

@@ -28,7 +28,21 @@ def trial_path(tuner, number, fold=None):
 
 def compact_training_record(record):
     """摘要不携带验证矩阵、样本参数、回调及其捕获对象。"""
-    keys = {"开始时间", "样本数", "依赖版本", "状态", "错误类型", "错误信息", "耗时秒", "最佳迭代", "最佳得分"}
+    keys = {
+        "开始时间",
+        "样本数",
+        "依赖版本",
+        "状态",
+        "错误类型",
+        "错误信息",
+        "耗时秒",
+        "最佳迭代",
+        "最佳得分",
+        "训练修订",
+        "评估集名称",
+        "最终评估",
+        "内部转换",
+    }
     return {name: value for name, value in record.items() if name in keys}
 
 
@@ -46,6 +60,9 @@ def compact_fold(record):
         "制品路径",
         "评估口径",
         "补充LIFT口径",
+        "验证来源",
+        "评估集名称",
+        "搜索评分数据集",
     }
     result = {name: value for name, value in record.items() if name in keys}
     for name, size_name in (("训练位置", "训练样本数"), ("验证位置", "验证样本数")):

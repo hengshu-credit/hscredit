@@ -137,6 +137,11 @@ class CatBoost(BaseRiskModel):
     基于 CatBoost 梯度提升框架（有序提升 + 类别特征原生处理），见
     Prokhorenkova, L. et al. (2018). *CatBoost: unbiased boosting with
     categorical features.* NeurIPS；文档 https://catboost.ai/docs/ 。
+
+    **参数补充**
+
+    :param n_jobs: 统一并行预算；-1 自动使用可用资源，1为串行，不传给原生不支持该参数的算法。
+    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
     """
 
     _preserve_dataframe = True
@@ -255,12 +260,21 @@ class CatBoost(BaseRiskModel):
         :param X: 特征矩阵
         :param y: 目标变量，可选
         :param sample_weight: 样本权重
-        :param eval_set: 验证集列表
+        :param eval_set: [(X_valid, y_valid)]、具名字典、DataFrame列表或单个数据集；
+            含标签的 DataFrame 通过 target 提取标签，也保留 CatBoost 原生 Pool 支持。
         :param cat_features: 类别特征索引列表
         :param fit_params: 其他fit参数
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> metric = get_metric('classification_cost', fn_cost=5, fp_cost=1)
+        >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
+        >>> final_values = model.get_eval_results()
         """
         eval_metric = fit_params.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
+        self._validate_custom_loss_options()
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         scorecard_sample_weight = sample_weight
@@ -379,6 +393,13 @@ class CatBoost(BaseRiskModel):
         if params.get("eval_metric") is None and isinstance(loss_object, BaseLoss):
             params["eval_metric"] = loss_object.metric()
         metric_object = params.get("eval_metric")
+        from ..losses._sample_params import has_bound_sample_params
+
+        if has_bound_sample_params(metric_object):
+            raise ValueError(
+                "CatBoost 回调无法标识逐行金融数组对应的样本；请使用 Pool/sample_weight 的金额权重，"
+                "或训练后 evaluate(metrics=loss.metric()) 分别评估"
+            )
         if isinstance(metric_object, BaseMetric):
             params["eval_metric"] = metric_object.to_catboost()
         resolved_loss = self._resolve_catboost_loss(loss_object)
@@ -437,6 +458,9 @@ class CatBoost(BaseRiskModel):
                         dataset_metrics[metric_object.name] = dataset_metrics.pop(native_name)
         self._is_fitted = True
         self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
+        from .._workflow import record_boosting_evaluation
+
+        record_boosting_evaluation(self, eval_set, eval_metric=metric_object)
 
         return self
 
@@ -473,12 +497,12 @@ class CatBoost(BaseRiskModel):
     def predict_proba(self, X: Union[np.ndarray, pd.DataFrame], **predict_params) -> np.ndarray:
         """预测概率.
 
-        当使用自定义损失函数（loss_function 为可调用对象）时，CatBoost 返回的是
-        未经过链接函数转换的原始分数（raw margin，一维数组），此处自动应用
-        sigmoid 转换为概率并补齐为二维 (n_samples, 2) 输出，与内置目标保持一致。
+        默认返回类别顺序为 classes_ 的两列概率，shape=(n_samples, 2)。
+        原生返回两列概率时直接透传；仅兼容一维 raw margin 输出时应用一次 sigmoid，
+        调用后不应再次转换。自定义训练目标与内置目标使用相同的公开概率语义。
         """
         self._require_fitted()
-        X = self._prepare_data(X)[0]
+        X = X if isinstance(X, cb.Pool) else self._prepare_data(X)[0]
         proba = np.asarray(self._model.predict_proba(X, **predict_params))
 
         # 自定义损失返回一维原始分数，应用 sigmoid 并补齐为两列概率

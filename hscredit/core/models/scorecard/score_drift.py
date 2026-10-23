@@ -75,11 +75,13 @@ from scipy.special import expit, logit
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 from .._contracts import ExtraParamsMixin, extract_target
+from .._lifecycle import record_training
+from .._workflow import TrainingProcessMixin
 
 logger = logging.getLogger(__name__)
 
 
-class BaseDriftCalibrator(BaseEstimator, ABC):
+class BaseDriftCalibrator(TrainingProcessMixin, BaseEstimator, ABC):
     """评分漂移校准器基类.
 
     所有漂移校准器的抽象基类，定义统一接口。
@@ -150,7 +152,14 @@ class BaseDriftCalibrator(BaseEstimator, ABC):
         :param X: 当前生产环境数据
         :param y: 目标变量，可选
         :param X_reference: 参考数据(训练数据)，可选
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import ScoreDriftCalibrator
+        >>> drift = ScoreDriftCalibrator(method='linear').fit(model, X_valid, y_valid, X_reference=X_train)
+        >>> aligned = drift.predict_score(X_test)
         """
         pass
 
@@ -358,6 +367,7 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
         self.target_mean = target_mean
         self.target_std = target_std
 
+    @record_training
     def fit(
         self,
         model: Any,
@@ -374,7 +384,14 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
         :param y: 目标变量，可选
         :param X_reference: 参考数据，可选
         :param target: 目标列名
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import ScoreDriftCalibrator
+        >>> drift = ScoreDriftCalibrator(method='linear').fit(model, X_valid, y_valid, X_reference=X_train)
+        >>> aligned = drift.predict_score(X_test)
         """
         # 准备数据(y可选)
         X_prep, _ = self._prepare_data(X, y, target, require_y=False)
@@ -480,6 +497,7 @@ class QuantileAligner(BaseDriftCalibrator):
         self.n_quantiles = n_quantiles
         self.interpolation = interpolation
 
+    @record_training
     def fit(
         self,
         model: Any,
@@ -496,7 +514,14 @@ class QuantileAligner(BaseDriftCalibrator):
         :param y: 目标变量，可选
         :param X_reference: 参考数据，可选
         :param target: 目标列名
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import ScoreDriftCalibrator
+        >>> drift = ScoreDriftCalibrator(method='linear').fit(model, X_valid, y_valid, X_reference=X_train)
+        >>> aligned = drift.predict_score(X_test)
         """
         # 准备数据(y可选)
         X_prep, _ = self._prepare_data(X, y, target, require_y=False)
@@ -612,6 +637,7 @@ class BinningRecalibrator(BaseDriftCalibrator):
         self.n_bins = n_bins
         self.binning_strategy = binning_strategy
 
+    @record_training
     def fit(
         self,
         model: Any,
@@ -630,7 +656,14 @@ class BinningRecalibrator(BaseDriftCalibrator):
         :param X_reference: 参考数据
         :param y_reference: 参考标签
         :param target: 目标列名
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import ScoreDriftCalibrator
+        >>> drift = ScoreDriftCalibrator(method='linear').fit(model, X_valid, y_valid, X_reference=X_train)
+        >>> aligned = drift.predict_score(X_test)
         """
         # 准备数据(需要y)
         X_prep, y_prep = self._prepare_data(X, y, target, require_y=True)
@@ -806,6 +839,7 @@ class ScoreDriftCalibrator(ExtraParamsMixin, BaseDriftCalibrator):
 
     _extra_params_attribute = "calibrator_params"
 
+    @record_training
     def fit(
         self,
         model: Any,
@@ -832,7 +866,14 @@ class ScoreDriftCalibrator(ExtraParamsMixin, BaseDriftCalibrator):
         :param X_reference: 参考数据
         :param y_reference: 参考标签，可选
         :param target: 目标列名，默认使用初始化时设置的target
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import ScoreDriftCalibrator
+        >>> drift = ScoreDriftCalibrator(method='linear').fit(model, X_valid, y_valid, X_reference=X_train)
+        >>> aligned = drift.predict_score(X_test)
         """
         # 使用初始化时设置的target
         target = target or self.target

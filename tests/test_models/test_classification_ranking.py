@@ -87,7 +87,7 @@ def test_auc_rejects_invalid_direction_and_keeps_single_class_ks_contract():
 
 @pytest.mark.parametrize("score", [[0.8, 0.2, 0.3, 0.1], [0.1, 0.5, 0.5, 0.9], [0.5] * 4])
 def test_all_auc_entry_points_share_direction_and_tie_handling(score):
-    """报告、模型评估、调参、逐步筛选、Gini回调和ROC数据的AUC必须一致。"""
+    """概率入口固定风险方向；未知方向的单变量入口保留显式 auto 兼容语义。"""
     from sklearn.metrics import auc as curve_area
     from hscredit.core.metrics import roc_curve
     from hscredit.core.models.base import _evaluate_binary_predictions
@@ -104,18 +104,17 @@ def test_all_auc_entry_points_share_direction_and_tie_handling(score):
     result = _evaluate_binary_predictions(y, score, score > 0.5, metrics=["auc", "gini"])
     fpr, tpr, _ = roc_curve(y, score)
     values = [
-        auc(y, score),
         result["AUC"],
         TuningObjective.auc(y, score),
         Metric("auc")(y, score),
-        StepwiseSelector()._calculate_auc(y, score),
-        _auc(y, score),
         _binary_metric_worker((y, score))[1],
         (GiniMetric()(y, score) + 1) / 2,
-        curve_area(fpr, tpr),
     ]
-    np.testing.assert_allclose(values, expected)
-    assert result["Gini"] == pytest.approx(2 * expected - 1)
+    np.testing.assert_allclose(values, raw)
+    np.testing.assert_allclose(
+        [auc(y, score), StepwiseSelector()._calculate_auc(y, score), _auc(y, score), curve_area(fpr, tpr)], expected
+    )
+    assert result["Gini"] == pytest.approx(2 * raw - 1)
     assert GiniMetric(score_direction="higher_risk")(y, score) == pytest.approx(2 * raw - 1)
     assert KSMetric()(y, score) == ks(y, score)
     frame = pd.DataFrame({"特征": score, "目标": y})

@@ -1,5 +1,213 @@
 # 模型训练、调参与保存
 
+## 常用路径：单模型、单次验证
+
+真实放款样例：[Notebook](../../examples/single_validation_workflow.ipynb)。
+在 Jupyter 中按单元格顺序执行，或运行 `python scripts/validate_examples.py --pattern single_validation_workflow.ipynb`。
+
+`fit(X_train, y_train)` 始终训练一个模型，不自动做交叉验证。
+`tune()` / `ModelTuner` / `AutoTuner.create()` 的 `cv` 默认均为 `None`：
+优先使用显式 `eval_set`；未提供时只按 `validation_fraction=0.2` 留出一次。
+所有参数点复用同一次划分。只有显式 `cv=5`、分割器或索引序列才启用多折。
+
+评估数据统一使用 XGBoost / LightGBM sklearn 接口的参数名 **`eval_set`**。
+其容器形式参考 `ModelReport(datasets=...)`，训练和调参均可使用：
+
+| 输入模式 | 示例 | 数据集名称 |
+| --- | --- | --- |
+| 原生列表 | `[(X_train, y_train), (X_valid, y_valid)]` | 数据集1、数据集2 |
+| 具名字典 | `{'训练监控': (X_train, y_train), '验证集': (X_valid, y_valid)}` | 保留字典名称和顺序 |
+| DataFrame 列表 | `[train_df, valid_df]` | 数据集1、数据集2；通过模型 target 提取标签 |
+| DataFrame 字典 | `{'训练监控': train_df, '验证集': valid_df}` | 保留名称；通过 target 提取标签 |
+| 混合形式 | `{'训练监控': train_df, '验证集': (X_valid, y_valid)}` | 每集独立解析标签 |
+| 单个数据集 | `(X_valid, y_valid)` 或 `valid_df` | 数据集1 |
+
+显式 `y` 优先于 DataFrame 中的目标列，目标列始终从特征中剔除；每个评估集沿用训练字段顺序。
+含标签的 DataFrame 需要在模型或调参器上配置 `target='FPD'`。原生矩阵也可使用 ndarray/稀疏矩阵。
+调参以**最后一个数据集**计算搜索指标，`validation_weight` 也对应这一集；所有输入均不会自动并入最终重训。
+所有可训练特征模型收到完整评估集列表。NGBoost 原生早停使用最后一集，其余集合也保留最终指标与逐轮预测评估。
+最终测试/OOT留在模型选定后单独评估，不作为选参数据。
+
+名称可在模型的 `eval_names_`、`training_summary_['评估集名称']`，调参器的
+`validation_summary_`、每次试验记录及 `get_validation_predictions()['数据集']` 中查看。
+名称元数据描述传入的评估集，原生训练曲线保持框架自身的键名与能力；Pipeline的内部早停集见下文说明。
+
+```python
+from hscredit import LightGBM, get_loss, get_metric, list_losses, list_metrics
+
+list_losses()                         # 中文用途、类名与全部构造参数
+list_metrics()                        # 中文用途、参数和优化方向
+loss = get_loss("cost_sensitive", fn_cost=5, fp_cost=1)
+monitor = loss.metric()                # 训练代理损失，默认 kind="loss"
+metric = loss.metric(kind="business")  # 实际误判成本；同一方法选择评估含义
+
+model = LightGBM(
+    objective=loss,
+    eval_metric=[monitor, metric, get_metric("auc")],
+    early_stopping_metric=monitor.name,
+    early_stopping_rounds=20,
+    n_estimators=300,
+    random_state=42,
+)
+# 已有参数：直接单次训练。
+model.fit(X_train, y_train, eval_set=[(X_valid, y_valid)])
+# 需要选参：每个 point 只训练一次，用同一验证集比较。
+best = model.tune(
+    X_train, y_train,
+    eval_set=[(X_valid, y_valid)],
+    metric=metric,
+    search_space={"max_depth": [2, 3, 4], "num_leaves": [4, 8]},
+    n_trials=10,
+)
+best.tuner.validation_summary_         # 验证方式、划分数、最终训练样本数
+best.tuner.get_optimization_history()  # 每个 point 的效果
+best.tuner.get_validation_predictions()
+best.tuner.get_trial_result(0)["各折"][0]["评估曲线"]
+best.evaluate(X_test, y_test, metrics=[metric, get_metric("auc")])
+```
+
+验证集用于早停和选参，独立测试集/OOT用于最后验收。直接提升器复用留出验证集早停，
+不额外随机拆一次；Pipeline 保留预处理契约，其末端模型若启用早停会在训练部分内部划分，
+不会将未经预处理的验证特征直接送入末端模型。需要指定其早停集时仍可通过原生 fit 参数配置。
+
+`validation_weight` 只对最后一个评估集的指标加权；训练权重仍为 `sample_weight`。
+逐轮监控的权重使用各框架原生 `eval_sample_weight` 等配置，不把指标权重静默变成训练权重。
+`eval_set` 不能与显式多折 `cv` 同时使用。按客户组留出时可传 `groups`；
+需要时间验证时建议提供按时间划好的验证集，默认单次留出仍是分层随机划分。
+
+选参后的 `best` 是一个重新训练的模型，不自动平均各折预测。提升器默认依据验证最佳轮数
+在传给 `tune` 的完整训练输入上重训，独立 `eval_set` 不会自动并入。
+若希望纳入验证数据，应显式组合数据后再训练，并保留独立测试集。
+
+多折仅在需要时启用：`model.tune(X_train, y_train, cv=5, ...)`。
+`get_validation_predictions()` 统一查看验证结果；多折时仍支持原有 `get_oof_predictions()`。
+`get_fold_models()` 显式取得各折模型，需 `retention="full"/"disk"` 或保留完整最佳点；
+它不会替换 `get_best_model()` 返回的单模型。单次留出只返回参加验证的样本，独立验证集不称为训练集OOF。
+
+`get_metric(loss, kind="business")` 与 `loss.metric(kind="business")` 共用实现；
+也可直接 `get_metric("topk_capture", top_ratio=.05)` 或传自定义概率函数与 `greater_is_better`。
+旧 `business_metric()` 保留兼容并给出弃用提示，新代码统一使用 `metric(kind=...)`。
+原有 `loss.metric()` 的损失值语义保持不变，避免把原来最小化的目标静默改成最大化。
+
+**默认值迁移**：以前省略 `cv` 会运行五折，现在只做一次留出验证。要复现旧实验请显式设置 `cv=5`。
+已有持久化 Study 不应切换验证方式续跑；请为新的验证口径建立新 Study。
+
+## 结果核对、训练过程与金融指标报告
+
+函数内也提供完整参数说明和示例，可在 IDE 中查看或调用 `help(ModelTuner)`、
+`help(model.model_report)`、`help(report.to_excel)`。新增的
+[完整链路 Notebook](../../examples/model_training_chain.ipynb) 使用真实数据从搜索运行到模型保存和 Excel 导出；
+[链路复核记录](model-chain-review-2026-10-23.md) 说明已修复断点与剩余能力边界。
+
+### 全模型适配范围
+
+`eval_set` 同时支持 `(X, y)`、`[(X, y), ...]`、`{"时间验证": (X, y)}`、单个含目标列的
+DataFrame、DataFrame 列表、具名 DataFrame 字典和混合形式。含目标列时配置 `target`；显式 y 优先，
+目标列始终从特征剔除。以下模型均支持 `fit(..., eval_set=..., eval_metric=...)`、
+`evaluate(..., metrics=...)`、`get_eval_results()`、`get_training_history()`、`get_learning_curve()`：
+
+| 模型 | 验证过程 | 训练损失 |
+| --- | --- | --- |
+| LogisticRegression、RandomForest、ExtraTrees、SVM、DecisionTreeClassifier | 完成训练后评估各集，不因 eval_set 拆分训练样本 | 使用算法原生目标；统一金融指标可用于离线评估和选模 |
+| GradientBoosting | 保留原生训练损失，并用 staged_predict_proba 记录各评估集逐轮指标 | sklearn 原生 loss；完整数据重训关闭 n_iter_no_change |
+| XGBoost、LightGBM | 原生训练曲线、早停及最终模型评估 | objective 接收 BaseLoss，处理 raw margin 与概率的链接转换 |
+| CatBoost | 原生曲线、早停及最终模型评估，保留原生 Pool 兼容 | objective 接收可独立逐样本计算的 BaseLoss |
+| NGBoost | 最后一集用于原生早停；所有评估集保留最终指标及逐轮预测评估 | objective 接收可独立逐样本计算的 BaseLoss，自动配套 Score/Dist |
+| ScoreCard、RoundScoreCard | 最终概率指标；记录 WOE 输入、评分公式、方向与取整配置 | 由底层 LR 训练；取整只影响评分，不替换底层概率 |
+| ProbabilityScoreCard | 最终概率指标，报告保留底层模型与评分转换记录 | 由 model 的算法决定；prefit 模式复用已有模型 |
+| RulesClassifier | 最终规则评估；分类指标使用真实 AND/OR 逻辑及 threshold | 验证规则和字段，不进行梯度训练 |
+| ProbabilityCalibrator | 最终校准概率指标、校准前后指标、基础模型是否重训 | 使用所选校准算法；calib_ratio 控制基础训练和校准划分 |
+
+上述 15 类模型均可通过 `ModelTuner(model, metric=..., cv=None)` 做单次验证搜索；显式 `cv=2`
+等配置启用多折。评分卡、规则模型和校准器需要显式提供适合其业务的 `search_space`。
+`CalibratedModel` 组合已训练对象，支持统一评估和模型报告；需要搜索时配置可训练的基础模型或
+`ProbabilityCalibrator`。预训练评分卡和校准包装器不会为了统一 API 而偷偷重新训练基础模型。
+
+纯变换组件也保留过程：`Standard/Linear/Quantile/BoxCoxScoreTransformer` 和统一 `ScoreTransformer`
+记录每次拟合；`Platt/Isotonic/Beta/HistogramCalibrator` 支持同一金融 metric 评估校准后的概率；
+`ScoreDriftCalibrator` 的 linear/quantile/binning 方法记录拟合。
+它们保留概率或评分输入语义，不能把特征矩阵训练参数直接传给纯变换。
+
+没有逐轮接口的算法返回空曲线表，最终结果在 `get_eval_results()`，不会把最终值伪装成一轮训练。
+NGBoost 和 GradientBoosting 的额外指标使用 staged 预测计算，不重新训练；会增加与评估集大小、轮数相应的预测开销。
+Boosting 的 `get_eval_results()` 默认计算 AUC、KS、LogLoss；传入 BaseMetric 时计算这些对象。
+框架专用的字符串指标及原生回调值保留在 `evals_result_` / `get_learning_curve()`。
+NGBoost 原生早停要求训练和验证权重同时存在。只给其中一方时，包装器用全1表示另一方的等权语义，
+并在“内部转换 / 原生权重适配”中记录；不会拿训练金额代替验证金额。
+
+```python
+from hscredit import LogisticRegression, get_loss, get_metric
+
+cost = get_loss("cost_sensitive", fn_cost=7, fp_cost=1).metric(kind="business")
+model = LogisticRegression(target="FPD", calculate_stats=False, max_iter=1000)
+model.fit(train_df, eval_set={"时间验证": valid_df}, eval_metric=[cost, get_metric("auc")])
+model.get_eval_results()             # 最终模型，各评估集的指标
+model.get_training_history()         # 包含内部转换与训练配置
+model.get_learning_curve()           # LR 无公开逐轮曲线，返回空表
+report = model.model_report(datasets={"验证": valid_df}, metrics=[cost], verbose=False)
+report.get_training_process()        # 报告持有的训练/调参/底层变换快照
+```
+
+所有特征模型的完整报告统一用 `model.model_report(...)` 或 `ModelReport(model, datasets=...)`。
+原有 `model.report(...)` 保持兼容：ProbabilityScoreCard.report 仍为评分分箱表，
+ProbabilityCalibrator.report 仍为校准对照表。新代码使用 model_report 可避开这些历史差异。
+
+`loss` 的**训练能力**取决于底层算法；其 `metric()` 的**评估能力**与模型类型无关。
+例如随机森林不能接受任意梯度目标，但可以用同一个成本指标评价、搜索和出报告。
+不能训练的 objective 会明确报错。CatBoost/NGBoost 不接受依赖全量排序或绑定逐行数组的训练损失，
+可用原生 sample_weight 表达金额权重，或训练后使用绑定相应评估样本的 metric。
+CatBoost 指标回调也无法可靠标识外部金融数组的行身份，包装器拒绝这类绑定；不会按长度猜数据集。
+框架协议参见 [CatBoost 自定义损失](https://catboost.ai/docs/en/concepts/python-usages-examples#user-defined-loss-function)
+和 [NGBoost Score/Dist](https://stanfordmlgroup.github.io/ngboost/5-dev.html)。
+
+训练、选参、离线评估和报告可以使用同一个 `get_metric(...)` 或 `loss.metric(...)` 对象：
+
+```python
+metric = loss.metric(kind="business")
+offline = best.evaluate(X_test, y_test, metrics=[metric])
+report = best.report(
+    datasets={"测试集": (X_test, y_test)}, metrics=[metric], verbose=False,
+)
+report.get_metrics()                   # 包含同名、同数值的业务指标
+best.get_training_history()            # 历次训练状态、配置、实际参数和耗时
+best.get_learning_curve()              # 最新训练逐轮长表
+best.get_learning_curve(revision=1)    # 旧训练曲线，受 max_history 保留次数限制
+best.tuner.get_learning_curve(0)        # 第0个参数点各折的逐轮记录
+report.get_training_process()          # 报告绑定时的训练与调参过程快照
+report.to_excel("模型报告.xlsx", mode="strict", return_result=True)
+```
+
+Excel新增“8-训练与调参过程”：模型口径、历史训练、曲线、逐点参数与得分、各折指标、选中试验曲线和重训配置。
+最终重训没有配置评估集时，本身没有验证曲线；对应搜索点的曲线仍单独保留，不能把二者混为同一次训练。
+默认训练历史摘要继续限制原始矩阵/参数对象的保存量，但逐轮曲线独立保存，不再按32或256项截断。
+`get_training_history()` 返回有界摘要，显式full历史的原始参数仍在 `training_history_` 中。
+
+报告绑定训练版本与配置快照。模型重新fit后，旧报告会明确报错，需重新创建；不会展示旧预测和新模型参数。
+调参器继续搜索时，已经创建的报告保留其当时的过程快照。过程缺少制品时会在过程表中写明原因。
+
+指标口径现在固定如下：
+
+- 模型概率评估的AUC/Gini、调参字符串`auc`与指标对象保持坏样本概率方向；反向预测不会被自动美化。
+  通用 `hscredit.core.metrics.auc` 仍保留既有auto默认，处理未知方向评分时可显式使用。
+- `logloss` 与 `log_loss` 都是正损失、最小化；需要负损失时使用 `neg_log_loss`。
+  旧Study与新指标协议不可混用，迁移后创建新Study。
+- 报告 `prediction_method="predict_score"` 根据模型评分刻度确定方向；也可显式传 `score_direction="higher_safe"/"higher_risk"`。
+  原始评分保持不变，风险排序单独处理。取整/截断造成的同分可能使评分与原始概率的指标略有差别。
+- TOP表、模型评估和业务指标共用“人数向上取整、边界同分等比例计入”；无有效坏样本时报告显示空值。
+  分档LIFT图则使用统一等频分箱器和 `compute_bin_stats`，同分不会按行序随意拆开；分档LIFT与累计TOP-LIFT有不同含义。
+- KS、AUC、金融指标与TOP表支持显式权重。报告 `sample_weight="放款金额"` 或 `{数据集名称: 权重}`
+  用于指标统计；样本数、字段描述和基础分箱样本表仍保留人数口径，金额分箱另用 `amount` 指定。
+  统一金融指标需要概率输入，不能把0–1000信用分直接当作概率计算利润或交叉熵。
+
+自定义训练损失不能再静默忽略 `scale_pos_weight/is_unbalance`；无效组合在fit前报错。
+应通过损失自身参数或 `sample_weight` 控制成本。XGBoost的自定义损失下，auto类别权重的实际值为1。
+
+XGBoost/LightGBM单次自动留出现在会同步切分 `AmountWeightedLoss` 的金额，及 `ExpectedValueLoss` 的逐行金融参数，
+不修改调用者的原始loss；切分样本数记录在训练摘要中。外部验证需显式配置其自身的配套指标，
+例如 `eval_metric=loss.metric(amounts=valid_amounts)`。多个验证集不能共用一份绑定数组。
+复杂逐行参数的CV自动路由仍未开放；现阶段金额加权可用 `sample_weight` / `validation_weight` / `evaluation_weight`，
+复杂场景使用明确的自定义trial流程。此限制是为了防止同长度、不同样本的数组被错误复用。
+
 ## 1. 最短训练路径
 
 ```python
@@ -324,3 +532,6 @@ python scripts/validate_examples.py --pattern 28_model_workflow.ipynb
 覆盖双 API 防泄漏、字段顺序、概率校准、五档结果保留的数值等价、按需读取、
 完整与推理制品保存恢复、续跑和显式资源释放。缺失值只使用训练集统计量处理。
 输出默认位于独立临时目录，可在配置单元格修改路径。示例不再依赖独立 `.py` 演示脚本。
+
+[模型家族验证 Notebook](../../examples/model_family_validation.ipynb) 补充十种基础分类器的训练、
+概率/评分保存恢复、类别特征与 SQLite 调参续跑验证；需要兼容的 boosting 可选依赖。

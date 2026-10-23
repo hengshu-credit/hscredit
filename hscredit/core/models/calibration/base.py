@@ -8,12 +8,13 @@ import pandas as pd
 from sklearn.base import BaseEstimator
 
 from ....utils.serialization import ArtifactSerializableMixin
+from .._workflow import TrainingProcessMixin
 
 if TYPE_CHECKING:
     import matplotlib
 
 
-class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
+class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstimator, ABC):
     """概率校准算法的统一基类。
 
     **参数**
@@ -86,7 +87,45 @@ class BaseCalibrator(ArtifactSerializableMixin, BaseEstimator, ABC):
 
     @abstractmethod
     def fit(self, y_prob, y_true):
-        """使用原始正类概率和 0/1 标签拟合校准映射。"""
+        """使用原始正类概率和 0/1 标签拟合校准映射。
+
+        **参数补充**
+
+        :param y_prob: 一维原始坏样本概率，取值在[0,1]；不是信用分或 raw margin。
+        :param y_true: 与概率等长的0/1真实标签，1表示坏样本。
+
+        **参考样例**
+
+        >>> from hscredit import PlattCalibrator
+        >>> calibrator = PlattCalibrator().fit(p_train, y_train)
+        >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+        """
+
+    def evaluate(self, y_prob, y_true, *, metrics=None, sample_weight=None):
+        """使用与特征模型相同的指标入口评估校准后的概率。
+
+        **参数补充**
+
+        :param y_prob: 一维原始坏样本概率，取值在[0,1]；不是信用分或 raw margin。
+        :param y_true: 与概率等长的0/1真实标签，1表示坏样本。
+        :param metrics: 统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置。
+        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> values = calibrator.evaluate(p_valid, y_valid, metrics=get_metric('brier'))
+        """
+        from ..base import _evaluate_binary_predictions
+
+        p = self.calibrate(y_prob)
+        return _evaluate_binary_predictions(
+            y_true,
+            p,
+            (p >= 0.5).astype(int),
+            metrics=["auc", "ks", "brier"] if metrics is None else metrics,
+            sample_weight=sample_weight,
+        )
 
     @abstractmethod
     def calibrate(self, y_prob):

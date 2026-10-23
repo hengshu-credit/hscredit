@@ -170,14 +170,16 @@ class BaseLoss(ABC):
         """额外权重与损失内部归一化权重相乘时的校正量。"""
         return 1.0
 
-    def metric(self, name=None, **sample_params):
-        """生成与本损失公式一致的评估指标，越小越好。
+    def metric(self, name=None, *, kind="loss", **sample_params):
+        """统一生成损失值或实际业务效果指标。
 
         :param name: 可选的中文指标名称，省略时使用内置名称。
+        :param kind: loss（默认）评估损失公式，越小越好；business 评估配套业务效果，
+            方向由返回指标的 direction 声明。无专用业务指标时回退为损失指标。
         :param sample_params: 替换指标副本中的逐行参数，例如
             ``AmountWeightedLoss.metric(amounts=valid_amounts)``。
             仅支持提供 ``set_sample_params`` 的损失，行顺序须与评估数据一致。
-        :return: 独立的 ``LossMetric`` 参数快照，可离线调用、传入 ModelTuner，
+        :return: 独立的 ``BaseMetric`` 参数快照，可离线调用、传入 ModelTuner，
             或转换为 sklearn 评分器、框架监控回调。
 
         >>> from hscredit.core.models.losses import FocalLoss
@@ -187,7 +189,17 @@ class BaseLoss(ABC):
         'minimize'
         >>> value = metric([0, 1], [0.2, 0.8])
         """
-        return LossMetric(self, name=name, **sample_params)
+        if kind not in ("loss", "business"):
+            raise ValueError("指标 kind 必须为 loss 或 business")
+        snapshot = LossMetric(self, name=name, **sample_params)
+        if kind == "loss":
+            return snapshot
+        from .business_metrics import business_metric_for_loss
+
+        metric = business_metric_for_loss(snapshot.loss)
+        if name is not None:
+            metric.name = snapshot.name
+        return metric
 
     def to_metric(self, name=None, **sample_params):
         """``metric`` 的同义方法，参数、快照与返回语义完全相同。
@@ -202,7 +214,7 @@ class BaseLoss(ABC):
         return self.metric(name=name, **sample_params)
 
     def business_metric(self):
-        """获取与损失目标对应的实际业务指标。
+        """兼容旧调用；新代码统一使用 ``metric(kind='business')``。
 
         :return: ``BaseMetric`` 实例，继承本损失的头部比例、成本等业务参数。
             排序目标对应 AUC，分离目标对应 KS，审批目标对应坏账率、通过率
@@ -213,13 +225,14 @@ class BaseLoss(ABC):
         两者可能有不同的最优模型及优化方向，应通过 ``metric.direction`` 判断。
 
         >>> from hscredit.core.models.losses import RankingAUCProxyLoss
-        >>> metric = RankingAUCProxyLoss().business_metric()
+        >>> metric = RankingAUCProxyLoss().metric(kind='business')
         >>> metric([0, 1], [0.2, 0.8])
         1.0
         """
-        from .business_metrics import business_metric_for_loss
+        import warnings
 
-        return business_metric_for_loss(self)
+        warnings.warn("business_metric() 已合并至 metric(kind='business')", DeprecationWarning, stacklevel=2)
+        return self.metric(kind="business")
 
     def evaluate(self, y_true, y_pred, sample_weight=None, *, raw_score=False, **sample_params):
         """校验输入并计算离线损失，建议作为统一评估入口。

@@ -8,8 +8,40 @@ import pandas as pd
 from scipy.sparse import issparse
 from sklearn.utils.validation import check_is_fitted
 from ...utils.data_contracts import extract_target_column, validate_target
+from ._workflow import ModelWorkflowMixin
 
 SAMPLE_PARAMETER_NAMES = frozenset({"sample_weight", "base_margin", "init_score", "baseline", "groups"})
+
+
+def evaluation_set_entries(eval_set):
+    """按 ModelReport.datasets 的命名规则整理评估集，保留原始对象及顺序。
+
+    字典的键为数据集名称；列表自动命名为数据集1、数据集2等。
+    另接受单个 DataFrame 或 (X, y)。这里只解析容器，不解析标签或原生框架容器。
+    """
+    if eval_set is None:
+        return []
+    if isinstance(eval_set, dict):
+        entries = [(str(name), value) for name, value in eval_set.items()]
+    elif isinstance(eval_set, pd.DataFrame):
+        entries = [("数据集1", eval_set)]
+    elif isinstance(eval_set, (list, tuple)):
+        try:
+            is_pair = (
+                len(eval_set) == 2 and np.ndim(eval_set[0]) == 2 and (eval_set[1] is None or np.ndim(eval_set[1]) == 1)
+            )
+        except (TypeError, ValueError):
+            is_pair = False  # 数据集列表中的 (矩阵, 标签) 本身通常不能转为齐次数组。
+        values = [eval_set] if is_pair else eval_set
+        entries = [(f"数据集{i + 1}", value) for i, value in enumerate(values)]
+    else:
+        raise ValueError("eval_set 必须为数据集字典、列表、单个 (X, y) 或 DataFrame")
+    if not entries:
+        raise ValueError("eval_set 不能为空，请提供评估数据或省略以自动留出")
+    names = [name for name, _ in entries]
+    if any(not name.strip() for name in names) or len(set(names)) != len(names):
+        raise ValueError("eval_set 的数据集名称不能为空，转为字符串后不能重复")
+    return entries
 
 
 def extract_target(X, y=None, target=None, *, require_y=True):
@@ -24,6 +56,29 @@ def extract_target(X, y=None, target=None, *, require_y=True):
     if y is not None and (np.asarray(y).ndim != 1 or len(y) != X.shape[0]):
         raise ValueError("标签必须是一维且与特征样本等长")
     return X, y
+
+
+def model_target_name(model):
+    """沿 Pipeline/组合模型查找实际标签列，仅读取配置，不按数据内容猜标签。"""
+    seen = set()
+    while model is not None and id(model) not in seen:
+        seen.add(id(model))
+        for name in ("target_", "target"):
+            value = getattr(model, name, None)
+            if isinstance(value, str) and value:
+                return value
+        if getattr(model, "steps", None):
+            model = model.steps[-1][1]
+        else:
+            model = next(
+                (
+                    getattr(model, name)
+                    for name in ("base_model", "model_", "model")
+                    if getattr(model, name, None) is not None
+                ),
+                None,
+            )
+    return None
 
 
 def validate_labels(y, *, classes=(0, 1), require_both=True):
@@ -48,6 +103,19 @@ def validate_sample_weight(sample_weight, n_samples):
     if not np.isfinite(weights).all() or np.any(weights < 0) or weights.sum() <= 0:
         raise ValueError("sample_weight 必须是有限非负数且总和大于0")
     return weights
+
+
+def validate_custom_loss_weights(params):
+    """自定义导数不消费原生正类权重；fit和搜索共用同一校验。"""
+    objective = params.get("objective", params.get("loss_function"))
+    custom = callable(objective) or hasattr(objective, "calc_ders_range")
+    if custom and (
+        params.get("scale_pos_weight") not in (None, 1, "auto") or params.get("is_unbalance") or params.get("unbalance")
+    ):
+        raise ValueError(
+            "自定义 loss 不使用原生 scale_pos_weight/is_unbalance；" "请通过损失参数或 sample_weight 设置类别权重"
+        )
+    return custom
 
 
 def take_rows(values, indices):
@@ -219,7 +287,7 @@ class ExtraParamsMixin:
         return self
 
 
-class InferenceExportMixin:
+class InferenceExportMixin(ModelWorkflowMixin):
     """显式导出不携带 tuner 和训练记录的推理对象，不改变当前实例。"""
 
     def __setstate__(self, state):

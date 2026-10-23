@@ -1,6 +1,14 @@
 # 超参数搜索：入门、指标、损失与结果复盘
 
-`ModelTuner` 使用 Optuna 采样候选参数，在外层交叉验证中评估候选，保留试验过程，再用选中的参数训练最终模型。已有 HSCredit 模型时，优先用 `model.tune(...)`，直接得到可预测的最佳模型。
+`ModelTuner` 使用 Optuna 采样候选参数，默认通过单次留出验证评估候选，再用选中的参数训练一个最终模型。
+已有模型时优先用 `model.tune(..., eval_set=[(X_valid, y_valid)])`；省略验证集时默认只留出20%。
+仅显式传入 `cv=5` 等配置才运行多折。下文的多折示例均显式启用。
+最终 `get_best_model()` 不自动集成折模型，独立验证集不自动并入训练。
+接口及默认值迁移说明见 [模型工作流](model-workflow.md)。
+
+`eval_set` 也支持与报告 datasets 类似的具名字典、DataFrame列表和混合形式：
+`{'训练监控': train_df, '验证集': (X_valid, y_valid)}`。DataFrame通过 `target` 提取标签，
+显式y优先；按字典/列表中的最后一集评分，名称与顺序保留到试验记录。
 
 完整可运行演示：[tuning_workflow.ipynb](../../examples/tuning_workflow.ipynb)。所有代码格使用仓库真实放款数据；模型数量和训练轮数控制在演示规模。损失选择与框架回调详见 [损失指南](losses-guide.md) 和 [losses_workflow.ipynb](../../examples/losses_workflow.ipynb)。
 
@@ -20,13 +28,13 @@
 
 | 名称 | 接收内容 | 用途 |
 | --- | --- | --- |
-| `ModelTuner.loss` | `BaseLoss` 实例 | 注入 HSCredit XGBoost、LightGBM、CatBoost 的训练目标 |
+| `ModelTuner.loss` | `BaseLoss` 实例 | 注入 HSCredit XGBoost、LightGBM、CatBoost、NGBoost 的训练目标；其他算法用 loss.metric() 选模 |
 | `ModelTuner.metric` | 字符串、`BaseMetric`、明确方向的函数，或上述列表 | 决定 trial 的优劣 |
 | 模型 `eval_metric` | 对应模型支持的评估配置 | 训练曲线与早停；不自动等于搜索 metric |
 | `ModelTuner.objective` | 历史评分目标名/函数 | 保留兼容的 `metric` 替代入口；不是训练 loss |
 | `ModelTuner.trial_objective` | `(trial) -> float` 或序列 | 完全接管一轮搜索，可用于外部训练流程 |
 
-`loss.metric()` 是同口径训练代理损失，始终最小化；`loss.business_metric()` 是对应真实业务指标，方向随指标变化。不要把训练 loss 的低值直接当作 AUC、利润或坏账率的改进。
+`loss.metric()` 是同口径训练代理损失，始终最小化；`loss.metric(kind='business')` 是对应真实业务指标，方向随指标变化。不要把训练 loss 的低值直接当作 AUC、利润或坏账率的改进。
 
 ## 环境与数据准备
 
@@ -405,7 +413,7 @@ print("已生成搜索历史图，可运行 figure.show() 查看。")
 ## 15. 常见误用检查
 
 - 调参结果“反着选”：裸函数必须声明方向；指标对象通过 `greater_is_better` 声明一次。
-- `metric="log_loss"` 是正的交叉熵，越小越好；旧 `"logloss"` / `"neg_log_loss"` 是负值，越大越好，保留作兼容。
+- `metric="log_loss"` 与 `"logloss"` 都是正交叉熵、默认最小化；只有显式 `"neg_log_loss"` 返回负值并最大化。
 - `loss` 决定训练，`metric` 决定候选优劣，模型的 `eval_metric` 决定训练监控/早停；三者可以不同。
 - `ModelTuner(objective=...)` 是旧评分入口；自定义训练用 `loss=...`，完全接管 trial 才用 `trial_objective=...`。
 - 自定义空间的名字必须是模型参数名；Pipeline 用 `步骤名__参数`；列表空间不是自动穷举。
@@ -505,7 +513,8 @@ callback_tuner.fit(X_train, y_train, n_trials=2, show_progress_bar=False)
 | `"ks"` | 最大化 | 好坏风险分布区分度 |
 | `"ks_diff"` | 最小化 | 训练与验证 KS 差异；建议与区分度搭配，单独低差异不保证有效 |
 | `"log_loss"` | 最小化 | 正的二元交叉熵；新代码优先用此名称 |
-| `"logloss"` / `"neg_log_loss"` | 最大化 | 负的二元交叉熵；保留旧比较方向 |
+| `"logloss"` / `"log_loss"` | 最小化 | 正的二元交叉熵，与统一指标对象相同 |
+| `"neg_log_loss"` | 最大化 | 显式负的二元交叉熵 |
 | `BaseMetric` / `make_metric(...)` | 对象声明 | 原始数值；不会自动取负 |
 | `loss.metric()` | 最小化 | 固定损失参数的同口径代理损失 |
 | 裸函数 | 必须指定 | 返回一个有限标量；不猜测业务方向 |
@@ -540,7 +549,7 @@ Optuna 4.9 已弃用 `terminator` 模块，普通调参不会再自动调用它�
 - 自定义评估使用 `make_metric`，需要完整类型封装时使用 `BaseMetric`；自定义训练使用 `BaseLoss`。
 - `loss=` 明确区分训练目标与历史 `objective=` 评分入口；收到混淆用法会说明正确参数。
 - 外层 CV 验证数据用于搜索评分，内部监控只来自训练折；训练权重与评价权重独立指定。
-- 保留原有空间声明和历史 `logloss` 负值语义；推荐新代码统一 `Integer/Real/Categorical` 与 `log_loss`。
+- 搜索空间声明保持兼容；指标口径已统一。旧 `logloss` 负值目标请改用 `neg_log_loss`，更改口径后新建 Study。
 - Notebook 使用少量 trial 验证接口与产物，不声称此参数组合已达到最佳业务效果。
 
 API 逐项说明见 [超参数调优 API](../api/tuning.rst)。模型保存、原生训练参数、制品版本限制详见 [模型工作流](model-workflow.md)。

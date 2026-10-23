@@ -23,6 +23,8 @@ from ....utils.parallel import ParallelizableMixin, _ACTIVE_BUDGET, parallel_exe
 from ....utils.serialization import ArtifactSerializableMixin
 from ...rules.rule import Rule, RuleState
 from .._contracts import extract_target
+from .._lifecycle import record_training
+from .._workflow import ModelWorkflowMixin, prepare_eval_sets, record_eval_results
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +270,10 @@ class RuleSet(ParallelizableMixin):
         :param X: 输入数据
         :param return_details: 是否返回详细结果
         :return: (整体命中结果, 各规则详细结果列表)
+
+        **参考样例**
+
+        >>> matched, details = ruleset.evaluate(X_test, return_details=True)
         """
         if len(self.rules) == 0:
             n_samples = len(X)
@@ -367,16 +373,17 @@ def _classifier_component_worker(task: Tuple[Any, ...]) -> Tuple[np.ndarray, Rul
     return _rule_component_worker((index, "classifier", rule, X))
 
 
-class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, ClassifierMixin, BaseEstimator):
-    artifact_kind = "风险模型"
+class RulesClassifier(
+    ModelWorkflowMixin, ArtifactSerializableMixin, ParallelizableMixin, ClassifierMixin, BaseEstimator
+):
     """规则分类器 - 统一入口.
-    
+
     支持传入单规则或规则集（支持嵌套）进行分类预测。
     最外层支持选择且/或逻辑组合，内层规则逻辑由各自的RuleSet定义。
     支持输出单规则命中结果或规则集最终结果，支持输出规则命中原因。
-    
+
     代码风格参考 binning 模块。
-    
+
     :param rules: 规则或规则集列表/单个对象，可以是 Rule、RuleSet 或混合
     :param logic: 最外层逻辑操作符，'and' 或 'or'，默认为 'or'
     :param output_mode: 输出模式
@@ -391,12 +398,12 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, Classifier
     :param n_jobs: 并行任务数，默认为-1
     :param parallel_backend: joblib并行后端，默认为None
     :param parallel_config: joblib扩展配置，默认为None
-    
+
     属性:
     - classes_: 类别标签
     - n_features_in_: 输入特征数
     - feature_names_in_: 特征名称
-    
+
     **参考样例**
 
     >>> rules = [
@@ -450,6 +457,8 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, Classifier
         >>> clf = RulesClassifier(rules=[nested_rules, Rule("fraud_flag == 1")])
     """
 
+    artifact_kind = "风险模型"
+
     def __init__(
         self,
         rules: Optional[Union[Rule, RuleSet, List[Union[Rule, RuleSet]]]] = None,
@@ -495,8 +504,16 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, Classifier
             return [self.rules]
         return list(self.rules)
 
+    @record_training(transactional=True)
     def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
+        *,
+        eval_set=None,
+        eval_metric=None,
+        eval_sample_weight=None,
+        **kwargs,
     ) -> "RulesClassifier":
         """拟合分类器（学习特征名）.
 
@@ -512,10 +529,23 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, Classifier
             - sklearn风格: 传入目标变量
             - scorecardpipeline风格: 不传，从X中提取target列
         :param kwargs: 其他参数
+        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
+        :param eval_metric: 最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标。
+        :param eval_sample_weight: 评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权。
         :return: 拟合后的分类器
+
+        **参考样例**
+
+        >>> from hscredit import RulesClassifier
+        >>> from hscredit.core.rules import Rule
+        >>> model = RulesClassifier(rules=[Rule('评分 < 0')], n_jobs=1)
+        >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=['auc', 'ks'])
         """
         # 处理输入数据
         X, y = _check_input_data(X, y, self.target)
+        if kwargs:
+            raise TypeError(f"RulesClassifier.fit 不支持参数: {', '.join(kwargs)}；规则权重请通过 weights 设置")
+        eval_set = prepare_eval_sets(self, eval_set)
 
         # 所有校验和派生均在局部变量完成，成功后一次提交，失败时保留旧模型。
         self._validate_rules(X)
@@ -529,6 +559,12 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, Classifier
         self.classes_ = np.array([0, 1])
         self.weights_ = weights
         self._is_fitted = True
+        self.transformation_summary_ = {
+            "概率口径": "规则命中权重占总权重的比例",
+            "组合逻辑": self.logic.value,
+            "训练内容": "验证规则与字段；不学习梯度损失",
+        }
+        record_eval_results(self, eval_set, metrics=eval_metric, eval_sample_weight=eval_sample_weight)
 
         if self.verbose:
             logger.info("RulesClassifier 已拟合")
@@ -916,6 +952,12 @@ class RulesClassifier(ArtifactSerializableMixin, ParallelizableMixin, Classifier
         if auto_initialize:
             self._commit_auto_state(X, weights)
         return proba
+
+    def _predict_evaluation_labels(self, X):
+        """评估分类指标使用实际 AND/OR 逻辑及阈值，不受明细输出模式影响。"""
+        view = copy.copy(self)
+        view.output_mode = "final"
+        return view.predict(X)
 
     def get_rule_summary(self) -> pd.DataFrame:
         """获取规则摘要.

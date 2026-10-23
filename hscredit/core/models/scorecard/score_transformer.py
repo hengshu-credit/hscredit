@@ -93,9 +93,11 @@ from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 from ....utils.serialization import ArtifactSerializableMixin
 from .._contracts import ExtraParamsMixin
+from .._lifecycle import record_training
+from .._workflow import TrainingProcessMixin
 
 
-class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
+class BaseScoreTransformer(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstimator, ABC):
     """评分转换器基类.
 
     所有评分转换器的抽象基类，定义统一接口。
@@ -220,7 +222,15 @@ class BaseScoreTransformer(ArtifactSerializableMixin, BaseEstimator, ABC):
         """拟合评分转换器.
 
         :param proba: 训练数据的预测概率(正类概率)
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import ScoreTransformer
+        >>> transformer = ScoreTransformer().fit(proba=p_train)
+        >>> scores = transformer.predict(p_valid)
+        >>> history = transformer.get_training_history()
         """
         pass
 
@@ -347,7 +357,8 @@ class StandardScoreTransformer(BaseScoreTransformer):
         - 'descending': 概率越高分数越低（信用评分，如300-1000）
         - 'ascending': 概率越高分数越高（欺诈评分，如0-100）
         - 'auto': 根据lower/upper自动判断
-    :param base_odds: 基准好坏比，默认0.05(5%坏样本率)
+    :param base_odds: 基准坏好比 p/(1-p)，默认0.05，对应坏样本率0.05/1.05；
+        若需5%坏样本率对应基准分，应传 0.05/0.95。该值不是坏样本率，也不是好坏比。
         - 表示在base_score对应的坏样本率
     :param base_score: 基准分数，默认600
         - 对应base_odds的分数
@@ -427,7 +438,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
 
         根据以下两个方程求解:
         1. base_score = A - B × ln(base_odds)
-        2. base_score + pdo = A - B × ln(rate × base_odds)
+        2. descending 时，base_score - pdo = A - B × ln(rate × base_odds)
 
         解得（其中 B_abs = pdo / ln(rate) 为非负基数，sign 决定方向）:
         B = sign × B_abs
@@ -446,13 +457,22 @@ class StandardScoreTransformer(BaseScoreTransformer):
         A = self.base_score + sign * B_abs * np.log(self.base_odds)
         return A, B
 
+    @record_training
     def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "StandardScoreTransformer":
         """拟合评分转换器.
 
         标准评分卡方法的参数在初始化时已确定，fit主要用于验证参数合理性。
 
         :param proba: 训练数据的预测概率(用于验证参数合理性)
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import StandardScoreTransformer
+        >>> transformer = StandardScoreTransformer().fit(proba=p_train)
+        >>> scores = transformer.predict(p_valid)
+        >>> history = transformer.get_training_history()
         """
         # 保存训练概率用于参考
         self.train_proba_ = self._validate_probabilities(proba)
@@ -700,13 +720,22 @@ class LinearScoreTransformer(BaseScoreTransformer):
     ):
         super().__init__(lower, upper, direction, decimal, clip)
 
+    @record_training
     def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "LinearScoreTransformer":
         """拟合评分转换器.
 
         线性方法的参数在初始化时已确定，fit主要用于保存训练概率分布。
 
         :param proba: 训练数据的预测概率
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import LinearScoreTransformer
+        >>> transformer = LinearScoreTransformer().fit(proba=p_train)
+        >>> scores = transformer.predict(p_valid)
+        >>> history = transformer.get_training_history()
         """
         # 保存训练概率用于参考
         self.train_proba_ = self._validate_probabilities(proba)
@@ -811,13 +840,22 @@ class QuantileScoreTransformer(BaseScoreTransformer):
             raise ValueError("n_quantiles必须是大于等于2的整数")
         self.n_quantiles = n_quantiles
 
+    @record_training
     def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "QuantileScoreTransformer":
         """拟合评分转换器.
 
         学习训练数据的概率分布，用于后续分位数映射。
 
         :param proba: 训练数据的预测概率
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import QuantileScoreTransformer
+        >>> transformer = QuantileScoreTransformer().fit(proba=p_train)
+        >>> scores = transformer.predict(p_valid)
+        >>> history = transformer.get_training_history()
         """
         # 保存训练概率
         self.train_proba_ = self._validate_probabilities(proba)
@@ -1034,6 +1072,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
                 best_lmbda = lmbda_candidate
         return float(best_lmbda)
 
+    @record_training
     def fit(
         self,
         proba: Union[np.ndarray, pd.Series],
@@ -1046,7 +1085,15 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         3. 记录变换后的值域 [z_min, z_max] 用于线性映射
 
         :param proba: 训练数据的预测概率（正类概率）
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import BoxCoxScoreTransformer
+        >>> transformer = BoxCoxScoreTransformer().fit(proba=p_train)
+        >>> scores = transformer.predict(p_valid)
+        >>> history = transformer.get_training_history()
         """
         self.train_proba_ = self._validate_probabilities(proba)
 
@@ -1213,11 +1260,20 @@ class ScoreTransformer(ExtraParamsMixin, BaseScoreTransformer):
 
     _extra_params_attribute = "transformer_params"
 
+    @record_training
     def fit(self, proba: Union[np.ndarray, pd.Series], **kwargs) -> "ScoreTransformer":
         """拟合评分转换器.
 
         :param proba: 训练数据的预测概率(正类概率)
+        :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import ScoreTransformer
+        >>> transformer = ScoreTransformer().fit(proba=p_train)
+        >>> scores = transformer.predict(p_valid)
+        >>> history = transformer.get_training_history()
         """
         # 创建具体的转换器
         if self.method == "standard":

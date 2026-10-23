@@ -88,6 +88,9 @@ from sklearn.metrics import get_scorer, log_loss, roc_curve
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 from ...metrics import auc as auc_metric
 from .._contracts import (
+    FeatureSchema,
+    evaluation_set_entries,
+    validate_custom_loss_weights,
     extract_target,
     positive_probability,
     split_sample_params,
@@ -327,7 +330,7 @@ class ModelTuner(ArtifactSerializableMixin):
         不参与任何计算逻辑），默认 None 时从 metric 自动推断
         （内置字符串取其大写形式，自定义函数取其 ``__name__``）。
         与 metric 不重复：metric 决定"算什么"，metric_names 只决定"叫什么"
-    :param cv: 交叉验证折数（默认5）、带 split 方法的分割器或 (训练位置, 验证位置) 序列。
+    :param cv: 默认 None 使用单次验证；显式整数>=2、分割器或索引对序列启用多折。
     :param n_jobs: 当前 trial 中模型可使用的并行任务数，默认-1；
         trial 本身顺序执行，确保主动中断及时生效并让自适应采样器利用全部历史结果
     :param random_state: 随机种子，默认None
@@ -421,8 +424,8 @@ class ModelTuner(ArtifactSerializableMixin):
         storage: Optional[str] = None,
         study_name: Optional[str] = None,
         load_if_exists: bool = False,
-        target: str = "target",
-        cv: int = 5,
+        target: Optional[str] = None,
+        cv: Optional[Any] = None,
         n_jobs: int = -1,
         random_state: Optional[int] = None,
         verbose: bool = False,
@@ -439,6 +442,7 @@ class ModelTuner(ArtifactSerializableMixin):
         retention: Optional[str] = None,
         loss: Optional[Any] = None,
         record_terminator_scores: Optional[bool] = None,
+        validation_fraction: float = 0.2,
     ):
         """初始化 ModelTuner.
 
@@ -450,8 +454,10 @@ class ModelTuner(ArtifactSerializableMixin):
             None 时使用 loss.metric()，无 loss 时使用 KS。
         :param direction: None 按指标对象/内置名称推断；裸函数须声明优化方向。
         :param metric_names: 指标显示名称列表，需与指标数一致且名称不重复。
-        :param target: fit(df) 时提取的标签列名；显式传 y 时也会删除该列避免泄漏。
-        :param cv: 折数、分割器或 (训练索引, 验证索引) 序列，默认5。
+        :param target: fit(df) 时的标签列名。None 优先继承模型实例（包括 Pipeline 末端）的 target，
+            再回退为 'target'；显式值优先，并传给最终 HSCredit 模型，评估与报告不必重复配置。
+        :param cv: 默认 None 使用单次留出验证；显式整数>=2、分割器或索引对序列启用多折。
+        :param validation_fraction: 未提供独立验证集时的单次留出比例，默认0.2；不影响显式cv。
         :param n_jobs: 每个模型的并行上限，默认 -1；Trial 按顺序运行。
         :param random_state: 交叉验证、采样器及未设置种子的模型共用的随机种子。
         :param verbose: 是否逐 Trial 打印得分及最终摘要，默认 False。
@@ -460,7 +466,7 @@ class ModelTuner(ArtifactSerializableMixin):
             或自定义函数 (y_true, y_prob) -> float。
             若指定此参数，则覆盖 metric 参数。
             支持：'ks' / 'auc' / 'lift_head' / 'lift_tail' /
-                   'lift_head_monotonic' / 'ks_with_lift_constraint' / 'head_ks'
+            'lift_head_monotonic' / 'ks_with_lift_constraint' / 'head_ks'。
         :param objective_kwargs: 透传给 TuningObjective 目标函数的额外参数，
             如 {'ratio': 0.05, 'penalty': 0.3}
         :param eval_ratios: 调参过程中额外追踪的 LIFT 覆盖率列表，
@@ -472,11 +478,9 @@ class ModelTuner(ArtifactSerializableMixin):
             也可在实例化后通过 :meth:`enqueue_trials` 追加。
         :param points_to_evaluate: Hyperopt 风格的初始搜索点，格式与 ``fmin`` 的
             ``points_to_evaluate`` 一致；内部与 ``trial_points`` 一并转换并入队。
-        :param sampler: 搜索器，支持:
-            - 字符串名称：见 :class:`TuningSampler`，如 'tpe'（默认）/'cmaes'/'random'/
-              'gp'/'nsgaii' 等内置采样器，或 'auto'/'hebo'/'smac' 等 optunahub 采样器
-            - 已实例化的 optuna 采样器对象（直接使用）
-            - None：等价于 'tpe'
+        :param sampler: 搜索器，支持 TuningSampler 中的字符串名称（如 'tpe'、'random'、'gp'、'nsgaii'），
+            或已实例化的 optuna 采样器对象；None 等价于 'tpe'。
+            'auto'/'hebo'/'smac' 等 optunahub 采样器需要相应可选依赖。
         :param sampler_kwargs: 透传给采样器构造函数的额外参数，如 {'n_startup_trials': 10}
         :param storage: optuna 存储 URL，如 ``'sqlite:///hscredit_tuning.db'``。
             指定后可配合 ``optuna-dashboard sqlite:///hscredit_tuning.db`` 实时查看
@@ -494,7 +498,7 @@ class ModelTuner(ArtifactSerializableMixin):
         :param retention: 结果保留策略：full、predictions、summary、best、disk。
             None 按 store_models 保持旧行为；disk 必须指定 artifact_dir，按需读取且不常驻折模型。
         :param loss: 用于模型训练的 BaseLoss 实例，与决定搜索优劣的 metric 分开。
-            支持 HSCredit XGBoost、LightGBM、CatBoost；例如
+            支持 HSCredit XGBoost、LightGBM、CatBoost、NGBoost；例如
             ``ModelTuner(XGBoost, loss=FocalLoss(), metric='auc')``。
             ``metric=None`` 时使用该损失的配套指标（越小越好）。
         :param record_terminator_scores: 是否额外记录旧 Optuna terminator 的专用CV数据。
@@ -507,15 +511,41 @@ class ModelTuner(ArtifactSerializableMixin):
         ...                    loss=FocalLoss(), metric='auc', cv=3, random_state=42)
         >>> params = tuner.fit(X_train, y_train, n_trials=10)
         >>> best = tuner.get_best_model()
+
+        从数据、选参、最终模型到评估及 Excel 的可直接执行示例::
+
+            >>> import tempfile
+            >>> from pathlib import Path
+            >>> import pandas as pd
+            >>> from sklearn.datasets import make_classification
+            >>> from hscredit import RandomForest, ModelTuner, get_metric
+            >>> X, y = make_classification(n_samples=90, n_features=3, n_redundant=0, random_state=42)
+            >>> data = pd.DataFrame(X, columns=['评分', '多头', '收入']).assign(FPD=y)
+            >>> train, valid, test = data.iloc[:50], data.iloc[50:70], data.iloc[70:]
+            >>> metric = get_metric('classification_cost', fn_cost=5, fp_cost=1)
+            >>> tuner = ModelTuner(RandomForest(target='FPD', n_estimators=8, n_jobs=1),
+            ...                    search_space={'max_depth': [2, 3]}, metric=metric, n_jobs=1, random_state=42)
+            >>> params = tuner.fit(train, eval_set={'验证': valid}, n_trials=2, show_progress_bar=False)
+            >>> best = tuner.get_best_model()  # 只使用 train 重训，未把 valid/test 并入
+            >>> effects = best.evaluate(test, metrics=['auc', metric])
+            >>> report = best.model_report(datasets={'训练': train, '验证': valid, '独立测试': test},
+            ...                            metrics=[metric], verbose=False, n_jobs=1)
+            >>> assert report.get_metrics().set_index('统计项').loc[metric.name, '独立测试'] == effects[metric.name]
+            >>> with tempfile.TemporaryDirectory() as directory:
+            ...     status = report.to_excel(str(Path(directory) / '模型报告.xlsx'), with_plots=False,
+            ...                              include_sample_records=False, mode='strict', return_result=True)
+            ...     assert status.complete
         """
         if not OPTUNA_AVAILABLE:
             raise ImportError("Optuna未安装，请使用 pip install optuna 安装")
 
         instance_params = {}
+        instance_target = None
         if record_terminator_scores is not None and not isinstance(record_terminator_scores, (bool, np.bool_)):
             raise ValueError("record_terminator_scores 必须是 True、False 或 None")
         self.record_terminator_scores = record_terminator_scores
         if not isinstance(model_class, type) and hasattr(model_class, "get_params"):
+            instance_target = getattr(self._final_estimator(model_class), "target", None)
             instance_params = model_class.get_params(deep=False)
             model_class = type(model_class)
         self.model_class = model_class
@@ -530,6 +560,16 @@ class ModelTuner(ArtifactSerializableMixin):
         self.model_params = self._canonical_params(self.model_params, prefer_alias=True)
         self.trial_objective = trial_objective
         self._explicit_fixed_params = dict(fixed_params or {})
+        fixed_target = self._explicit_fixed_params.get("target")
+        if target is not None and fixed_target is not None and fixed_target != target:
+            raise ValueError("target 与 fixed_params['target'] 不一致，请统一目标列配置")
+        self.target = target or fixed_target or self.model_params.get("target") or instance_target or "target"
+        if not isinstance(self.target, str) or not self.target:
+            raise ValueError("target 必须是非空目标列名")
+        if getattr(self.model_class, "__module__", "").startswith("hscredit.core.models"):
+            signature = inspect.signature(self.model_class).parameters
+            if "target" in signature or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.values()):
+                self.model_params["target"] = self.target
         self.loss = loss
         self._configure_training_loss()
         self.fixed_params: Dict[str, Any] = {}
@@ -556,8 +596,8 @@ class ModelTuner(ArtifactSerializableMixin):
         self.storage = storage
         self.study_name = study_name
         self.load_if_exists = load_if_exists
-        self.target = target
-        self.cv = cv if isinstance(cv, (int, np.integer)) or hasattr(cv, "split") else tuple(cv)
+        self.cv = cv if cv is None or isinstance(cv, (int, np.integer)) or hasattr(cv, "split") else tuple(cv)
+        self.validation_fraction = validation_fraction
         self.n_jobs = resolve_n_jobs(n_jobs)
         self.random_state = random_state
         self.verbose = verbose
@@ -626,9 +666,10 @@ class ModelTuner(ArtifactSerializableMixin):
             raise TypeError("loss 必须是 BaseLoss 实例；原生目标回调请通过模型 objective 配置")
         model_module = getattr(self.model_class, "__module__", "")
         model_name = getattr(self.model_class, "__name__", "")
-        if not model_module.startswith("hscredit.") or model_name not in {"XGBoost", "LightGBM", "CatBoost"}:
+        if not model_module.startswith("hscredit.") or model_name not in {"XGBoost", "LightGBM", "CatBoost", "NGBoost"}:
             raise ValueError(
-                "loss 便捷参数仅支持 HSCredit XGBoost、LightGBM、CatBoost；Pipeline 请预配置最终模型的 objective"
+                "该模型训练器不支持自定义 loss；XGBoost、LightGBM、CatBoost、NGBoost 支持此入口，"
+                "其他模型请用 metric=loss.metric() 选模；Pipeline 请预配置最终模型的 objective"
             )
         if any(key in self._explicit_fixed_params for key in ("objective", "loss_function")):
             raise ValueError("loss 与 fixed_params 中的 objective/loss_function 不能同时设置")
@@ -737,14 +778,7 @@ class ModelTuner(ArtifactSerializableMixin):
                 "自定义 loss 不使用原生 scale_pos_weight/is_unbalance，不能搜索这些参数；请通过损失参数或 sample_weight 设置类别权重"
             )
         params = {**self.model_params, **self._explicit_fixed_params}
-        if (
-            params.get("scale_pos_weight") not in (None, 1, "auto")
-            or params.get("is_unbalance")
-            or params.get("unbalance")
-        ):
-            raise ValueError(
-                "自定义 loss 不使用原生 scale_pos_weight/is_unbalance；请通过损失参数或 sample_weight 设置类别权重"
-            )
+        validate_custom_loss_weights(params)
 
     def _refresh_fixed_params(self) -> None:
         """按实例默认值 < 搜索参数 < 显式固定参数合并模型配置。"""
@@ -851,6 +885,8 @@ class ModelTuner(ArtifactSerializableMixin):
         gc_after_trial: bool = False,
         fit_params: Optional[Dict[str, Any]] = None,
         evaluation_weight: Optional[np.ndarray] = None,
+        eval_set=None,
+        validation_weight=None,
         **optimize_kwargs,
     ) -> Dict[str, Any]:
         """执行超参数调优.
@@ -873,6 +909,12 @@ class ModelTuner(ArtifactSerializableMixin):
         :param show_progress_bar: 是否显示进度条，默认True
         :param sample_weight: 仅用于训练的样本权重，不自动改变验证目标。
         :param evaluation_weight: 显式评估权重，按每折训练/验证位置切分；默认None保持未加权指标。
+        :param eval_set: 评估集列表 [(X_valid, y_valid)]；最后一个数据集用于搜索评分。
+            同 ModelReport.datasets 支持具名字典、DataFrame列表及混合形式；显式y优先，名称和顺序保留。
+            支持多评估集的模型收到完整列表；NGBoost 仅以最后一集早停，仍保留其他集评估。
+            也接受单个二元组或含目标列的 DataFrame。
+            只能与 cv=None 配合；不会并入最终重训数据。此集用于选参，不应充当最终测试集。
+        :param validation_weight: 最后一个评估集的指标权重；不自动用作训练权重或早停权重。
         :param groups: 传给自定义交叉验证分割器的分组标签。
         :param callbacks: 本次运行额外追加的 Study.optimize 回调。
         :param catch: 允许 Optuna 标记失败后继续执行的异常类型；默认保留历史行为。
@@ -891,11 +933,17 @@ class ModelTuner(ArtifactSerializableMixin):
         >>> best = tuner.get_best_model()
         >>> prediction = best.predict_proba(X_test)[:, 1]
         """
+        if "validation_data" in optimize_kwargs:
+            raise TypeError("验证集参数已统一为 eval_set，请使用 eval_set=[(X_valid, y_valid)]")
         # 检查并处理输入
         X, y = self._check_input(X, y)
         sample_weight = validate_sample_weight(sample_weight, len(y))
         evaluation_weight = validate_sample_weight(evaluation_weight, len(y))
+        eval_set, eval_names, validation_weight = self._prepare_eval_set(X, eval_set, validation_weight)
+        validation_data = None if eval_set is None else eval_set[-1]
         runtime_fit_params = {**self.fit_params, **dict(fit_params or {})}
+        if eval_set is not None and any(key in runtime_fit_params for key in ("eval_set", "X_val")):
+            raise ValueError("eval_set 请只通过公开参数提供，不要同时在 fit_params 中重复配置评估集")
         if self.trial_objective is None:
             self._validate_custom_loss_parameters()
             for value in (self.model_params, self.fixed_params, self.metrics, runtime_fit_params):
@@ -903,7 +951,14 @@ class ModelTuner(ArtifactSerializableMixin):
             self._validate_native_loss({**self.model_params, **self.fixed_params})
         from joblib import hash as stable_hash
 
-        data_signature = stable_hash((X, y, sample_weight, evaluation_weight, groups))
+        data_context = (X, y, sample_weight, evaluation_weight, groups)
+        if validation_data is not None:
+            data_context += (validation_data, validation_weight)
+            if len(eval_set) > 1:
+                data_context += (eval_set[:-1],)
+            if eval_names != [f"数据集{i + 1}" for i in range(len(eval_set))]:
+                data_context += (eval_names,)
+        data_signature = stable_hash(data_context)
         configuration = (
             self.model_params,
             self._explicit_fixed_params,
@@ -922,17 +977,24 @@ class ModelTuner(ArtifactSerializableMixin):
             and self.study_ is not None
         ):
             raise ValueError("续跑固定参数、训练参数或指标发生变化；请新建 ModelTuner 和 study_name")
-        cv_signature = stable_hash(self.cv)
+        cv_signature = stable_hash(
+            self.cv if self.cv is not None else (None, getattr(self, "validation_fraction", 0.2))
+        )
         if getattr(self, "_cv_signature_", cv_signature) != cv_signature and self.study_ is not None:
             raise ValueError("续跑交叉验证配置发生变化；请新建 ModelTuner 和 study_name")
         existing_splits = getattr(self, "_cv_splits", None)
         cv_splits = (
             existing_splits
             if old_signature == data_signature and existing_splits is not None
-            else self._validated_splits(X, y, groups)
+            else self._validation_splits(X, y, groups, validation_data)
         )
-        self._validate_fold_weights(evaluation_weight, cv_splits)
+        if validation_data is None:
+            self._validate_fold_weights(evaluation_weight, cv_splits)
+        validation_mode = (
+            "交叉验证" if self.cv is not None else "独立验证集" if validation_data is not None else "单次留出"
+        )
         contract = {
+            "指标协议": 2,
             "数据": data_signature,
             "配置": configuration_signature,
             "交叉验证": cv_signature,
@@ -960,7 +1022,21 @@ class ModelTuner(ArtifactSerializableMixin):
         self._y = y
         self._sample_weight = sample_weight
         self._evaluation_weight = evaluation_weight
-        if self._evaluation_weight is not None:
+        self._validation_data = validation_data
+        self._eval_set = eval_set
+        self._eval_names = eval_names
+        self._validation_weight = validation_weight
+        self.validation_summary_ = {
+            "验证方式": validation_mode,
+            "划分数": len(cv_splits),
+            "最终训练样本数": len(y),
+            "独立验证样本数": 0 if validation_data is None else len(validation_data[1]),
+            "评估集数量": 0 if eval_set is None else len(eval_set),
+            "评估集名称": eval_names,
+            "搜索评分数据集": "留出验证集" if eval_set is None else eval_names[-1],
+            "最终模型": "按最佳配置单次重训，不自动集成各折模型",
+        }
+        if self._evaluation_weight is not None or validation_weight is not None:
             for metric in self.metrics:
                 metric.validate_evaluation_weight()
         self._groups = groups
@@ -1033,7 +1109,12 @@ class ModelTuner(ArtifactSerializableMixin):
         model_workers = max(1, int(self.n_jobs or 1))
 
         def objective(trial):
-            self.trial_results_[trial.number] = {"试验编号": trial.number, "各折": [], "保留策略": self.retention_}
+            self.trial_results_[trial.number] = {
+                "试验编号": trial.number,
+                "各折": [],
+                "保留策略": self.retention_,
+                "验证方式": validation_mode,
+            }
             try:
                 if self.trial_objective is not None:
                     return self.trial_objective(trial)
@@ -1048,6 +1129,10 @@ class ModelTuner(ArtifactSerializableMixin):
                     return_diagnostics=True,
                     trial=trial,
                     evaluation_weight=self._evaluation_weight,
+                    validation_data=validation_data,
+                    external_validation_weight=validation_weight,
+                    eval_set=eval_set,
+                    eval_names=eval_names,
                 )
                 for name, value in diagnostics.items():
                     trial.set_user_attr(name, value)
@@ -1244,9 +1329,63 @@ class ModelTuner(ArtifactSerializableMixin):
         model = self.model_class(**copy.deepcopy(direct))
         if nested:
             model.set_params(**nested)
+        terminal = self._final_estimator(model)
+        from ..scorecard.model_scorecard import ProbabilityScoreCard
+        from ..scorecard.scorecard import ScoreCard
+        from ..calibration.model import ProbabilityCalibrator
+        from .._contracts import is_model_fitted
+
+        path = ""
+        cursor = model
+        while getattr(cursor, "steps", None):
+            step_name, cursor = cursor.steps[-1]
+            path += step_name + "__"
+        frozen = []
+        if isinstance(terminal, ProbabilityCalibrator) and terminal.calib_ratio is None:
+            frozen.append("model")
+        if isinstance(terminal, ScoreCard):
+            frozen.extend(
+                name
+                for name in ("lr_model", "pipeline")
+                if getattr(terminal, name, None) is not None and is_model_fitted(getattr(terminal, name))
+            )
+
+        if isinstance(terminal, ProbabilityScoreCard) and terminal.model is not None:
+            if terminal.prefit is not True:
+                # 搜索期间自动模式也要使用当前划分重新学习；不能携带实例的旧系数进入每折。
+                terminal.model = clone(terminal.model)
+            else:
+                frozen.append("model")
+        for child in frozen:
+            prefix = path + child + "__"
+            if any(name.startswith(prefix) for name in nested):
+                raise ValueError(
+                    f"预训练模式（prefit=True、calib_ratio=None 或已拟合评分卡组件）已冻结底层模型，"
+                    f"不能搜索 {prefix} 参数；请启用基础模型重训或直接对基础模型/Pipeline 调参"
+                )
+        if type(terminal).__module__.startswith("hscredit.core.models") and hasattr(terminal, "target"):
+            terminal.set_params(target=self.target)
         return model
 
     def _splitter(self, X, y, groups=None):
+        if self.cv is None:
+            from sklearn.model_selection import GroupShuffleSplit, train_test_split
+
+            fraction = getattr(self, "validation_fraction", 0.2)
+            if (
+                isinstance(fraction, (bool, np.bool_))
+                or not isinstance(fraction, (int, float, np.integer, np.floating))
+                or not 0 < fraction < 1
+            ):
+                raise ValueError("单次验证的 validation_fraction 必须在 (0, 1) 内")
+            if groups is not None:
+                return GroupShuffleSplit(n_splits=1, test_size=fraction, random_state=self.random_state).split(
+                    X, y, groups
+                )
+            train, valid = train_test_split(
+                np.arange(len(y)), test_size=fraction, random_state=self.random_state, stratify=y
+            )
+            return iter([(train, valid)])
         if isinstance(self.cv, (int, np.integer)):
             splitter = StratifiedKFold(n_splits=int(self.cv), shuffle=True, random_state=self.random_state)
         else:
@@ -1254,6 +1393,60 @@ class ModelTuner(ArtifactSerializableMixin):
         if hasattr(splitter, "split"):
             return splitter.split(X, y, groups)
         return iter(splitter)
+
+    def _prepare_eval_set(self, X, eval_set, validation_weight):
+        """统一为原生 sklearn 评估集列表，最后一集用于搜索评分。"""
+        if eval_set is None:
+            if validation_weight is not None:
+                raise ValueError("validation_weight 必须与 eval_set 一起提供")
+            return None, [], None
+        if self.cv is not None:
+            raise ValueError("eval_set 与多折 cv 不能同时使用；单次验证请设置 cv=None")
+        entries = evaluation_set_entries(eval_set)
+        schema = FeatureSchema.from_data(X)
+        result = []
+        for name, item in entries:
+            if isinstance(item, pd.DataFrame):
+                valid_X, valid_y = self._check_input(item)
+            elif isinstance(item, (tuple, list)) and len(item) == 2:
+                valid_X, valid_y = self._check_input(*item)
+            else:
+                raise ValueError(f"评估集 {name!r} 必须是 (X_valid, y_valid) 或含目标列的 DataFrame")
+            result.append((schema.align(valid_X), valid_y))
+        return result, [name for name, _ in entries], validate_sample_weight(validation_weight, len(result[-1][1]))
+
+    def _validation_splits(self, X, y, groups, validation_data):
+        """独立验证位置属于独立数据集，不能按训练索引进行交集校验。"""
+        if validation_data is not None:
+            return [(np.arange(len(y)), np.arange(len(validation_data[1])))]
+        return self._validated_splits(X, y, groups)
+
+    def _fit_holdout(self, model, X, y, params, validation_data, *, eval_set=None, eval_names=None):
+        """直接提升器复用单次验证集早停；Pipeline保持其预处理与内部早停契约。"""
+        module = type(model).__module__
+        name = type(model).__name__.lower()
+        runtime = dict(params)
+        if eval_set is not None and any(key in runtime for key in ("eval_set", "X_val")):
+            raise ValueError("eval_set 请只通过公开参数提供，不要同时在 fit_params 中重复配置评估集")
+        if not any(key in runtime for key in ("eval_set", "X_val")):
+            if (
+                module.startswith("hscredit.core.models") and "eval_set" in inspect.signature(model.fit).parameters
+            ) or module.split(".")[0] in {
+                "xgboost",
+                "lightgbm",
+                "catboost",
+                "ngboost",
+            }:
+                if "ngboost" in name or "ngb" in name:
+                    if module.startswith("hscredit."):
+                        runtime["eval_set"] = eval_set if eval_set is not None else [validation_data]
+                    else:
+                        runtime.update(X_val=validation_data[0], Y_val=validation_data[1])
+                else:
+                    runtime["eval_set"] = eval_set if eval_set is not None else [validation_data]
+                if module.startswith("hscredit.") and eval_names:
+                    runtime["eval_set"] = dict(zip(eval_names, runtime["eval_set"]))
+        return self._fit_fold(model, X, y, runtime)
 
     def _validated_splits(self, X, y, groups=None):
         """所有调参与重评估入口共用位置索引校验。"""
@@ -1390,10 +1583,14 @@ class ModelTuner(ArtifactSerializableMixin):
         evaluation_weight=None,
         cv_splits=None,
         fit_params=None,
+        validation_data=None,
+        external_validation_weight=None,
+        eval_set=None,
+        eval_names=None,
     ):
         """交叉验证并保留逐折模型、预测、指标和学习曲线。"""
         evaluation_weight = validate_sample_weight(evaluation_weight, len(y))
-        if evaluation_weight is not None:
+        if evaluation_weight is not None or external_validation_weight is not None:
             for metric in self.metrics:
                 metric.validate_evaluation_weight()
         fold_results = {i: [] for i in range(len(self.metrics))}
@@ -1403,12 +1600,17 @@ class ModelTuner(ArtifactSerializableMixin):
             splits = self._validated_splits(X, y, groups=getattr(self, "_groups", None))
         if not splits:
             raise ValueError("交叉验证没有产生任何数据划分")
-        self._validate_fold_weights(evaluation_weight, splits)
+        if validation_data is None:
+            self._validate_fold_weights(evaluation_weight, splits)
         for fold_index, (train_idx, val_idx) in enumerate(splits):
-            X_train_fold, X_val_fold = _safe_index(X, train_idx), _safe_index(X, val_idx)
-            y_train_fold, y_val_fold = _safe_index(y, train_idx), _safe_index(y, val_idx)
+            X_train_fold, y_train_fold = _safe_index(X, train_idx), _safe_index(y, train_idx)
+            X_val_fold, y_val_fold = (
+                validation_data if validation_data is not None else (_safe_index(X, val_idx), _safe_index(y, val_idx))
+            )
             sample_weight_fold = _safe_index(sample_weight, train_idx)
-            validation_weight = _safe_index(evaluation_weight, val_idx)
+            validation_weight = (
+                external_validation_weight if validation_data is not None else _safe_index(evaluation_weight, val_idx)
+            )
             train_evaluation_weight = _safe_index(evaluation_weight, train_idx)
             try:
                 fold_model = clone(model)
@@ -1416,7 +1618,14 @@ class ModelTuner(ArtifactSerializableMixin):
                 # 兼容既有的非 sklearn 自定义模型；模板尚未训练，每折仍使用独立对象。
                 fold_model = copy.deepcopy(model)
             fit_kwargs = {}
-            record = {"折编号": fold_index, "训练位置": np.asarray(train_idx), "验证位置": np.asarray(val_idx)}
+            record = {
+                "折编号": fold_index,
+                "训练位置": np.asarray(train_idx),
+                "验证位置": np.asarray(val_idx),
+                "验证来源": "独立验证集" if validation_data is not None else "训练输入留出",
+                "评估集名称": list(eval_names or []),
+                "搜索评分数据集": eval_names[-1] if eval_names else "留出验证集",
+            }
             if trial is not None:
                 self.trial_results_[trial.number]["各折"].append(record)
             try:
@@ -1424,7 +1633,18 @@ class ModelTuner(ArtifactSerializableMixin):
                     train_idx, trial, fold_index, n_samples=len(y), fit_params=fit_params
                 )
                 self._route_sample_weight(fold_model, fit_kwargs, sample_weight_fold)
-                self._fit_fold(fold_model, X_train_fold, y_train_fold, fit_kwargs)
+                if self.cv is None:
+                    self._fit_holdout(
+                        fold_model,
+                        X_train_fold,
+                        y_train_fold,
+                        fit_kwargs,
+                        (X_val_fold, y_val_fold),
+                        eval_set=eval_set,
+                        eval_names=eval_names,
+                    )
+                else:
+                    self._fit_fold(fold_model, X_train_fold, y_train_fold, fit_kwargs)
                 y_train_pred = positive_probability(fold_model.predict_proba(X_train_fold), fold_model.classes_, 1)
                 y_val_pred = positive_probability(fold_model.predict_proba(X_val_fold), fold_model.classes_, 1)
                 y_val_arr, y_train_arr = np.asarray(y_val_fold), np.asarray(y_train_fold)
@@ -1446,7 +1666,7 @@ class ModelTuner(ArtifactSerializableMixin):
                     fold_results[i].append(value)
                     scores[metric.name] = float(value)
                 record["指标"] = scores
-                record["评估口径"] = "未加权" if evaluation_weight is None else "显式评估权重"
+                record["评估口径"] = "未加权" if validation_weight is None else "显式评估权重"
                 record["补充LIFT口径"] = "按样本行，未应用评估权重"
                 for ratio in fold_lifts:
                     fold_lifts[ratio].append(TuningObjective.lift_head(y_val_arr, y_val_pred, ratio=ratio))
@@ -1466,6 +1686,7 @@ class ModelTuner(ArtifactSerializableMixin):
                 trained_params = trained.get_params(deep=False) if hasattr(trained, "get_params") else {}
                 record["启用早停"] = bool(
                     fit_kwargs.get("early_stopping_rounds", trained_params.get("early_stopping_rounds"))
+                    or trained_params.get("n_iter_no_change")
                 )
                 if hasattr(trained, "get_best_iteration"):
                     record["最佳迭代"] = trained.get_best_iteration()
@@ -1592,6 +1813,88 @@ class ModelTuner(ArtifactSerializableMixin):
         >>> oof = tuner.get_oof_predictions()
         >>> oof.loc[oof['验证次数'] > 0, ['真实标签', '预测概率']]
         """
+        if getattr(self, "_validation_data", None) is not None:
+            raise ValueError("独立验证集预测不是训练集OOF，请使用 get_validation_predictions()")
+        return self._prediction_table(trial_number, getattr(self, "_y", None), self._n_samples)
+
+    def get_validation_predictions(self, trial_number=None):
+        """统一返回单次验证或多折验证的预测，位置始终相对于对应验证来源。
+
+        :param trial_number: 默认最佳试验。
+        :return: 已参加验证的样本位置、真实标签、预测概率、验证次数和验证来源。
+            单次留出仅返回验证部分；交叉验证重复验证取平均；独立验证集的位置从0开始。
+
+        **参考样例**
+
+        >>> validation = tuner.get_validation_predictions(trial_number=tuner.best_trial_.number)
+        >>> assert (validation['验证次数'] > 0).all()
+        """
+        validation = getattr(self, "_validation_data", None)
+        labels = getattr(self, "_y", None) if validation is None else validation[1]
+        if labels is None:
+            raise ValueError("尚未训练或验证数据已释放，请先 fit 或读取已保存的试验制品")
+        table = self._prediction_table(trial_number, labels, len(labels))
+        table = table.loc[table["验证次数"] > 0].copy()
+        table["验证来源"] = "独立验证集" if validation is not None else "训练输入留出"
+        names = getattr(self, "_eval_names", None)
+        table["数据集"] = names[-1] if validation is not None and names else "留出验证集"
+        return table.reset_index(drop=True)
+
+    def get_fold_models(self, trial_number=None):
+        """显式获取一个参数点的已训练模型列表；不会自动平均或替换最终模型。
+
+        :param trial_number: 默认最佳试验。
+        :return: 每次划分的模型；单次验证长度为1，多折时返回各折模型。
+        :raises ValueError: 当前保留策略不含模型时抛出。
+
+        **参考样例**
+
+        >>> folds = tuner.get_fold_models()
+        >>> final_model = tuner.get_best_model()  # 单独重训，未对 folds 求平均
+        """
+        if trial_number is None:
+            if self.best_params_ is None:
+                raise ValueError("请先完成至少一次成功试验")
+            trial_number = self.best_trial_.number
+        folds = self.get_trial_result(trial_number)["各折"]
+        if not folds or any("模型" not in fold or fold.get("状态") != "完成" for fold in folds):
+            raise ValueError("该试验未保留全部已完成模型，请使用 full、disk 或最佳试验保留策略")
+        return [fold["模型"] for fold in folds]
+
+    def get_learning_curve(self, trial_number=None, fold=None):
+        """查询一个参数点的逐轮长表；默认最佳点，fold可指定折编号。
+
+        **参数补充**
+
+        :param trial_number: Optuna Trial 编号；None 使用 tuner.best_trial_.number，编号见 get_optimization_history()。
+        :param fold: 折编号，从0开始；None 合并该试验保留的全部折。单次验证只有第0折。
+
+        **参考样例**
+
+        >>> curve = tuner.get_learning_curve(trial_number=tuner.best_trial_.number, fold=0)
+        """
+        from .._lifecycle import learning_curve_table
+
+        if trial_number is None:
+            if self.best_params_ is None:
+                raise ValueError("请先完成至少一次成功试验")
+            trial_number = self.best_trial_.number
+        result = self.get_trial_result(trial_number, load=False)
+        tables = [
+            learning_curve_table(
+                item.get("评估曲线", {}),
+                context={"试验编号": trial_number, "折编号": item["折编号"]},
+                names=item.get("训练记录", {}).get("评估集名称") or item.get("评估集名称"),
+            )
+            for item in result["各折"]
+            if fold is None or item["折编号"] == fold
+        ]
+        if not tables:
+            raise ValueError(f"试验 {trial_number} 没有指定折的记录")
+        return pd.concat(tables, ignore_index=True)
+
+    def _prediction_table(self, trial_number, labels, n_samples):
+        """按位置汇总已保留预测，供单次验证与旧OOF接口共享。"""
         if trial_number is None:
             if self.best_params_ is None:
                 raise ValueError("请先完成至少一次成功试验")
@@ -1601,17 +1904,17 @@ class ModelTuner(ArtifactSerializableMixin):
         record = self.get_trial_result(trial_number, load=False)
         if not any("预测概率" in fold or "制品路径" in fold for fold in record.get("各折", [])):
             raise ValueError("当前保留策略未保留该试验的折外预测，请使用 full、predictions、disk 或最佳试验")
-        sums, counts = np.zeros(self._n_samples), np.zeros(self._n_samples, dtype=int)
+        sums, counts = np.zeros(n_samples), np.zeros(n_samples, dtype=int)
         for summary in record["各折"]:
             fold = load_fold(summary, self)
             if "预测概率" in fold:
                 np.add.at(sums, fold["验证位置"], fold["预测概率"])
                 np.add.at(counts, fold["验证位置"], 1)
-        probability = np.divide(sums, counts, out=np.full(self._n_samples, np.nan), where=counts > 0)
+        probability = np.divide(sums, counts, out=np.full(n_samples, np.nan), where=counts > 0)
         return pd.DataFrame(
             {
-                "样本位置": np.arange(self._n_samples),
-                "真实标签": np.asarray(self._y),
+                "样本位置": np.arange(n_samples),
+                "真实标签": np.asarray(labels),
                 "预测概率": probability,
                 "验证次数": counts,
             }
@@ -1633,7 +1936,18 @@ class ModelTuner(ArtifactSerializableMixin):
         """
         from .._contracts import SAMPLE_PARAMETER_NAMES
 
-        for name in ("_X", "_y", "_sample_weight", "_evaluation_weight", "_groups", "_cv_splits"):
+        for name in (
+            "_X",
+            "_y",
+            "_sample_weight",
+            "_evaluation_weight",
+            "_groups",
+            "_cv_splits",
+            "_validation_data",
+            "_eval_set",
+            "_eval_names",
+            "_validation_weight",
+        ):
             setattr(self, name, None)
         row_names = SAMPLE_PARAMETER_NAMES | {"eval_set", "X_val", "Y_val"}
         for name in ("fit_params", "_fit_params"):
@@ -1746,6 +2060,8 @@ class ModelTuner(ArtifactSerializableMixin):
         evaluation_weight: Optional[np.ndarray] = None,
         groups: Optional[Any] = None,
         fit_params: Optional[Dict[str, Any]] = None,
+        eval_set=None,
+        validation_weight=None,
     ) -> pd.DataFrame:
         """评估指定超参数点的模型效果.
 
@@ -1769,7 +2085,14 @@ class ModelTuner(ArtifactSerializableMixin):
         :param evaluation_weight: 显式验证指标权重，默认None，不继承之前fit的评估权重。
         :param groups: 本次交叉验证的分组标签，按当前数据重新划分。
         :param fit_params: 本次评估的训练参数。以构造时 fit_params 为基础，不继承旧 fit 的临时参数。
+        :param eval_set: cv=None 时提供 [(X_valid, y_valid)]，按最后一集评分；未提供时重新做单次留出。
+        :param validation_weight: 本次最后一个评估集的指标权重，不继承旧验证权重。
         :return: 包含评估结果的DataFrame
+
+        **参考样例**
+
+        >>> points = tuner.evaluate_trials(X_train, y_train, trial_points=[{'max_depth': 2}, {'max_depth': 3}],
+        ...                                eval_set={'验证': (X_valid, y_valid)})
         """
         # 检查trial_points
         if trial_points is None:
@@ -1779,7 +2102,9 @@ class ModelTuner(ArtifactSerializableMixin):
         X, y = self._check_input(X, y)
         sample_weight = validate_sample_weight(sample_weight, len(y))
         evaluation_weight = validate_sample_weight(evaluation_weight, len(y))
-        cv_splits = self._validated_splits(X, y, groups)
+        eval_set, eval_names, validation_weight = self._prepare_eval_set(X, eval_set, validation_weight)
+        validation_data = None if eval_set is None else eval_set[-1]
+        cv_splits = self._validation_splits(X, y, groups, validation_data)
         runtime = {**self.fit_params, **dict(fit_params or {})}
         for value in (self.model_params, self.fixed_params, self.metrics, runtime):
             self._validate_loss_sample_arrays(value)
@@ -1796,7 +2121,17 @@ class ModelTuner(ArtifactSerializableMixin):
             # 创建模型并评估
             model = self._new_model(full_params)
             metric_values = self._evaluate_model(
-                model, X, y, sample_weight, evaluation_weight=evaluation_weight, cv_splits=cv_splits, fit_params=runtime
+                model,
+                X,
+                y,
+                sample_weight,
+                evaluation_weight=evaluation_weight,
+                cv_splits=cv_splits,
+                fit_params=runtime,
+                validation_data=validation_data,
+                external_validation_weight=validation_weight,
+                eval_set=eval_set,
+                eval_names=eval_names,
             )
 
             if self._is_multi_objective:
@@ -1817,6 +2152,8 @@ class ModelTuner(ArtifactSerializableMixin):
         evaluation_weight: Optional[np.ndarray] = None,
         groups: Optional[Any] = None,
         fit_params: Optional[Dict[str, Any]] = None,
+        eval_set=None,
+        validation_weight=None,
     ) -> pd.DataFrame:
         """评估已完成 study 中指定 trial 的模型效果.
 
@@ -1838,6 +2175,8 @@ class ModelTuner(ArtifactSerializableMixin):
         :param evaluation_weight: 显式指标权重；仅X未传入时默认复用fit的评估权重。
         :param groups: 传入新X时使用的分组标签；不复用旧数据的CV位置。
         :param fit_params: 本次重评估训练参数；新数据仅继承构造参数，旧数据继承原 fit 参数。
+        :param eval_set: 评估集列表，按最后一集评分；不提供 X 时默认沿用 fit 的评估集。
+        :param validation_weight: 最后一个评估集的指标权重；仅沿用原评估集时默认复用。
         :return: 包含评估结果的DataFrame，含 ``trial索引``/``trial状态``/超参数/
             重新评估指标/``study记录值`` 列
 
@@ -1881,11 +2220,23 @@ class ModelTuner(ArtifactSerializableMixin):
                 sample_weight = getattr(self, "_sample_weight", None)
             if evaluation_weight is None:
                 evaluation_weight = getattr(self, "_evaluation_weight", None)
+            if eval_set is None:
+                eval_set = getattr(self, "_eval_set", None)
+                if eval_set is None and getattr(self, "_validation_data", None) is not None:
+                    eval_set = [self._validation_data]
+                elif eval_set is not None and getattr(self, "_eval_names", None):
+                    eval_set = dict(zip(self._eval_names, eval_set))
+                if validation_weight is None:
+                    validation_weight = getattr(self, "_validation_weight", None)
             runtime = {**getattr(self, "_fit_params", self.fit_params), **dict(fit_params or {})}
         else:
             X, y = self._check_input(X, y)
-            cv_splits = self._validated_splits(X, y, groups)
             runtime = {**self.fit_params, **dict(fit_params or {})}
+            cv_splits = self._validation_splits(X, y, groups, validation_data=None) if eval_set is None else None
+        eval_set, eval_names, validation_weight = self._prepare_eval_set(X, eval_set, validation_weight)
+        validation_data = None if eval_set is None else eval_set[-1]
+        if validation_data is not None:
+            cv_splits = self._validation_splits(X, y, groups, validation_data)
         sample_weight = validate_sample_weight(sample_weight, len(y))
         for value in (self.model_params, self.fixed_params, self.metrics, runtime):
             self._validate_loss_sample_arrays(value)
@@ -1905,7 +2256,17 @@ class ModelTuner(ArtifactSerializableMixin):
             # 创建模型并评估
             model = self._new_model(full_params)
             metric_values = self._evaluate_model(
-                model, X, y, sample_weight, evaluation_weight=evaluation_weight, cv_splits=cv_splits, fit_params=runtime
+                model,
+                X,
+                y,
+                sample_weight,
+                evaluation_weight=evaluation_weight,
+                cv_splits=cv_splits,
+                fit_params=runtime,
+                validation_data=validation_data,
+                external_validation_weight=validation_weight,
+                eval_set=eval_set,
+                eval_names=eval_names,
             )
 
             # study 记录的原始得分（用于与重新评估结果对照）
@@ -2465,6 +2826,12 @@ class ModelTuner(ArtifactSerializableMixin):
         :param fit_params: 最终训练的额外原生参数
         :return: 已拟合模型。默认以各折早停最佳轮数中位数在完整输入重训。
 
+        多目标时从 Pareto 前沿按 metric 列表顺序选择：先比较首指标，再比较后续指标；
+        get_pareto_front() 可查看其他方案。full_data 指传入 fit 的训练输入，外部 eval_set 不会自动合并。
+        默认完整重训可能不产生验证曲线；搜索曲线用 tuner.get_learning_curve()，最终模型效果用 best.evaluate()。
+        ProbabilityScoreCard 的 prefit=None/False 在各折及最终重训时克隆并训练基础模型；
+        显式 prefit=True 冻结基础模型，不能同时搜索 ``model__`` 参数。
+
         full_data=False 保留模型早停设置；更改 full_data 会自动重新拟合。
         已释放训练数据时仅允许复用此前缓存的相同模式模型。
 
@@ -2500,6 +2867,7 @@ class ModelTuner(ArtifactSerializableMixin):
                 "catboost",
                 "ngboost",
                 "ngbclassifier",
+                "gradientboosting",
             )
         )
         if full_data and boosting and hasattr(estimator, "set_params"):
@@ -2513,13 +2881,15 @@ class ModelTuner(ArtifactSerializableMixin):
                 if fold.get("启用早停") and fold.get("最佳迭代") is not None and fold["最佳迭代"] >= 0
             ]
             if iterations:
-                offset = 0 if "lightgbm" in name or "lgbm" in name else 1
+                offset = 0 if "lightgbm" in name or "lgbm" in name or "gradientboosting" in name else 1
                 estimator_params["iterations" if "catboost" in name else "n_estimators"] = max(
                     1, int(np.ceil(np.median(iterations))) + offset
                 )
             if "early_stopping_rounds" in estimator_params:
                 estimator_params["early_stopping_rounds"] = None
-            if "validation_fraction" in estimator_params:
+            if "n_iter_no_change" in estimator_params:
+                estimator_params["n_iter_no_change"] = None
+            if "validation_fraction" in estimator_params and "gradientboosting" not in name:
                 estimator_params["validation_fraction"] = 0.0
             estimator.set_params(**estimator_params)
             params = model.get_params(deep=False)
@@ -2530,10 +2900,37 @@ class ModelTuner(ArtifactSerializableMixin):
             runtime.pop("early_stopping_rounds", None)
         self.refit_model_ = model
         self.refit_params_ = dict(params)
-        self._fit_fold(model, self._X, self._y, runtime)
+        if (
+            not full_data
+            and self.cv is None
+            and getattr(self, "_validation_data", None) is not None
+            and not any(key in runtime for key in ("eval_set", "X_val"))
+        ):
+            self._fit_holdout(
+                model,
+                self._X,
+                self._y,
+                runtime,
+                self._validation_data,
+                eval_set=getattr(self, "_eval_set", None),
+                eval_names=getattr(self, "_eval_names", None),
+            )
+        else:
+            self._fit_fold(model, self._X, self._y, runtime)
         self.best_model_ = model
         self._best_model_full_data_ = full_data
-        if hasattr(model, "tuner"):
+        if (
+            type(model).__module__.startswith("hscredit.core.models")
+            or hasattr(model, "tuner")
+            or type(model).__module__.split(".")[0]
+            in {
+                "sklearn",
+                "xgboost",
+                "lightgbm",
+                "catboost",
+                "ngboost",
+            }
+        ):
             model.tuner = self
         return model
 
@@ -2887,7 +3284,7 @@ class AutoTuner:
         direction: Optional[Union[str, List[Optional[str]]]] = None,
         metric_names: Optional[List[str]] = None,
         target: str = "target",
-        cv: int = 5,
+        cv: Optional[Any] = None,
         random_state: Optional[int] = None,
         verbose: bool = False,
         early_stopping_rounds: int = 20,
@@ -2909,7 +3306,7 @@ class AutoTuner:
         :param direction: 默认 None 按各指标推断；裸函数须明确方向，多目标可给列表。
         :param metric_names: 指标名称列表（多目标时用于显示）
         :param target: 目标列名，用于scorecardpipeline风格的fit，默认'target'
-        :param cv: 折数、分割器或索引对序列，默认5折分层交叉验证。
+        :param cv: 默认 None 使用单次验证；显式折数>=2、分割器或索引对序列启用多折。
         :param random_state: 随机种子
         :param verbose: 是否输出详细信息
         :param early_stopping_rounds: 早停轮数，默认20

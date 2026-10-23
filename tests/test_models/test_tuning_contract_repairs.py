@@ -65,15 +65,15 @@ def _data():
     return make_classification(n_samples=60, n_features=4, random_state=43)
 
 
-def test_logloss_metric_uses_probabilities_and_maximizes_negative_loss():
+def test_logloss_metric_uses_probabilities_and_minimizes_positive_loss():
     metric = Metric("logloss")
     y_true = np.array([0, 1])
 
     good_score = metric(y_true, np.array([0.01, 0.99]))
     bad_score = metric(y_true, np.array([0.99, 0.01]))
 
-    assert good_score > bad_score
-    assert good_score == pytest.approx(-0.01005033585350145)
+    assert good_score < bad_score
+    assert good_score == pytest.approx(0.01005033585350145)
 
 
 def test_callable_objective_preserves_explicit_minimize_direction():

@@ -1,8 +1,12 @@
 损失函数与评估指标
 ==================
 
+.. autofunction:: hscredit.core.models.get_loss
+
+.. autofunction:: hscredit.core.models.list_losses
+
 每一种损失都通过 ``loss.metric()`` 提供同定义评估指标，通过
-``loss.business_metric()`` 提供对应业务指标，通过 ``metric.to_scorer()``
+``loss.metric(kind='business')`` 提供对应业务指标，通过 ``metric.to_scorer()``
 接入 sklearn 交叉验证。HSCredit 模型可直接接受 ``objective=loss`` 与
 ``eval_metric=metric`` 对象。
 

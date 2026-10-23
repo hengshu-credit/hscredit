@@ -183,6 +183,10 @@ class XGBoost(BaseRiskModel):
     基于 XGBoost 梯度提升框架，见 Chen, T. & Guestrin, C. (2016).
     *XGBoost: A Scalable Tree Boosting System.* KDD；
     文档 https://xgboost.readthedocs.io/ 。
+
+    **参数补充**
+
+    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
     """
 
     _preserve_dataframe = True
@@ -305,12 +309,28 @@ class XGBoost(BaseRiskModel):
         :param X: 特征矩阵
         :param y: 目标变量，可选
         :param sample_weight: 样本权重
-        :param eval_set: 验证集列表
+        :param eval_set: [(X_valid, y_valid)]、具名字典、DataFrame列表或单个数据集；
+            同 ModelReport.datasets 的容器规则，含标签的 DataFrame 通过 target 提取标签。
         :param fit_params: 其他fit参数
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> metric = get_metric('classification_cost', fn_cost=5, fp_cost=1)
+        >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
+        >>> final_values = model.get_eval_results()
         """
         eval_metric = fit_params.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
         objective = self._native_params.get("objective", self.kwargs.get("objective", self.objective))
+        from ..losses._sample_params import bound_sample_params, slice_sample_loss, has_bound_sample_params
+
+        original_objective = objective
+        auto_loss_metric = eval_metric is None and isinstance(objective, BaseLoss)
+        if auto_loss_metric and eval_set is not None and bound_sample_params(objective):
+            raise ValueError(
+                "绑定逐行金融参数的损失使用外部 eval_set 时，请显式提供该数据集的 eval_metric；不能复用训练金额"
+            )
         if eval_metric is None and isinstance(objective, BaseLoss):
             eval_metric = objective.metric()
         metric_object = eval_metric if isinstance(eval_metric, BaseMetric) else None
@@ -322,13 +342,17 @@ class XGBoost(BaseRiskModel):
         scorecard_sample_weight = sample_weight
         self._validate_probability_scorecard_labels(y)
         eval_set = self._prepare_eval_set(eval_set)
+        if eval_set and len(eval_set) > 1 and has_bound_sample_params(eval_metric):
+            raise ValueError("绑定逐行金融参数的 eval_metric 只能对应一个 eval_set，多个数据集不能共用同一金额数组")
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
         self.classes_ = np.unique(y)
 
-        # 自动计算scale_pos_weight（内部建模经验：当bad_rate<0.05时）
-        if self.scale_pos_weight == "auto":
+        # 自定义目标的权重由导数/样本权重控制，不展示实际未使用的自动类别权重。
+        if self._validate_custom_loss_options():
+            self.scale_pos_weight_ = 1.0
+        elif self.scale_pos_weight == "auto":
             pos_ratio = np.mean(y == 1)
             if pos_ratio < 0.05:
                 # 内部经验: 0.05 * n_samples / n_positive
@@ -349,6 +373,12 @@ class XGBoost(BaseRiskModel):
             sample_weight = sw_train
         else:
             X_train, y_train = X, y
+        if auto_eval_split:
+            objective = slice_sample_loss(objective, self._eval_train_indices_, len(y))
+            eval_metric = slice_sample_loss(eval_metric, self._eval_val_indices_, len(y))
+            metric_object = eval_metric if isinstance(eval_metric, BaseMetric) else None
+            if objective is not original_objective:
+                self.loss_sample_sizes_ = {"原始样本": len(y), "训练样本": len(y_train), "验证样本": len(y_val)}
         # 构建参数 - 在构造函数中传入所有参数
         params = {
             "max_depth": self.max_depth,
@@ -472,7 +502,9 @@ class XGBoost(BaseRiskModel):
 
         # 解析自定义损失（BaseLoss 实例 -> sklearn 包装器可用的目标函数）
         # 旧版 sklearn 目标回调不传权重，已完成自动划分的训练权重作为兼容回退。
-        params["objective"] = resolve_custom_objective(params.get("objective"), sample_weight=sample_weight)
+        params["objective"] = resolve_custom_objective(
+            objective if objective is not original_objective else params.get("objective"), sample_weight=sample_weight
+        )
 
         # 旧版在 fit 接收早停和回调，新版在构造器接收。
         from packaging.version import Version
@@ -518,6 +550,11 @@ class XGBoost(BaseRiskModel):
         self._evals_result = getattr(self._model, "evals_result_", {})
         self._is_fitted = True
         self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
+        from .._workflow import record_boosting_evaluation
+
+        record_boosting_evaluation(
+            self, eval_set, eval_metric=eval_metric, weights=fit_kwargs.get("sample_weight_eval_set")
+        )
 
         return self
 
@@ -566,9 +603,9 @@ class XGBoost(BaseRiskModel):
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
 
-        当使用自定义损失函数（objective 为可调用对象）时，XGBoost 返回的是
-        未经过链接函数转换的原始分数（raw margin，一维数组），此处自动应用
-        sigmoid 转换为概率并补齐为二维 (n_samples, 2) 输出，与内置目标保持一致。
+        默认返回类别顺序为 classes_ 的两列概率，shape=(n_samples, 2)。
+        原生 sklearn 接口已经返回两列概率时直接透传；仅兼容一维 raw margin 输出时
+        应用一次 sigmoid 并补齐两列，不能在调用后再次对概率做 sigmoid。
         """
         self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)

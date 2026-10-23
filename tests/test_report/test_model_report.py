@@ -251,6 +251,7 @@ def test_model_report_does_not_freeze_any_worksheet(tmp_path):
 
     workbook = load_workbook(output)
     assert {sheet.title: sheet.freeze_panes for sheet in workbook.worksheets} == {
+        "报告执行状态": None,
         "目录": None,
         "1-基本信息": None,
         "2-模型性能": None,
@@ -258,6 +259,7 @@ def test_model_report_does_not_freeze_any_worksheet(tmp_path):
         "4-稳定性分析": None,
         "5-模型参数": None,
         "6-模型部署需求": None,
+        "8-训练与调参过程": None,
     }
 
 
@@ -866,8 +868,9 @@ class TestModelReportOverdueDpdsSeparate:
         ).set_index("统计项")
 
         assert table.loc["坏样本率", "TOTAL"] == pytest.approx(5 / 9)
-        assert table.loc["坏样本率", "TOP 50%"] == pytest.approx(3 / 4)
-        assert table.loc["LIFT值", "TOP 50%"] == pytest.approx((3 / 4) / (5 / 9))
+        # 九个有效样本的 TOP 50% 统一向上取整为五人，与 TopKLiftMetric 一致。
+        assert table.loc["坏样本率", "TOP 50%"] == pytest.approx(4 / 5)
+        assert table.loc["LIFT值", "TOP 50%"] == pytest.approx((4 / 5) / (5 / 9))
 
 
 class TestModelReportRegression:
@@ -1335,6 +1338,7 @@ class TestModelReportRegression:
 
         workbook = load_workbook(output)
         assert workbook.sheetnames == [
+            "报告执行状态",
             "目录",
             "1-基本信息",
             "2-模型性能",
@@ -1342,6 +1346,7 @@ class TestModelReportRegression:
             "4-稳定性分析",
             "5-模型参数",
             "6-模型部署需求",
+            "8-训练与调参过程",
         ]
         contents = [cell.value for row in workbook["目录"].iter_rows() for cell in row]
         basic_info = [cell.value for row in workbook["1-基本信息"].iter_rows() for cell in row]
@@ -1761,6 +1766,7 @@ class TestModelReportRealDataContract:
 
     FEATURE_NAMES = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"]
     EXPECTED_SHEETS = [
+        "报告执行状态",
         "目录",
         "1-基本信息",
         "2-模型性能",
@@ -1768,6 +1774,7 @@ class TestModelReportRealDataContract:
         "4-稳定性分析",
         "5-模型参数",
         "6-模型部署需求",
+        "8-训练与调参过程",
     ]
 
     @staticmethod
@@ -1887,11 +1894,11 @@ class TestModelReportRealDataContract:
         for sheet_name in self.EXPECTED_SHEETS:
             ws = workbook[sheet_name]
             assert _merged_range_for_row(ws, 2) is not None
-        for sheet_name in self.EXPECTED_SHEETS[1:]:
+        for sheet_name in [name for name in self.EXPECTED_SHEETS if name != "目录"]:
             assert workbook[sheet_name]["B2"].hyperlink.location == "#'目录'!B2"
 
         contents = workbook["目录"]
-        for sheet_name in self.EXPECTED_SHEETS[1:]:
+        for sheet_name in [name for name in self.EXPECTED_SHEETS if name != "目录"]:
             content_cell = next(cell for row in contents.iter_rows() for cell in row if cell.value == sheet_name)
             assert content_cell.hyperlink.location == f"#'{sheet_name}'!B2"
 

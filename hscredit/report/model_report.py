@@ -35,6 +35,8 @@ import pandas as pd
 from ..utils.overdue import overdue_label, validate_overdue_operator
 from ..utils.input_utils import normalize_dpd_values
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
+from ._model_context import ModelContextMixin, report_model_current, has_bound_sample_params, _model_stamp
+from .result import ReportResult
 from .model_explanation import build_model_explanation, explanation_to_dict, normalize_explain_config
 from ..exceptions import SerializationError, ValidationError
 from ..utils.parallel import (
@@ -175,13 +177,13 @@ def _proba_pos(model, X) -> np.ndarray:
     return proba.reshape(-1)
 
 
-def _safe_binary_metric(metric, y_true, y_score) -> float:
+def _safe_binary_metric(metric, y_true, y_score, **kwargs) -> float:
     """计算二分类指标，单类别样本返回 NaN。"""
     y_arr = np.asarray(y_true)
     if len(y_arr) == 0 or len(np.unique(y_arr[~pd.isna(y_arr)])) < 2:
         return np.nan
     try:
-        return float(metric(y_arr, y_score))
+        return float(metric(y_arr, y_score, **kwargs))
     except (TypeError, ValueError):
         return np.nan
 
@@ -269,16 +271,19 @@ def _binary_metric_worker(task) -> Tuple[float, float, int, float]:
     """基于已缓存预测计算单个数据集/标签的确定性指标。"""
     from ..core.metrics import auc, ks
 
-    y_true, y_proba = task
+    y_true, y_proba, *options = task
+    direction, weight = options if options else ("higher_risk", None)
     y_arr = np.asarray(y_true, dtype=float)
     proba_arr = np.asarray(y_proba)
     valid = np.isfinite(y_arr)
     y_arr = y_arr[valid]
     proba_arr = proba_arr[valid]
-    bad_rate = float(y_arr.mean()) if len(y_arr) else np.nan
+    if weight is not None:
+        weight = np.asarray(weight)[valid]
+    bad_rate = float(np.average(y_arr, weights=weight)) if len(y_arr) else np.nan
     return (
-        _safe_binary_metric(ks, y_arr, proba_arr),
-        _safe_binary_metric(auc, y_arr, proba_arr),
+        _safe_binary_metric(ks, y_arr, proba_arr, sample_weight=weight),
+        _safe_binary_metric(auc, y_arr, proba_arr, score_direction=direction, sample_weight=weight),
         len(y_arr),
         bad_rate,
     )
@@ -472,7 +477,7 @@ class ReportDataset:
 # ---------------------------------------------------------------------------
 
 
-class ModelReport:
+class ModelReport(ModelContextMixin):
     """面向报表输出的快速模型报告封装.
 
     参考风控建模标准报告模板，对已训练模型一站式生成多 Sheet 结构的
@@ -546,6 +551,9 @@ class ModelReport:
         parallel_config: Optional[Dict[str, Any]] = None,
         *,
         overdue_operator: Optional[str] = None,
+        score_direction: Optional[str] = None,
+        metrics=None,
+        sample_weight=None,
         **kwargs,
     ):
         """初始化模型报告.
@@ -595,7 +603,7 @@ class ModelReport:
         :param X_oot: 跨时间验证集特征（命名为 跨时间验证集）
         :param y_oot: 跨时间验证集标签，None 时从 X_oot 中通过 target / overdue+dpds 构建
         :param features: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
-        :param target: 目标列配置
+        :param target: 目标列配置；None 且未指定 overdue/dpds 时继承模型或 Pipeline 末端的目标列。
             - str: 列名，如 'target'，数据全部在 X 中时使用
             - dict: {标签名: Series/ndarray/list/callable}，每个标签独立统计
         :param overdue: 逾期列名（str）或多个列名（List[str]），与 target 模式互斥
@@ -605,6 +613,11 @@ class ModelReport:
         :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
         :param prediction_method: 数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
         :param prediction_kwargs: callable 同名参数的显式覆盖字典
+        :param explain_config: 可选模型解释配置；None 不生成可选解释章节，由 normalize_explain_config 校验。
+        :param score_direction: higher_risk/higher_safe；默认按预测方法和评分刻度确定，不按标签反转概率。
+        :param metrics: get_metric/ loss.metric() 等统一指标对象或名称，附加到性能表与Excel。
+            这些指标需要 prediction_method='predict_proba' 的概率输入。
+        :param sample_weight: 指标权重，可传列名、{数据集名称: 权重} 或单数据集的一维权重。
         :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
         :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
         :param parallel_config: joblib 其他并行配置，保留调用者字典引用
@@ -612,6 +625,10 @@ class ModelReport:
         """
         if overdue_operator is not None:
             validate_overdue_operator(overdue_operator)
+        if target is None and overdue is None and dpds is None:
+            from ..core.models._contracts import model_target_name
+
+            target = model_target_name(model)
         validate_target_mode(target, overdue, dpds)
         reject_legacy_target_keywords(kwargs)
         for old, new in (
@@ -640,6 +657,7 @@ class ModelReport:
             raise ValidationError("prediction_kwargs 必须是字典或 None")
         self.prediction_method = prediction_method
         self.prediction_kwargs = dict(prediction_kwargs or {})
+        self._init_model_context(score_direction, metrics, sample_weight)
         self.kwargs = dict(kwargs)
         self.method_source_ = None
         if callable(prediction_method):
@@ -675,6 +693,9 @@ class ModelReport:
             "parallel_backend": parallel_backend,
             "parallel_config": parallel_config,
             "explain_config": explain_config,
+            "score_direction": score_direction,
+            "metrics": metrics,
+            "sample_weight": sample_weight,
         }
 
         # 在任何预测任务启动前完成公共配置校验；保留调用者传入字典的对象身份。
@@ -692,6 +713,7 @@ class ModelReport:
         self._label_names: List[str] = []
 
         # 所有缓存仅在完整计算成功后提交。
+        self.report_warnings_ = []
         self._metrics_cache: Dict[Optional[str], pd.DataFrame] = {}
         self._summary_cache: Optional[pd.DataFrame] = None
         self._raw_importance_cache: Optional[pd.Series] = None
@@ -719,6 +741,10 @@ class ModelReport:
             X_oot=X_oot,
             y_oot=y_oot,
         )
+        if len(normalized) > 1 and has_bound_sample_params(self.metrics):
+            raise ValueError(
+                "多个报告数据集不能共用绑定逐行金融参数的指标；金额加权请使用 sample_weight 列名，或分别创建报告"
+            )
         self._init_from_normalized(normalized)
 
         # 解析最终使用的特征名列表
@@ -742,9 +768,14 @@ class ModelReport:
             self.feature_names = list(first_ds.X.columns)
         else:
             self.feature_names = []
+        for key in self._datasets:
+            self._metric_weight(key)
+        self._capture_model_context()
 
     def _invalidate_caches(self) -> None:
         """清除所有依赖数据集的派生结果。"""
+        self.report_warnings_ = []
+        self.report_skips_ = []
         self._metrics_cache.clear()
         self._summary_cache = None
         self._raw_importance_cache = None
@@ -762,10 +793,25 @@ class ModelReport:
     def _report_warning(self, message, *args) -> None:
         """保留现有日志，同时把导出中的降级明确记录为失败章节。"""
         logger.warning(message, *args)
+        rendered = message % args if args else str(message)
+        title = "降级：" + str(message).split("[")[0].strip()
+        warning = {"章节": title, "说明": rendered}
+        if warning not in getattr(self, "report_warnings_", []):
+            self.report_warnings_ = [*getattr(self, "report_warnings_", []), warning]
         result = getattr(self, "_execution_result", None)
         if result is not None:
-            rendered = message % args if args else str(message)
-            result.failure("降级：" + str(message).split("[")[0].strip(), rendered)
+            previous = result.sections.get(title)
+            if previous is None or rendered not in previous.reason:
+                result.failure(title, rendered)
+
+    def _report_not_applicable(self, title, reason):
+        """显式记录算法或配置不提供的可选内容，不把正常能力限制伪装成计算失败。"""
+        entry = {"章节": title, "说明": reason}
+        if entry not in getattr(self, "report_skips_", []):
+            self.report_skips_ = [*getattr(self, "report_skips_", []), entry]
+        result = getattr(self, "_execution_result", None)
+        if result is not None:
+            result.skip(title, reason)
 
     def _run_cache_transaction(self, function, *args, **kwargs):
         """隔离派生缓存写入；仅在整个公共输出操作成功后提交。"""
@@ -797,7 +843,11 @@ class ModelReport:
 
     def __getstate__(self):
         """把 callable method 转为 cloudpickle 载荷，避免执行源码字符串。"""
+        self._assert_model_current()
         state = dict(self.__dict__)
+        state["_metrics_payload"] = cloudpickle.dumps(self.metrics)
+        state["metrics"] = []
+        state["init_params_"] = {**state.get("init_params_", {}), "metrics": None}
         if callable(self.prediction_method):
             try:
                 state["_method_payload"] = cloudpickle.dumps(self.prediction_method)
@@ -822,6 +872,7 @@ class ModelReport:
         state = dict(state)
         payload = state.pop("_method_payload", None)
         target_payload = state.pop("_target_payload", None)
+        metrics_payload = state.pop("_metrics_payload", None)
         self.__dict__.update(state)
         self.overdue = state.get("overdue", state.get("init_params_", {}).get("overdue"))
         self.dpds = state.get("dpds", state.get("init_params_", {}).get("dpds"))
@@ -841,6 +892,18 @@ class ModelReport:
             except Exception as exc:
                 raise SerializationError(f"method callable 无法恢复: {exc}") from exc
             self.init_params_["prediction_method"] = self.prediction_method
+        if not hasattr(self, "score_direction"):
+            self._init_model_context(None, None, None)
+        if metrics_payload is not None:
+            self.metrics = cloudpickle.loads(metrics_payload)
+            self.init_params_["metrics"] = self.metrics
+        if not hasattr(self, "model_context_"):
+            self._capture_model_context()
+        if state.get("evaluation_protocol_", 0) < 2:
+            self._invalidate_caches()
+        self.evaluation_protocol_ = 2
+        # 数组在序列化后可从视图变成连续内存，重绑布局相关指纹；序列化前已校验模型未变化。
+        self._model_stamp_ = _model_stamp(self.model)
 
     def _call_custom_method(self, X: pd.DataFrame):
         """按签名同名注入上下文并严格调用 callable 一次。"""
@@ -1091,6 +1154,7 @@ class ModelReport:
         self._invalidate_caches()
 
     @analysis_inputs("X", roles=())
+    @report_model_current
     def add_dataset(self, key: str, label: str, X, y=None, features: Optional[List[str]] = None):
         """添加额外数据集（如 OOT）用于报告.
 
@@ -1228,10 +1292,16 @@ class ModelReport:
 
     # ---------- 1. 模型性能指标 ----------
 
+    @report_model_current
     def get_metrics(self, label: Optional[str] = None) -> pd.DataFrame:
         """KS / AUC / PSI 等核心指标.
 
         :param label: 多标签模式下指定标签名，None 时使用 combined y
+
+        **参考样例**
+
+        >>> effects = report.get_metrics()
+        >>> numeric_auc = effects.set_index('统计项').loc['AUC']
         """
         if label in self._metrics_cache:
             return self._metrics_cache[label].copy()
@@ -1239,7 +1309,10 @@ class ModelReport:
         # 数据集按传入顺序展示（dict 的 key / list 顺序 / 训练集→测试集→跨时间验证集）
         ds_keys = list(self._datasets)
         labels_map = {k: self._datasets[k].label for k in ds_keys}
-        tasks = [(self._get_y(key, label), self._datasets[key].y_proba) for key in ds_keys]
+        tasks = [
+            (*self._get_valid_target_arrays(key, label), self.score_direction, self._metric_weight(key, label))
+            for key in ds_keys
+        ]
         metric_values = parallel_execute(
             _binary_metric_worker,
             tasks,
@@ -1300,7 +1373,9 @@ class ModelReport:
             psi_row.update({labels_map[key]: value for key, value in zip(ds_keys[1:], psi_values)})
             rows.append(psi_row)
 
-        result = pd.DataFrame(rows)
+        by_name = {row["统计项"]: row for row in rows}
+        by_name.update({row["统计项"]: row for row in self._extra_metric_rows(label)})
+        result = pd.DataFrame(by_name.values())
         self._metrics_cache[label] = result.copy()
         return result
 
@@ -1324,6 +1399,7 @@ class ModelReport:
         return feature_bin_stats(data, **parameters)
 
     @report_inputs
+    @report_model_current
     def get_bin_table(
         self,
         dataset: str = "train",
@@ -1423,38 +1499,52 @@ class ModelReport:
             return self._raw_importance_cache.copy()
 
         candidates: List[Any] = []
+        pending = [self.model]
         seen = set()
-        for candidate in [
-            self.model,
-            getattr(self.model, "model_", None),
-            getattr(self.model, "_model", None),
-            getattr(self.model, "model", None),
-            getattr(self.model, "lr_model_", None),
-            getattr(self.model, "lr_model", None),
-        ]:
+        while pending:
+            candidate = pending.pop(0)
             if candidate is None or id(candidate) in seen:
                 continue
             seen.add(id(candidate))
             candidates.append(candidate)
+            pending.extend(
+                getattr(candidate, name, None)
+                for name in ("model_", "_model", "model", "lr_model_", "lr_model", "base_model")
+            )
+            if getattr(candidate, "steps", None):
+                pending.append(candidate.steps[-1][1])
 
         resolved: Optional[pd.Series] = None
         for candidate in candidates:
+            from ..core.models.classical.sklearn_models import SklearnRiskModel
+
+            if isinstance(candidate, SklearnRiskModel) and not any(
+                hasattr(candidate._model, attr) for attr in ("feature_importances_", "coef_")
+            ):
+                continue  # 如 RBF SVM，原生没有逐字段重要性。
             values = None
             if callable(getattr(candidate, "get_feature_importances", None)):
                 try:
                     values = candidate.get_feature_importances()
-                except Exception:
+                except Exception as exc:
+                    self._report_warning("读取模型重要性失败 [模型=%s]: %s", type(candidate).__name__, exc)
                     values = None
-            if values is None and hasattr(candidate, "feature_importances_"):
+            if values is None:
                 try:
-                    values = getattr(candidate, "feature_importances_")
-                except Exception:
+                    values = getattr(candidate, "feature_importances_", None)
+                except Exception as exc:
+                    self._report_warning("读取模型重要性属性失败 [模型=%s]: %s", type(candidate).__name__, exc)
                     values = None
-            if values is None and hasattr(candidate, "coef_"):
+            if values is None:
                 try:
-                    coefficients = np.asarray(getattr(candidate, "coef_"), dtype=float)
-                    values = np.mean(np.abs(coefficients), axis=0) if coefficients.ndim > 1 else np.abs(coefficients)
-                except Exception:
+                    coefficient = getattr(candidate, "coef_", None)
+                    if coefficient is not None:
+                        coefficients = np.asarray(coefficient, dtype=float)
+                        values = (
+                            np.mean(np.abs(coefficients), axis=0) if coefficients.ndim > 1 else np.abs(coefficients)
+                        )
+                except Exception as exc:
+                    self._report_warning("读取模型系数失败 [模型=%s]: %s", type(candidate).__name__, exc)
                     values = None
             if values is None:
                 continue
@@ -1474,6 +1564,9 @@ class ModelReport:
 
         if resolved is None:
             resolved = pd.Series(index=self.feature_names, dtype=float, name="特征重要性")
+            self._report_not_applicable(
+                "原生特征重要性", "当前模型没有可用的原生逐字段重要性；保留变量统计，不编造重要性数值"
+            )
         else:
             resolved.name = "特征重要性"
         self._raw_importance_cache = resolved.copy()
@@ -1641,6 +1734,7 @@ class ModelReport:
         )
         return figure
 
+    @report_model_current
     def get_feature_importance(self, top_n: Optional[int] = None) -> pd.DataFrame:
         if self._importance_cache is None:
             importances = self._get_raw_feature_importance().dropna()
@@ -1836,6 +1930,11 @@ class ModelReport:
 
         class_names = {base.__name__.lower().replace("_", "") for base in type(self.model).__mro__}
         if not any("logisticregression" in name or name == "lr" for name in class_names):
+            return pd.DataFrame()
+
+        statistics = getattr(self.model, "statistics_status_", {})
+        if statistics.get("状态") in {"未执行", "不适用", "超出预算"}:
+            self._report_not_applicable("逻辑回归统计诊断", f"{statistics}；保留原始模型系数与概率评估")
             return pd.DataFrame()
 
         try:
@@ -2134,6 +2233,7 @@ class ModelReport:
 
     # ---------- 8. 图表导出 ----------
 
+    @report_model_current
     def _get_top_n_lift_table(
         self,
         percentiles: Tuple[float, ...] = (0.01, 0.03, 0.05, 0.10),
@@ -2184,25 +2284,40 @@ class ModelReport:
             n = len(y_arr)
             overall_bad_rate = float(y_arr.mean())
 
-            sorted_idx = np.argsort(-prediction)
-            sorted_y = y_arr[sorted_idx]
+            from ..core.models.losses.business_metrics import _selection_fraction, _bounded_parameter
+
+            fractions = {
+                pct: (
+                    _selection_fraction(
+                        self._risk_values(prediction),
+                        _bounded_parameter(pct, "头部人数占比", 0, 1, include_lower=False),
+                        higher=True,
+                    )
+                    if n
+                    else np.asarray([])
+                )
+                for pct in percentiles
+            }
+            weights = self._metric_weight(ds_key, label)
+            weights = np.ones(n) if weights is None else weights
+            overall_bad_rate = float(np.average(y_arr, weights=weights)) if n else np.nan
 
             bad_rates: Dict[str, float] = {}
             lifts: Dict[str, float] = {}
             improvements: Dict[str, float] = {}
 
             for pct in percentiles:
-                top_n = max(1, int(n * pct))
-                top_bad_rate = float(sorted_y[:top_n].mean())
-                lift = top_bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0.0
-                improvement = (top_bad_rate - overall_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0.0
+                selected = fractions[pct] * weights
+                top_bad_rate = float(np.dot(y_arr, selected) / selected.sum()) if selected.sum() else np.nan
+                lift = top_bad_rate / overall_bad_rate if overall_bad_rate > 0 else np.nan
+                improvement = (top_bad_rate - overall_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else np.nan
                 key = f"TOP {int(pct * 100)}%"
                 bad_rates[key] = top_bad_rate
                 lifts[key] = lift
                 improvements[key] = improvement
 
             bad_rates["TOTAL"] = overall_bad_rate
-            lifts["TOTAL"] = 1.0
+            lifts["TOTAL"] = 1.0 if overall_bad_rate > 0 else np.nan
             improvements["TOTAL"] = 0.0
 
             rows.append({"数据集": tag, "统计项": "坏样本率", **bad_rates})
@@ -2214,11 +2329,8 @@ class ModelReport:
                 amounts = (
                     pd.to_numeric(ds.X[amount], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)[valid]
                 )
-                amounts_sorted = amounts[sorted_idx]
                 overall_bad_amount = (
-                    float((sorted_y * amounts_sorted).sum() / amounts_sorted.sum())
-                    if amounts_sorted.sum() > 0
-                    else overall_bad_rate
+                    float((y_arr * amounts).sum() / amounts.sum()) if amounts.sum() > 0 else overall_bad_rate
                 )
 
                 amt_bad_rates: Dict[str, float] = {}
@@ -2226,19 +2338,19 @@ class ModelReport:
                 amt_improvements: Dict[str, float] = {}
 
                 for pct in percentiles:
-                    top_n = max(1, int(n * pct))
-                    top_amt = amounts_sorted[:top_n]
-                    top_y_sorted = sorted_y[:top_n]
-                    top_bad_amt = float((top_y_sorted * top_amt).sum() / top_amt.sum()) if top_amt.sum() > 0 else 0.0
-                    lift_amt = top_bad_amt / overall_bad_amount if overall_bad_amount > 0 else 0.0
-                    imp_amt = (top_bad_amt - overall_bad_amount) / overall_bad_amount if overall_bad_amount > 0 else 0.0
+                    top_amt = amounts * fractions[pct]
+                    top_bad_amt = float((y_arr * top_amt).sum() / top_amt.sum()) if top_amt.sum() > 0 else 0.0
+                    lift_amt = top_bad_amt / overall_bad_amount if overall_bad_amount > 0 else np.nan
+                    imp_amt = (
+                        (top_bad_amt - overall_bad_amount) / overall_bad_amount if overall_bad_amount > 0 else np.nan
+                    )
                     key = f"TOP {int(pct * 100)}%"
                     amt_bad_rates[key] = top_bad_amt
                     amt_lifts[key] = lift_amt
                     amt_improvements[key] = imp_amt
 
                 amt_bad_rates["TOTAL"] = overall_bad_amount
-                amt_lifts["TOTAL"] = 1.0
+                amt_lifts["TOTAL"] = 1.0 if overall_bad_amount > 0 else np.nan
                 amt_improvements["TOTAL"] = 0.0
 
                 rows[-3:] = [
@@ -2346,6 +2458,8 @@ class ModelReport:
                 y_m = ds.y[mask.values]
                 proba_m = ds.y_proba[mask.values]
                 score_m = np.asarray(ds.score)[mask.values]
+                weights = self._metric_weight(ds_key)
+                weights = None if weights is None else weights[mask.values]
                 if len(y_m) == 0:
                     continue
                 try:
@@ -2353,9 +2467,11 @@ class ModelReport:
                         "数据集": ds.label,
                         "月份": str(month),
                         "样本数": len(y_m),
-                        "坏样本率": float(y_m.mean()),
-                        "KS": _safe_binary_metric(ks, y_m, proba_m),
-                        "AUC": _safe_binary_metric(auc, y_m, proba_m),
+                        "坏样本率": float(np.average(y_m, weights=weights)),
+                        "KS": _safe_binary_metric(ks, y_m, proba_m, sample_weight=weights),
+                        "AUC": _safe_binary_metric(
+                            auc, y_m, proba_m, score_direction=self.score_direction, sample_weight=weights
+                        ),
                         "均值": float(np.nanmean(score_m)),
                         "标准差": float(np.nanstd(score_m)),
                         "最小值": float(np.nanmin(score_m)),
@@ -2445,7 +2561,15 @@ class ModelReport:
 
             p = str(output_dir / f"ks_{ds_key}.png")
             try:
-                ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=p, figsize=(12, 7))
+                ks_plot(
+                    ds.score,
+                    ds.y,
+                    title=f"{tag} KS曲线",
+                    save=p,
+                    figsize=(12, 7),
+                    score_direction=self.score_direction,
+                    sample_weight=self._metric_weight(ds_key),
+                )
                 _safe_close_figs()
                 model_figs.append(p)
             except Exception as exc:
@@ -2454,7 +2578,15 @@ class ModelReport:
             if show_lift:
                 p = str(output_dir / f"lift_{ds_key}.png")
                 try:
-                    lift_plot(ds.y, ds.y_proba, n_bins=20, title=f"{tag} LIFT曲线", save=p, figsize=(12, 7))
+                    lift_plot(
+                        ds.y,
+                        self._risk_values(ds.y_proba),
+                        n_bins=20,
+                        title=f"{tag} LIFT曲线",
+                        save=p,
+                        figsize=(12, 7),
+                        sample_weight=self._metric_weight(ds_key),
+                    )
                     _safe_close_figs()
                     model_figs.append(p)
                 except Exception as exc:
@@ -2686,7 +2818,15 @@ class ModelReport:
 
                 path = str(output_dir / f"ks_{ds_key}.png")
                 try:
-                    figure = ks_plot(ds.score, ds.y, title=f"{tag} KS曲线", save=path, figsize=(12, 7))
+                    figure = ks_plot(
+                        ds.score,
+                        ds.y,
+                        title=f"{tag} KS曲线",
+                        save=path,
+                        figsize=(12, 7),
+                        score_direction=self.score_direction,
+                        sample_weight=self._metric_weight(ds_key),
+                    )
                     _safe_close_plot_result(figure)
                     model_figs.append(path)
                 except Exception as exc:
@@ -2697,9 +2837,10 @@ class ModelReport:
                     try:
                         figure = lift_plot(
                             ds.y,
-                            ds.y_proba,
+                            self._risk_values(ds.y_proba),
                             n_bins=20,
                             title=f"{tag} LIFT曲线",
+                            sample_weight=self._metric_weight(ds_key),
                             save=path,
                             figsize=(12, 7),
                         )
@@ -2951,6 +3092,7 @@ class ModelReport:
     # 模型摘要默认展示的指标（每个指标横向展开到各数据集）
     _SUMMARY_METRICS = ["KS", "AUC", "样本数", "坏样本率"]
 
+    @report_model_current
     def summary(self) -> pd.DataFrame:
         """模型核心指标摘要表（多层列：统计指标 × 数据集；行：逾期指标）.
 
@@ -3110,6 +3252,7 @@ class ModelReport:
                             f"生成金额口径特征分箱失败 [特征={feature}, 数据集={ds.label}, 金额字段={amount}]"
                         ) from exc
 
+    @report_model_current
     def get_model_explanation(self) -> Dict[str, Any]:
         """返回显式配置的结构化模型解释结果。"""
         if not self.explain_config["enabled"]:
@@ -3135,6 +3278,7 @@ class ModelReport:
         self._model_explanation_cache = explanation
         return explanation
 
+    @report_model_current
     @report_inputs
     def to_excel(
         self,
@@ -3160,15 +3304,46 @@ class ModelReport:
         return_result: bool = False,
         transactional: bool = False,
         include_sample_records: bool = True,
-    ) -> str:
+    ) -> Union[str, ReportResult]:
         """事务性生成 Excel；失败时恢复派生缓存。
 
-        mode为strict或best_effort时启用章节状态协议；默认保留原返回路径。
+        默认按best_effort记录全部章节状态并写入状态页，仍返回原路径；strict拒绝缺失必需章节。
         return_result=True 返回 ReportResult，并在失败时保留结构化诊断。
         transactional=True 使用不可变版本目录＋完成清单统一发布Excel和图片，
         默认按strict检查；返回实际版本文件路径，不覆盖原filepath或旧版本。
         include_sample_records=False 不导出生产订单样例及逐行模型分数，章节标记为不适用；
         此开关不替代显式模型解释配置中对个体解释的选择。
+
+        **参数补充**
+
+        :param filepath: 输出 .xlsx 路径，支持相对或绝对路径。事务模式的实际路径见返回值或 result.artifacts。
+        :param max_n_bins: 报告分箱数量，默认10；使用 hscredit 分箱器，不改变模型参数或预测。
+        :param method: 报告分箱方法，默认 quantile；不是模型预测方法，预测方法在构造报告时配置。
+        :param amount: 金额字段名，启用金额口径分析；不等同于报告指标 sample_weight，若需金额加权指标须另行指定。
+        :param date: 日期字段名，用于分月/分期分析；该列可保留在报告 DataFrame 中而不作为模型特征。
+        :param freq: 日期汇总频率，如 D、W、M、Q；None 根据日期跨度推断。
+        :param group: 可选分组字段，用于分组样本量和坏样本率分析。
+        :param with_plots: 是否生成并插入图表，默认 True；False 只输出数据表，图形章节记为不适用。
+        :param model_name: 报告中展示的模型名称，None 使用模型类名。
+        :param project_desc: 项目说明文本，写入基本信息页，不参与训练。
+        :param feature_map: {字段名: 业务含义}，用于报告展示，不重命名模型真实输入字段。
+        :param feature_info: 可选特征部署信息 DataFrame，如变量来源与加工说明。
+        :param show_lift: 是否展示 LIFT 曲线，默认 True；与 with_plots 配合。
+        :param show_importance: 是否展示特征重要性，默认 True；算法无对应能力时在报告状态中说明。
+        :param feature_contribution_label_max_features: 贡献图最多标注的特征数，默认10；None 全部标注，0不标注。
+        :param data_source: 数据来源说明文本，用于报告基本信息。
+        :param loc_cols: 订单等定位字段名或列表，仅在输出逐行生产测试用例时使用。
+        :param mode: strict 在必需章节失败时抛出 ReportGenerationError；best_effort 保留成功章节并记录失败。默认 best_effort；事务模式默认 strict。
+        :param return_result: 默认 False；to_excel 返回文件路径，auto_model_report 返回 ModelReport。True 改为返回 ReportResult，可检查 complete、status_table() 和 artifacts。
+        :param transactional: 默认 False；True 将 Excel 与图片发布到独立版本目录，返回实际版本文件路径，不覆盖旧版本。
+        :param include_sample_records: 默认 True 输出逐行订单及模型分数；False 不导出这些明细，章节记为不适用。
+
+        **参考样例**
+
+        >>> status = report.to_excel('output/模型报告.xlsx', mode='strict', return_result=True,
+        ...                          with_plots=False, include_sample_records=False)
+        >>> assert status.complete
+        >>> files = status.artifacts
         """
         if not isinstance(include_sample_records, (bool, np.bool_)):
             raise ValueError("include_sample_records 必须为布尔值")
@@ -3179,13 +3354,13 @@ class ModelReport:
             return self._to_excel_transactional(filepath, options)
         from .result import ReportGenerationError, ReportResult
 
-        result = (
-            ReportResult(mode=mode or "best_effort", metadata={"报告类型": "模型报告"})
-            if mode is not None or return_result
-            else None
-        )
+        result = ReportResult(mode=mode or "best_effort", metadata={"报告类型": "模型报告"})
         previous = getattr(self, "_execution_result", None)
         self._execution_result = result
+        for warning in getattr(self, "report_warnings_", []):
+            result.failure(warning["章节"], warning["说明"])
+        for skipped in getattr(self, "report_skips_", []):
+            result.skip(skipped["章节"], skipped["说明"])
         if result is not None:
             result.metadata["包含订单样例明细"] = bool(include_sample_records)
             result.plan("核心数据计算")
@@ -3494,6 +3669,16 @@ class ModelReport:
                 "内容": "7-模型解释",
                 "备注": "SHAP贡献、解释稳定性、代表样本及原因码",
             }
+        contents.loc[len(contents)] = {
+            "序号": 8,
+            "内容": "8-训练与调参过程",
+            "备注": "预测口径、训练记录、曲线、参数搜索及最终重训",
+        }
+        if execution_result is not None:
+            contents = pd.concat(
+                [pd.DataFrame([{"序号": 0, "内容": "报告执行状态", "备注": "完整性、失败章节和降级原因"}]), contents],
+                ignore_index=True,
+            )
 
         ws = writer.get_sheet_by_name("目录")
         end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="模型评估报告", style="header_middle")
@@ -4590,16 +4775,7 @@ class ModelReport:
             style="header_middle",
             align={"horizontal": "left"},
         )
-        params_str = ""
-        if hasattr(self.model, "get_params"):
-            try:
-                params_str = str(self.model.get_params())
-            except Exception as exc:
-                self._report_warning("读取模型参数失败 [模型=%s]: %s", model_name, exc)
-        if not params_str and hasattr(self.model, "__dict__"):
-            params_str = str(
-                {k: v for k, v in self.model.__dict__.items() if not k.startswith("_") and not callable(v)}
-            )
+        params_str = str(self.model_context_)
         end_row, _ = writer.insert_value2sheet(
             ws, (end_row, 2), value=params_str or "N/A", style="middle", align={"horizontal": "left"}
         )
@@ -4987,6 +5163,28 @@ class ModelReport:
         ]:
             if sheet_name in writer.workbook.sheetnames:
                 _adjust_report_title_merges(writer.workbook[sheet_name])
+        process_tables = self.get_training_process()
+        if process_tables:
+            process_sheet = writer.get_sheet_by_name("8-训练与调参过程")
+            process_row = 2
+            for title, table in process_tables.items():
+                writer.insert_value2sheet(
+                    process_sheet,
+                    (process_row, 2),
+                    title,
+                    style="header",
+                    end_space=(process_row, max(3, len(table.columns) + 1)),
+                )
+                printable = table.apply(
+                    lambda column: column.map(
+                        lambda value: str(value) if isinstance(value, (dict, list, tuple)) else value
+                    )
+                )
+                dataframe2excel(
+                    printable, writer, sheet_name=process_sheet, start_row=process_row + 2, start_col=2, index=False
+                )
+                process_row += len(table) + 5
+            _insert_required_hyperlink(process_sheet, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
         if execution_result is not None:
             for sheet_name in writer.workbook.sheetnames:
                 if sheet_name != "初始化":
@@ -4999,8 +5197,12 @@ class ModelReport:
                 "B2",
                 "报告完整" if execution_result.complete else "报告不完整：请检查失败章节",
                 style="header",
+                end_space=(2, 9),
             )
-            writer.insert_df2sheet(status_sheet, execution_result.status_table(), "B4", index=False, auto_width=True)
+            writer.insert_df2sheet(
+                status_sheet, execution_result.status_table(), "B4", index=False, auto_width=True, speed="fast"
+            )
+            _insert_required_hyperlink(status_sheet, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
         if execution_result is not None:
             execution_result.current_section = "工作簿发布"
         writer.save(filepath)
@@ -5008,6 +5210,7 @@ class ModelReport:
 
     # ---------- 12. to_dict ----------
 
+    @report_model_current
     def to_dict(self) -> Dict[str, Any]:
         """事务性返回报告字典；任一表失败时恢复调用前缓存。"""
         return self._run_cache_transaction(self._to_dict_impl)
@@ -5018,6 +5221,9 @@ class ModelReport:
             "summary": self.summary().reset_index().to_dict(orient="records"),
             "metrics": self.get_metrics().to_dict(orient="records"),
             "feature_importance": self.get_feature_importance().reset_index().to_dict(orient="records"),
+            "training_process": {
+                key: table.to_dict(orient="records") for key, table in self.get_training_process().items()
+            },
         }
         for ds_key in self._datasets:
             result[f"bin_table_{ds_key}"] = self.get_bin_table(ds_key, labels=labels_arg).to_dict(orient="records")
@@ -5074,8 +5280,11 @@ def auto_model_report(
     return_result: bool = False,
     transactional: bool = False,
     include_sample_records: bool = True,
+    metrics=None,
+    sample_weight=None,
+    score_direction=None,
     **kwargs,
-) -> ModelReport:
+) -> Union[ModelReport, ReportResult]:
     """一键生成模型报告.
 
     数据集传入支持三种方式，内部统一规整为 ``{数据集名称: (X, y)}`` 结构：
@@ -5166,12 +5375,24 @@ def auto_model_report(
     :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
     :param parallel_config: joblib 其他并行配置
     :param kwargs: 透传给 callable 的额外同名参数
+    :param mode: strict 在必需章节失败时抛出 ReportGenerationError；best_effort 保留成功章节并记录失败。默认 best_effort；事务模式默认 strict。
+    :param return_result: 默认 False；to_excel 返回文件路径，auto_model_report 返回 ModelReport。True 改为返回 ReportResult，可检查 complete、status_table() 和 artifacts。
+    :param transactional: 默认 False；True 将 Excel 与图片发布到独立版本目录，返回实际版本文件路径，不覆盖旧版本。
+    :param metrics: 统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置。
+    :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+    :param score_direction: higher_risk 表示值越大风险越高（概率默认）；higher_safe 表示值越大越安全；auto 仅显式指定时自动判断。
     :return: ModelReport 实例
 
     :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
         ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    **参考样例**
+
+    >>> report = auto_model_report(model, datasets={'独立测试': (X_test, y_test)},
+    ...                           metrics=['auc', 'ks'], verbose=False)
+    >>> effects = report.get_metrics()
     """
     if mode is not None and mode not in {"strict", "best_effort"}:
         raise ValueError("报告 mode 必须为 'strict' 或 'best_effort'")
@@ -5194,6 +5415,9 @@ def auto_model_report(
         overdue_operator=overdue_operator,
         prediction_method=prediction_method,
         prediction_kwargs=prediction_kwargs,
+        metrics=metrics,
+        sample_weight=sample_weight,
+        score_direction=score_direction,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,

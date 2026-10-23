@@ -229,6 +229,7 @@ def lift_plot(
     show_baseline: bool = True,
     save: Optional[str] = None,
     dpi: int = 240,
+    sample_weight=None,
     **kwargs,
 ) -> plt.Figure:
     """绘制Lift提升图.
@@ -237,7 +238,8 @@ def lift_plot(
 
     :param y_true: 真实标签
     :param y_score: 预测概率分数
-    :param n_bins: 分箱数，默认10
+    :param n_bins: 最大等频分箱数，默认10；同分样本放入同一箱，实际箱数可能更少。
+    :param sample_weight: 可选评估权重；样本深度仍按人数，箱内指标按权重统计。
     :param ax: matplotlib Axes对象
     :param figsize: 图像尺寸
     :param title: 图表标题
@@ -258,6 +260,13 @@ def lift_plot(
     if len(y_true) != len(y_score):
         raise ValueError(f"y_true 与 y_score 长度不一致: {len(y_true)} != {len(y_score)}")
     valid_mask = ~pd.isna(y_true) & ~pd.isna(y_score)
+    if sample_weight is not None:
+        from ..models._contracts import validate_sample_weight
+
+        weights = np.asarray(sample_weight)
+        if weights.shape != y_true.shape:
+            raise ValueError("sample_weight 必须是一维且与标签等长")
+        sample_weight = validate_sample_weight(weights[valid_mask], int(valid_mask.sum()))
     y_true = y_true[valid_mask]
     y_score = y_score[valid_mask]
     if len(y_true) == 0:
@@ -275,25 +284,21 @@ def lift_plot(
     if colors is None:
         colors = DEFAULT_COLORS
 
-    # 计算Lift
-    overall_bad_rate = np.mean(y_true)
+    from ..binning import QuantileBinning
+    from ..metrics import compute_bin_stats
 
-    # 按分数排序分箱
-    sorted_indices = np.argsort(-y_score)  # 降序
-    y_true_sorted = np.array(y_true)[sorted_indices]
-
-    # 计算每个分箱的Lift
-    lifts = []
-    depths = []
-    end = 0
-
-    for bin_values in np.array_split(y_true_sorted, n_bins):
-        end += len(bin_values)
-        bin_bad_rate = np.mean(bin_values)
-        lift = bin_bad_rate / overall_bad_rate if overall_bad_rate > 0 else 1.0
-
-        lifts.append(lift)
-        depths.append((end / len(y_true)) * 100)
+    binner = QuantileBinning(max_n_bins=n_bins, force_numerical=True, n_jobs=1)
+    codes = binner.fit_transform(pd.DataFrame({"风险分值": y_score}), y_true)["风险分值"].to_numpy()
+    table = compute_bin_stats(
+        codes,
+        y_true,
+        round_digits=False,
+        target_type="binary" if sample_weight is None else "amount_weighted",
+        amount=sample_weight,
+    ).sort_values("分箱", ascending=False)
+    lifts = table["LIFT值"].to_numpy()
+    counts = np.array([np.count_nonzero(codes == value) for value in table["分箱"]])
+    depths = np.cumsum(counts) / len(y_true) * 100
 
     # 绘制基线
     if show_baseline:

@@ -55,7 +55,7 @@ def test_loss_is_distinct_from_search_objective():
     assert obj.fixed_params["objective"] is loss
     with pytest.raises(TypeError, match="loss="):
         ModelTuner(XGBoost, objective=loss)
-    with pytest.raises(ValueError, match="仅支持"):
+    with pytest.raises(ValueError, match="不支持自定义 loss"):
         tuner(loss=loss)
 
 

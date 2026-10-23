@@ -95,6 +95,11 @@ class _ProbabilityScoreCardMixin:
             **config,
         ).fit(proba=train_probability)
         self.score_transformer_ = self.scorecard_.transformer_
+        self.transformation_summary_ = {
+            "公开概率": "两列概率，列顺序为 classes_；类别 1 表示坏样本",
+            "概率转评分": self.scorecard_.score_formula(),
+            "刻度先验来源": self.score_prior_source_,
+        }
 
     def _probability_scorecard_state(self) -> Dict[str, Any]:
         """返回原生模型序列化时需要保留的评分刻度状态。"""

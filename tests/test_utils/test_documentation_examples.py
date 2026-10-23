@@ -13,6 +13,28 @@ from hscredit.core.selectors import PSISelector
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_examples_only_publish_notebook_demonstrations():
+    """项目演示只允许 Notebook；已有运行产物不算演示源文件。"""
+    from scripts.validate_examples import discover_examples
+
+    examples = discover_examples(PROJECT_ROOT / "examples", include_python=True)
+    python_demos = [path.relative_to(PROJECT_ROOT).as_posix() for path in examples if path.suffix == ".py"]
+    assert not python_demos, f"examples 不允许 Python 演示或并行副本，请迁移为 .ipynb: {python_demos}"
+
+
+def test_model_notebooks_are_self_contained_and_valid():
+    import nbformat
+
+    for name in ("model_training_chain", "model_family_validation", "single_validation_workflow"):
+        notebook = nbformat.read(PROJECT_ROOT / "examples" / f"{name}.ipynb", as_version=4)
+        nbformat.validate(notebook)
+        cells = [cell.source for cell in notebook.cells if cell.cell_type == "code"]
+        assert len(cells) >= 5
+        assert all("argparse" not in source and "__file__" not in source for source in cells)
+        for index, source in enumerate(cells):
+            compile(source, f"{name}.ipynb:代码单元格{index + 1}", "exec")
+
+
 def test_quickstart_markdown_python_blocks_execute(tmp_path):
     text = (PROJECT_ROOT / "docs" / "quickstart.md").read_text(encoding="utf-8")
     blocks = re.findall(r"```python\n(.*?)```", text, flags=re.S)

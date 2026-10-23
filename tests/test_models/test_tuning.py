@@ -12,7 +12,6 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from hscredit.core.models import AutoTuner, BaseRiskModel, ModelTuner, TuningObjective
 from hscredit.core.models.tuning import normalize_search_space
 
-
 optuna = pytest.importorskip("optuna")
 
 
@@ -239,9 +238,7 @@ def test_each_tuning_trial_observes_all_previous_completed_trials(monkeypatch):
     original_evaluate = tuner._evaluate_model
 
     def recording_evaluate(*args, **kwargs):
-        observed_completed.append(
-            sum(trial.state == optuna.trial.TrialState.COMPLETE for trial in tuner.study_.trials)
-        )
+        observed_completed.append(sum(trial.state == optuna.trial.TrialState.COMPLETE for trial in tuner.study_.trials))
         return original_evaluate(*args, **kwargs)
 
     monkeypatch.setattr(tuner, "_evaluate_model", recording_evaluate)
@@ -683,9 +680,7 @@ class TestManualSearchPoints:
 
         assert tuner.study_.trials[0].params == {"C": 1.0, "solver": "liblinear"}
         assert tuner.study_.trials[0].user_attrs["来源"] == "经验值"
-        assert {"LIFT@1%", "LIFT@3%", "LIFT@5%", "LIFT@10%"} <= set(
-            tuner.study_.trials[0].user_attrs
-        )
+        assert {"LIFT@1%", "LIFT@3%", "LIFT@5%", "LIFT@10%"} <= set(tuner.study_.trials[0].user_attrs)
 
     def test_gridsearch_param_grid_expands_with_parameter_grid_order(self):
         X, y = _small_binary_data(as_frame=True)

@@ -33,6 +33,8 @@ from ...utils.serialization import ArtifactSerializableMixin
 from ...utils.parallel import resolve_n_jobs
 from .scorecard_support import _ProbabilityScoreCardMixin
 from ._contracts import (
+    evaluation_set_entries,
+    validate_custom_loss_weights,
     InferenceExportMixin,
     align_model_features,
     positive_probability,
@@ -56,20 +58,9 @@ def _lift_score(y_true, y_proba, top_ratio=0.1):
         raise ValueError("计算Lift时标签不能为空")
     if not 0 < top_ratio <= 1:
         raise ValueError("top_ratio必须在(0, 1]范围内")
-    n_top = max(1, int(np.ceil(n * top_ratio)))
+    from .losses.business_metrics import TopKLiftMetric
 
-    # 按概率降序排序
-    sorted_indices = np.argsort(-y_proba)
-    y_sorted = y_true[sorted_indices]
-
-    # 计算整体坏样本率和top_ratio的坏样本率
-    overall_bad_rate = y_true.mean()
-    top_bad_rate = y_sorted[:n_top].mean()
-
-    if overall_bad_rate == 0:
-        return 1.0
-
-    return top_bad_rate / overall_bad_rate
+    return TopKLiftMetric(top_ratio)(y_true, y_proba)
 
 
 def _evaluate_binary_predictions(
@@ -79,7 +70,7 @@ def _evaluate_binary_predictions(
     *,
     metrics,
     sample_weight=None,
-    score_direction="auto",
+    score_direction="higher_risk",
 ) -> Dict[str, float]:
     """按统一模型评估契约计算二值标签指标。"""
     from sklearn.metrics import (
@@ -136,6 +127,16 @@ def _evaluate_binary_predictions(
         *aliases,
     }
     from .losses.base import BaseMetric
+    from .losses.registry import get_metric
+
+    metrics = [metrics] if isinstance(metrics, (str, BaseMetric)) else list(metrics)
+    try:
+        metrics = [
+            get_metric(metric) if isinstance(metric, str) and metric.lower() not in supported else metric
+            for metric in metrics
+        ]
+    except ValueError as exc:
+        raise ValueError(f"不支持的评估指标: {exc}") from exc
 
     normalized = [metric if isinstance(metric, BaseMetric) else str(metric).lower() for metric in metrics]
     unknown = [
@@ -151,11 +152,7 @@ def _evaluate_binary_predictions(
         for name in normalized:
             if isinstance(name, BaseMetric):
                 continue
-            if name == "ks":
-                label = "KS"
-            elif name in aliases:
-                label = aliases[name][0]
-            elif name == "lift_monotonicity":
+            if name == "lift_monotonicity":
                 label = "LIFT单调性"
             else:
                 continue
@@ -178,12 +175,14 @@ def _evaluate_binary_predictions(
             elif name == "auc":
                 results["AUC"] = auc(y_true, y_proba, sample_weight=weights, score_direction=score_direction)
             elif name == "ks":
-                results["KS"] = ks(y_true, y_proba)
+                results["KS"] = ks(y_true, y_proba, sample_weight=weights)
             elif name == "gini":
                 results["Gini"] = gini(y_true, y_proba, sample_weight=weights, score_direction=score_direction)
             elif name in aliases:
                 key, ratio = aliases[name]
-                results[key] = _lift_score(y_true, y_proba, top_ratio=ratio)
+                from .losses.business_metrics import TopKLiftMetric
+
+                results[key] = TopKLiftMetric(ratio).evaluate(y_true, y_proba, sample_weight=weights)
             elif name == "logloss":
                 results["LogLoss"] = log_loss(y_true, y_proba, sample_weight=weights, labels=[0, 1])
             elif name == "accuracy":
@@ -445,6 +444,13 @@ class BaseRiskModel(
         :param eval_set: 验证集列表 [(X_val1, y_val1), ...]，可选
         :param fit_params: 其他fit参数
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> metric = get_metric('classification_cost', fn_cost=5, fp_cost=1)
+        >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
+        >>> final_values = model.get_eval_results()
         """
         pass
 
@@ -538,24 +544,33 @@ class BaseRiskModel(
     def evaluate(
         self,
         X: Union[np.ndarray, pd.DataFrame],
-        y: Union[np.ndarray, pd.Series],
+        y: Optional[Union[np.ndarray, pd.Series]] = None,
         sample_weight: Optional[np.ndarray] = None,
         metrics: Optional[List[Any]] = None,
         positive_class: Optional[Any] = None,
-        score_direction: str = "auto",
+        score_direction: str = "higher_risk",
     ) -> Dict[str, float]:
         """评估模型性能.
 
-        :param X: 特征矩阵
-        :param y: 真实标签
+        :param X: 特征矩阵或包含 target 列的 DataFrame。
+        :param y: 真实标签；None 时按模型 target 提取，显式 y 优先且目标列仍从特征剔除。
         :param sample_weight: 样本权重
-        :param metrics: 指标名称、BaseMetric 对象或其列表；可传 loss.metric()
+        :param metrics: 指标名称、BaseMetric 对象或其列表；可传 loss.metric()。
+            None 使用 AUC、KS、Gini 和 1%/3%/5%/10% 的 TOP LIFT，不自动继承搜索目标。
         :param positive_class: 显式正类标签；None 时使用 ``classes_[1]``
         :param score_direction: AUC/Gini分数方向，同 ``metrics.auc``；higher_risk保留原始AUC
         :return: 评估结果字典
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> values = model.evaluate(X_test, y_test, metrics=['auc', get_metric('classification_cost', fn_cost=5)])
         """
         self._require_fitted()
         from .losses.base import BaseMetric
+        from ._contracts import extract_target
+
+        X, y = extract_target(X, y, self.target)
 
         requested_metrics = (
             list(self.DEFAULT_METRICS)
@@ -636,6 +651,9 @@ class BaseRiskModel(
         *,
         del_grey: bool = False,
         overdue_operator: Optional[str] = None,
+        metrics=None,
+        sample_weight=None,
+        score_direction=None,
         **kwargs,
     ) -> "ModelReport":
         """生成风控建模报告（支持多数据集/overdue/dpds）.
@@ -673,10 +691,20 @@ class BaseRiskModel(
         :param date: 日期字段
         :param group: 分组字段
         :param kwargs: 传递给 auto_model_report 的其他参数
+        :param del_grey: 是否按逾期标签口径剔除灰样本，默认 False；仅作用于报告标签分析，不重新训练模型。
+        :param metrics: 统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置。
+        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+        :param score_direction: higher_risk 表示值越大风险越高（概率默认）；higher_safe 表示值越大越安全；auto 仅显式指定时自动判断。
         :return: ModelReport 实例
 
         :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
             满足比较条件记为坏样本(1)，否则为好样本(0)。
+
+        **参考样例**
+
+        >>> report = model.model_report(datasets={'独立测试': (X_test, y_test)},
+        ...                           metrics=['auc', 'ks'], verbose=False)
+        >>> effects = report.get_metrics()
         """
         if overdue_operator is not None:
             validate_overdue_operator(overdue_operator)
@@ -702,6 +730,9 @@ class BaseRiskModel(
             amount=amount,
             date=date,
             group=group,
+            metrics=metrics,
+            sample_weight=sample_weight,
+            score_direction=score_direction,
             **kwargs,
         )
 
@@ -881,12 +912,16 @@ class BaseRiskModel(
         metric: Union[str, Callable, List] = "ks",
         direction: Optional[Union[str, List[str]]] = None,
         n_trials: int = 100,
-        cv: int = 5,
+        cv: Optional[Any] = None,
         timeout: Optional[int] = None,
         verbose: Optional[bool] = None,
         sample_weight: Optional[np.ndarray] = None,
         show_progress_bar: Optional[bool] = None,
         loss=None,
+        *,
+        eval_set=None,
+        validation_weight=None,
+        validation_fraction: float = 0.2,
         **kwargs,
     ) -> "BaseRiskModel":
         """超参数调优并返回最佳模型.
@@ -900,12 +935,18 @@ class BaseRiskModel(
         :param metric: 搜索比较指标，可为名称、BaseMetric或概率函数；设为None时使用loss配套指标。
         :param direction: 优化方向；None按内置/指标对象推断。裸函数必须指定方向。
         :param n_trials: 搜索次数
-        :param cv: 交叉验证折数
+        :param cv: 默认 None 使用单次留出验证；显式整数>=2、分割器或索引序列启用多折。
+            已有验证集可通过 eval_set=[(X_valid, y_valid)] 传入，不并入最终训练数据。
         :param timeout: 超时时间(秒)
         :param verbose: 是否输出详细信息
         :param sample_weight: 训练权重，可选；需要加权评分时另传evaluation_weight。
         :param show_progress_bar: 是否显示进度条；默认跟随 verbose，可显式覆盖
-        :param loss: 可选BaseLoss训练损失，便利入口支持HSCredit XGBoost/LightGBM/CatBoost。
+        :param loss: 可选BaseLoss训练损失，便利入口支持HSCredit XGBoost/LightGBM/CatBoost/NGBoost。
+        :param eval_set: 评估集列表 [(X_valid, y_valid)]；最后一个数据集用于搜索评分。
+            同 ModelReport.datasets 支持具名字典、DataFrame列表及混合形式；显式y优先。
+            支持多评估集的提升器同时记录各集曲线；也支持单个 (X_valid, y_valid) 或含 target 的 DataFrame。
+        :param validation_weight: 独立验证集评分权重，不自动变为训练或早停权重。
+        :param validation_fraction: cv=None 且未提供验证集时的一次留出比例，默认0.2。
         :param kwargs: 其他传递给 ModelTuner 的参数
         :return: 使用最佳参数训练好的模型实例
 
@@ -930,12 +971,20 @@ class BaseRiskModel(
         """
         from .tuning import ModelTuner
 
+        if "validation_data" in kwargs:
+            raise TypeError("验证集参数已统一为 eval_set，请使用 eval_set=[(X_valid, y_valid)]")
         fit_options = {
             name: kwargs.pop(name)
-            for name in ("groups", "catch", "gc_after_trial", "evaluation_weight")
+            for name in (
+                "groups",
+                "catch",
+                "gc_after_trial",
+                "evaluation_weight",
+            )
             if name in kwargs
         }
         fit_options.update(kwargs.pop("optimize_kwargs", {}))
+        fit_options.update(eval_set=eval_set, validation_weight=validation_weight)
         kwargs.setdefault("random_state", self.random_state)
 
         if verbose is None:
@@ -960,6 +1009,7 @@ class BaseRiskModel(
             cv=cv,
             verbose=verbose,
             loss=loss,
+            validation_fraction=validation_fraction,
             **kwargs,
         )
         self.tuner = tuner
@@ -1018,21 +1068,33 @@ class BaseRiskModel(
 
         return X, y, sample_weight
 
+    def _validate_custom_loss_options(self):
+        params = {**self.get_params(deep=False), **getattr(self, "_native_params", {})}
+        return validate_custom_loss_weights(params)
+
     def _prepare_eval_set(self, eval_set):
-        """验证集沿用训练字段顺序，支持原生 (X, y) 与列表两种形式。"""
+        """评估集共用字段契约，支持具名字典、列表、DataFrame及原生容器。"""
+        self.eval_names_ = []
         if eval_set is None:
             return None
-        if isinstance(eval_set, tuple) and len(eval_set) == 2 and hasattr(eval_set[0], "shape"):
-            eval_set = [eval_set]
-        if not isinstance(eval_set, (list, tuple)):
+        if isinstance(eval_set, (list, tuple)) and not eval_set:
+            return []  # 保留原生 fit(eval_set=[]) 不启用自动留出的既有行为。
+        if not isinstance(eval_set, (dict, list, tuple, pd.DataFrame)):
             return eval_set  # CatBoost Pool 等原生容器由后端处理。
         result = []
-        for item in eval_set:
+        for name, item in evaluation_set_entries(eval_set):
             if isinstance(item, (list, tuple)) and len(item) == 2:
                 eval_X, eval_y, _ = self._prepare_data(item[0], item[1], extract_target=True)
-                result.append((eval_X, eval_y))
+            elif isinstance(item, pd.DataFrame):
+                eval_X, eval_y, _ = self._prepare_data(item, extract_target=True)
             else:
                 result.append(item)
+                self.eval_names_.append(name)
+                continue  # 如 CatBoost Pool；保留框架原生行为。
+            if eval_y is None:
+                raise ValueError(f"评估集 {name!r} 缺少标签，请提供 (X, y) 或配置 target")
+            result.append((eval_X, eval_y))
+            self.eval_names_.append(name)
         return result
 
     def _create_eval_set(
@@ -1046,6 +1108,7 @@ class BaseRiskModel(
         :return: X_train, X_val, y_train, y_val, sw_train, sw_val
         """
         if 0 < self.validation_fraction < 1:
+            self.eval_names_ = ["内部验证集"]
             indices = np.arange(len(y))
             train_indices, val_indices = train_test_split(
                 indices,

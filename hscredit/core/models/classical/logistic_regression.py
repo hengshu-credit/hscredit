@@ -51,7 +51,6 @@ _SKLEARN_LOGISTIC_PARAMS = set(inspect.signature(SklearnLogisticRegression.__ini
 class LogisticRegression(
     _ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSerializableMixin, SklearnLogisticRegression
 ):
-    artifact_kind = "风险模型"
     """扩展逻辑回归模型.
 
     继承 sklearn.linear_model.LogisticRegression，增加统计信息计算功能。
@@ -179,6 +178,8 @@ class LogisticRegression(
     - VIF > 10 通常表示存在严重的多重共线性
     """
 
+    artifact_kind = "风险模型"
+
     def __init__(
         self,
         penalty: str = "l2",
@@ -251,6 +252,9 @@ class LogisticRegression(
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
+        eval_set=None,
+        eval_metric=None,
+        eval_sample_weight=None,
         **kwargs,
     ) -> "LogisticRegression":
         """训练逻辑回归模型.
@@ -272,6 +276,9 @@ class LogisticRegression(
             如果为None且init中指定了target，则从X中提取
         :param sample_weight: 样本权重，形状 (n_samples,)
             默认 None，所有样本权重为1
+        :param eval_set: 与 ModelReport.datasets 一致的具名字典、列表或单个数据集，仅训练后评估
+        :param eval_metric: 评估指标名称、BaseMetric 或列表，支持 loss.metric()
+        :param eval_sample_weight: 验证权重；多个评估集使用 {数据集名称: 权重} 字典
         :param kwargs: 其他传递给父类 fit 方法的参数
 
         **返回**
@@ -300,8 +307,12 @@ class LogisticRegression(
             >>> model = LogisticRegression(target='label')
             >>> model.fit(X_train)  # 从X_train中提取'label'列作为y
         """
+        from .._workflow import prepare_eval_sets, record_eval_results
+
         X, y = extract_target(X, y, self.target)
         record_feature_schema(self, X)
+        eval_set = prepare_eval_sets(self, eval_set)
+        self.native_params_ = {name: getattr(self, name) for name in SklearnLogisticRegression._get_param_names()}
         sample_weight = validate_sample_weight(sample_weight, len(y))
         self._validate_probability_scorecard_labels(y)
         level = (
@@ -352,6 +363,10 @@ class LogisticRegression(
             if apply_positive_woe_coef:
                 self.ensure_positive_woe_coefficients()
             self._fit_probability_scorecard(X, y, sample_weight=sample_weight)
+            self.transformation_summary_.update(
+                {"WOE系数符号调整": bool(apply_positive_woe_coef), "预测空间": "坏样本概率"}
+            )
+            record_eval_results(self, eval_set, metrics=eval_metric, eval_sample_weight=eval_sample_weight)
             return fitted_model
 
         # 准备特征名列表（用于summary输出）
@@ -369,6 +384,10 @@ class LogisticRegression(
 
         self._compute_fitted_statistics(X, sample_weight=sample_weight, level=level)
         self._fit_probability_scorecard(X, y, sample_weight=sample_weight)
+        self.transformation_summary_.update(
+            {"WOE系数符号调整": bool(apply_positive_woe_coef), "预测空间": "坏样本概率"}
+        )
+        record_eval_results(self, eval_set, metrics=eval_metric, eval_sample_weight=eval_sample_weight)
 
         return self
 
@@ -921,23 +940,29 @@ class LogisticRegression(
     def evaluate(
         self,
         X: Union[pd.DataFrame, np.ndarray],
-        y: Union[pd.Series, np.ndarray],
+        y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
         metrics: Optional[List[str]] = None,
-        score_direction: str = "auto",
+        score_direction: str = "higher_risk",
     ) -> dict:
         """评估模型性能（与 BaseRiskModel.evaluate 接口一致）.
 
-        :param X: 特征矩阵
-        :param y: 真实标签
+        :param X: 特征矩阵或包含 target 列的 DataFrame。
+        :param y: 真实标签；None 时按模型 target 提取，显式 y 优先。
         :param sample_weight: 样本权重
         :param metrics: 评估指标列表
         :param score_direction: AUC/Gini分数方向，同 ``metrics.auc``
         :return: 评估结果字典
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> values = model.evaluate(X_test, y_test, metrics=['auc', get_metric('classification_cost', fn_cost=5)])
         """
         from ..base import BaseRiskModel, _evaluate_binary_predictions
 
         check_is_fitted(self)
+        X, y = extract_target(X, y, self.target)
         return _evaluate_binary_predictions(
             y,
             self.predict_proba(X)[:, 1],
@@ -970,6 +995,9 @@ class LogisticRegression(
         target: Optional[TargetInput] = None,
         del_grey: bool = False,
         overdue_operator: Optional[str] = None,
+        metrics=None,
+        sample_weight=None,
+        score_direction=None,
         **kwargs,
     ):
         """生成风控建模报告（与 :meth:`BaseRiskModel.report` 接口一致）。
@@ -987,11 +1015,22 @@ class LogisticRegression(
         :param excel_path: 报告导出的 Excel 路径，提供则落盘，可选
         :param verbose: 是否打印进度，默认 ``True``
         :param kwargs: 透传给报告生成器的其他参数
+        :param target: 目标列名或报告多标签配置；None 使用模型配置。显式标签优先；与 overdue/dpds 互斥。
+        :param del_grey: 是否按逾期标签口径剔除灰样本，默认 False；仅作用于报告标签分析，不重新训练模型。
+        :param metrics: 统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置。
+        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+        :param score_direction: higher_risk 表示值越大风险越高（概率默认）；higher_safe 表示值越大越安全；auto 仅显式指定时自动判断。
         :return: ``ModelReport`` 实例
         :raises NotFittedError: 模型尚未训练时
 
         :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
             满足比较条件记为坏样本(1)，否则为好样本(0)。
+
+        **参考样例**
+
+        >>> report = model.model_report(datasets={'独立测试': (X_test, y_test)},
+        ...                           metrics=['auc', 'ks'], verbose=False)
+        >>> effects = report.get_metrics()
         """
         if overdue_operator is not None:
             validate_overdue_operator(overdue_operator)
@@ -1012,6 +1051,9 @@ class LogisticRegression(
             del_grey=del_grey,
             excel_path=excel_path,
             verbose=verbose,
+            metrics=metrics,
+            sample_weight=sample_weight,
+            score_direction=score_direction,
             **kwargs,
         )
 
@@ -1022,13 +1064,17 @@ class LogisticRegression(
         search_space: Optional[dict] = None,
         fixed_params: Optional[dict] = None,
         metric="ks",
-        direction="maximize",
+        direction=None,
         n_trials: int = 100,
-        cv: int = 5,
+        cv: Optional[Any] = None,
         timeout: Optional[int] = None,
         verbose: bool = False,
         sample_weight: Optional[np.ndarray] = None,
         show_progress_bar: Optional[bool] = None,
+        *,
+        eval_set=None,
+        validation_weight=None,
+        validation_fraction: float = 0.2,
         **kwargs,
     ) -> "LogisticRegression":
         """超参数调优并返回最佳模型（与 BaseRiskModel.tune 接口一致）.
@@ -1041,13 +1087,18 @@ class LogisticRegression(
         :param search_space: 参数搜索空间，默认使用自适应空间
         :param fixed_params: 固定参数
         :param metric: 优化指标，默认 'ks'
-        :param direction: 优化方向，默认 'maximize'
+        :param direction: 默认 None，根据指标方向自动确定；自定义裸函数须显式指定。
         :param n_trials: 搜索次数，默认 100
-        :param cv: 交叉验证折数，默认 5
+        :param cv: 默认 None 使用单次验证；显式整数>=2或分割器启用多折。
+            独立验证集通过 eval_set=[(X_valid, y_valid)] 提供，不并入最终训练数据。
         :param timeout: 超时时间(秒)
         :param verbose: 是否输出详细信息
         :param sample_weight: 样本权重，可选
         :param show_progress_bar: 是否显示进度条；默认跟随 verbose，可显式覆盖
+        :param eval_set: 评估集列表 [(X_valid, y_valid)]，最后一个数据集用于搜索评分；
+            同报告 datasets 支持具名字典、DataFrame列表、混合形式和单个数据集，显式y优先。
+        :param validation_weight: 独立验证集的指标权重。
+        :param validation_fraction: 未提供独立验证集时的一次留出比例，默认0.2。
         :param kwargs: 其他传递给 ModelTuner 的参数（如 sampler/storage）
         :return: 使用最佳参数训练好的模型实例
 
@@ -1059,12 +1110,20 @@ class LogisticRegression(
         """
         from ..tuning import ModelTuner
 
+        if "validation_data" in kwargs:
+            raise TypeError("验证集参数已统一为 eval_set，请使用 eval_set=[(X_valid, y_valid)]")
         fit_options = {
             name: kwargs.pop(name)
-            for name in ("groups", "catch", "gc_after_trial", "evaluation_weight")
+            for name in (
+                "groups",
+                "catch",
+                "gc_after_trial",
+                "evaluation_weight",
+            )
             if name in kwargs
         }
         fit_options.update(kwargs.pop("optimize_kwargs", {}))
+        fit_options.update(eval_set=eval_set, validation_weight=validation_weight)
         kwargs.setdefault("random_state", self.random_state)
 
         if show_progress_bar is None:
@@ -1083,6 +1142,7 @@ class LogisticRegression(
             target=self.target or "target",
             cv=cv,
             verbose=verbose,
+            validation_fraction=validation_fraction,
             **kwargs,
         )
         self.tuner = tuner

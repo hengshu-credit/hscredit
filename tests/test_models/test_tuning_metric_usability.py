@@ -27,11 +27,12 @@ def test_probability_auc_does_not_reward_reversed_predictions():
     assert Metric(explicit_auc)(y, p) == 0
 
 
-def test_string_auc_preserves_legacy_automatic_direction():
+def test_string_auc_matches_fixed_probability_direction():
     y, p = [0, 0, 1, 1], [0.9, 0.8, 0.2, 0.1]
-    assert Metric("auc")(y, p) == 1
-    assert TuningObjective.auc(y, p) == 1
-    assert TuningObjective.get("auc")(y, p) == 1
+    assert Metric("auc")(y, p) == 0
+    assert TuningObjective.auc(y, p) == 0
+    assert TuningObjective.get("auc")(y, p) == 0
+    assert TuningObjective.get("auc", score_direction="auto")(y, p) == 1
 
 
 @pytest.mark.parametrize("score_direction", ["auto", "higher_risk", "higher_safe"])
@@ -65,13 +66,13 @@ def test_auc_errors_are_not_silently_converted_into_scores(metric, y, p):
         metric(y, p)
 
 
-def test_raw_log_loss_and_legacy_negative_logloss_are_both_explicit():
+def test_logloss_aliases_use_positive_loss_and_negative_loss_is_explicit():
     y, p = [0, 1], [0.1, 0.9]
     assert Metric("log_loss")(y, p) == pytest.approx(log_loss(y, p))
     assert Metric("log_loss").direction == "minimize"
-    assert Metric("logloss")(y, p) == pytest.approx(-log_loss(y, p))
-    assert Metric("neg_log_loss")(y, p) == Metric("logloss")(y, p)
-    assert Metric("logloss").direction == "maximize"
+    assert Metric("logloss")(y, p) == pytest.approx(log_loss(y, p))
+    assert Metric("neg_log_loss")(y, p) == -Metric("logloss")(y, p)
+    assert Metric("logloss").direction == "minimize"
 
 
 def test_classification_threshold_treats_probability_half_as_positive():

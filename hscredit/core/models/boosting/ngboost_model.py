@@ -21,6 +21,7 @@ pip install ngboost
 """
 
 import inspect
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .._lifecycle import record_training
@@ -138,6 +139,10 @@ class NGBoost(BaseRiskModel):
     基于 NGBoost（自然梯度提升，输出概率分布以量化预测不确定性），见
     Duan, T. et al. (2020). *NGBoost: Natural Gradient Boosting for
     Probabilistic Prediction.* ICML；文档 https://stanfordmlgroup.github.io/projects/ngboost/ 。
+
+    **参数补充**
+
+    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
     """
 
     def __init__(
@@ -230,17 +235,41 @@ class NGBoost(BaseRiskModel):
         :param X: 特征矩阵
         :param y: 目标变量，可选
         :param sample_weight: 样本权重
-        :param eval_set: 验证集列表 [(X_val, y_val)]
+        :param eval_set: [(X_val, y_val)]、具名字典、DataFrame列表或单个数据集；
+            含标签的 DataFrame 通过 target 提取标签。原生早停使用最后一集，所有集合均记录评估。
         :param fit_params: 其他fit参数
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> metric = get_metric('classification_cost', fn_cost=5, fp_cost=1)
+        >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
+        >>> final_values = model.get_eval_results()
         """
         from sklearn.tree import DecisionTreeRegressor
 
+        from ..losses import BaseLoss, get_metric
+        from .._workflow import record_eval_results
+
+        eval_metric = fit_params.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
+        requested_metrics = (
+            list(eval_metric)
+            if isinstance(eval_metric, (list, tuple))
+            else [eval_metric] if eval_metric is not None else []
+        )
+        monitor_metric = get_metric(requested_metrics[0]) if requested_metrics else None
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         scorecard_sample_weight = sample_weight
         self._validate_probability_scorecard_labels(y)
         eval_set = self._prepare_eval_set(eval_set)
+        all_eval_set = eval_set
+        all_eval_names = list(self.eval_names_)
+        from ..losses._sample_params import has_bound_sample_params
+
+        if eval_set and len(eval_set) > 1 and has_bound_sample_params(requested_metrics):
+            raise ValueError("绑定逐行金融参数的 eval_metric 只能对应一个 eval_set，多个数据集不能共用同一金额数组")
         fit_kwargs = dict(fit_params)
         effective_early_stopping_rounds = fit_kwargs.pop("early_stopping_rounds", self.early_stopping_rounds)
         has_native_x_val = "X_val" in fit_kwargs
@@ -261,7 +290,7 @@ class NGBoost(BaseRiskModel):
         X_val, y_val = None, None
         sw_val = None
         if eval_set is not None and len(eval_set) > 0:
-            X_val, y_val = eval_set[0]
+            X_val, y_val = eval_set[-1]
             if isinstance(X_val, pd.DataFrame):
                 X_val = X_val.values
             if isinstance(y_val, pd.Series):
@@ -318,14 +347,33 @@ class NGBoost(BaseRiskModel):
 
         # 最后更新原生params（优先级最高，但排除已处理的base参数）
         for k, v in self._native_params.items():
-            if not k.startswith("base_") and k not in {"validation_fraction", "early_stopping_rounds"}:
+            if not k.startswith("base_") and k not in {
+                "validation_fraction",
+                "early_stopping_rounds",
+                "objective",
+                "eval_metric",
+            }:
                 ngb_params[k] = v
+
+        objective = self._native_params.get("objective", self.objective)
+        if isinstance(objective, BaseLoss):
+            if (
+                "Score" in self.kwargs
+                or "Dist" in self.kwargs
+                or "Score" in self._native_params
+                or "Dist" in self._native_params
+            ):
+                raise ValueError("NGBoost 自定义 objective 与原生 Score/Dist 不能同时设置")
+            ngb_params.update(objective.ngboost_params())
+        elif objective not in ("binary", "binary:logistic", None):
+            raise ValueError("NGBoost objective 需为 binary 或 BaseLoss；原生损失请使用配套 Score/Dist")
 
         # 创建模型
         self.native_params_ = dict(ngb_params)
         self._model = NGBClassifier(**ngb_params)
 
         # 训练
+        weight_routing = {}
         if sample_weight is not None:
             fit_kwargs["sample_weight"] = sample_weight
         if X_val is not None and y_val is not None:
@@ -333,8 +381,34 @@ class NGBoost(BaseRiskModel):
             fit_kwargs["Y_val"] = y_val
             if sw_val is not None:
                 fit_kwargs.setdefault("val_sample_weight", sw_val)
+            from .._contracts import validate_sample_weight
+
+            val_weight = validate_sample_weight(fit_kwargs.get("val_sample_weight"), len(y_val))
+            if val_weight is not None:
+                fit_kwargs["val_sample_weight"] = val_weight
+                if sample_weight is None:
+                    fit_kwargs["sample_weight"] = np.ones(len(y_train))
+                    weight_routing["训练权重"] = "原生接口要求成对提供；未配置的训练权重以全1表达等权"
+            elif sample_weight is not None:
+                fit_kwargs["val_sample_weight"] = np.ones(len(y_val))
+                weight_routing["验证权重"] = "原生接口要求成对提供；未配置的验证权重以全1表达等权"
             if effective_early_stopping_rounds is not None and not constructor_handles_early_stopping:
                 fit_kwargs["early_stopping_rounds"] = effective_early_stopping_rounds
+            if monitor_metric is not None:
+                if "val_loss_monitor" in fit_kwargs:
+                    raise ValueError("eval_metric 与 val_loss_monitor 不能同时设置")
+                from ..losses._sample_params import slice_sample_loss
+
+                if hasattr(self, "_eval_val_indices_"):
+                    monitor_metric = slice_sample_loss(monitor_metric, self._eval_val_indices_, len(y))
+                    requested_metrics = [
+                        slice_sample_loss(item, self._eval_val_indices_, len(y)) for item in requested_metrics
+                    ]
+                weight = fit_kwargs.get("val_sample_weight")
+                sign = -1 if monitor_metric.direction == "maximize" else 1
+                fit_kwargs["val_loss_monitor"] = lambda distribution, labels: sign * monitor_metric.evaluate(
+                    labels, distribution.probs[1], sample_weight=weight
+                )
 
         # NGBoost 的提升轮次存在顺序依赖，不能安全地在轮次层并行；其
         # 决策树/NumPy 原生计算仍会使用 OpenMP/BLAS。统一 n_jobs 在这里
@@ -353,9 +427,39 @@ class NGBoost(BaseRiskModel):
         # 保存结果
         self._best_iteration = getattr(self._model, "best_val_loss_itr", None)
         self._best_score = None
-        self._evals_result = getattr(self._model, "evals_result", {})
+        self._evals_result = deepcopy(getattr(self._model, "evals_result", {}))
+        if monitor_metric is not None and "val" in self._evals_result:
+            values = next(iter(self._evals_result["val"].values()))
+            self._evals_result["val"] = {monitor_metric.name: [sign * value for value in values]}
         self._is_fitted = True
         self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
+
+        if not all_eval_set and X_val is not None:
+            all_eval_set = [(X_val, y_val)]
+            all_eval_names = self.eval_names_ or ["验证集"]
+        self.eval_names_ = all_eval_names
+        self.transformation_summary_.update(
+            {
+                "训练目标": type(objective).__name__ if isinstance(objective, BaseLoss) else "Bernoulli LogScore",
+                "早停评估集": all_eval_names[-1] if all_eval_names else None,
+                "早停指标": monitor_metric.name if monitor_metric else "训练损失",
+                "原生权重适配": weight_routing,
+            }
+        )
+        record_eval_results(
+            self,
+            all_eval_set,
+            metrics=requested_metrics or None,
+            staged=True,
+            eval_sample_weight=(
+                {
+                    name: fit_kwargs.get("val_sample_weight") if i == len(all_eval_names) - 1 else None
+                    for i, name in enumerate(all_eval_names)
+                }
+                if all_eval_names
+                else None
+            ),
+        )
 
         return self
 

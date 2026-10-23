@@ -30,7 +30,8 @@ def test_model_report_appends_seventh_sheet(tmp_path):
     report = _report(True)
     output = report.to_excel(tmp_path / "解释报告.xlsx", with_plots=False)
     workbook = load_workbook(output, read_only=True)
-    assert workbook.sheetnames[:7] == [
+    assert workbook.sheetnames[:8] == [
+        "报告执行状态",
         "目录",
         "1-基本信息",
         "2-模型性能",
@@ -39,4 +40,5 @@ def test_model_report_appends_seventh_sheet(tmp_path):
         "5-模型参数",
         "6-模型部署需求",
     ]
-    assert workbook.sheetnames[7] == "7-模型解释"
+    assert workbook.sheetnames[8] == "7-模型解释"
+    assert workbook.sheetnames[-1] == "8-训练与调参过程"

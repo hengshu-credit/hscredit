@@ -55,7 +55,7 @@ def test_catboost_public_n_jobs_controls_native_thread_count(monkeypatch):
     monkeypatch.setattr(
         catboost_module,
         "cb",
-        type("FakeCatBoostModule", (), {"CatBoostClassifier": FakeCatBoostClassifier}),
+        type("FakeCatBoostModule", (), {"CatBoostClassifier": FakeCatBoostClassifier, "Pool": catboost_module.cb.Pool}),
     )
     model = catboost_module.CatBoost(
         n_jobs=3,

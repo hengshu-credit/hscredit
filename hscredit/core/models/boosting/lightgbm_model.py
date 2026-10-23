@@ -167,6 +167,10 @@ class LightGBM(BaseRiskModel):
     基于 LightGBM 梯度提升框架（leaf-wise 生长 + 直方图算法），见
     Ke, G. et al. (2017). *LightGBM: A Highly Efficient Gradient Boosting
     Decision Tree.* NeurIPS；文档 https://lightgbm.readthedocs.io/ 。
+
+    **参数补充**
+
+    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
     """
 
     _preserve_dataframe = True
@@ -290,13 +294,30 @@ class LightGBM(BaseRiskModel):
         :param X: 特征矩阵
         :param y: 目标变量，可选
         :param sample_weight: 样本权重
-        :param eval_set: 验证集列表
+        :param eval_set: [(X_valid, y_valid)]、具名字典、DataFrame列表或单个数据集；
+            同 ModelReport.datasets 的容器规则，含标签的 DataFrame 通过 target 提取标签。
         :param fit_params: 其他fit参数
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import get_metric
+        >>> metric = get_metric('classification_cost', fn_cost=5, fp_cost=1)
+        >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
+        >>> final_values = model.get_eval_results()
         """
         fit_kwargs = dict(fit_params)
+        self._validate_custom_loss_options()
         eval_metric = fit_kwargs.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
         objective = self._native_params.get("objective", self.kwargs.get("objective", self.objective))
+        from ..losses._sample_params import bound_sample_params, slice_sample_loss, has_bound_sample_params
+
+        original_objective = objective
+        auto_loss_metric = eval_metric is None and isinstance(objective, BaseLoss)
+        if auto_loss_metric and eval_set is not None and bound_sample_params(objective):
+            raise ValueError(
+                "绑定逐行金融参数的损失使用外部 eval_set 时，请显式提供该数据集的 eval_metric；不能复用训练金额"
+            )
         if eval_metric is None and isinstance(objective, BaseLoss):
             eval_metric = objective.metric()
         early_stopping_rounds = fit_kwargs.pop(
@@ -308,6 +329,8 @@ class LightGBM(BaseRiskModel):
         scorecard_sample_weight = sample_weight
         self._validate_probability_scorecard_labels(y)
         eval_set = self._prepare_eval_set(eval_set)
+        if eval_set and len(eval_set) > 1 and has_bound_sample_params(eval_metric):
+            raise ValueError("绑定逐行金融参数的 eval_metric 只能对应一个 eval_set，多个数据集不能共用同一金额数组")
 
         # 保存特征信息
         self.n_features_in_ = X.shape[1]
@@ -322,6 +345,12 @@ class LightGBM(BaseRiskModel):
             sample_weight = sw_train
         else:
             X_train, y_train = X, y
+
+        if auto_eval_split:
+            objective = slice_sample_loss(objective, self._eval_train_indices_, len(y))
+            eval_metric = slice_sample_loss(eval_metric, self._eval_val_indices_, len(y))
+            if objective is not original_objective:
+                self.loss_sample_sizes_ = {"原始样本": len(y), "训练样本": len(y_train), "验证样本": len(y_val)}
 
         # 构建参数
         params = {
@@ -396,7 +425,9 @@ class LightGBM(BaseRiskModel):
         params = self._resolve_native_aliases(params, self._parameter_aliases)
 
         # 解析自定义损失（BaseLoss 实例 -> sklearn 包装器可用的目标函数）
-        params["objective"] = resolve_custom_objective(params.get("objective"))
+        params["objective"] = resolve_custom_objective(
+            objective if objective is not original_objective else params.get("objective")
+        )
 
         # 创建模型
         self.native_params_ = dict(params)
@@ -459,6 +490,11 @@ class LightGBM(BaseRiskModel):
         self._evals_result = getattr(self._model, "evals_result_", {})
         self._is_fitted = True
         self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
+        from .._workflow import record_boosting_evaluation
+
+        record_boosting_evaluation(
+            self, eval_set, eval_metric=eval_metric, weights=fit_kwargs.get("eval_sample_weight")
+        )
 
         return self
 

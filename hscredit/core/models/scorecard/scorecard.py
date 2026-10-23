@@ -38,6 +38,7 @@ from ..classical.logistic_regression import LogisticRegression
 from .score_transformer import StandardScoreTransformer
 from .._contracts import ExtraParamsMixin, extract_target, validate_sample_weight
 from .._lifecycle import record_training
+from .._workflow import ModelWorkflowMixin, prepare_eval_sets, record_eval_results
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class _ScoreCardLoadDispatcher:
         return load_model
 
 
-class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
+class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
     """评分卡模型.
 
     将逻辑回归模型转换为评分卡，支持评分卡输出、保存和导出等功能。
@@ -71,7 +72,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         - odds增加的倍数
     :param base_odds: 好坏比（好客户:坏客户），默认 35
         - 当 base_odds >= 1 时，解释为好坏比。例如 35 表示 35:1，坏样本率 ≈ 2.8%
-        - 当 base_odds < 1 时，解释为坏样本率或坏好比(P(bad)/P(good))
+        - 当 base_odds < 1 时，直接作为坏好比 P(bad)/P(good)，不是坏样本率；5%坏率应传0.05/0.95
     :param base_score: 基础 odds 对应的分数，默认 750
     :param step: score_odds_reference的步长，默认None(自动计算为pdo/10)
     :param direction: 评分方向，默认 'descending'（信用分模式）
@@ -103,7 +104,8 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
     **继承方法**
 
-    从 StandardScoreTransformer 继承的方法:
+    从 StandardScoreTransformer 继承的方法：
+
         - transform(proba): 将概率转换为评分
         - inverse_transform(scores): 将评分反向转换为概率
         - predict_score(X, proba): 通过概率预测评分
@@ -112,13 +114,14 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
 
     **评分公式**
 
-    继承自 StandardScoreTransformer:
+    继承自 StandardScoreTransformer::
+
         Score = A - B × ln(odds)
         其中: odds = P(bad) / P(good)
               B = pdo / ln(rate)
               A = base_score + B × ln(actual_odds)
               actual_odds = 1/base_odds (当 base_odds >= 1，好坏比)
-              actual_odds = base_odds   (当 base_odds < 1，坏样本率)
+              actual_odds = base_odds   (当 base_odds < 1，坏好比)
 
     **使用方式**
 
@@ -133,11 +136,11 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         >>> X_train_woe = binner.transform(X_train, metric='woe')
         >>>
         >>> # 步骤2：训练评分卡（传入 WOE 数据）
-        >>> scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750)
+        >>> scorecard = ScoreCard(binner=binner, pdo=60, rate=2, base_odds=35, base_score=750)
         >>> scorecard.fit(X_train_woe, y_train)  # 默认 input_type='woe'
         >>>
         >>> # 步骤3：预测（传入原始数据，自动转换）
-        >>> scores = scorecard.predict(X_test)  # 默认 input_type='raw'
+        >>> scores = scorecard.predict(X_test, input_type='raw')
 
     **方式2：fit传入原始数据（需要配置binner进行WOE转换）**
 
@@ -151,14 +154,24 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         >>> lr.fit(X_train_woe, y_train)
         >>> scorecard = ScoreCard(lr_model=lr)  # 传入预训练模型
         >>> # 不需要调用fit，直接predict
-        >>> scores = scorecard.predict(X_test, input_type='woe')  # 传入WOE数据
+        >>> X_test_woe = binner.transform(X_test, metric='woe')
+        >>> scores = scorecard.predict(X_test_woe, input_type='woe')
 
     **引用**
 
-    标准评分卡刻度公式 ``Score = A - B·ln(odds)``（A=offset、B=factor=pdo/ln(rate)）出自
+    标准评分卡刻度公式 ``Score = A - B·ln(odds)`` （A=offset、B=factor=pdo/ln(rate)）出自
     Siddiqi, N. (2006). *Credit Risk Scorecards: Developing and Implementing Intelligent
     Credit Scoring.* Wiley。API 设计对标 toad.ScoreCard、scorecardpipeline.ScoreCard 与
     optbinning.Scorecard（https://gnpalencia.org/optbinning/scorecard.html）。
+
+    **参数补充**
+
+    :param lower: 评分下界，None 使用该转换器的默认边界；不影响底层概率。
+    :param upper: 评分上界，None 使用该转换器的默认边界；不影响底层概率。
+    :param decimal: 评分保留的小数位数；RoundScoreCard 对各分箱分数取整后再合计。
+    :param history_policy: summary/diagnostics/full，默认 summary；控制原始参数保留范围，数值学习曲线均完整保留。
+    :param max_history: 最多保留的拟合历史条数，默认20；被移除的训练修订不能再查询。
+    :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
     # 标记是否需要fit（根据是否传入lr_model决定）
@@ -279,7 +292,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         ScoreCard 重写父类方法，正确处理 base_odds 的含义：
         - base_odds >= 1: 解释为好坏比（好客户:坏客户），例如 35 表示 35:1，
           对应坏样本率 1/36 ≈ 2.8%。内部转换为实际 odds = 1/base_odds。
-        - base_odds < 1: 解释为坏样本率或坏好比（P(bad)/P(good)），直接使用。
+        - base_odds < 1: 直接作为坏好比（P(bad)/P(good)），不是坏样本率。
 
         标准评分卡公式:
             Score = A - B × ln(odds)
@@ -1202,6 +1215,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
         input_type: str = "woe",
+        eval_set=None,
+        eval_metric=None,
+        eval_sample_weight=None,
     ) -> "ScoreCard":
         """训练评分卡模型.
 
@@ -1235,6 +1251,9 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         :param input_type: 输入数据类型，默认为'woe'
             - 'woe': WOE 转换后的数据（默认，推荐）
             - 'raw': 原始数据（需要配置 binner 进行 WOE 转换）
+        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
+        :param eval_metric: 最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标。
+        :param eval_sample_weight: 评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权。
         :return: self
         """
         if self.verbose:
@@ -1245,6 +1264,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         if input_type not in ["woe", "raw"]:
             raise ValueError(f"input_type 必须是 'woe' 或 'raw'，当前为: {input_type}")
         X, y = extract_target(X, y, self.target)
+        eval_set = prepare_eval_sets(self, eval_set)
         sample_weight = validate_sample_weight(sample_weight, len(y))
         self.A_, self.B_ = self._compute_parameters()
         self.direction_ = self._determine_direction()
@@ -1311,6 +1331,26 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         self.base_effect_ = pd.Series(np.median(sub_scores, axis=0), index=self.feature_names_)
 
         self._is_fitted = True
+
+        self.classes_ = np.asarray(self.lr_model_.classes_)
+        self.native_params_ = self.lr_model_.get_params(deep=False)
+        self.transformation_summary_ = {
+            "训练输入": input_type,
+            "评估输入": input_type,
+            "评分公式": "Score = A - B * ln(odds)",
+            "A": self.A_,
+            "B": self.B_,
+            "评分方向": self.direction_,
+            "取整位数": getattr(self, "decimal", None),
+            "概率来源": "底层LR，取整仅影响评分",
+        }
+        record_eval_results(
+            self,
+            eval_set,
+            metrics=eval_metric,
+            eval_sample_weight=eval_sample_weight,
+            predict_params={"input_type": input_type},
+        )
 
         if self.verbose:
             logger.info(f"评分卡训练完成，总分 = 截距分数 + 各特征分数之和")
@@ -1810,7 +1850,7 @@ class ScoreCard(ExtraParamsMixin, StandardScoreTransformer):
         """预测样本属于各类别的概率（使用底层 LR 模型）。
 
         支持显式指定输入类型。若为原始数据则先经 binner/encoder 转为 WOE，
-        再交由逻辑回归模型输出概率。与 :meth:`predict`（输出分数）相对，本方法输出概率。
+        再交由逻辑回归模型输出概率。:meth:`predict` 输出分数，本方法输出概率。
 
         :param X: 输入数据，原始特征或 WOE 数据，DataFrame 或 ndarray
         :param input_type: 输入类型 ``'auto'`` / ``'raw'`` / ``'woe'``，默认 ``'auto'``
@@ -4398,6 +4438,41 @@ class RoundScoreCard(ScoreCard):
 
     取整一致性计分对应评分卡工程落地实践，刻度公式同 :class:`ScoreCard`
     （Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley）。
+
+    **参数补充**
+
+    :param pdo: Point of Double Odds，odds增加rate倍时分数变化量，默认 60
+    :param rate: 倍率，默认 2
+        - odds增加的倍数
+    :param base_odds: 好坏比（好客户:坏客户），默认 35
+        - 当 base_odds >= 1 时，解释为好坏比。例如 35 表示 35:1，坏样本率 ≈ 2.8%
+        - 当 base_odds < 1 时，直接作为坏好比 P(bad)/P(good)，不是坏样本率；5%坏率应传0.05/0.95
+    :param base_score: 基础 odds 对应的分数，默认 750
+    :param step: score_odds_reference的步长，默认None(自动计算为pdo/10)
+    :param lower: 评分下界，None 使用该转换器的默认边界；不影响底层概率。
+    :param upper: 评分上界，None 使用该转换器的默认边界；不影响底层概率。
+    :param direction: 评分方向，默认 'descending'（信用分模式）
+        - 'descending': 概率越高分越低（信用分，分越高越好）
+        - 'ascending': 概率越高分越高（欺诈分，分越高越差）
+    :param lr_model: 预训练的逻辑回归模型，可选
+        - 如果传入，predict前不需要调用fit
+        - 如果未传入，predict前必须先调用fit训练
+    :param lr_kwargs: 未传入 lr_model 时，通过 kwargs 传入 LR 参数进行训练，可选
+    :param binner: 特征分箱器，可选。支持以下类型：
+        - hscredit 分箱器：支持 transform(X, metric='woe')
+        - toad/scorecardpipeline 分箱器：输出分箱索引
+    :param encoder: WOE 转换器，可选。支持以下类型：
+        - hscredit WOEEncoder：支持 transform(X)
+        - toad WOETransformer
+    :param pipeline: 已训练的 pipeline，支持以下类型：
+        - 末端为 LR：从 pipeline 中提取 LR 模型
+        - 包含分箱器+WOE转换器+LR：提取所有组件
+    :param calculate_stats: 是否计算统计信息，默认 True
+    :param verbose: 是否输出详细信息，默认 False
+    :param target: 目标列名，默认'target'
+    :param history_policy: summary/diagnostics/full，默认 summary；控制原始参数保留范围，数值学习曲线均完整保留。
+    :param max_history: 最多保留的拟合历史条数，默认20；被移除的训练修订不能再查询。
+    :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
     def __init__(
@@ -4748,6 +4823,9 @@ class RoundScoreCard(ScoreCard):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
         input_type: str = "woe",
+        eval_set=None,
+        eval_metric=None,
+        eval_sample_weight=None,
     ) -> "RoundScoreCard":
         """训练评分卡（计分口径取整一致）。
 
@@ -4755,11 +4833,34 @@ class RoundScoreCard(ScoreCard):
         含义一致），但额外按 ``decimal`` 精度对各特征分箱分数取整，并据此重算基础效应，
         确保后续计分与 :meth:`scorecard_points` 完全一致。
 
+        :param X: 二维特征或包含目标列的 DataFrame；与训练阶段使用相同字段和输入表示。
+        :param y: 一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征。
+        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+        :param input_type: 训练与 eval_set 的输入表示：woe 为已转换数据，raw 通过配置的 binner/encoder 转换；本次评估集须使用相同表示。
+        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
+        :param eval_metric: 最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标。
+        :param eval_sample_weight: 评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import RoundScoreCard
+        >>> card = RoundScoreCard(binner=binner)
+        >>> _ = card.fit(X_train, y_train, input_type='raw', eval_set={'验证': (X_valid, y_valid)},
+        ...              eval_metric=['auc', 'ks'])
+        >>> values = card.get_eval_results()
         """
         X_for_base_effect = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X).copy()
 
-        result = super().fit(X, y=y, sample_weight=sample_weight, input_type=input_type)
+        result = super().fit(
+            X,
+            y=y,
+            sample_weight=sample_weight,
+            input_type=input_type,
+            eval_set=eval_set,
+            eval_metric=eval_metric,
+            eval_sample_weight=eval_sample_weight,
+        )
 
         if (
             isinstance(X_for_base_effect, pd.DataFrame)

@@ -8,7 +8,17 @@
    :members:
    :imported-members:
    :show-inheritance:
-   :exclude-members: ExcelWriter, dataframe2excel, SingleFeatureRuleMiner, MultiFeatureRuleMiner, MultiLabelRuleMiner, TreeRuleExtractor, RuleMetrics, calculate_rule_metrics
+   :exclude-members: ModelReport, ExcelWriter, dataframe2excel, SingleFeatureRuleMiner, MultiFeatureRuleMiner, MultiLabelRuleMiner, TreeRuleExtractor, RuleMetrics, calculate_rule_metrics
+
+模型报告的配置、评估与导出
+--------------------------
+
+.. autoclass:: hscredit.report.ModelReport
+   :members:
+   :show-inheritance:
+   :class-doc-from: both
+
+.. automethod:: hscredit.report.ModelReport.get_training_process
 
 .. note::
 

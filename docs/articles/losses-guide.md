@@ -2,6 +2,12 @@
 
 `hscredit.core.models.losses` 提供 16 种二分类损失。每一种损失都可以用同一个对象生成训练目标、配套评估指标和 sklearn 评分器。
 
+推荐统一从 `hscredit` 导入 `get_loss`、`get_metric`、`list_losses`、`list_metrics`。
+例如 `get_loss("cost_sensitive", fn_cost=5)` 创建训练损失，`get_metric("auc")` 创建固定概率方向的指标；
+两份目录返回中文用途、参数以及指标方向。已有损失的派生指标统一通过
+`loss.metric(kind="loss")` 或 `loss.metric(kind="business")` 选择。
+旧业务指标方法仅作带弃用提示的兼容入口；`metric()` 默认仍计算损失值。
+
 ```python
 from hscredit import LightGBM
 from hscredit.core.models.losses import FocalLoss
@@ -20,10 +26,10 @@ value = loss.evaluate(y_valid, model.predict_proba(X_valid))
 | --- | --- | --- |
 | `loss` / `objective=loss` | 训练时提供梯度和二阶导数 | 优化损失 |
 | `loss.metric()` | 与该损失相同参数、相同数值定义的评估指标 | 始终越小越好 |
-| `loss.business_metric()` | 对应真实业务口径，例如 AUC、捕获率、利润；没有专用口径时返回损失指标 | 由 `greater_is_better` / `direction` 声明 |
+| `loss.metric(kind='business')` | 对应真实业务口径，例如 AUC、捕获率、利润；没有专用口径时返回损失指标 | 由 `greater_is_better` / `direction` 声明 |
 | `metric.to_scorer()` | sklearn CV / GridSearchCV 评分器 | sklearn 要求越大越好，因此最小化指标自动取负 |
 
-`loss.metric()` 返回 `LossMetric`，它保存损失参数的独立快照。指标评估不会修改训练损失；如果随后修改了损失参数，应重新生成指标。`loss.to_metric()` 与 `loss.metric()` 等价，`loss.to_scorer()` 与 `loss.metric().to_scorer()` 等价。
+`loss.metric()` 返回 `LossMetric`，它保存损失参数的独立快照。指标评估不会修改训练损失；如果随后修改了损失参数，应重新生成指标。旧 `loss.to_metric()` 仅作兼容别名，新代码统一使用 `metric()`。sklearn 评分器通过 `metric.to_scorer()` 生成。
 
 同一个指标可以用于训练曲线、早停、测试集评估和超参数搜索；比较模型时必须保持指标参数、样本范围、样本权重一致。不同 `alpha`、成本参数或金额口径的损失值不能直接横向比较。即使某种自定义损失不用于训练，仍可用它评估任意提供坏样本概率的二分类模型。
 
@@ -57,9 +63,9 @@ X_test, y_test = X.iloc[test_idx], y[test_idx]
 
 ## 3. 每种损失对应什么指标
 
-所有行均支持 `loss.metric()`，返回与训练损失同定义的标量，方向均为 `minimize`。下面的业务指标通过 `loss.business_metric()` 获取，自动继承该损失的相关参数。
+所有行均支持 `loss.metric()`，返回与训练损失同定义的标量，方向均为 `minimize`。下面的业务指标通过 `loss.metric(kind='business')` 获取，自动继承该损失的相关参数。
 
-| 损失 | 主要用途 | `business_metric()` | 业务方向 |
+| 损失 | 主要用途 | `metric(kind="business")` | 业务方向 |
 | --- | --- | --- | --- |
 | `FocalLoss` | 降低容易样本的权重、关注难分样本 | 聚焦损失本身 | 越小越好 |
 | `AsymmetricFocalLoss` | 好坏样本分别设置聚焦强度 | 非对称聚焦损失本身 | 越小越好 |
@@ -84,7 +90,7 @@ X_test, y_test = X.iloc[test_idx], y[test_idx]
 from hscredit.core.models.losses import TopKBadCaptureLoss
 
 capture_loss = TopKBadCaptureLoss(top_ratio=0.05, miss_penalty=5)
-capture_metric = capture_loss.business_metric()
+capture_metric = capture_loss.metric(kind='business')
 print(capture_metric.name, capture_metric.direction)
 # 头部坏样本捕获率 maximize
 ```
@@ -142,7 +148,7 @@ from hscredit import XGBoost
 from hscredit.core.models.losses import ExpectedProfitLoss
 
 profit_loss = ExpectedProfitLoss(revenue=1, default_cost=8, cutoff=0.2)
-profit_metric = profit_loss.business_metric()
+profit_metric = profit_loss.metric(kind='business')
 model = XGBoost(
     objective=profit_loss,
     eval_metric=profit_metric,
@@ -368,7 +374,7 @@ tuner.fit(X_train, y_train, n_trials=10, show_progress_bar=False)
 print(tuner.best_params_, tuner.best_score_)  # 原始损失，越小越好
 ```
 
-传入 `BaseMetric` 或调参器自己的 `Metric` 对象时，ModelTuner 采用对象自带方向；不需要重复设置 `direction="minimize"`。普通自定义函数须显式指定方向，也可用下节的 `make_metric` 一次包装。多目标搜索可传 `metric=[loss.metric(), loss.business_metric()]`，每个对象分别提供方向；当两个入口返回同一种损失指标时没有必要重复添加。
+传入 `BaseMetric` 或调参器自己的 `Metric` 对象时，ModelTuner 采用对象自带方向；不需要重复设置 `direction="minimize"`。普通自定义函数须显式指定方向，也可用下节的 `make_metric` 一次包装。多目标搜索可传 `metric=[loss.metric(), loss.metric(kind='business')]`，每个对象分别提供方向；当两个入口返回同一种损失指标时没有必要重复添加。
 
 `loss=` 是训练目标；`metric` 决定候选优劣；`ModelTuner(objective=...)` 是历史评分别名，不要将 loss 放入此参数。已有模型可直接 `best = model.tune(X_train, y_train, loss=loss, metric=loss.metric(), ...)`。搜索 `alpha`、`gamma` 等损失参数时，固定评估指标为 AUC、Brier 或同一业务口径，不能让各个 trial 使用不同损失标尺。详见 [调参指南](tuning-guide.md)。
 
@@ -572,8 +578,8 @@ TopK 分位点、Lift 头部边界和排序难配对选择都可能分段不可�
 | 每次手写一个损失指标函数 | `loss.metric()` 统一生成训练、离线与调参指标 |
 | 自定义目标下直接把原始分数当概率 | 原生 metric 回调声明 `raw_score=True`；HSCredit 自动判断 |
 | CatBoost 自定义评估返回值不符合协议 | `metric.to_catboost()` 返回符合 `(error_sum, weight_sum)` 协议的对象 |
-| `CostSensitiveLoss(y, p)` 返回硬分类成本 | 默认变为成本加权 BCE；实际成本用 `loss.business_metric()` / `loss.classification_cost(y, p, threshold=0.5)`；显式 `loss(y, p, threshold=0.5)` 保留旧口径 |
-| `ProfitMaxLoss` 混合训练代理与实际利润 | 默认返回利润成本加权 BCE；实际利润用 `loss.business_metric()` / `loss.profit(y, p, threshold=0.5)` |
+| `CostSensitiveLoss(y, p)` 返回硬分类成本 | 默认变为成本加权 BCE；实际成本用 `loss.metric(kind='business')` / `loss.classification_cost(y, p, threshold=0.5)`；显式 `loss(y, p, threshold=0.5)` 保留旧口径 |
+| `ProfitMaxLoss` 混合训练代理与实际利润 | 默认返回利润成本加权 BCE；实际利润用 `loss.metric(kind='business')` / `loss.profit(y, p, threshold=0.5)` |
 | 非对称聚焦的 `clip_value` 同时改变两类概率 | 现在仅对负类采用 `max(p-clip_value, 0)`；正类概率保持原定义 |
 | BalancedFocal 标签平滑未实际作用 | 标签平滑参与损失、梯度和二阶导数 |
 | KS 聚焦项仅改变梯度 | 聚焦权重现在同时进入标量损失，保证评价与导数一致 |

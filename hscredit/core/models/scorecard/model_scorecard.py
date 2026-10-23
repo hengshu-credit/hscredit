@@ -16,7 +16,7 @@ CatBoost、NGBoost、TabNet/Net 等）转换为评分卡式的信用/欺诈评�
 
 - 任意概率转评分（复用 :class:`ScoreTransformer`，支持 standard/linear/quantile/boxcox）
 - 支持 LR / sklearn / LightGBM / XGBoost / CatBoost / NGBoost / Net 等模型
-- 模型报告输出（评分-坏率对照表；底层为 BaseRiskModel 时复用其 report）
+- 模型报告输出（report 为评分-坏率对照表；model_report 为当前评分卡的完整模型报告）
 - 评分转换、基础参数信息留存、输出转换公式
 - 持久化与离线模型加载（复用 ``hscredit.utils.io``）
 
@@ -58,13 +58,13 @@ from .._contracts import (
     validate_sample_weight,
 )
 from .._lifecycle import record_training
+from .._workflow import ModelWorkflowMixin, prepare_eval_sets, record_eval_results
 from .score_transformer import ScoreTransformer
 
 logger = logging.getLogger(__name__)
 
 
-class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEstimator):
-    artifact_kind = "评分卡"
+class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSerializableMixin, BaseEstimator):
     """通用模型评分卡（概率 → 评分）.
 
     将任意含 ``predict_proba`` 的模型输出的概率，通过 :class:`ScoreTransformer`
@@ -73,20 +73,21 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
     **参数**
 
     :param model: 含 ``predict_proba`` 的模型实例，可选。
-        - 若为已训练模型，``fit`` 时不会重复训练（除非 ``prefit=False`` 且检测到未训练）
+        - 若为已训练模型，``fit`` 时不会重复训练（除非 ``prefit=False``）
         - 若为未训练模型，``fit`` 时会先用 ``(X, y)`` 训练底层模型
         - 若为 None，``fit`` 时必须通过 ``proba`` 直接传入概率（纯概率转评分）
     :param method: 概率转评分方法，默认 'standard'，可选 'standard'/'linear'/'quantile'/'boxcox'
     :param lower: 评分下界，默认 None
     :param upper: 评分上界，默认 None
     :param direction: 评分方向，默认 'descending'（信用分：概率越高分越低）
-    :param base_odds: 基准好坏比/坏样本率（standard 方法），默认 0.05
+    :param base_odds: 基准坏好比 p/(1-p)（standard 方法），默认0.05，不是坏样本率；
+        5%坏样本率应传 0.05/0.95。
     :param base_score: 基准分数（standard 方法），默认 600
     :param pdo: Point of Double Odds（standard 方法），默认 20
     :param rate: 倍率（standard 方法），默认 2
     :param decimal: 评分精度（小数位数），默认 0
     :param clip: 是否截断到 [lower, upper]，默认 True
-    :param prefit: 是否将 model 视为已训练（跳过训练），默认 None（自动检测）
+    :param prefit: 是否将 model 视为已训练（跳过训练），默认 None（直接 fit 自动检测；ModelTuner 搜索时重训底层模型，只有显式 True 冻结）
     :param target: 目标列名，默认 'target'（用于从 DataFrame 提取 y）
     :param verbose: 是否输出详细信息，默认 False
     :param positive_class: 坏样本类别，默认 1；None 时沿用基础模型第 2 列的类别。
@@ -98,7 +99,14 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
     :ivar transformer_: 已拟合的 ScoreTransformer
     :ivar A_/B_: 标准评分卡刻度参数（method='standard' 时可用）
     :ivar feature_names_in_: 训练特征名（DataFrame 输入时）
+
+    **参数补充**
+
+    :param history_policy: summary/diagnostics/full，默认 summary；控制原始参数保留范围，数值学习曲线均完整保留。
+    :param max_history: 最多保留的拟合历史条数，默认20；被移除的训练修订不能再查询。
     """
+
+    artifact_kind = "评分卡"
 
     def __init__(
         self,
@@ -208,6 +216,9 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         y: Optional[Union[pd.Series, np.ndarray]] = None,
         sample_weight: Optional[np.ndarray] = None,
         proba: Optional[Union[np.ndarray, pd.Series]] = None,
+        eval_set=None,
+        eval_metric=None,
+        eval_sample_weight=None,
     ) -> "ProbabilityScoreCard":
         """拟合通用模型评分卡.
 
@@ -232,8 +243,21 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         :param y: 目标变量，可选
         :param sample_weight: 样本权重，可选（训练底层模型时使用）
         :param proba: 直接传入训练集正类概率（无模型时使用），可选
+        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
+        :param eval_metric: 最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标。
+        :param eval_sample_weight: 评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权。
         :return: self
+
+        **参考样例**
+
+        >>> from hscredit import ProbabilityScoreCard
+        >>> card = ProbabilityScoreCard(model=model, prefit=True).fit(X_train, y_train,
+        ...     eval_set={'测试': (X_test, y_test)}, eval_metric=['auc', 'ks'])
+        >>> scores = card.predict_score(X_test)
         """
+        eval_set = prepare_eval_sets(self, eval_set)
+        if eval_set and self.model is None:
+            raise ValidationError("纯概率评分转换没有特征模型；请对输入概率使用 get_metric(...)(y, proba)")
         if X is not None:
             X, y = extract_target(X, y, self.target, require_y=False)
             record_feature_schema(self, X)
@@ -276,6 +300,10 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         self.direction_ = self.transformer_.direction_
 
         self._is_fitted = True
+        if self.model_ is not None:
+            self.classes_ = np.asarray(getattr(self.model_, "classes_", [0, 1]))
+        self.transformation_summary_ = self.get_params_info()
+        record_eval_results(self, eval_set, metrics=eval_metric, eval_sample_weight=eval_sample_weight)
         return self
 
     # ==================== 预测 ====================
@@ -437,27 +465,30 @@ class ProbabilityScoreCard(ExtraParamsMixin, ArtifactSerializableMixin, BaseEsti
         :param max_n_bins: 分箱数，默认 10
         :param method: 分箱方式，'quantile' 或 'uniform'
         :return: 评分-坏率对照表 DataFrame
+
+        **参考样例**
+
+        >>> score_bins = card.report(X_test, y_test, max_n_bins=5)
+        >>> complete = card.model_report(datasets={'测试': (X_test, y_test)}, verbose=False)
         """
         return self.score_to_bad_rate_table(scores=scores, y=y, X=X, max_n_bins=max_n_bins, method=method)
 
     def model_report(self, *args, **kwargs):
-        """复用底层模型的报告能力.
+        """为当前评分卡生成完整模型报告，包含评分转换配置与底层预测。
 
-        当底层模型为 ``BaseRiskModel`` 子类时，转调其 ``report``（生成多 Sheet
-        风控建模报告），参数与 ``BaseRiskModel.report`` 一致。
+        **参数补充**
 
-        :return: 底层模型的报告对象
-        :raises ValidationError: 底层模型不支持 report
+        :param args: 兼容位置参数；第一个位置参数为 datasets，建议其他配置使用明确的关键字参数。
+        :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
+
+        **参考样例**
+
+        >>> report = model.model_report(datasets={'独立测试': (X_test, y_test)},
+        ...                           metrics=['auc', 'ks'], verbose=False)
+        >>> effects = report.get_metrics()
         """
         self._check_fitted()
-        model = getattr(self, "model_", None)
-        try:
-            from ..base import BaseRiskModel
-        except Exception:
-            BaseRiskModel = ()
-        if model is not None and BaseRiskModel and isinstance(model, BaseRiskModel):
-            return model.report(*args, **kwargs)
-        raise ValidationError("底层模型不是 BaseRiskModel 子类，无法生成模型报告；请使用 report() 获取评分-坏率对照表")
+        return ModelWorkflowMixin.model_report(self, *args, **kwargs)
 
     # ==================== 持久化（复用 utils.io） ====================
 

@@ -342,9 +342,20 @@ def test_population_drift_parallel_excel_layout_matches_serial(report_data, tmp_
     parallel = pd.ExcelFile(parallel_path)
     assert parallel.sheet_names == serial.sheet_names
     for sheet in serial.sheet_names:
+        parallel_frame = pd.read_excel(parallel_path, sheet_name=sheet, header=None)
+        serial_frame = pd.read_excel(serial_path, sheet_name=sheet, header=None)
+        # 运行耗时本来就会随串行/并行及机器负载变化。仍校验其位置、数值有效性，
+        # 只在布局比较时归一化耗时；所有业务统计和其他状态单元格保持精确比较。
+        for frame in (parallel_frame, serial_frame):
+            positions = np.argwhere(frame.eq("耗时(秒)").fillna(False).to_numpy(dtype=bool))
+            for row, column in positions:
+                durations = pd.to_numeric(frame.iloc[row + 1 :, column].dropna(), errors="raise")
+                assert np.isfinite(durations).all()
+                assert (durations >= 0).all()
+                frame.iloc[row + 1 :, column] = 0.0
         pd.testing.assert_frame_equal(
-            pd.read_excel(parallel_path, sheet_name=sheet, header=None),
-            pd.read_excel(serial_path, sheet_name=sheet, header=None),
+            parallel_frame,
+            serial_frame,
         )
 
 

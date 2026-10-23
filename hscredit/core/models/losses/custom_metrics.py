@@ -87,7 +87,7 @@ class GiniMetric(BaseMetric):
     衡量模型区分能力，Gini越大越好。
 
     :param name: 指标名称，默认为"gini"
-    :param score_direction: 同 ``metrics.auc``，默认auto；higher_risk保留原始方向
+    :param score_direction: 默认higher_risk保留原始概率方向；显式auto兼容未知方向的评分
 
     **参考样例**
 
@@ -96,7 +96,7 @@ class GiniMetric(BaseMetric):
     >>> gini_value = gini_metric(y_true, y_pred)
     """
 
-    def __init__(self, name: str = "gini", score_direction: str = "auto"):
+    def __init__(self, name: str = "gini", score_direction: str = "higher_risk"):
         super().__init__(name, greater_is_better=True)
         self.score_direction = score_direction
 

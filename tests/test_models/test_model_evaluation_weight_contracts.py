@@ -69,21 +69,14 @@ def test_model_auc_and_gini_match_public_metrics_with_weights_and_direction(dire
     assert result["Gini"] == gini(y, scores, sample_weight=weights, score_direction=direction)
 
 
-def test_unsupported_weight_metrics_warn_once_and_return_unweighted_results():
-    """KS 与 Lift 忽略权重时必须集中 warning，不能静默或逐项报警。"""
+def test_ks_and_lift_use_the_same_weighted_contract():
+    """字符串指标必须实际使用权重，与统一指标对象相同。"""
     model = _FixedRiskModel([0.9, 0.8, 0.7, 0.6])
     y = np.array([1, 0, 1, 0])
-    weights = np.array([1.0, 10.0, 1.0, 1.0])
-
-    with pytest.warns(UserWarning, match="KS.*LIFT@10%") as records:
-        result = model.evaluate(
-            np.zeros((4, 1)),
-            y,
-            sample_weight=weights,
-            metrics=["ks", "lift@10%"],
-        )
-
-    assert len(records) == 1
+    weights = np.array([10.0, 1.0, 1.0, 1.0])
+    result = model.evaluate(np.zeros((4, 1)), y, sample_weight=weights, metrics=["ks", "lift@10%"])
+    assert result["KS"] == pytest.approx(10 / 11)
+    assert result["LIFT@10%"] == pytest.approx(13 / 11)
     assert set(result) == {"KS", "LIFT@10%"}
 
 
@@ -114,7 +107,7 @@ def test_sample_weight_validation_rejects_mismatched_or_negative_values():
         model.evaluate(X, y, sample_weight=np.array([1.0, -1.0, 1.0, 1.0]), metrics=["auc"])
 
 
-def test_calibrated_model_uses_the_same_metric_and_weight_warning_contract():
+def test_calibrated_model_uses_the_same_weighted_metric_contract():
     """校准包装模型不能维护另一套 evaluate 参数和返回键。"""
     X, y = make_classification(n_samples=100, n_features=4, random_state=51)
     base_model = LogisticRegression(max_iter=300).fit(X[:60], y[:60])
@@ -122,13 +115,8 @@ def test_calibrated_model_uses_the_same_metric_and_weight_warning_contract():
     model = CalibratedModel(base_model, calibrator)
     weights = np.linspace(1.0, 2.0, 20)
 
-    with pytest.warns(UserWarning, match="KS") as records:
-        result = model.evaluate(
-            X[80:],
-            y[80:],
-            sample_weight=weights,
-            metrics=["auc", "ks", "brier"],
-        )
+    result = model.evaluate(X[80:], y[80:], sample_weight=weights, metrics=["auc", "ks", "brier"])
+    from hscredit.core.metrics import ks
 
-    assert len(records) == 1
+    assert result["KS"] == pytest.approx(ks(y[80:], model.predict_proba(X[80:])[:, 1], sample_weight=weights))
     assert set(result) == {"AUC", "KS", "Brier"}

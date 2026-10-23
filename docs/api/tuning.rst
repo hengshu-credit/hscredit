@@ -40,6 +40,7 @@
 .. autoclass:: hscredit.core.models.tuning.tuning.ModelTuner
    :members:
    :show-inheritance:
+   :class-doc-from: both
 
 .. autoclass:: hscredit.core.models.tuning.tuning.AutoTuner
    :members:
