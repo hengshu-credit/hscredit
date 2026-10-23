@@ -222,8 +222,7 @@ def _normalize_report(
     target_names: Optional[Mapping[str, str]] = None,
     target_name: str = "target",
 ) -> Tuple[pd.DataFrame, str]:
-    """将单层或多层 ``Rule.report`` 结果转换为统一长表.
-    """
+    """将单层或多层 ``Rule.report`` 结果转换为统一长表."""
     if not isinstance(report, pd.DataFrame) or report.empty:
         raise ValueError("report 必须是非空的 DataFrame")
 
@@ -609,8 +608,7 @@ GroupOrder = Union[None, str, Callable[[Any], Any], Sequence[Any]]
 
 
 def _order_groups(present: Sequence[Any], group_order: GroupOrder) -> list:
-    """按 ``group_order`` 规则对已出现的分组标签排序，缺省升序排列.
-    """
+    """按 ``group_order`` 规则对已出现的分组标签排序，缺省升序排列."""
     present = _ordered_unique(list(present))  # 去重并保留出现顺序
 
     if group_order is None or (isinstance(group_order, str) and group_order == "asc"):
@@ -977,16 +975,14 @@ def _normalize_target_label(label: Any) -> str:
 
 
 def _normalize_target_names(target_names: Optional[Mapping[str, str]]) -> Optional[Dict[str, str]]:
-    """将 ``target_names`` 的键统一为空格形式，使任意写法的键都能匹配到标签。
-    """
+    """将 ``target_names`` 的键统一为空格形式，使任意写法的键都能匹配到标签。"""
     if isinstance(target_names, _ExplicitTargetNames) or not target_names:
         return target_names
     return {_normalize_target_label(key): value for key, value in target_names.items()}
 
 
 def _display_target_label(label: Any, target_names: Optional[Mapping[str, str]]) -> str:
-    """规整单个逾期标签：先统一为空格形式，再套用 ``target_names`` 映射。
-    """
+    """规整单个逾期标签：先统一为空格形式，再套用 ``target_names`` 映射。"""
     if isinstance(target_names, _ExplicitTargetNames):
         return target_names.get(label, label)
     normalized = _normalize_target_label(label)
@@ -1006,8 +1002,7 @@ def _rename_target_level(
 
 
 def _as_text_list(value: Optional[Union[str, Sequence[str]]]) -> List[str]:
-    """将文本参数规整为字符串列表， ``None`` 返回空列表.
-    """
+    """将文本参数规整为字符串列表， ``None`` 返回空列表."""
     if value is None:
         return []
     if isinstance(value, str):
@@ -1187,8 +1182,7 @@ def _format_columns(table: pd.DataFrame) -> Tuple[list, list]:
 
 
 def _cf_columns(table: pd.DataFrame, names: Optional[Sequence[str]]) -> list:
-    """返回表中（任意层级）列名命中 ``names`` 的完整列标签，用于条件格式列定位.
-    """
+    """返回表中（任意层级）列名命中 ``names`` 的完整列标签，用于条件格式列定位."""
     if not names:
         return []
     name_set = set(names)
@@ -1209,8 +1203,7 @@ def _write_subtitle(writer, worksheet, row: int, text: str, start_col: int) -> N
 
 
 def _cf_condition_color(bar_names: Optional[Sequence[str]], scale_names: Optional[Sequence[str]]) -> dict:
-    """构建 ``dataframe2excel`` 的 ``condition_color`` 字典：数据条按指标取单色、色阶取三色锚点.
-    """
+    """构建 ``dataframe2excel`` 的 ``condition_color`` 字典：数据条按指标取单色、色阶取三色锚点."""
     color_map: Dict[str, Any] = {}
     for name in bar_names or []:
         color_map[name] = _CF_BAR_COLORS.get(name, _CF_BAR_DEFAULT_COLOR)

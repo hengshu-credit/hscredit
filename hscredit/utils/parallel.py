@@ -570,8 +570,7 @@ def resolve_native_workers(
     n_jobs: NJobs,
     native_workers: Optional[int] = None,
 ) -> int:
-    """统一解析 ``thread_count`` 、 ``num_workers`` 等原生线程参数。
-    """
+    """统一解析 ``thread_count`` 、 ``num_workers`` 等原生线程参数。"""
     if native_workers is not None:
         native_workers = _validate_integer(native_workers, "native_workers", 1)
     budget = _current_parallel_budget()

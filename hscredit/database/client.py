@@ -223,8 +223,7 @@ class Database:
         return self._call_nosql("delete_many", resource, selector, **options)
 
     def delete(self, resource: Any, selector: Any = None, **options: Any) -> Any:
-        """根据输入形态与 ``many`` 选项自适应执行删除。
-        """
+        """根据输入形态与 ``many`` 选项自适应执行删除。"""
 
         return self._call_nosql("delete", resource, selector, **options)
 

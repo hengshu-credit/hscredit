@@ -114,8 +114,7 @@ class IsotonicCalibrator(BaseCalibrator):
 
 
 class BetaCalibrator(BaseCalibrator):
-    """使用 ``log(p)`` 与 ``-log(1-p)`` 特征拟合 Beta 校准。
-    """
+    """使用 ``log(p)`` 与 ``-log(1-p)`` 特征拟合 Beta 校准。"""
 
     @record_training
     def fit(self, y_prob, y_true):

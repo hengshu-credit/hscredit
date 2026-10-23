@@ -1673,8 +1673,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         return self._normalize_binned_output(X_binned, X)
 
     def _resolve_binner(self) -> Optional[Any]:
-        """按 ``binner > bin_params`` 解析有效分箱器。
-        """
+        """按 ``binner > bin_params`` 解析有效分箱器。"""
         if self.binner is not None:
             if isinstance(self.binner, type):
                 raise ValidationError("binner 必须传入配置好的分箱器实例，不能传入分箱器类")

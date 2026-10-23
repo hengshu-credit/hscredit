@@ -174,8 +174,7 @@ def _feature_stats_call(task):
 
 
 def _feature_summary_call(task):
-    """执行单个 ``方法 × 特征`` 汇总计算任务。
-    """
+    """执行单个 ``方法 × 特征`` 汇总计算任务。"""
     feature_name, method, call_kwargs = task
     table = feature_bin_stats(feature=feature_name, method=method, **call_kwargs)
     return feature_name, method, table
@@ -325,8 +324,7 @@ def _cleanup_auto_feature_progress(reporter, event_queue, monitor, manager, stop
 
 
 def _feature_group_summary_call(task):
-    """计算一个 ``方法 × 特征`` 下的全部有序分组。
-    """
+    """计算一个 ``方法 × 特征`` 下的全部有序分组。"""
     data, labels, ordered_groups, feature_name, method, params = task
     fitted_binner = _fit_group_summary_binner(data, feature_name, method, params)
     rows = []
@@ -346,8 +344,7 @@ def _feature_group_summary_call(task):
 
 
 def _benchmark_binning_call(task):
-    """计算一个 ``逾期字段 × DPD × 分箱方法`` 的基准结果。
-    """
+    """计算一个 ``逾期字段 × DPD × 分箱方法`` 的基准结果。"""
     x, y, feature, method, overdue_name, dpd, params = task
     row = {
         "method": f"hscredit-{method}",
@@ -550,8 +547,7 @@ _LONG_FORMAT_COLUMNS = (
 
 
 def _summary_display_name(target_name: Any) -> Any:
-    """将目标名称转换为摘要展示名称（ ``MOB1_3+`` → ``MOB1@3`` ）。
-    """
+    """将目标名称转换为摘要展示名称（ ``MOB1_3+`` → ``MOB1@3`` ）。"""
     if isinstance(target_name, str) and target_name.endswith("+") and "_" in target_name:
         overdue_name, dpd = target_name[:-1].rsplit("_", 1)
         return f"{overdue_name}@{dpd}"
@@ -559,8 +555,7 @@ def _summary_display_name(target_name: Any) -> Any:
 
 
 def _reorder_long_format_columns(table: pd.DataFrame) -> pd.DataFrame:
-    """按  :data:`_LONG_FORMAT_COLUMNS`  重排长格式分箱表列顺序，保留未列出的额外列。
-    """
+    """按  :data:`_LONG_FORMAT_COLUMNS`  重排长格式分箱表列顺序，保留未列出的额外列。"""
     ordered = [col for col in _LONG_FORMAT_COLUMNS if col in table.columns]
     extras = [col for col in table.columns if col not in _LONG_FORMAT_COLUMNS]
     return table[ordered + extras]
@@ -1438,8 +1433,7 @@ def _get_binner_bin_labels(
     bins: np.ndarray,
     fallback_splits: Optional[np.ndarray] = None,
 ) -> List[str]:
-    """按 ``bins`` 的唯一值顺序生成分箱标签，优先复用分箱器内部标签。
-    """
+    """按 ``bins`` 的唯一值顺序生成分箱标签，优先复用分箱器内部标签。"""
     unique_bins = np.unique(bins)
     label_map: Dict[int, str] = {}
 

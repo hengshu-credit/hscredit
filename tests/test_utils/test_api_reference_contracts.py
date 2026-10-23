@@ -4,9 +4,9 @@ import ast
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -20,7 +20,11 @@ def _constructors():
                 if not isinstance(node, ast.ClassDef) or node.name.startswith("_"):
                     continue
                 init = next(
-                    (member for member in node.body if isinstance(member, ast.FunctionDef) and member.name == "__init__"),
+                    (
+                        member
+                        for member in node.body
+                        if isinstance(member, ast.FunctionDef) and member.name == "__init__"
+                    ),
                     None,
                 )
                 if init is not None:
@@ -52,7 +56,7 @@ def test_binning_method_reference_matches_registry():
 def test_api_reference_notebook_with_real_data(tmp_path, monkeypatch):
     """按单元顺序执行同一份演示，验证统计行数、返回类型和导出产物。"""
     if not (ROOT / "examples/hscredit_yyp.xlsx").is_file():
-        pytest.skip("真实放款数据为本地验证资源，不随仓库分发")
+        pytest.skip("hscredit_yyp.xlsx 为本地真实放款验证资源，不随仓库分发")
     monkeypatch.chdir(ROOT)
     monkeypatch.setenv("HSCREDIT_EXAMPLE_OUTPUT", str(tmp_path))
     notebook = json.loads((ROOT / "examples/29_api_reference.ipynb").read_text(encoding="utf-8"))
@@ -65,3 +69,14 @@ def test_api_reference_notebook_with_real_data(tmp_path, monkeypatch):
             exec(compile(source, f"29_api_reference.ipynb:单元格{index}", "exec"), namespace)
     assert int(namespace["table"]["样本总数"].sum()) == len(namespace["data"])
     assert (tmp_path / "特征分析.xlsx").is_file()
+
+
+def test_missing_workbook_skip_satisfies_strict_ci_policy(tmp_path, monkeypatch):
+    """无业务数据的 CI 必须识别该跳过为允许的本地工作簿缺失。"""
+    from tests.conftest import _is_allowed_ci_skip
+
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    with pytest.raises(pytest.skip.Exception) as captured:
+        test_api_reference_notebook_with_real_data(tmp_path, monkeypatch)
+    report = SimpleNamespace(longrepr=(__file__, 0, f"Skipped: {captured.value}"))
+    assert _is_allowed_ci_skip(report)

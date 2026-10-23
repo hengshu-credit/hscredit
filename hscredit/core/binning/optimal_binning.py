@@ -500,15 +500,13 @@ class OptimalBinning(BaseBinning):
         }
 
     def get_params(self, deep: bool = True) -> Dict[str, Any]:
-        """在不改变 ``**kwargs`` 入口的前提下暴露方法专属参数。
-        """
+        """在不改变 ``**kwargs`` 入口的前提下暴露方法专属参数。"""
         params = super().get_params(deep=deep)
         params.update(self.kwargs)
         return params
 
     def set_params(self, **params) -> "OptimalBinning":
-        """支持 sklearn 为显式参数和方法专属 ``**kwargs`` 参数赋值。
-        """
+        """支持 sklearn 为显式参数和方法专属 ``**kwargs`` 参数赋值。"""
         if not params:
             return self
         explicit = set(inspect.signature(self.__init__).parameters) - {"self", "kwargs"}

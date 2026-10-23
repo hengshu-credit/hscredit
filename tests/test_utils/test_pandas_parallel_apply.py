@@ -10,6 +10,7 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 import pytest
+from packaging.version import Version
 
 import hscredit  # noqa: F401 - 导入即注册 pandas 扩展
 from hscredit.exceptions import ValidationError
@@ -18,6 +19,9 @@ from hscredit.utils.pandas_parallel import (
     _call_group_apply_item,
     _wrap_callable_for_process_backend,
 )
+
+PANDAS_VERSION = Version(pd.__version__)
+GROUPBY_APPLY_KWARGS = {"include_groups": False} if PANDAS_VERSION >= Version("2.2") else {}
 
 
 def _row_total(row, offset=0):
@@ -260,7 +264,7 @@ def test_dataframe_groupby_scalar_result_matches_pandas():
 
     actual = grouped.hscredit(n_jobs=2, bar=False, parallel_backend="loky").apply(
         _group_sum,
-        include_groups=False,
+        **GROUPBY_APPLY_KWARGS,
     )
     expected = pd.Series([7, 10], index=pd.Index(["b", "a"], name="g"), dtype="int64")
 
@@ -270,11 +274,11 @@ def test_dataframe_groupby_scalar_result_matches_pandas():
 def test_dataframe_groupby_dataframe_result_preserves_group_keys():
     """DataFrame 返回值若简单 concat 会丢失 group_keys MultiIndex。"""
     df = pd.DataFrame({"g": [1, 1, 2], "x": [2, 3, 5]}, index=["a", "b", "c"])
-    grouped = df.groupby("g", group_keys=True)
+    grouped = df.groupby("g", group_keys=True)[["x"]]
 
     actual = grouped.hscredit(n_jobs=2, bar=False, parallel_backend="loky").apply(
         _group_frame,
-        include_groups=False,
+        **GROUPBY_APPLY_KWARGS,
     )
     expected = pd.DataFrame(
         {"x": [2, 3, 5], "两倍": [4, 6, 10]},
@@ -302,7 +306,7 @@ def test_multikey_groupby_function_receives_native_group_name():
 
     actual = grouped.hscredit(n_jobs=2, bar=False, parallel_backend="loky").apply(
         _group_name_result,
-        include_groups=False,
+        **GROUPBY_APPLY_KWARGS,
     )
     expected = pd.DataFrame(
         {"组名": ["('a', 1)", "('a', 2)", "('b', 1)"], "合计": [3, 4, 5]},
@@ -340,7 +344,7 @@ def test_groupby_type_error_is_not_retried():
     with pytest.raises(TypeError, match="bad-group"):
         grouped.hscredit(n_jobs=2, bar=False, parallel_backend="threading").apply(
             fail,
-            include_groups=False,
+            **GROUPBY_APPLY_KWARGS,
         )
 
     counts = Counter(calls)
@@ -381,7 +385,7 @@ def test_groupby_failure_closes_progress_without_false_completion(capsys):
     grouped = pd.DataFrame({"g": [1, 1, 2, 2], "x": [2, 3, 4, 5]}).groupby("g", sort=False)
 
     with pytest.raises(RuntimeError, match="group failed"):
-        grouped.hscredit(n_jobs=1, bar=True).apply(fail, include_groups=False)
+        grouped.hscredit(n_jobs=1, bar=True).apply(fail, **GROUPBY_APPLY_KWARGS)
 
     progress = capsys.readouterr().err
     assert "GroupBy 分组计算" in progress
@@ -411,6 +415,11 @@ def test_series_by_row_false_delegates_whole_series_once():
         return value.sum()
 
     series = pd.Series([1, 2, 3], name="值")
+    if PANDAS_VERSION < Version("2.1"):
+        with pytest.raises(TypeError, match="by_row"):
+            series.hscredit(n_jobs=2, bar=False).apply(whole, by_row=False)
+        return
+
     actual = series.hscredit(n_jobs=2, bar=False).apply(whole, by_row=False)
 
     assert actual == 6
@@ -478,8 +487,8 @@ def test_groupby_dropna_false_and_as_index_false_match_literal_result():
 
     actual = grouped.hscredit(n_jobs=2, bar=False, parallel_backend="threading").apply(
         _group_sum,
-        include_groups=False,
+        **GROUPBY_APPLY_KWARGS,
     )
-    expected = pd.DataFrame({"g": ["a", np.nan], None: [9, 5]})
+    expected = pd.DataFrame({"g": ["a", np.nan], None: [9, 5]}, columns=pd.Index(["g", None], dtype=object))
 
     pd.testing.assert_frame_equal(actual, expected)

@@ -192,8 +192,7 @@ class RedisPoolOptions:
 
 @dataclass(frozen=True)
 class MongoPoolOptions:
-    """PyMongo ``MongoClient`` 原生连接池配置。
-    """
+    """PyMongo ``MongoClient`` 原生连接池配置。"""
 
     min_pool_size: int = 0
     max_pool_size: int = 100
@@ -233,8 +232,7 @@ class MongoPoolOptions:
                 raise ValidationError(f"MongoDB 连接池参数 {name} 必须是非负整数或 None")
 
     def to_mongo_kwargs(self) -> Dict[str, Any]:
-        """转换为 ``MongoClient`` 驼峰连接池参数。
-        """
+        """转换为 ``MongoClient`` 驼峰连接池参数。"""
 
         self._validate()
         result: Dict[str, Any] = {

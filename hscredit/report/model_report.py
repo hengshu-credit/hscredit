@@ -316,8 +316,7 @@ def _feature_metric_worker(task) -> Tuple[float, float, float]:
 
 
 def _compare_model_worker(task) -> Tuple[str, pd.DataFrame]:
-    """构建单模型摘要；用于 ``compare_models`` 的模型外层并行。
-    """
+    """构建单模型摘要；用于 ``compare_models`` 的模型外层并行。"""
     name, model, X_train, y_train, X_test, y_test, n_jobs, backend, config = task
     report = ModelReport(
         model=model,
@@ -426,8 +425,7 @@ def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str])
 
 
 def _drop_bin_meta_cols(table: pd.DataFrame) -> pd.DataFrame:
-    """删除分箱表中的 ``指标名称`` / ``指标含义`` 列（兼容扁平列与 MultiIndex 列）。
-    """
+    """删除分箱表中的 ``指标名称`` / ``指标含义`` 列（兼容扁平列与 MultiIndex 列）。"""
     drop_names = {"指标名称", "指标含义"}
     if isinstance(table.columns, pd.MultiIndex):
         keep = [c for c in table.columns if c[-1] not in drop_names]
@@ -1291,24 +1289,21 @@ class ModelReport(ModelContextMixin):
 
     @property
     def _train_key(self) -> str:
-        """训练集对应的内部 key：优先 ``'train'`` ，否则回退到第一个数据集.
-        """
+        """训练集对应的内部 key：优先 ``'train'`` ，否则回退到第一个数据集."""
         if "train" in self._datasets:
             return "train"
         return next(iter(self._datasets))
 
     @property
     def _test_key(self) -> Optional[str]:
-        """测试集对应的内部 key：优先 ``'test'`` ，否则回退到第二个数据集（不存在时为 None）.
-        """
+        """测试集对应的内部 key：优先 ``'test'`` ，否则回退到第二个数据集（不存在时为 None）."""
         if "test" in self._datasets:
             return "test"
         keys = [k for k in self._datasets if k != self._train_key]
         return keys[0] if keys else None
 
     def _resolve_dataset_key(self, dataset: str) -> str:
-        """解析数据集标识，支持 ``'train'`` / ``'test'`` 在缺省时回退到第一 / 第二个数据集.
-        """
+        """解析数据集标识，支持 ``'train'`` / ``'test'`` 在缺省时回退到第一 / 第二个数据集."""
         if dataset in self._datasets:
             return dataset
         if dataset == "train":
@@ -1341,8 +1336,7 @@ class ModelReport(ModelContextMixin):
         return dict(zip(self._label_names, display))
 
     def _normalize_overdue_bin_columns(self, table: pd.DataFrame) -> pd.DataFrame:
-        """将 ``feature_bin_stats`` 的原生逾期标签统一为报告标签。
-        """
+        """将 ``feature_bin_stats`` 的原生逾期标签统一为报告标签。"""
         if not isinstance(table.columns, pd.MultiIndex):
             return table
         overdue_cols, dpds_vals = self._overdue_dpds()

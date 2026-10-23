@@ -33,8 +33,7 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
         self._validate_configuration()
 
     def _validate_configuration(self) -> None:
-        """校验可被 ``set_params`` 修改的分箱配置。
-        """
+        """校验可被 ``set_params`` 修改的分箱配置。"""
         if not isinstance(self.n_bins, int) or isinstance(self.n_bins, bool) or self.n_bins < 1:
             raise ValueError("n_bins必须是大于等于1的整数")
         if self.strategy not in {"uniform", "quantile"}:
@@ -61,8 +60,7 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
 
     @staticmethod
     def _validate_probabilities(y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
-        """返回一维、非空、有限且位于 ``[0, 1]`` 的概率数组。
-        """
+        """返回一维、非空、有限且位于 ``[0, 1]`` 的概率数组。"""
         values = np.asarray(y_prob, dtype=float)
         if values.ndim != 1 or values.size == 0:
             raise ValueError("概率必须是一维非空数组")
@@ -140,8 +138,7 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
         return self.calibrate(y_prob)
 
     def predict_proba(self, y_prob):
-        """返回 ``[P(0), P(1)]`` 两列校准概率。
-        """
+        """返回 ``[P(0), P(1)]`` 两列校准概率。"""
         positive = np.clip(self.calibrate(y_prob), 0.0, 1.0)
         return np.column_stack([1.0 - positive, positive])
 

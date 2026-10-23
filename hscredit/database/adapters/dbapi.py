@@ -72,8 +72,7 @@ class DBAPIAdapter(BaseDatabaseAdapter):
         raise NotImplementedError
 
     def load_pool_class(self) -> Any:
-        """按需加载 DBUtils ``PooledDB`` 。
-        """
+        """按需加载 DBUtils ``PooledDB`` 。"""
 
         try:
             from dbutils.pooled_db import PooledDB

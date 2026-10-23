@@ -18,6 +18,24 @@ def installed_version(import_name: str, distribution_name: Optional[str] = None)
     return Version(metadata.version(distribution_name or import_name))
 
 
+def pandas_apply_api(pandas_version: Version) -> str:
+    """按明确版本边界选择 pandas apply 内部接口。
+
+    pandas 2.1 引入 by_row，2.2 引入 engine/include_groups 并将 grouper
+    移至 _grouper；3.0 移除 convert_dtype、GroupBy axis 和内置函数替换。
+    版本规则同时用于参数构造和结果装配，不通过执行用户函数来探测接口。
+    """
+    if pandas_version < Version("2.0"):
+        raise ValueError("pandas apply 并行代理要求 pandas>=2.0")
+    if pandas_version < Version("2.1"):
+        return "2.0"
+    if pandas_version < Version("2.2"):
+        return "2.1"
+    if pandas_version < Version("3.0"):
+        return "2.2"
+    return "3.0"
+
+
 def needs_lightgbm_dask_pandas_compat(
     lightgbm_version: Optional[Version],
     pandas_version: Optional[Version],

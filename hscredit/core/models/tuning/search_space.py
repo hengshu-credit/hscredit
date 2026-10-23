@@ -172,8 +172,7 @@ class IntDistribution(Dimension):
         self.log = bool(log)
 
     def to_spec(self) -> dict:
-        """返回整数闭区间和可选步长、对数采样标记，参见 ``Dimension.to_spec`` 。
-        """
+        """返回整数闭区间和可选步长、对数采样标记，参见 ``Dimension.to_spec`` 。"""
         spec: dict = {"type": "int", "low": self.low, "high": self.high}
         if self.log:
             spec["log"] = True
@@ -231,8 +230,7 @@ class FloatDistribution(Dimension):
         self._q = float(_q) if _q is not None else None
 
     def to_spec(self) -> dict:
-        """返回浮点边界与分布参数，参见 ``Dimension.to_spec`` 。
-        """
+        """返回浮点边界与分布参数，参见 ``Dimension.to_spec`` 。"""
         if self._distribution is not None:
             spec = {"type": self._distribution, "low": self.low, "high": self.high}
             if self._q is not None:
@@ -276,8 +274,7 @@ class CategoricalDistribution(Dimension):
         self.choices = list(choices)
 
     def to_spec(self) -> dict:
-        """返回类别候选值的副本，参见 ``Dimension.to_spec`` 。
-        """
+        """返回类别候选值的副本，参见 ``Dimension.to_spec`` 。"""
         return {"type": "categorical", "choices": list(self.choices)}
 
 
@@ -327,8 +324,7 @@ class NormalDistribution(Dimension):
         self.log = bool(log)
 
     def to_spec(self) -> dict:
-        """返回正态参数及未量化的截断区间，参见 ``Dimension.to_spec`` 。
-        """
+        """返回正态参数及未量化的截断区间，参见 ``Dimension.to_spec`` 。"""
         # 按状态返回具体类型字符串，便于 _space_param_from_dict 的 param_type 分支识别
         if self.log and self.q is not None:
             param_type = "qlognormal"
@@ -415,8 +411,7 @@ class Integer(IntDistribution):
         self.dtype = dtype
 
     def to_spec(self) -> dict:
-        """返回整数区间及可选 dtype，参见 ``Dimension.to_spec`` 。
-        """
+        """返回整数区间及可选 dtype，参见 ``Dimension.to_spec`` 。"""
         spec = super().to_spec()
         if self.dtype is not np.int64:
             spec["dtype"] = self.dtype
@@ -481,8 +476,7 @@ class Real(FloatDistribution):
         self.dtype = dtype
 
     def to_spec(self) -> dict:
-        """返回实数闭区间及可选对数标记、dtype，参见 ``Dimension.to_spec`` 。
-        """
+        """返回实数闭区间及可选对数标记、dtype，参见 ``Dimension.to_spec`` 。"""
         spec: dict = {"type": "float", "low": self.low, "high": self.high}
         if self.log:
             spec["log"] = True
@@ -535,8 +529,7 @@ class Categorical(CategoricalDistribution):
         self.transform = transform
 
     def to_spec(self) -> dict:
-        """返回候选值及可选先验权重，参见 ``Dimension.to_spec`` 。
-        """
+        """返回候选值及可选先验权重，参见 ``Dimension.to_spec`` 。"""
         spec = super().to_spec()
         if self.prior is not None:
             spec["prior"] = list(self.prior)

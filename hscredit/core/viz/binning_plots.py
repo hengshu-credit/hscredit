@@ -433,8 +433,7 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
         return super().get_extent(renderer)
 
     def get_bbox(self, renderer: Any):
-        """兼容 Matplotlib 3.7+ 的 ``OffsetBox`` 尺寸计算接口。
-        """
+        """兼容 Matplotlib 3.7+ 的 ``OffsetBox`` 尺寸计算接口。"""
         self._update_child_width(renderer)
         return super().get_bbox(renderer)
 

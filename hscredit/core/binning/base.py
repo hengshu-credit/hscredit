@@ -333,8 +333,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     )
 
     def __init_subclass__(cls, **kwargs):
-        """将具体分箱器的 ``fit`` 包装为估计器级事务。
-        """
+        """将具体分箱器的 ``fit`` 包装为估计器级事务。"""
         super().__init_subclass__(**kwargs)
         fit_method = cls.__dict__.get("fit")
         if fit_method is None or getattr(fit_method, "_hscredit_transactional_fit", False):

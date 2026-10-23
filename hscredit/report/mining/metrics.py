@@ -85,8 +85,7 @@ class RuleMetrics(ParallelizableMixin):
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
-        """:param target_positive: 正类标签，默认1
-        """
+        """:param target_positive: 正类标签，默认1"""
         self.target_positive = target_positive
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend

@@ -32,8 +32,7 @@ class StarRocksAdapter(MySQLAdapter):
     capabilities = replace(MySQLAdapter.capabilities, atomic_replace=False)
 
     def json_extract_expression(self, column_sql: str, path: str) -> str:
-        """使用 StarRocks ``GET_JSON_STRING`` 提取 JSON 路径。
-        """
+        """使用 StarRocks ``GET_JSON_STRING`` 提取 JSON 路径。"""
 
         return f"GET_JSON_STRING({column_sql}, '{path}')"
 

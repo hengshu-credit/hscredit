@@ -36,8 +36,7 @@ def _class_index(classes: np.ndarray, label: Any) -> int:
 
 
 def _assemble_binary_probabilities(positive: np.ndarray, classes: np.ndarray, positive_class: Any) -> np.ndarray:
-    """按 ``classes_`` 的真实顺序组装二分类概率矩阵。
-    """
+    """按 ``classes_`` 的真实顺序组装二分类概率矩阵。"""
     positive_index = _class_index(classes, positive_class)
     result = np.empty((len(positive), 2), dtype=float)
     result[:, positive_index] = positive
@@ -156,8 +155,7 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         self._validate_parameters()
 
     def _validate_parameters(self) -> None:
-        """校验构造参数和经 ``set_params`` 修改后的状态。
-        """
+        """校验构造参数和经 ``set_params`` 修改后的状态。"""
         if self.method not in self.CALIB_METHODS:
             raise ValueError(f"不支持的校准方法: {self.method}，可选: {list(self.CALIB_METHODS.keys())}")
         if not isinstance(self.n_bins, int) or isinstance(self.n_bins, bool) or self.n_bins < 1:

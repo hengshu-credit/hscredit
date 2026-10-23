@@ -2,6 +2,27 @@
 
 HSCredit 的分箱器、特征筛选器、编码器、规则执行与规则挖掘组件，以及特征、规则、逾期、漂移和模型报告，统一使用 joblib 调度独立任务。并行只改变任务调度方式，不改变算法、样本、候选集合、迭代次数或数值精度。
 
+## pandas apply 版本兼容
+
+`df.hscredit(...).apply(...)`、`series.hscredit(...).apply(...)` 与 GroupBy 代理通过
+`packaging.version.Version(pd.__version__)` 选择内部接口。兼容分支集中在
+`hscredit._compat.pandas_apply_api`，不通过属性存在性、函数签名探测或捕获执行错误决定版本路径。
+原生签名绑定仅用于校验调用参数及区分 UDF 参数。
+
+| pandas 版本 | 处理方式 |
+| --- | --- |
+| `2.0.x` | 不传 `by_row`、`engine` 和 `include_groups` 控制参数；保留 `convert_dtype`。 |
+| `2.1.x` | 支持 `by_row`，按原生行为保留已弃用的 `convert_dtype`；不传 `engine` 控制参数。 |
+| `2.2.x`、`2.3.x` | 支持 `engine`、`include_groups`，通过 `_grouper` 装配分组结果。 |
+| `3.0.x`、`3.1.x` | 不访问已移除的 `convert_dtype`、`group_keys_seq`、GroupBy `axis` 或内置函数替换入口；分组键使用 `result_index`，拒绝 `include_groups=True`。 |
+
+在新版本中已移除的控制参数，若原生接口会将其传给 UDF，代理也保持相同行为。例如 pandas 3.x
+的 `Series.apply(convert_dtype=False)` 将该关键字传给用户函数；代理不会静默丢弃。
+所有路径保留用户函数单次执行、缺失值装箱、重复索引及结果类型语义。
+
+版本边界参考 [pandas 3.0 迁移说明](https://pandas.pydata.org/docs/whatsnew/v3.0.0.html#removal-of-prior-version-deprecations-changes)。
+独立的 `pandas-compat.yml` 工作流覆盖上述六个版本的实际执行，不只替换版本号模拟分支。
+
 ## 并行数 `n_jobs`
 
 设机器可用的物理 CPU 核数为 `P`。HSCredit 优先通过 joblib 查询物理核数；旧版 joblib 不支持该查询时依次退回逻辑核数和 `os.cpu_count()`，仍不可用时按 1 核处理。

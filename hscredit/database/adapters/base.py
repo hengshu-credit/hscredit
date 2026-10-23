@@ -210,8 +210,7 @@ class BaseDatabaseAdapter:
         return False
 
     def table_exists(self, table_name: str) -> Optional[bool]:
-        """只读判断目标表是否存在；无法通用判断时返回 ``None`` 。
-        """
+        """只读判断目标表是否存在；无法通用判断时返回 ``None`` 。"""
 
         del table_name
         return None

@@ -2770,8 +2770,7 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
             return pipeline
 
     def _apply_pmml_score_clipping(self, pmml_file: str) -> None:
-        """在 PMML 输出层应用与  :meth:`predict`  一致的分数边界.
-        """
+        """在 PMML 输出层应用与  :meth:`predict`  一致的分数边界."""
         import xml.etree.ElementTree as ET
 
         tree = ET.parse(pmml_file)

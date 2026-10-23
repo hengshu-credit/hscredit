@@ -18,7 +18,9 @@ import numpy as np
 import pandas as pd
 from joblib import wrap_non_picklable_objects
 from joblib.externals.loky.backend.reduction import get_loky_pickler_name
+from packaging.version import Version
 
+from .._compat import pandas_apply_api
 from ..exceptions import ValidationError
 from .parallel import (
     ParallelWorkload,
@@ -27,6 +29,8 @@ from .parallel import (
     resolve_n_jobs,
     validate_parallel_config,
 )
+
+_PANDAS_APPLY_API = pandas_apply_api(Version(pd.__version__))
 
 _THREAD_SAFE_CALLABLES = (
     np.all,
@@ -164,8 +168,7 @@ class HSCreditApplyProxy:
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Mapping[str, Any]] = None,
     ) -> "HSCreditApplyProxy":
-        """返回保存显式配置的新代理，兼容 ``obj.hscredit(...).apply`` 。
-        """
+        """返回保存显式配置的新代理，兼容 ``obj.hscredit(...).apply`` 。"""
         return create_hscredit_apply_proxy(
             self._obj,
             n_jobs=n_jobs,
@@ -180,8 +183,7 @@ class HSCreditApplyProxy:
 
 
 class HSCreditApplyAccessor:
-    """把 ``hscredit`` 暴露为同时可调用且可直接 ``apply`` 的访问器。
-    """
+    """把 ``hscredit`` 暴露为同时可调用且可直接 ``apply`` 的访问器。"""
 
     def __get__(self, instance, owner=None):
         if instance is None:
@@ -230,7 +232,7 @@ def create_hscredit_apply_proxy(
 
 
 def _bind_native_apply(obj, func, args: Tuple[Any, ...], kwargs: Mapping[str, Any]) -> Dict[str, Any]:
-    """按当前 pandas 版本的原生签名拆分控制参数和 UDF 参数。"""
+    """用原生签名校验用户实参；兼容分支单独由版本矩阵决定。"""
     signature = inspect.signature(obj.apply)
     bound = signature.bind(func, *args, **dict(kwargs))
     bound.apply_defaults()
@@ -446,14 +448,15 @@ def _frame_apply_adapter(df, func, parameters: Mapping[str, Any]):
         "axis": df._get_axis_number(parameters.get("axis", 0)),
         "raw": parameters.get("raw", False),
         "result_type": parameters.get("result_type"),
-        "by_row": parameters.get("by_row", "compat"),
-        "engine": parameters.get("engine", "python"),
-        "engine_kwargs": parameters.get("engine_kwargs"),
         "args": parameters.get("args", ()),
         "kwargs": parameters.get("kwargs", {}),
     }
-    supported = inspect.signature(frame_apply).parameters
-    return frame_apply(df, **{name: value for name, value in candidate.items() if name in supported})
+    if _PANDAS_APPLY_API != "2.0":
+        candidate["by_row"] = parameters.get("by_row", "compat")
+    if _PANDAS_APPLY_API in {"2.2", "3.0"}:
+        candidate["engine"] = parameters.get("engine", "python")
+        candidate["engine_kwargs"] = parameters.get("engine_kwargs")
+    return frame_apply(df, **candidate)
 
 
 def _execute_dataframe_apply(
@@ -522,13 +525,15 @@ def _series_apply_adapter(series, func, parameters: Mapping[str, Any]):
     from pandas.core.apply import SeriesApply
 
     candidate = {
-        "convert_dtype": parameters.get("convert_dtype", lib.no_default),
-        "by_row": parameters.get("by_row", "compat"),
         "args": parameters.get("args", ()),
         "kwargs": parameters.get("kwargs", {}),
     }
-    supported = inspect.signature(SeriesApply).parameters
-    return SeriesApply(series, func, **{name: value for name, value in candidate.items() if name in supported})
+    if _PANDAS_APPLY_API != "3.0":
+        default = True if _PANDAS_APPLY_API == "2.0" else lib.no_default
+        candidate["convert_dtype"] = parameters.get("convert_dtype", default)
+    if _PANDAS_APPLY_API != "2.0":
+        candidate["by_row"] = parameters.get("by_row", "compat")
+    return SeriesApply(series, func, **candidate)
 
 
 def _boxed_series_apply_values(series: pd.Series, convert_dtype: bool):
@@ -548,7 +553,10 @@ def _boxed_series_apply_values(series: pd.Series, convert_dtype: bool):
     # ExtensionArray 的装箱规则各不相同（如 Int64 会把缺失值转为 float NaN，
     # DatetimeArray 则传 Timestamp）。复用当前 pandas 的映射入口只做装箱，
     # 不执行用户函数，也不基于返回值探测或重试。
-    series._map_values(capture, convert=convert_dtype)
+    if _PANDAS_APPLY_API in {"2.0", "3.0"}:
+        series._map_values(capture)
+    else:
+        series._map_values(capture, convert=convert_dtype)
     return boxed
 
 
@@ -564,7 +572,7 @@ def _execute_series_apply(
     capability = _classify_callable(func) if callable(func) else "vectorized"
     resolve_n_jobs(proxy.n_jobs, task_count=len(series))
     operation = _series_apply_adapter(series, func, parameters) if callable(func) else None
-    whole_series_call = operation is not None and operation.by_row is False
+    whole_series_call = operation is not None and _PANDAS_APPLY_API != "2.0" and operation.by_row is False
 
     if (
         not callable(func)
@@ -586,7 +594,8 @@ def _execute_series_apply(
     assert operation is not None
     udf_args = tuple(parameters.get("args", ()))
     udf_kwargs = dict(parameters.get("kwargs", {}))
-    values = _boxed_series_apply_values(series, operation.convert_dtype)
+    convert_dtype = True if _PANDAS_APPLY_API == "3.0" else operation.convert_dtype
+    values = _boxed_series_apply_values(series, convert_dtype)
     tasks = [(position, func, value, udf_args, udf_kwargs) for position, value in enumerate(values)]
     completed = _execute_items(
         proxy,
@@ -604,14 +613,18 @@ def _execute_series_apply(
     if mapped and isinstance(mapped[0], pd.Series):
         return series._constructor_expanddim(mapped, index=series.index)
 
-    if not operation.convert_dtype:
+    if not convert_dtype:
         mapped = np.asarray(mapped, dtype=object)
     return series._constructor(mapped, index=series.index).__finalize__(series, method="apply")
 
 
 def _groupby_data(grouped, parameters: Mapping[str, Any]):
     """按当前 pandas include_groups 语义选择传给 UDF 的数据。"""
-    if "include_groups" in parameters and not parameters["include_groups"]:
+    if _PANDAS_APPLY_API == "3.0":
+        if parameters.get("include_groups", False):
+            raise ValueError("pandas>=3.0 不再支持 include_groups=True")
+        return grouped._obj_with_exclusions
+    if _PANDAS_APPLY_API == "2.2" and not parameters.get("include_groups", True):
         return grouped._obj_with_exclusions
     return grouped._selected_obj
 
@@ -644,14 +657,12 @@ def _execute_groupby_apply(
             description="GroupBy 分组计算",
         )
 
-    effective_func = getattr(com, "is_builtin_func")(func)
+    effective_func = func if _PANDAS_APPLY_API == "3.0" else com.is_builtin_func(func)
     data = _groupby_data(grouped, parameters)
-    grouper = getattr(grouped, "_grouper", None)
-    if grouper is None:
-        grouper = grouped.grouper
-    axis = int(getattr(grouped, "axis", 0))
-    keys = list(grouper.group_keys_seq)
-    splitter = grouper._get_splitter(data, axis=axis)
+    grouper = grouped._grouper if _PANDAS_APPLY_API in {"2.2", "3.0"} else grouped.grouper
+    axis = 0 if _PANDAS_APPLY_API == "3.0" else int(grouped.axis)
+    keys = list(grouper.result_index if _PANDAS_APPLY_API == "3.0" else grouper.group_keys_seq)
+    splitter = grouper._get_splitter(data) if _PANDAS_APPLY_API == "3.0" else grouper._get_splitter(data, axis=axis)
     groups = list(splitter)
     if len(groups) != len(keys):
         raise RuntimeError("pandas GroupBy 分组键与数据分组数量不一致")

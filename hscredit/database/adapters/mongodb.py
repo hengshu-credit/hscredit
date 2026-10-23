@@ -10,8 +10,7 @@ from .base import BaseDatabaseAdapter
 
 
 class MongoDBAdapter(BaseDatabaseAdapter):
-    """基于 PyMongo ``MongoClient`` 内建连接池的 MongoDB 适配器。
-    """
+    """基于 PyMongo ``MongoClient`` 内建连接池的 MongoDB 适配器。"""
 
     database_type = "mongodb"
     is_nosql = True

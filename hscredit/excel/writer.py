@@ -2339,8 +2339,7 @@ class ExcelWriter:
         )
 
     def _build_sparkline_groups_xml(self, specs: List[Dict[str, Any]]) -> str:
-        """根据迷你图规格构建单个 sheet 的 ``x14:sparklineGroups`` 子元素 XML。
-        """
+        """根据迷你图规格构建单个 sheet 的 ``x14:sparklineGroups`` 子元素 XML。"""
         # 颜色元素需按 schema 顺序输出
         color_order = [
             "colorSeries",
@@ -3230,8 +3229,7 @@ class ExcelWriter:
         )
 
     def _inject_number_stored_as_text_ignored_errors(self, filename: str) -> None:
-        """向 xlsx 注入数字样文本单元格的 ``ignoredErrors`` 声明。
-        """
+        """向 xlsx 注入数字样文本单元格的 ``ignoredErrors`` 声明。"""
         refs_by_sheet = {}
         workbook_worksheets = set(self.workbook.worksheets)
         for worksheet, cells in self._number_stored_as_text_cells.items():
@@ -3422,8 +3420,7 @@ def resolve_condition_color(
 
 
 def _clean_hex(color: str) -> str:
-    """规范化颜色为openpyxl可用的十六进制：去除 ``#`` 前缀并大写。
-    """
+    """规范化颜色为openpyxl可用的十六进制：去除 ``#`` 前缀并大写。"""
     return str(color).lstrip("#").upper()
 
 

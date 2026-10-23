@@ -703,8 +703,7 @@ class ModelExplainer:
         return self._plot("plot_explanation_overview", result, **kwargs)
 
     def plot_shap_summary(self, X=None, plot_type="dot", max_display=20, show=True, **kwargs):
-        """绘制 SHAP summary 图；支持 ``dot`` 、 ``violin`` 和 ``bar`` 。
-        """
+        """绘制 SHAP summary 图；支持 ``dot`` 、 ``violin`` 和 ``bar`` 。"""
         result = (
             X if isinstance(X, ExplanationResult) else (self.explain(X) if X is not None else self._require_result())
         )
