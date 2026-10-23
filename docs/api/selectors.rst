@@ -5,8 +5,7 @@
 逐步回归、Boruta、组合筛选等维度。``SelectionReportCollector`` 可手动聚合多个已拟合
 筛选器的报告，生成统一中文摘要。
 
-原始字段 KS 筛选
-------------------------
+.. rubric:: 原始字段 KS 筛选
 
 ``KSSelector`` 支持直接传入包含目标列的原始数据，保留 ``KS >= threshold`` 的字段：
 

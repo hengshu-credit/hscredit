@@ -4,8 +4,7 @@
 46+ 种风控可视化图表：分箱趋势、KS / ROC / PR / Lift / Gain、评分分布、策略阈值、
 Vintage、变量稳定性、客群漂移、决策树图等。
 
-推荐入口
---------
+.. rubric:: 推荐入口
 
 新代码优先使用以下四个公开方法；其他同类入口主要用于兼容既有代码或特定报告布局。
 
@@ -24,8 +23,7 @@ Vintage、变量稳定性、客群漂移、决策树图等。
    * - ``plot_model_feature_importance``
      - 模型原生重要性、SHAP 分布和单特征依赖关系
 
-样式与调用契约
---------------
+.. rubric:: 样式与调用契约
 
 ``import hscredit`` 会自动调用 ``hscredit.init_setting()``，统一配置内置中文字体、
 Matplotlib 基础样式和负号显示。``set_style`` / ``reset_style`` 仅用于在该基线上

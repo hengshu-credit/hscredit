@@ -10,8 +10,7 @@
    :show-inheritance:
    :exclude-members: ModelReport, ExcelWriter, dataframe2excel, SingleFeatureRuleMiner, MultiFeatureRuleMiner, MultiLabelRuleMiner, TreeRuleExtractor, RuleMetrics, calculate_rule_metrics
 
-模型报告的配置、评估与导出
---------------------------
+.. rubric:: 模型报告的配置、评估与导出
 
 .. autoclass:: hscredit.report.ModelReport
    :members:
@@ -25,8 +24,7 @@
    ``ExcelWriter`` / ``dataframe2excel`` 见 :doc:`excel`；规则挖掘器在下方
    ``hscredit.report.mining`` 小节统一说明。
 
-规则挖掘 ``hscredit.report.mining``
------------------------------------
+.. rubric:: 规则挖掘 ``hscredit.report.mining``
 
 单特征 / 多特征交叉 / 多标签规则挖掘器与树规则提取器。
 

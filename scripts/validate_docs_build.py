@@ -402,6 +402,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     errors = collect_validation_errors(args.build_dir)
     errors.extend(collect_search_runtime_errors(args.build_dir))
+    if __package__:
+        from .validate_api_layout import collect_api_layout_errors
+    else:
+        from validate_api_layout import collect_api_layout_errors
+
+    errors.extend(collect_api_layout_errors(args.build_dir))
     if errors:
         for error in errors:
             print(f"文档校验失败：{error}")

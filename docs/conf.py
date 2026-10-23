@@ -20,6 +20,9 @@ from pathlib import Path
 # -- 路径设置 ---------------------------------------------------------------
 # 将项目根目录加入 sys.path，使 autodoc 能够 import hscredit。
 sys.path.insert(0, os.path.abspath(".."))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "_ext"))
+
+from parameter_docs import normalize_parameter_docs
 
 # -- 项目信息 ---------------------------------------------------------------
 project = "hscredit"
@@ -73,6 +76,7 @@ napoleon_include_init_with_doc = False
 
 # 可选依赖在当前环境可能缺失，mock 掉以保证文档构建不依赖其安装。
 autodoc_mock_imports = [
+    "catboost",
     "ngboost",
     "shap",
     "sklearn2pmml",
@@ -207,12 +211,20 @@ def _wrap_trailing_underscore(lines):
         if stripped.startswith((">>>", "...", ".. ")) or _MD_TABLE_ROW.match(line):
             out.append(line)
         else:
-            out.append(_TRAILING_UNDERSCORE.sub(r"``\1``", line))
+            # 已有 literal/角色/链接中的属性路径必须整体保留，例如
+            # ``tuner.study_.best_trial.number``，不能再次包装其中的 study_。
+            parts = re.split(r"(``[^`]*``|:[\w:]+:`[^`]*`|`[^`]*`_?)", line)
+            out.append(
+                "".join(
+                    part if i % 2 else _TRAILING_UNDERSCORE.sub(r"``\1``", part)
+                    for i, part in enumerate(parts)
+                )
+            )
     return out
 
 
 def _process_docstring(app, what, name, obj, options, lines):
-    new_lines = _wrap_trailing_underscore(_convert_md_tables(lines))
+    new_lines = normalize_parameter_docs(_wrap_trailing_underscore(_convert_md_tables(lines)))
     lines[:] = new_lines
 
 

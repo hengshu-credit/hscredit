@@ -31,34 +31,34 @@ API 页面和 ``help(对象)`` 使用源码中同一份中文 docstring。参数
      - 取值
      - 含义
    * - 分箱器 ``transform(metric=...)``
-     - ``indices`` / ``bins`` / ``woe``
-     - 箱索引 / 区间或类别标签 / WOE；默认 ``indices``。
+     - ``'indices'``、``'bins'``、``'woe'``
+     - 箱索引 / 区间或类别标签 / WOE；默认 ``'indices'``。
    * - 分箱器 ``handle_unknown``
-     - ``-3``、``value``、``raise`` 或已记录整数箱号
-     - 默认未知箱为 ``-3``；``value`` 等价于默认；``raise`` 遇未知类别报错。
-   * - 编码器 ``handle_unknown`` / ``handle_missing``
-     - ``value`` / ``error`` / ``return_nan``
+     - ``-3``、``'value'``、``'raise'`` 或已记录整数箱号
+     - 默认未知箱为 ``-3``；``'value'`` 等价于默认；``'raise'`` 遇未知类别报错。
+   * - 编码器 ``handle_unknown``、``handle_missing``
+     - ``'value'``、``'error'``、``'return_nan'``
      - 子类默认编码值 / 报错 / 缺失值；编码值的含义见各编码器。
    * - AUC、Gini 的 ``score_direction``
-     - ``auto`` / ``higher_risk`` / ``higher_safe``
-     - 自动判断 / 高分高风险 / 高分低风险。评估已知坏样本概率时显式使用 ``higher_risk``。
+     - ``'auto'``、``'higher_risk'``、``'higher_safe'``
+     - 自动判断 / 高分高风险 / 高分低风险。评估已知坏样本概率时显式使用 ``'higher_risk'``。
    * - 逾期分析 ``overdue_operator``
-     - ``>`` / ``>=`` / ``<`` / ``<=``
-     - 与 DPD 阈值比较，满足条件记为坏样本；默认 ``>``。
+     - ``'>'``、``'>='``、``'<'``、``'<='``
+     - 与 DPD 阈值比较，满足条件记为坏样本；默认 ``'>'``。
    * - 分组报告 ``group_order``
-     - ``asc`` / ``desc`` / ``appearance``，也支持排序函数或显式序列
-     - 升序 / 降序 / 首次出现顺序；默认 ``asc``。
+     - ``'asc'``、``'desc'``、``'appearance'``，也支持排序函数或显式序列
+     - 升序 / 降序 / 首次出现顺序；默认 ``'asc'``。
    * - 筛选报告 ``to_dataframe(kind=...)``
-     - ``summary`` / ``details``
-     - 阶段摘要 / 逐特征明细；默认 ``summary``。
+     - ``'summary'``、``'details'``
+     - 阶段摘要 / 逐特征明细；默认 ``'summary'``。
    * - ``auto_feature_analysis(mode=...)``
-     - ``None`` / ``strict`` / ``best_effort``
+     - ``None``、``'strict'``、``'best_effort'``
      - 传统异常行为 / 必需章节失败时拒绝发布 / 记录章节状态。
 
 分箱方法由 ``OptimalBinning.VALID_METHODS`` 给出。当前 17 个值是
-``uniform``、``quantile``、``tree``、``chi``、``best_ks``、``best_iv``、``mdlp``、
-``or_tools``、``cp_sat``、``cart``、``kmeans``、``monotonic``、``genetic``、``smooth``、
-``kernel_density``、``best_lift``、``target_bad_rate``。``optimal`` 不是方法值。
+``'uniform'``、``'quantile'``、``'tree'``、``'chi'``、``'best_ks'``、``'best_iv'``、``'mdlp'``、
+``'or_tools'``、``'cp_sat'``、``'cart'``、``'kmeans'``、``'monotonic'``、``'genetic'``、``'smooth'``、
+``'kernel_density'``、``'best_lift'``、``'target_bad_rate'``。``'optimal'`` 不是方法值。
 每种方法的附加参数和依赖见 :doc:`binning`。
 
 公共调度参数的全部值、边界和嵌套预算见 :doc:`../parallelism`；
@@ -82,6 +82,16 @@ API 页面和 ``help(对象)`` 使用源码中同一份中文 docstring。参数
 
 维护说明与引用
 --------------
+
+参数枚举统一使用行内代码：字符串写作 ``'value'``，布尔值和空值写作
+``True``、``False``、``None``。多个值用顿号分隔；需要逐项解释时使用列表，
+列表前留空行，列表及续行缩进到所属的 ``:param:`` 字段内。
+docstring 和 RST 页面使用双反引号，Markdown 页面使用单反引号；
+两种源格式都应渲染成相同的行内代码样式。不要用斜体或普通引号代替行内代码。
+
+API 叶子页面的目录固定为“模块 → 类或函数 → 方法”。介绍、样例和主题分组使用
+``.. rubric:: 标题``，避免后续 API 被归入最后一个介绍小节，挤占类方法的目录层级。
+普通指南与 API 分类索引仍使用章节标题和 ``toctree``。
 
 新增或修改接口说明时，应对照函数签名和校验逻辑核对默认值、枚举与互斥条件。
 示例应包含导入和数据准备，区分可直接运行的示例与依赖前文状态的片段；

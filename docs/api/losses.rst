@@ -23,8 +23,7 @@
    model.fit(X_train, y_train, eval_set=[(X_valid, y_valid)])
    value = loss.metric().evaluate(y_valid, model.predict_proba(X_valid))
 
-统一接口
---------
+.. rubric:: 统一接口
 
 ``loss.metric()`` 越小越好；真实业务指标的方向以 ``metric.direction`` 为准。
 仅 sklearn scorer 对最小化指标自动取负。所有概率均为坏样本概率。
@@ -42,8 +41,7 @@
    :members:
    :show-inheritance:
 
-自定义评估函数
---------------
+.. rubric:: 自定义评估函数
 
 只需要新评价口径时，优先用 ``make_metric`` 包装普通概率评估函数；
 需要状态和额外方法时继承 ``BaseMetric``；训练目标才需要实现 ``BaseLoss``。
@@ -54,8 +52,7 @@
    :members:
    :show-inheritance:
 
-分类与类别不平衡损失
---------------------
+.. rubric:: 分类与类别不平衡损失
 
 .. autoclass:: hscredit.core.models.FocalLoss
    :members:
@@ -77,8 +74,7 @@
    :members:
    :show-inheritance:
 
-审批、利润与金额损失
---------------------
+.. rubric:: 审批、利润与金额损失
 
 .. autoclass:: hscredit.core.models.BadDebtLoss
    :members:
@@ -104,8 +100,7 @@
    :members:
    :show-inheritance:
 
-排序与头部效果损失
-------------------
+.. rubric:: 排序与头部效果损失
 
 .. autoclass:: hscredit.core.models.OrdinalRankLoss
    :members:
@@ -127,8 +122,7 @@
    :members:
    :show-inheritance:
 
-独立业务评估指标
-----------------
+.. rubric:: 独立业务评估指标
 
 这些指标可单独创建并评价任意二分类模型。``PSIMetric`` 用于参考分布与当前分布
 的稳定性比较，其输入用途与其他监督指标不同。
@@ -176,8 +170,7 @@
    :show-inheritance:
    :no-index:
 
-框架适配器
-----------
+.. rubric:: 框架适配器
 
 一般优先使用 ``loss.to_xgboost(api=...)``、``loss.to_lightgbm(api=...)``、
 ``loss.to_catboost()`` 或 ``loss.ngboost_params()``。

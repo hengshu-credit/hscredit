@@ -1255,14 +1255,19 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :type test_data_list: List[Tuple[str, pd.DataFrame]]
         :param metric_type: 默认值为 ``'auc'`` 。评估指标类型
 
-            ========= ==========================================
-            类型       说明
-            ========= ==========================================
-            'auc'     ROC AUC 分数（使用 predict_proba 的正类概率）
-            'ks'      KS 统计量
-            'lift'    top 客群的 LIFT 值
-            'top'     top客群坏样本率（与 lift 等价）
-            ========= ==========================================
+            .. list-table::
+                :header-rows: 1
+
+                * - 类型
+                  - 说明
+                * - ``'auc'``
+                  - ROC AUC 分数（使用 predict_proba 的正类概率）
+                * - ``'ks'``
+                  - KS 统计量
+                * - ``'lift'``
+                  - top 客群的 LIFT 值
+                * - ``'top'``
+                  - top 客群坏样本率（与 lift 等价）
 
         :type metric_type: str
 

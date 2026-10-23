@@ -48,7 +48,7 @@ def test_binning_method_reference_matches_registry():
 
     text = (ROOT / "docs/api/conventions.rst").read_text(encoding="utf-8")
     method_section = text.split("当前 17 个值是", 1)[1].split("每种方法", 1)[0]
-    documented = re.findall(r"``([a-z_]+)``", method_section)
+    documented = re.findall(r"``'([a-z_]+)'``", method_section)
     assert set(documented) - {"optimal"} == set(OptimalBinning.VALID_METHODS)
     assert "optimal" not in OptimalBinning.VALID_METHODS
 
