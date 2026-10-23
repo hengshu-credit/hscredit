@@ -63,6 +63,7 @@ def get_columns_from_query(query_str: str) -> List[str]:
     **参数**
 
     :param query_str: pandas query 支持的查询语句，如 "age > 18 and income < 5000"
+    :type query_str: str
     :return: query 语句使用的列名列表（去重后按字母排序）
 
     **参考样例**
@@ -113,14 +114,15 @@ def get_columns_from_query(query_str: str) -> List[str]:
 class RuleState(str, Enum):
     """规则生命周期状态枚举。
 
-    继承 ``str``，可直接与字符串比较。:class:`Rule` 用它标记是否已执行过 predict，
-    从而约束 :meth:`Rule.result` 等依赖结果的方法。
+    继承 ``str`` ，可直接与字符串比较。 :class:`Rule`  用它标记是否已执行过 predict，
+    从而约束  :meth:`Rule.result`  等依赖结果的方法。
 
     **枚举值**
 
-    - ``INITIALIZED`` (``"initialized"``)：规则已创建但尚未调用 :meth:`Rule.predict`，
+    - ``INITIALIZED`` ( ``"initialized"`` )：规则已创建但尚未调用  :meth:`Rule.predict` ，
       此时无可用结果
-    - ``APPLIED`` (``"applied"``)：规则已对某数据集执行过 :meth:`Rule.predict`，
+
+    - ``APPLIED`` ( ``"applied"`` )：规则已对某数据集执行过  :meth:`Rule.predict` ，
       ``result_`` 中存有最近一次命中结果
     """
 
@@ -132,7 +134,7 @@ class RuleStateError(StateError):
     """规则状态异常基类。
 
     当在规则不允许的状态下调用方法时抛出，继承自
-    :class:`~hscredit.exceptions.StateError`。
+    :class:`~hscredit.exceptions.StateError` 。
     """
 
     pass
@@ -141,7 +143,7 @@ class RuleStateError(StateError):
 class RuleUnAppliedError(RuleStateError):
     """规则尚未应用异常。
 
-    在未先调用 :meth:`Rule.predict` 的情况下访问 :meth:`Rule.result` 等依赖预测
+    在未先调用  :meth:`Rule.predict`  的情况下访问  :meth:`Rule.result`  等依赖预测
     结果的方法时抛出。
     """
 
@@ -158,18 +160,37 @@ def _rule_report_target_worker(task: Tuple[Any, ...]) -> pd.DataFrame:
 class Rule(ParallelizableMixin):
     """规则类。
 
-    支持使用 pandas eval 语法的规则定义和评估，支持 &（与）、|（或）、
-    ~（非）、^（异或）等运算符组合多个规则为复合规则。
+    支持使用 pandas eval 语法的规则定义和评估，支持 ``&`` （与）、 ``|`` （或）、
+    ``~`` （非）、 ``^`` （异或）等运算符组合多个规则为复合规则。
 
     **属性**
 
+    **参数**
+
     :param expr: 规则表达式字符串
+    :type expr: str
     :param name: 规则名称，用于标识和展示，默认为None（使用表达式作为名称）
+    :type name: Optional[str]
     :param description: 规则描述，默认为空字符串
+    :type description: str
     :param weight: 规则权重，用于规则集分类器，默认为1.0
-    :param n_jobs: 并行任务数，默认为-1
-    :param parallel_backend: joblib并行后端，默认为None
-    :param parallel_config: joblib扩展配置，默认为None
+    :type weight: float
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
     :ivar feature_names_in_: 从表达式中解析出的特征名列表
     :ivar result_: 最近一次 predict 的结果 Series
     :ivar _state: 当前规则状态（initialized/applied）
@@ -204,6 +225,7 @@ class Rule(ParallelizableMixin):
 
         :param expr: 规则表达式字符串，支持 pandas eval 语法，
             如 "age > 18 and income < 5000"
+
         :param name: 规则名称，用于标识和展示，默认为None（使用表达式作为名称）
         :param description: 规则描述，默认为空字符串
         :param weight: 规则权重，用于规则集分类器，默认为1.0
@@ -232,12 +254,12 @@ class Rule(ParallelizableMixin):
         """规则"与"（AND）组合，对应 Python ``&`` 运算符。
 
         将两条规则用 ``&`` 拼接为复合规则，命中条件为两者同时成立；表达式会经
-        :func:`beautify_expr` 美化与 :func:`optimize_expr` 化简，名称拼为
-        ``(A)_AND_(B)``，权重取两者较大值。
+        :func:`beautify_expr`  美化与  :func:`optimize_expr`  化简，名称拼为
+        ``(A)_AND_(B)`` ，权重取两者较大值。
 
-        :param other: 另一条 :class:`Rule` 规则
-        :return: 组合后的新 :class:`Rule`（不修改原规则）
-        :raises InputTypeError: ``other`` 不是 :class:`Rule` 时
+        :param other: 另一条  :class:`Rule`  规则
+        :return: 组合后的新  :class:`Rule` （不修改原规则）
+        :raises InputTypeError: ``other`` 不是  :class:`Rule`  时
 
         **参考样例**
 
@@ -265,11 +287,11 @@ class Rule(ParallelizableMixin):
         """规则"或"（OR）组合，对应 Python ``|`` 运算符。
 
         将两条规则用 ``|`` 拼接为复合规则，命中条件为两者任一成立；表达式经美化与
-        化简，名称拼为 ``(A)_OR_(B)``，权重取两者较大值。
+        化简，名称拼为 ``(A)_OR_(B)`` ，权重取两者较大值。
 
-        :param other: 另一条 :class:`Rule` 规则
-        :return: 组合后的新 :class:`Rule`（不修改原规则）
-        :raises InputTypeError: ``other`` 不是 :class:`Rule` 时
+        :param other: 另一条  :class:`Rule`  规则
+        :return: 组合后的新  :class:`Rule` （不修改原规则）
+        :raises InputTypeError: ``other`` 不是  :class:`Rule`  时
 
         **参考样例**
 
@@ -296,10 +318,10 @@ class Rule(ParallelizableMixin):
     def __invert__(self):
         """规则"非"（NOT）取反，对应 Python ``~`` 运算符。
 
-        对规则整体取反得到新规则，命中条件为原规则不成立；名称拼为 ``NOT_(A)``，
+        对规则整体取反得到新规则，命中条件为原规则不成立；名称拼为 ``NOT_(A)`` ，
         权重保持不变。
 
-        :return: 取反后的新 :class:`Rule`（不修改原规则）
+        :return: 取反后的新  :class:`Rule` （不修改原规则）
 
         **参考样例**
 
@@ -322,12 +344,12 @@ class Rule(ParallelizableMixin):
     def __xor__(self, other):
         """规则"异或"（XOR）组合，对应 Python ``^`` 运算符。
 
-        命中条件为两条规则恰有一条成立。由于 pandas eval 不支持布尔 ``^``，内部以等价
-        表达式 ``(A & ~B) | (~A & B)`` 实现；名称拼为 ``(A)_XOR_(B)``，权重取较大值。
+        命中条件为两条规则恰有一条成立。由于 pandas eval 不支持布尔 ``^`` ，内部以等价
+        表达式 ``(A & ~B) | (~A & B)`` 实现；名称拼为 ``(A)_XOR_(B)`` ，权重取较大值。
 
-        :param other: 另一条 :class:`Rule` 规则
-        :return: 组合后的新 :class:`Rule`（不修改原规则）
-        :raises InputTypeError: ``other`` 不是 :class:`Rule` 时
+        :param other: 另一条  :class:`Rule`  规则
+        :return: 组合后的新  :class:`Rule` （不修改原规则）
+        :raises InputTypeError: ``other`` 不是  :class:`Rule`  时
 
         **参考样例**
 
@@ -355,12 +377,12 @@ class Rule(ParallelizableMixin):
     def __eq__(self, other):
         """规则相等比较，对应 Python ``==`` 运算符。
 
-        两条规则当且仅当 ``expr`` 表达式字符串完全相同时视为相等（与 :meth:`__hash__`
-        保持一致，因此 :class:`Rule` 可放入 set / 作为 dict 键）。
+        两条规则当且仅当 ``expr`` 表达式字符串完全相同时视为相等（与  :meth:`__hash__`
+        保持一致，因此  :class:`Rule`  可放入 set / 作为 dict 键）。
 
-        :param other: 另一条 :class:`Rule` 规则
+        :param other: 另一条  :class:`Rule`  规则
         :return: 两者表达式是否相同（bool）
-        :raises InputTypeError: ``other`` 不是 :class:`Rule` 时
+        :raises InputTypeError: ``other`` 不是  :class:`Rule`  时
         """
         if not isinstance(other, Rule):
             raise InputTypeError(f"输入必须是 Rule 类型，实际类型为 {type(other).__name__}")
@@ -374,6 +396,7 @@ class Rule(ParallelizableMixin):
         **参数**
 
         :param X: 输入数据 DataFrame（必须包含规则表达式中引用的全部列）
+        :type X: DataFrame
         :return: 规则匹配结果 Series（布尔类型，True表示命中）
         :raises InputTypeError: X 不是 DataFrame 时
         :raises FeatureNotFoundError: X 缺少规则表达式所需的列时
@@ -454,6 +477,7 @@ class Rule(ParallelizableMixin):
         **参数**
 
         :param X: 输入数据 DataFrame
+        :type X: DataFrame
         :return: 满足规则的数据子集 DataFrame
         :raises InputTypeError: X 不是 DataFrame 时
         :raises FeatureNotFoundError: X 缺少规则表达式所需的列时
@@ -495,23 +519,37 @@ class Rule(ParallelizableMixin):
         **参数**
 
         :param datasets: 数据集 DataFrame，需要包含目标变量列或逾期天数列
+        :type datasets: pd.DataFrame
         :param target: 目标变量列名，默认为"target"，0=好样本，1=坏样本
-        :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，
+        :type target: Optional[TargetInput]
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本
             支持多标签多DPD联合分析）
+
+        :type overdue: Optional[Union[str, List[str]]]
         :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），默认为0；
             传入列表时支持多DPD联合分析
-        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+
+        :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
+        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :type del_grey: bool
         :param desc: 规则描述，用于报告的"指标含义"列，默认为空字符串
-        :param filter_cols: 指定返回的字段列表（可选）
-        :param prior_rules: 先验规则（可选），先对数据应用先验规则排除部分样本，
+        :type desc: str
+        :param filter_cols: 默认值为 ``None`` 。指定返回的字段列表（可选）
+        :type filter_cols: Optional[List[str]]
+        :param prior_rules: 默认值为 ``None`` 。先验规则（可选），先对数据应用先验规则排除部分样本
             再对当前规则进行评估
-        :param amount: 金额字段名（可选），传入时以金额口径而非样本数口径进行统计
+
+        :type prior_rules: Optional['Rule']
+        :param amount: 默认值为 ``None`` 。金额字段名（可选），传入时以金额口径而非样本数口径进行统计
+        :type amount: Optional[str]
         :param margins: 是否在报告末尾添加合计行，默认为False
+        :type margins: bool
         :return: 规则效果评估表DataFrame。
             单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）；
             列包括：规则分类、指标名称、指标含义、分箱、样本总数、样本占比、
             好样本数、好样本占比、坏样本数、坏样本占比、坏账率、LIFT值、
             坏账改善、风险拒绝比、准确率、精确率、召回率、F1分数
+
         :raises FeatureNotFoundError: 数据集缺少规则表达式所需的列时
         :raises KeyError: overdue字段在数据集中不存在时
 
@@ -528,10 +566,12 @@ class Rule(ParallelizableMixin):
         >>> report = rule.report(df, target='target')
         >>> print(report)
 
-        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
             满足比较条件记为坏样本(1)，否则为好样本(0)。
-            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+        :type overdue_operator: str
         """
         validate_overdue_operator(overdue_operator)
         reject_legacy_target_keywords(kwargs)
@@ -875,10 +915,15 @@ class Rule(ParallelizableMixin):
         **参数**
 
         :param report: 规则报告 DataFrame（由 report() 方法生成）
+        :type report: pd.DataFrame
         :param excel_writer: Excel 文件路径（字符串或 PathLike）或 ExcelWriter 对象；
             传入路径时会自动创建并写入后关闭，传入对象时追加写入不关闭
+
+        :type excel_writer: Union[str, os.PathLike, 'ExcelWriter']
         :param sheet_name: 工作表名称，默认为None（使用默认名称Sheet1）
-        :param excel_params: 额外的 dataframe2excel 写入参数（可选）
+        :type sheet_name: Optional[str]
+        :param excel_params: 默认值为 ``None`` 。额外的 dataframe2excel 写入参数（可选）
+        :type excel_params: Optional[Dict]
         :return: ExcelWriter 对象
         :raises TypeError: excel_writer 类型不正确时
 
@@ -930,6 +975,7 @@ def get_rule_columns(rule_expr: str) -> List[str]:
     **参数**
 
     :param rule_expr: 规则表达式字符串，如 "age > 18 and income < 5000"
+    :type rule_expr: str
     :return: 规则表达式中引用的列名列表（去重后按字母排序）
 
     **参考样例**

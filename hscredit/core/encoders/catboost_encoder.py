@@ -19,17 +19,48 @@ class CatBoostEncoder(BaseEncoder):
 
     **参数**
 
-    :param features: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :param target: 默认值为 ``None`` 。scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
+    :type target: Optional[str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param passthrough_target: 是否在转换结果中保留目标列，默认 ``False`` 。
+        ``True`` 仅用于需要目标列的表格分析；连接预测 Pipeline 时应保持 ``False`` ，避免标签进入模型。
+
+    :type passthrough_target: bool
+
+    :param features: 默认值为 ``None`` 。需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :type features: Optional[List[str]]
     :param sigma: 添加的高斯噪声标准差，默认为None
+    :type sigma: Optional[float]
     :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :type handle_unknown: str
     :param handle_missing: 处理缺失值的方式，默认为'value'
+    :type handle_missing: str
     :param drop_invariant: 是否删除方差为0的列，默认为False
+    :type drop_invariant: bool
     :param return_df: 是否返回DataFrame，默认为True
+    :type return_df: bool
     :param random_state: 随机种子，用于可复现性，默认为None
+    :type random_state: Optional[int]
 
     **属性**
 
     - mapping_: 目标编码映射字典，格式为 {col: {category: encoded_value}}
+
     - global_mean_: 全局目标均值
 
     **参考样例**
@@ -45,7 +76,7 @@ class CatBoostEncoder(BaseEncoder):
     **注意**
 
     与普通目标编码相比，本编码器对样本随机排序后只用"当前样本之前"的目标累积统计来编码
-    （ordered target statistics），从而显著降低目标泄漏；``random_state`` 决定排序，
+    （ordered target statistics），从而显著降低目标泄漏； ``random_state`` 决定排序，
     影响结果可复现性。
 
     **引用**

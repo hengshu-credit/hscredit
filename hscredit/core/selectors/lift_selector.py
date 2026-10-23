@@ -139,13 +139,21 @@ def _compute_lift_with_direction(
     :param y: 目标变量数组
     :param ratio: 覆盖率
     :param direction: 方向模式
+
         - 'auto': 同时计算两个方向，只比较各自目标方向上的改善
+
         - 'bad': 仅计算找坏人的LIFT（降序取头部，LIFT越高越好）
+
         - 'good': 仅计算找好人的LIFT（升序取头部，LIFT越低越好）
+
     :return: (score, lift_bad, lift_good, best_direction)
+
         - score: 指定方向相对 LIFT=1 的有效改善，越大区分力越强
+
         - lift_bad: 降序LIFT值（找坏人方向）
+
         - lift_good: 升序LIFT值（找好人方向）
+
         - best_direction: 最优方向 'bad' 或 'good'
     """
     lift_bad, lift_good, _, _ = _compute_lift_pair(x, y, ratio, tie_policy, missing_policy)
@@ -183,7 +191,9 @@ class LiftSelector(BaseFeatureSelector):
     **LIFT@ratio% 计算方式**
 
     1. 将样本按特征值排序
+
     2. 取头部 ratio 比例的样本
+
     3. LIFT = 该子群坏样本率 / 整体坏样本率
 
     **方向模式**
@@ -199,34 +209,83 @@ class LiftSelector(BaseFeatureSelector):
     score 只度量目标方向相对基准 LIFT=1 的改善，反向偏离按 0 计:
 
     - score = 0: 无区分能力（LIFT = 1）
+
     - score = 4.0: 强找坏人能力（LIFT_bad=5.0）；找好人得分上限为 1（LIFT_good=0）
+
     - 内部经验: score >= 0.5 通常认为有一定区分力
 
     **参数**
 
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param threshold: 目标方向的改善得分阈值，默认0.5
+
         - 仅保留 score >= threshold 的特征
+
         - threshold=0.5 等价于旧版 LIFT >= 1.5（找坏人方向）
+
         - 内部经验: 风控场景常用 0.5~1.0
+
+    :type threshold: float
     :param ratio: LIFT计算的覆盖率，默认0.10（即LIFT@10%）
+
         - 内部经验: 风控场景常用 lift@5% 或 lift@10%
+
+    :type ratio: float
     :param direction: 方向模式，默认'auto'
+
         - 'auto': 同时计算两个方向，取最优（推荐）
+
         - 'bad': 仅评估找坏人能力（降序取头部，LIFT > 1）
+
         - 'good': 仅评估找好人能力（升序取头部，LIFT < 1）
+
+    :type direction: Literal['auto', 'bad', 'good']
     :param target: 目标变量列名，默认为'target'
-    :param include: 强制保留的特征列表
-    :param exclude: 强制剔除的特征列表
-    :param n_jobs: 并行计算的任务数
+    :type target: str
+    :param include: 默认值为 ``None`` 。强制保留的特征列表
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表
+    :type exclude: Optional[List[str]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
     :param tie_policy: 默认 'fractional'，头部边界同值样本按组坏率比例分摊，保持
         ceil(有效样本数 × ratio) 的加权头部数量；'legacy' 恢复依赖样本顺序的截断。
+
+    :type tie_policy: str
     :param missing_policy: 默认 'exclude'，每列独立排除缺失并在有效样本中计算基准坏率；
         'legacy' 恢复旧缺失排序，存在缺失时需同时指定 tie_policy='legacy'。
 
+    :type missing_policy: str
+
     **属性**
 
-    - scores\_: 各特征在目标方向上的改善得分，pd.Series
-    - lift_detail\_: 各特征的LIFT详情表，pd.DataFrame
+    - scores\\_: 各特征在目标方向上的改善得分，pd.Series
+
+    - lift_detail\\_: 各特征的LIFT详情表，pd.DataFrame
         包含列: 找坏人LIFT、找好人LIFT、最优方向、方向改善得分、有效样本数、头部样本量、实际覆盖率
 
     **参考样例**
@@ -254,7 +313,7 @@ class LiftSelector(BaseFeatureSelector):
     **引用**
 
     LIFT@k%（头部覆盖率下的提升度）是响应/风险模型的标准评估口径，参见 lift chart
-    https://en.wikipedia.org/wiki/Lift_(data_mining) 及 Siddiqi, N. (2006).
+    Siddiqi (2006) 的模型区分度章节 及 Siddiqi, N. (2006).
     *Credit Risk Scorecards.* Wiley。
     """
 

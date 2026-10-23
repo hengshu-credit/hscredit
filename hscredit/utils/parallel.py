@@ -251,7 +251,7 @@ def resolve_n_jobs(
     """解析并行工作数。
 
     ``-1`` 大约使用物理 CPU 的 80%，并在多核环境中保留一个 CPU。
-    正整数表示固定工作数，``0`` 到 ``1`` 之间的小数表示物理 CPU 比例。
+    正整数表示固定工作数， ``0`` 到 ``1`` 之间的小数表示物理 CPU 比例。
     """
     if available_budget is not None:
         if isinstance(available_budget, (bool, np.bool_)) or not isinstance(available_budget, numbers.Integral):
@@ -358,7 +358,29 @@ def plan_parallel_execution(
     cpu_count: Optional[int] = None,
     available_budget: Optional[int] = None,
 ) -> ParallelExecutionPlan:
-    """根据用户预算和工作负载生成确定性的有效执行计划。"""
+    """根据用户预算和工作负载生成确定性的有效执行计划。
+
+    **参数**
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Mapping[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: NJobs
+    """
     if not isinstance(workload, ParallelWorkload):
         raise ValidationError("workload 必须为 ParallelWorkload")
 
@@ -548,7 +570,8 @@ def resolve_native_workers(
     n_jobs: NJobs,
     native_workers: Optional[int] = None,
 ) -> int:
-    """统一解析 ``thread_count``、``num_workers`` 等原生线程参数。"""
+    """统一解析 ``thread_count`` 、 ``num_workers`` 等原生线程参数。
+    """
     if native_workers is not None:
         native_workers = _validate_integer(native_workers, "native_workers", 1)
     budget = _current_parallel_budget()
@@ -761,6 +784,27 @@ def parallel_execute(
 
     memory_budget_bytes 是基于 workload 的资源预检而非操作系统内存硬限额。
     iterator 尚未耗尽时若发生错误，调用者已取得的结果属于部分结果。
+
+    **参数**
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Mapping[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: NJobs
     """
     config = validate_parallel_config(parallel_backend, parallel_config)
     current_budget = _current_parallel_budget()

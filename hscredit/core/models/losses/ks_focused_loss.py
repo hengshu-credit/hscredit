@@ -21,29 +21,47 @@ class KSFocusedLoss(BaseLoss):
     是信贷风控模型评估的核心指标之一。本损失在标准交叉熵基础上增加
     分布分离惩罚项，通过以下机制逼近 KS 优化：
 
-    1. **均值分离**: 最大化 mean(p|y=1) - mean(p|y=0)
-    2. **分布聚集**: 减小类内预测方差，使分布更集中
-    3. **重叠区聚焦**: 在正负分布重叠区域施加更大权重
+    1. **均值分离** : 最大化 mean(p|y=1) - mean(p|y=0)
+
+    2. **分布聚集** : 减小类内预测方差，使分布更集中
+
+    3. **重叠区聚焦** : 在正负分布重叠区域施加更大权重
 
     数学形式::
 
         overlap_i = exp(-(p_i-midpoint)^2 / (2*bandwidth^2))
         L = bce_weight × mean((1 + focus_weight × overlap_i) × BCE_i)
+
           - ks_weight × [μ₁ - μ₀]
+
           + var_weight × [σ₁² + σ₀²]
 
         midpoint = (μ₁ + μ₀) / 2；导数包含该均值对所有概率的依赖。
         导数按 n × 平均损失计算；训练框架仅使用 Hessian 的对角项。
 
+    **参数**
+
     :param ks_weight: 分布分离项权重，默认 1.0
+
         - 内部经验: 0.5~2.0 之间，越大分布分离越强但可能牺牲概率校准
+
+    :type ks_weight: float
     :param bce_weight: 基础交叉熵权重，默认 1.0
+    :type bce_weight: float
     :param var_weight: 类内方差惩罚权重，默认 0.1
+
         - 内部经验: 适度值（0.05~0.3）可减少类内离散度，提升 KS
+
+    :type var_weight: float
     :param focus_weight: 重叠区聚焦倍数，默认 2.0
+
         - 对预测值处于正负分布重叠区的样本额外加权
+
+    :type focus_weight: float
     :param bandwidth: 重叠区高斯核带宽，默认 0.1
+    :type bandwidth: float
     :param name: 损失函数名称，默认 "ks_focused_loss"
+    :type name: str
 
     **参考样例**
 

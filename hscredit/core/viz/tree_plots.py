@@ -52,10 +52,10 @@ from .utils import (
 
 
 def _tex_label(text: str) -> str:
-    r"""将 ASCII 比较符号转换为 TeX math text，用于 matplotlib 渲染.
+    """将 ASCII 比较符号转换为 TeX math text，用于 matplotlib 渲染.
 
     使用 matplotlib 原生 math text 语法（无需 usetex），
-    如 "x <= 600" → "x $\leq$ 600"，">" → "$>$"。
+    如 "x <= 600" → "x $\\leq$ 600"，">" → "$>$"。
 
     :param text: 原始文本
     :return: TeX math text 格式
@@ -192,8 +192,11 @@ def _class_counts(raw_value: Any, n_samples: int, n_classes: int) -> List[float]
     """将节点 value 统一为每个类别的样本数。
 
     sklearn 不同版本及本模块的人工树结构可能使用两类 value 口径：
-    - 类别比例，形如 ``[[0.8, 0.2]]``；
-    - 类别计数，形如 ``[[80, 20]]``。
+
+    - 类别比例，形如 ``[[0.8, 0.2]]`` ；
+
+    - 类别计数，形如 ``[[80, 20]]`` 。
+
     图表需要展示样本数和坏样本率，因此这里按节点样本数统一换算为类别计数。
     """
     if raw_value is None:
@@ -479,8 +482,11 @@ def _wrap_condition_text(text: str, max_width: float, fontsize: float) -> List[s
     """将切分条件文本智能换行，使其不超过 max_width（inch）。
 
     换行策略：
+
     1. 尝试整行
+
     2. 尝试在 "<=" 处拆分（特征名一行，阈值一行）
+
     3. 强制在空格处拆分（多行）
 
     :param text: 条件文本（如 "衡枢鉴真分老客版 <= 600"）
@@ -718,23 +724,35 @@ def plot_tree_matplotlib(
 ) -> plt.Figure:
     """使用 matplotlib 绘制 AntV G6 风格的决策树。
 
-    **AntV G6 风格特点**：
+    **AntV G6 风格特点** ：
+
     - 卡片式节点：圆角矩形，内含标题、统计信息
+
     - 平滑曲线连线：子节点从父节点底部中点出发
+
     - 颜色语义：按坏账率从浅蓝→浅红渐变
 
     **参数**
 
     :param tree_obj: ManualTreeExtractor 或 sklearn DecisionTreeClassifier
-    :param figsize: 初始画布大小（宽, 高），单位英寸；实际画布会按节点统一宽度/树形结构
+    :type tree_obj: Any
+    :param figsize: 默认值为 ``(18, 12)`` 。初始画布大小（宽, 高），单位英寸；实际画布会按节点统一宽度/树形结构
         自动重新计算并覆盖该值，以保证 1 个数据坐标单位严格等于 1 inch（否则节点框
         与文字字号的相对比例会被意外缩放，导致文字溢出节点）
-    :param dpi: 图像分辨率
+
+    :type figsize: Tuple[float, float]
+    :param dpi: 默认值为 ``150`` 。图像分辨率
+    :type dpi: int
     :param save: 保存路径（如 'tree.png'），如传入路径中有文件夹不存在，会自动创建，默认 None
-    :param title: 图表标题
-    :param show_stats: 是否显示节点统计信息（样本数、坏账率等）
-    :param show_gini: 是否显示 Gini 不纯度
-    :param node_color_scheme: 配色方案，'risk'=按坏账率，'depth'=按深度
+    :type save: Optional[str]
+    :param title: 默认值为 ``''`` 。图表标题
+    :type title: str
+    :param show_stats: 默认值为 ``True`` 。是否显示节点统计信息（样本数、坏账率等）
+    :type show_stats: bool
+    :param show_gini: 默认值为 ``True`` 。是否显示 Gini 不纯度
+    :type show_gini: bool
+    :param node_color_scheme: 默认值为 ``'risk'`` 。配色方案，'risk'=按坏账率，'depth'=按深度
+    :type node_color_scheme: str
     :return: matplotlib Figure 对象
 
     **参考样例**
@@ -1134,22 +1152,34 @@ def plot_tree_pyecharts(
 ) -> Any:
     """使用 pyecharts 绘制 AntV G6 风格的交互式决策树。
 
-    **交互功能**：
+    **交互功能** ：
+
     - 鼠标悬停 tooltip 显示节点详细信息
+
     - 支持缩放和平移
+
     - 可导出为 HTML
 
     **参数**
 
     :param tree_obj: ManualTreeExtractor 或 sklearn DecisionTreeClassifier
-    :param figsize: 画布尺寸（宽, 高），单位英寸（与 :func:`plot_tree_matplotlib` 同名参数
+    :type tree_obj: Any
+    :param figsize: 画布尺寸（宽, 高），单位英寸（与  :func:`plot_tree_matplotlib`  同名参数
         对齐）；最终像素 = figsize × dpi。默认 None 时回退到默认画布 1400×900 px
+
+    :type figsize: Optional[Tuple[float, float]]
     :param dpi: 每英寸像素数，与 figsize 配合换算画布像素尺寸，默认 100
-    :param title: 图表标题
-    :param width: 画布宽度（CSS 格式，如 '1400px'）；显式给出时优先于 figsize/dpi
-    :param height: 画布高度（CSS 格式）；显式给出时优先于 figsize/dpi
+    :type dpi: int
+    :param title: 默认值为 ``''`` 。图表标题
+    :type title: str
+    :param width: 默认值为 ``None`` 。画布宽度（CSS 格式，如 '1400px'）；显式给出时优先于 figsize/dpi
+    :type width: Optional[str]
+    :param height: 默认值为 ``None`` 。画布高度（CSS 格式）；显式给出时优先于 figsize/dpi
+    :type height: Optional[str]
     :param save: 保存路径（如 'tree.html'），如传入路径中有文件夹不存在，会自动创建，默认 None
-    :param page_title: HTML 页面标题
+    :type save: Optional[str]
+    :param page_title: 默认值为 ``'决策树可视化'`` 。HTML 页面标题
+    :type page_title: str
     :return: pyecharts Graph 对象
 
     **参考样例**
@@ -1445,28 +1475,40 @@ def plot_tree_graphviz(
 ) -> Any:
     """使用 graphviz 绘制 AntV G6 风格的高质量决策树。
 
-    样式与实现参考 :func:`plot_tree_matplotlib`：圆形节点徽章 + 主题色标题栏 +
+    样式与实现参考  :func:`plot_tree_matplotlib` ：圆形节点徽章 + 主题色标题栏 +
     无表头两列指标表格，全树统一节点宽度（含上限，超长切分条件自动换行），
     人工修改节点（is_manual）使用副主题色边框/标题/徽章，自其向下的连接线
-    也统一换为副主题色。卡片采用与 :func:`plot_tree_matplotlib` 一致的直角矩形。
+    也统一换为副主题色。卡片采用与  :func:`plot_tree_matplotlib`  一致的直角矩形。
 
-    **特点**：
+    **特点** ：
+
     - 高质量矢量图（SVG/PDF/PNG）
+
     - 支持中文
+
     - 适合嵌入报告
 
     **参数**
 
     :param tree_obj: ManualTreeExtractor 或 sklearn DecisionTreeClassifier
+    :type tree_obj: Any
     :param figsize: 输出图像最大尺寸（宽, 高），单位英寸；graphviz 会在保持纵横比的
-        前提下将整张图缩放到不超过该尺寸（与 :func:`plot_tree_matplotlib` 同名参数
+        前提下将整张图缩放到不超过该尺寸（与  :func:`plot_tree_matplotlib`  同名参数
         含义对齐）。默认 None 表示按内容自然尺寸输出（不缩放）
+
+    :type figsize: Optional[Tuple[float, float]]
     :param dpi: 图像分辨率（每英寸像素数），用于控制位图（png 等）输出的像素大小，
         默认 150。配合 figsize 可灵活控制最终图片大小
+
+    :type dpi: int
     :param save: 保存路径（如 'tree.png' / 'tree.pdf' / 'tree.svg'），渲染格式由文件名
         后缀自动推断；如传入路径中有文件夹不存在，会自动创建，默认 None
-    :param title: 图表标题
-    :param feature_names: 特征名列表（sklearn clf 推荐传入）
+
+    :type save: Optional[str]
+    :param title: 默认值为 ``''`` 。图表标题
+    :type title: str
+    :param feature_names: 默认值为 ``None`` 。特征名列表（sklearn clf 推荐传入）
+    :type feature_names: Optional[List[str]]
     :return: graphviz.Source 对象
 
     **参考样例**
@@ -1695,14 +1737,23 @@ class DecisionTreeViz:
 
     **参数**
 
-    :param backend: 渲染后端，可选 'matplotlib' | 'pyecharts' | 'graphviz'
+    :param backend: 默认值为 ``'matplotlib'`` 。渲染后端，可选 'matplotlib' | 'pyecharts' | 'graphviz'
+
         - 'matplotlib': 纯 Python，无需额外依赖，适合快速预览
+
         - 'pyecharts': 交互式 HTML，支持 tooltip、缩放
+
         - 'graphviz': 高质量矢量图，适合报告嵌入
-    :param feature_names: 特征名列表（当 tree_obj 为 sklearn clf 时需要）
-    :param title: 图表标题
-    :param figsize: matplotlib 画布大小
-    :param dpi: matplotlib 分辨率
+
+    :type backend: str
+    :param feature_names: 默认值为 ``None`` 。特征名列表（当 tree_obj 为 sklearn clf 时需要）
+    :type feature_names: Optional[List[str]]
+    :param title: 默认值为 ``''`` 。图表标题
+    :type title: str
+    :param figsize: 默认值为 ``(18, 12)`` 。matplotlib 画布大小
+    :type figsize: Tuple[float, float]
+    :param dpi: 默认值为 ``240`` 。matplotlib 分辨率
+    :type dpi: int
 
     **参考样例**
 
@@ -1754,8 +1805,11 @@ class DecisionTreeViz:
         """绘制决策树。
 
         :param tree_obj: ManualTreeExtractor 或 sklearn DecisionTreeClassifier
-        :param save: 保存路径
-        :param title: 图表标题（覆盖构造时的 title）
+        :type tree_obj: Any
+        :param save: 默认值为 ``None`` 。保存路径
+        :type save: Optional[str]
+        :param title: 默认值为 ``None`` 。图表标题（覆盖构造时的 title）
+        :type title: Optional[str]
         :return: 渲染结果（matplotlib Figure / pyecharts Chart / graphviz Source）
         """
         self._last_tree_obj = tree_obj
@@ -1806,6 +1860,7 @@ class DecisionTreeViz:
         """保存/渲染当前树图到文件。
 
         :param path: 保存路径
+        :type path: str
         :return: 渲染结果
         """
         return self.plot(self._last_tree_obj, save=path)
@@ -1850,8 +1905,11 @@ def plot_tree(
     **参数**
 
     :param tree_obj: ManualTreeExtractor 或 sklearn DecisionTreeClassifier
+    :type tree_obj: Any
     :param backend: 渲染后端，默认 'matplotlib'
-    :param save: 保存路径
+    :type backend: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 传给 DecisionTreeViz 的参数
     :return: 渲染结果
 
@@ -1880,11 +1938,16 @@ def tree_leaf_comparison_plot(
 ):
     """对比多棵决策树的叶节点坏样本率与 LIFT.
 
-    :param evaluations: ``{树名称: 叶节点评估表}``，表中需包含节点编号、坏样本率和LIFT值
+    :param evaluations: ``{树名称: 叶节点评估表}`` ，表中需包含节点编号、坏样本率和LIFT值
+    :type evaluations: Dict[str, pd.DataFrame]
     :param overall_bad_rate: 总体坏样本率
-    :param figsize: 图像尺寸
-    :param title: 总标题
-    :param save: 保存路径
+    :type overall_bad_rate: float
+    :param figsize: 默认值为 ``None`` 。图像尺寸
+    :type figsize: Optional[Tuple[float, float]]
+    :param title: 默认值为 ``'叶节点效果对比'`` 。总标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: matplotlib Figure
     """
     if not evaluations:

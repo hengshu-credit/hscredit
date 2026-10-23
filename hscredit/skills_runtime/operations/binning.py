@@ -31,7 +31,8 @@ def _parameters(
     reserved: Iterable[str] = ("data",),
     allow_var_keyword: bool = False,
 ) -> Dict[str, Any]:
-    """校验目标函数参数，并可按需放行 ``**kwargs``。"""
+    """校验目标函数参数，并可按需放行 ``**kwargs`` 。
+    """
     signature = inspect.signature(function)
     has_var_keyword = any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()

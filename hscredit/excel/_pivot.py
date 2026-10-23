@@ -75,7 +75,7 @@ def register_aggregation(key: str, subtotal: str, prefix: Optional[str] = None) 
     Excel 原生汇总仅 11 种（sum/count/average/max/min/product/countNums/stdDev/stdDevp/var/varp），
     本函数用于为其登记自定义别名，使 ``values`` 参数可用更贴合业务的名称。
 
-    :param key: 别名（大小写不敏感），如 ``'总和'``、``'均值'``
+    :param key: 别名（大小写不敏感），如 ``'总和'`` 、 ``'均值'``
     :param subtotal: 对应的 OOXML 汇总取值，须为 11 种之一
     :param prefix: 中文标题前缀，默认为None（复用 ``subtotal`` 已有前缀，没有则用 key）
 
@@ -180,13 +180,18 @@ def normalize_values(values: Any, data: pd.DataFrame) -> List[Dict[str, Any]]:
     """将 ``values`` 参数规范化为值字段配置列表。
 
     支持的输入形式:
-    - ``'col'`` 或 ``['c1', 'c2']``：默认聚合（数值列 sum，非数值列 count）
-    - ``[('col', 'sum'), ('col2', 'mean')]``：显式聚合
-    - ``[('col', 'sum', '全局占比')]``：聚合 + 占比显示
-    - ``{'col': 'sum', 'col2': 'count'}``：字典（值为聚合名）
+
+    - ``'col'`` 或 ``['c1', 'c2']`` ：默认聚合（数值列 sum，非数值列 count）
+
+    - ``[('col', 'sum'), ('col2', 'mean')]`` ：显式聚合
+
+    - ``[('col', 'sum', '全局占比')]`` ：聚合 + 占比显示
+
+    - ``{'col': 'sum', 'col2': 'count'}`` ：字典（值为聚合名）
+
     - ``[{'field': 'col', 'agg': 'sum', 'show_as': '全局占比', 'name': '占比', 'number_format': '0.00%'}]``
 
-    占比（``show_as``）支持：全局占比/行占比/列占比/组合占比（及 percent_of_* 英文别名）。
+    占比（ ``show_as`` ）支持：全局占比/行占比/列占比/组合占比（及 percent_of_* 英文别名）。
 
     :return: 形如 ``[{'col', 'agg', 'subtotal', 'name', 'show_as', 'show_as_ext', 'number_format'}]``
     """
@@ -265,13 +270,13 @@ def _shared_items(series: pd.Series) -> Tuple[List[Any], bool]:
 def compute_buckets(series: pd.Series, start: float, interval: float) -> Dict[str, Any]:
     """对数值列按起始值/步长分组，计算分桶标签、区间上界与「值 -> 桶索引」映射。
 
-    分桶规则与 Excel「组合字段」一致：首尾各含一个溢出桶（``<start`` / ``>end``），
+    分桶规则与 Excel「组合字段」一致：首尾各含一个溢出桶（ ``<start`` / ``>end`` ），
     中间为 ``[lo, hi)`` 左闭右开区间。
 
     :param series: 数值列
     :param start: 分组起始值
     :param interval: 分组步长（须 > 0）
-    :return: ``{labels, start, end, interval, bucket_of}``，其中 ``bucket_of`` 为 value->索引函数
+    :return: ``{labels, start, end, interval, bucket_of}`` ，其中 ``bucket_of`` 为 value->索引函数
     """
     import math
 
@@ -331,12 +336,14 @@ def build_pivot_spec(
 ) -> Dict[str, Any]:
     """根据源数据与透视配置，计算构建 XML 所需的全部中间信息。
 
-    :param groups: 数值字段分组，形如 ``{'放款金额': {'start': 0, 'interval': 1000}}``，
+    :param groups: 数值字段分组，形如 ``{'放款金额': {'start': 0, 'interval': 1000}}`` ，
         对横轴/纵轴的数值特征按起始值与步长分桶统计
-    :param filter_items: 字段筛选项，形如 ``{'MOB1': [1]}`` 或 ``{'区域': ['华东', '华南']}``，
+
+    :param filter_items: 字段筛选项，形如 ``{'MOB1': [1]}`` 或 ``{'区域': ['华东', '华南']}`` ，
         仅保留所列取值（可作用于行/列/筛选字段）
+
     :param subtotals: 是否对非最内层行/列字段显示分类汇总，默认为False
-    :return: 透视表规格字典，供 :func:`render_*` 系列函数渲染 XML
+    :return: 透视表规格字典，供  :func:`render_*`  系列函数渲染 XML
     """
     rows = list(rows)
     columns = list(columns)
@@ -873,7 +880,7 @@ def compute_pivot_layout(spec: Dict[str, Any]) -> Dict[str, Any]:
 def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, int]] = None) -> str:
     """渲染 pivotTableDefinition XML。
 
-    :param spec: :func:`build_pivot_spec` 产出的规格
+    :param spec:  :func:`build_pivot_spec`  产出的规格
     :param fmt_id_map: 自定义数字格式字符串 -> numFmtId 的映射（由注入端统一分配），默认为None
     """
     fmt_id_map = fmt_id_map or {}

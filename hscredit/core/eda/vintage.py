@@ -37,19 +37,32 @@ def vintage_analysis(
     追踪不同放款批次（Vintage）随账龄（MOB）的风险表现变化
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param vintage_col: Vintage批次列（如放款月份）
+    :type vintage_col: str
     :param mob_col: 账龄列（Month on Book）
+    :type mob_col: str
     :param target: 目标变量列（如是否逾期）
-    :param max_mob: 最大账龄
-    :param entity_col: 显式 panel/snapshot/event 模式所需的唯一账户或合同字段
-    :param input_mode: legacy 保留旧累计行口径（不是账户面板）；panel 为账户×MOB；
+    :type target: str
+    :param max_mob: 默认值为 ``12`` 。最大账龄
+    :type max_mob: int
+    :param entity_col: 默认值为 ``None`` 。显式 panel/snapshot/event 模式所需的唯一账户或合同字段
+    :type entity_col: Optional[str]
+    :param input_mode: 默认值为 ``'legacy'`` 。legacy 保留旧累计行口径（不是账户面板）；panel 为账户×MOB
         snapshot 每账户一行；event 为新增违约事件，必须提供 cohort_sizes 和 observation_end
-    :param label_mode: panel/snapshot 必须指定 ever 或 current；event 必须为 new_default
-    :param observation_end: 观察截止日期；按放款批次自然月与截止自然月之差判断成熟 MOB，
+
+    :type input_mode: str
+    :param label_mode: 默认值为 ``None`` 。panel/snapshot 必须指定 ever 或 current；event 必须为 new_default
+    :type label_mode: Optional[str]
+    :param observation_end: 默认值为 ``None`` 。观察截止日期；按放款批次自然月与截止自然月之差判断成熟 MOB
         未成熟格输出 NaN，不视为好样本。指定时 vintage_col 必须可解析为日期/月
-    :param cohort_sizes: 每批次独立开户数；event 必需，panel 可用于声明完整账户总体
-    :param exposure_col: panel/snapshot 每条观测的非负金额字段；输出同一MOB的好/坏金额及金额坏账率，
+
+    :param cohort_sizes: 默认值为 ``None`` 。每批次独立开户数；event 必需，panel 可用于声明完整账户总体
+    :type cohort_sizes: Optional[Dict]
+    :param exposure_col: 默认值为 ``None`` 。panel/snapshot 每条观测的非负金额字段；输出同一MOB的好/坏金额及金额坏账率
         不把跨期余额相加。缺失金额拒绝计算，零金额分母输出NaN
+
+    :type exposure_col: Optional[str]
     :return: Vintage分析DataFrame
 
     **参考样例**
@@ -280,10 +293,15 @@ def vintage_summary(
     """Vintage汇总统计.
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param vintage_col: Vintage批次列
+    :type vintage_col: str
     :param mob_col: 账龄列
+    :type mob_col: str
     :param target: 目标变量列
-    :param max_mob: 最大账龄
+    :type target: str
+    :param max_mob: 默认值为 ``12`` 。最大账龄
+    :type max_mob: int
     :return: Vintage汇总DataFrame
 
     **参考样例**
@@ -334,8 +352,11 @@ def roll_rate_analysis(df: pd.DataFrame, overdue_cols: List[str], labels: List[s
     分析不同逾期状态之间的转化情况
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param overdue_cols: 各期逾期状态列（如['mob1_status', 'mob2_status', 'mob3_status']）
-    :param labels: 状态标签（如['M0', 'M1', 'M2+']）
+    :type overdue_cols: List[str]
+    :param labels: 默认值为 ``None`` 。状态标签（如['M0', 'M1', 'M2+']）
+    :type labels: List[str]
     :return: 滚动率分析DataFrame
 
     **参考样例**

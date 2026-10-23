@@ -205,14 +205,14 @@ def plot_feature_importance(
     """绘制模型原生特征重要性水平条形图。
 
     :param model: 已拟合且提供原生重要性或系数的模型。
-    :param X: 用于推断特征名的 DataFrame 或数组，可选。
-    :param top_n: 展示前 N 个特征，必须为正整数。
-    :param importance_type: 传给模型重要性接口的类型。
-    :param figsize: Matplotlib 画布大小。
+    :param X: 默认值为 ``None`` 。用于推断特征名的 DataFrame 或数组，可选
+    :param top_n: 默认值为 ``20`` 。展示前 N 个特征，必须为正整数
+    :param importance_type: 默认值为 ``'gain'`` 。传给模型重要性接口的类型
+    :param figsize: 默认值为 ``(10, 8)`` 。Matplotlib 画布大小
     :param title: 自定义标题；None 时使用中文默认标题。
-    :param color: 条形颜色，显式值优先。
-    :param show_values: 是否标注重要性数值。
-    :param show: 是否调用 ``plt.show()``。
+    :param color: 默认值为 ``'#2E86AB'`` 。条形颜色，显式值优先
+    :param show_values: 默认值为 ``True`` 。是否标注重要性数值
+    :param show: 默认值为 ``True`` 。是否调用 ``plt.show()``
     :return: Matplotlib Figure。
     """
     from .reports import model_explain_report
@@ -237,7 +237,7 @@ def plot_feature_importance(
 def plot_shap_importance(model, X, top_n=20, figsize=(10, 8), title=None, color="#4C78A8", show=True):
     """计算并绘制平均绝对 SHAP 特征重要性。
 
-    :return: 单坐标轴 Matplotlib Figure，``show=False`` 时不显示窗口。
+    :return: 单坐标轴 Matplotlib Figure， ``show=False`` 时不显示窗口。
     """
     from .explainer import ModelExplainer
 

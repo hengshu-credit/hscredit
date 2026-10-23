@@ -12,7 +12,9 @@ def seed_everything(seed: int, freeze_torch: bool = False):
     """固定当前环境随机种子，以保证后续实验可重复。
 
     :param seed: 随机种子
-    :param freeze_torch: 是否固定 pytorch 的随机种子
+    :type seed: int
+    :param freeze_torch: 默认值为 ``False`` 。是否固定 pytorch 的随机种子
+    :type freeze_torch: bool
 
     **参考样例**
 

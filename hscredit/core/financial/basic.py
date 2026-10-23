@@ -60,19 +60,15 @@ def fv(rate, nper, pmt, pv, when="end"):
     常用于储蓄/投资终值、定投账户余额测算等场景。
 
     满足等式 ``fv + pv*(1+rate)**nper + pmt*(1+rate*when)/rate*((1+rate)**nper-1) = 0``
-    （当 ``rate == 0`` 时退化为 ``fv = -(pv + pmt*nper)``）。
+    （当 ``rate == 0`` 时退化为 ``fv = -(pv + pmt*nper)`` ）。
 
-    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12``）
+    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12`` ）
     :param nper: 总付款（计息）期数
     :param pmt: 每期固定付款额，按现金流方向约定（流出为负，如每月储蓄 -100）
     :param pv: 现值，即期初一次性金额（流出为负，如初始投入 -100）
-    :param when: 每期付款发生的时点，默认 ``'end'``。可取以下枚举值：
-
-        - ``'end'`` / ``'e'`` / ``'finish'`` / ``0``：期末付款（普通年金 ordinary
-          annuity），每期现金流在期末发生——最常见
-        - ``'begin'`` / ``'b'`` / ``'beginning'`` / ``'start'`` / ``1``：期初付款
-          （预付年金 annuity-due），每期现金流在期初发生，比期末多计一期利息
-        - 也可传入 numpy 数组对每个元素分别指定时点（向量化）
+    :param when: 付款时点，默认 ``"end"`` （期末）； ``0`` 、 ``"end"`` 、
+        ``"e"`` 、 ``"finish"`` 表示期末； ``1`` 、 ``"begin"`` 、 ``"b"`` 、
+        ``"beginning"`` 、 ``"start"`` 表示期初。标量和数组按 NumPy 广播规则对齐。
 
     :return: 未来值（与输入现金流方向相反，通常为正表示终值收入）；标量入参返回标量，
         数组入参返回 numpy 数组
@@ -89,7 +85,7 @@ def fv(rate, nper, pmt, pv, when="end"):
         >>> fv(0.05/12, 10*12, -100, -100, when='begin')
         15757.629844104778
 
-    向量化计算（同时评估多个利率；注意所有数值参数需为等长数组，含 ``when``）::
+    向量化计算（同时评估多个利率；数值参数和 ``when`` 支持标量及可广播数组）::
 
         >>> import numpy as np
         >>> fv(np.array([0.05/12, 0.06/12]), np.array([120, 120]),
@@ -98,7 +94,7 @@ def fv(rate, nper, pmt, pv, when="end"):
 
     **引用**
 
-    对应 Excel ``FV`` 函数与 ``numpy_financial.fv``：
+    对应 Excel ``FV`` 函数与 ``numpy_financial.fv`` ：
     https://numpy.org/numpy-financial/latest/functions/fv.html
     """
     when = _convert_when(when)
@@ -138,15 +134,13 @@ def pv(rate, nper, pmt, fv=0, when="end"):
     在固定每期利率与等额分期付款条件下，将未来各期现金流与终值折算到期初的等价价值。
     常用于贷款可借本金测算、未来收益的当前估值等场景。
 
-    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12``）
+    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12`` ）
     :param nper: 总付款（计息）期数
     :param pmt: 每期固定付款额，按现金流方向约定（流出为负）
     :param fv: 未来值，即最后一期期末的目标余额，默认为 ``0``
-    :param when: 每期付款发生的时点，默认 ``'end'``。可取以下枚举值：
-
-        - ``'end'`` / ``'e'`` / ``'finish'`` / ``0``：期末付款（普通年金）
-        - ``'begin'`` / ``'b'`` / ``'beginning'`` / ``'start'`` / ``1``：期初付款（预付年金）
-        - 也可传入 numpy 数组对每个元素分别指定时点（向量化）
+    :param when: 付款时点，默认 ``"end"`` （期末）； ``0`` 、 ``"end"`` 、
+        ``"e"`` 、 ``"finish"`` 表示期末； ``1`` 、 ``"begin"`` 、 ``"b"`` 、
+        ``"beginning"`` 、 ``"start"`` 表示期初。标量和数组按 NumPy 广播规则对齐。
 
     :return: 现值（与未来现金流方向相反，通常为负表示期初支出）
 
@@ -166,7 +160,7 @@ def pv(rate, nper, pmt, fv=0, when="end"):
 
     **引用**
 
-    对应 Excel ``PV`` 函数与 ``numpy_financial.pv``：
+    对应 Excel ``PV`` 函数与 ``numpy_financial.pv`` ：
     https://numpy.org/numpy-financial/latest/functions/pv.html
     """
     when = _convert_when(when)
@@ -203,15 +197,13 @@ def pmt(rate, nper, pv, fv=0, when="end"):
     在给定现值、每期利率与期数条件下，计算等额本息分期的每期偿付额。
     是评分卡/信贷场景中测算月供的核心函数。
 
-    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12``）
+    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12`` ）
     :param nper: 总付款（计息）期数
     :param pv: 现值，即贷款本金或投资额（借款人视角下本金为正流入）
     :param fv: 未来值，即最后一期期末的目标余额，默认为 ``0``
-    :param when: 每期付款发生的时点，默认 ``'end'``。可取以下枚举值：
-
-        - ``'end'`` / ``'e'`` / ``'finish'`` / ``0``：期末付款（普通年金）
-        - ``'begin'`` / ``'b'`` / ``'beginning'`` / ``'start'`` / ``1``：期初付款（预付年金）
-        - 也可传入 numpy 数组对每个元素分别指定时点（向量化）
+    :param when: 付款时点，默认 ``"end"`` （期末）； ``0`` 、 ``"end"`` 、
+        ``"e"`` 、 ``"finish"`` 表示期末； ``1`` 、 ``"begin"`` 、 ``"b"`` 、
+        ``"beginning"`` 、 ``"start"`` 表示期初。标量和数组按 NumPy 广播规则对齐。
 
     :return: 每期付款额（与本金方向相反，通常为负表示每期支出）
 
@@ -224,7 +216,7 @@ def pmt(rate, nper, pv, fv=0, when="end"):
 
     **引用**
 
-    对应 Excel ``PMT`` 函数与 ``numpy_financial.pmt``：
+    对应 Excel ``PMT`` 函数与 ``numpy_financial.pmt`` ：
     https://numpy.org/numpy-financial/latest/functions/pmt.html
     """
     when = _convert_when(when)
@@ -256,15 +248,13 @@ def nper(rate, pmt, pv, fv=0, when="end"):
     在给定每期利率、每期付款额与现值条件下，计算达到目标未来值所需的付款期数。
     返回值一般为非整数，表示理论上的精确期数。
 
-    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12``）
+    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12`` ）
     :param pmt: 每期固定付款额，按现金流方向约定（流出为负）
     :param pv: 现值，即初始投资或贷款本金
     :param fv: 未来值，即目标余额，默认为 ``0``
-    :param when: 每期付款发生的时点，默认 ``'end'``。可取以下枚举值：
-
-        - ``'end'`` / ``'e'`` / ``'finish'`` / ``0``：期末付款（普通年金）
-        - ``'begin'`` / ``'b'`` / ``'beginning'`` / ``'start'`` / ``1``：期初付款（预付年金）
-        - 也可传入 numpy 数组对每个元素分别指定时点（向量化）
+    :param when: 付款时点，默认 ``"end"`` （期末）； ``0`` 、 ``"end"`` 、
+        ``"e"`` 、 ``"finish"`` 表示期末； ``1`` 、 ``"begin"`` 、 ``"b"`` 、
+        ``"beginning"`` 、 ``"start"`` 表示期初。标量和数组按 NumPy 广播规则对齐。
 
     :return: 达到目标未来值所需的期数（通常为非整数）
 
@@ -277,7 +267,7 @@ def nper(rate, pmt, pv, fv=0, when="end"):
 
     **引用**
 
-    对应 Excel ``NPER`` 函数与 ``numpy_financial.nper``：
+    对应 Excel ``NPER`` 函数与 ``numpy_financial.nper`` ：
     https://numpy.org/numpy-financial/latest/functions/nper.html
     """
     when = _convert_when(when)
@@ -308,18 +298,16 @@ def ipmt(rate, per, nper, pv, fv=0, when="end"):
     """计算给定期间的利息部分 (Interest Payment).
 
     将等额本息分期中第 ``per`` 期的还款额拆分出"利息"部分。基于摊销公式：
-    第 ``per`` 期利息 = 期初剩余本金 × ``rate``。满足 ``ipmt + ppmt == pmt``。
+    第 ``per`` 期利息 = 期初剩余本金 × ``rate`` 。满足 ``ipmt + ppmt == pmt`` 。
 
-    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12``）
-    :param per: 指定期次，取值范围 1 ~ ``nper``（第 1 期至第 ``nper`` 期）
+    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12`` ）
+    :param per: 指定期次，取值范围 1 ~ ``nper`` （第 1 期至第 ``nper`` 期）
     :param nper: 总付款（计息）期数
     :param pv: 现值，即贷款本金或投资额
     :param fv: 未来值，即最后一期期末的目标余额，默认为 ``0``
-    :param when: 每期付款发生的时点，默认 ``'end'``。可取以下枚举值：
-
-        - ``'end'`` / ``'e'`` / ``'finish'`` / ``0``：期末付款（普通年金）
-        - ``'begin'`` / ``'b'`` / ``'beginning'`` / ``'start'`` / ``1``：期初付款
-          （预付年金；此时首期无利息，返回 0，其余期相应折现一期）
+    :param when: 付款时点，默认 ``"end"`` （期末）； ``0`` 、 ``"end"`` 、
+        ``"e"`` 、 ``"finish"`` 表示期末； ``1`` 、 ``"begin"`` 、 ``"b"`` 、
+        ``"beginning"`` 、 ``"start"`` 表示期初。标量和数组按 NumPy 广播规则对齐。
 
     :return: 第 ``per`` 期的利息支付额（与付款额同向，通常为负）
 
@@ -332,7 +320,7 @@ def ipmt(rate, per, nper, pv, fv=0, when="end"):
 
     **引用**
 
-    对应 Excel ``IPMT`` 函数与 ``numpy_financial.ipmt``：
+    对应 Excel ``IPMT`` 函数与 ``numpy_financial.ipmt`` ：
     https://numpy.org/numpy-financial/latest/functions/ipmt.html
     """
     when = _convert_when(when)
@@ -359,17 +347,16 @@ def ppmt(rate, per, nper, pv, fv=0, when="end"):
     """计算给定期间的本金部分 (Principal Payment).
 
     将等额本息分期中第 ``per`` 期的还款额拆分出"本金"部分，等于该期总付款额减去利息
-    （``ppmt = pmt - ipmt``）。随着期次推进，本金占比逐期增大、利息占比逐期减小。
+    （ ``ppmt = pmt - ipmt`` ）。随着期次推进，本金占比逐期增大、利息占比逐期减小。
 
-    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12``）
-    :param per: 指定期次，取值范围 1 ~ ``nper``（第 1 期至第 ``nper`` 期）
+    :param rate: 每期利率，小数表示（如年利率 5% 按月计息则传 ``0.05/12`` ）
+    :param per: 指定期次，取值范围 1 ~ ``nper`` （第 1 期至第 ``nper`` 期）
     :param nper: 总付款（计息）期数
     :param pv: 现值，即贷款本金或投资额
     :param fv: 未来值，即最后一期期末的目标余额，默认为 ``0``
-    :param when: 每期付款发生的时点，默认 ``'end'``。可取以下枚举值：
-
-        - ``'end'`` / ``'e'`` / ``'finish'`` / ``0``：期末付款（普通年金）
-        - ``'begin'`` / ``'b'`` / ``'beginning'`` / ``'start'`` / ``1``：期初付款（预付年金）
+    :param when: 付款时点，默认 ``"end"`` （期末）； ``0`` 、 ``"end"`` 、
+        ``"e"`` 、 ``"finish"`` 表示期末； ``1`` 、 ``"begin"`` 、 ``"b"`` 、
+        ``"beginning"`` 、 ``"start"`` 表示期初。标量和数组按 NumPy 广播规则对齐。
 
     :return: 第 ``per`` 期的本金支付额（与付款额同向，通常为负）
 
@@ -382,7 +369,7 @@ def ppmt(rate, per, nper, pv, fv=0, when="end"):
 
     **引用**
 
-    对应 Excel ``PPMT`` 函数与 ``numpy_financial.ppmt``：
+    对应 Excel ``PPMT`` 函数与 ``numpy_financial.ppmt`` ：
     https://numpy.org/numpy-financial/latest/functions/ppmt.html
     """
     total = pmt(rate, nper, pv, fv, when)
@@ -400,13 +387,13 @@ def rate(nper, pmt, pv, fv=0, when="end", guess=0.1, tol=1e-6, max_iter=100):
     :param pmt: 每期固定付款额，按现金流方向约定（流出为负）
     :param pv: 现值，即初始投资或贷款本金
     :param fv: 未来值，即最后一期期末的目标余额，默认为 ``0``
-    :param when: 每期付款发生的时点，默认 ``'end'``。可取以下枚举值：
+    :param when: 付款时点，默认 ``"end"`` （期末）； ``0`` 、 ``"end"`` 、
+        ``"e"`` 、 ``"finish"`` 表示期末； ``1`` 、 ``"begin"`` 、 ``"b"`` 、
+        ``"beginning"`` 、 ``"start"`` 表示期初。标量和数组按 NumPy 广播规则对齐。
 
-        - ``'end'`` / ``'e'`` / ``'finish'`` / ``0``：期末付款（普通年金）
-        - ``'begin'`` / ``'b'`` / ``'beginning'`` / ``'start'`` / ``1``：期初付款（预付年金）
-
-    :param guess: 牛顿迭代的初始猜测利率，默认为 ``0.1``（即 10%）。当方程存在多解或
+    :param guess: 牛顿迭代的初始猜测利率，默认为 ``0.1`` （即 10%）。当方程存在多解或
         迭代不收敛时，可调整该初值
+
     :param tol: 收敛容差，残差或步长小于该值即视为收敛，默认为 ``1e-6``
     :param max_iter: 最大迭代次数，默认为 ``100``
     :return: 每期利率（小数表示）
@@ -421,7 +408,7 @@ def rate(nper, pmt, pv, fv=0, when="end", guess=0.1, tol=1e-6, max_iter=100):
 
     **引用**
 
-    对应 Excel ``RATE`` 函数与 ``numpy_financial.rate``；牛顿迭代法参见
+    对应 Excel ``RATE`` 函数与 ``numpy_financial.rate`` ；牛顿迭代法参见
     https://numpy.org/numpy-financial/latest/functions/rate.html
     """
     when = _convert_when(when)

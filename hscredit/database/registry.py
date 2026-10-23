@@ -45,6 +45,7 @@ def canonical_adapter_name(name: str) -> str:
     """解析数据库类型或别名的规范名称。
 
     :param name: 数据库类型、内置别名或自定义别名，不区分大小写和连字符。
+    :type name: str
     :return: 注册表使用的小写下划线名称。
     :rtype: str
     :raises ValidationError: ``name`` 不是非空字符串。
@@ -64,10 +65,14 @@ def register_adapter(
     """注册自定义数据库适配器及其别名。
 
     :param name: 新适配器的规范名称。
-    :param adapter_class: :class:`BaseDatabaseAdapter` 的实现类。
-    :param aliases: 可选别名集合。
-    :param replace: 是否允许替换同名适配器和冲突别名，默认 ``False``。
-    :return: ``None``。
+    :type name: str
+    :param adapter_class:  :class:`BaseDatabaseAdapter`  的实现类。
+    :type adapter_class: Type[BaseDatabaseAdapter]
+    :param aliases: 默认值为 ``()`` 。可选别名集合
+    :type aliases: Iterable[str]
+    :param replace: 是否允许替换同名适配器和冲突别名，默认 ``False`` 。
+    :type replace: bool
+    :return: ``None`` 。
     :raises ValidationError: 名称、适配器类型或别名冲突无效。
 
     **参考样例**
@@ -131,6 +136,7 @@ def get_adapter_class(name: str) -> Type[BaseDatabaseAdapter]:
     内置适配器在第一次获取时才导入，从而保持所有数据库驱动均为可选依赖。
 
     :param name: 数据库类型或别名。
+    :type name: str
     :return: 已加载的适配器类。
     :raises ValidationError: 数据库类型未注册或导入入口无效。
     """

@@ -44,13 +44,19 @@ def score_ks_plot(
 ) -> Figure:
     """KS曲线图，支持多数据集叠加.
 
-    :param y_true: 真实标签（单数据集时使用）
-    :param y_prob: 预测概率（单数据集时使用）
-    :param datasets: {'训练集': (y_true, y_prob), '测试集': ...}
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
+    :param y_true: 默认值为 ``None`` 。真实标签（单数据集时使用）
+    :param y_prob: 默认值为 ``None`` 。预测概率（单数据集时使用）
+    :param datasets: 默认值为 ``None`` 。{'训练集': (y_true, y_prob), '测试集': ...}
+    :type datasets: Optional[Dict[str, Tuple]]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸
+    :param title: 默认值为 ``'KS曲线'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -109,12 +115,19 @@ def score_distribution_comparison_plot(
 ) -> Figure:
     """多数据集评分分布对比图（KDE + 直方图）.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param scores: {'训练集': score_array, '测试集': score_array}
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param bins: 直方图分箱数
-    :param save: 保存路径
+    :type scores: Dict[str, Union[np.ndarray, pd.Series]]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(10, 5)`` 。图像尺寸
+    :param title: 默认值为 ``'评分分布对比'`` 。图标题
+    :type title: str
+    :param bins: 默认值为 ``50`` 。直方图分箱数
+    :type bins: int
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -164,13 +177,19 @@ def score_badrate_bin_plot(
 ) -> Figure:
     """评分分箱坏率图：柱=样本量，折线=坏率.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param y_true: 真实标签
     :param score: 评分
     :param max_n_bins: 分箱数，默认10
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type max_n_bins: int
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(12, 6)`` 。图像尺寸
+    :param title: 默认值为 ``'评分分箱坏率'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -249,14 +268,21 @@ def score_lift_plot(
 ) -> Figure:
     """LIFT曲线图，支持多数据集叠加，标注关键点.
 
-    :param y_true: 真实标签（单数据集）
-    :param y_prob: 预测概率（单数据集）
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
+    :param y_true: 默认值为 ``None`` 。真实标签（单数据集）
+    :param y_prob: 默认值为 ``None`` 。预测概率（单数据集）
     :param ratios: 覆盖率列表，默认 [0.01,0.03,0.05,0.10,0.20,0.30,0.50]
-    :param datasets: {'训练集': (y_true, y_prob), ...}
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type ratios: List[float]
+    :param datasets: 默认值为 ``None`` 。{'训练集': (y_true, y_prob), ...}
+    :type datasets: Optional[Dict[str, Tuple]]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸
+    :param title: 默认值为 ``'LIFT曲线'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -319,14 +345,21 @@ def score_approval_badrate_curve(
 ) -> Figure:
     """审批通过率 vs 坏账率曲线（策略人员必备）.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param y_true: 真实标签
     :param score: 评分
-    :param score_ascending: True=分数越高越安全（低分拒绝）
-    :param n_points: 曲线采样点数
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :param score_ascending: 默认值为 ``True`` 。True=分数越高越安全（低分拒绝）
+    :type score_ascending: bool
+    :param n_points: 默认值为 ``100`` 。曲线采样点数
+    :type n_points: int
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸
+    :param title: 默认值为 ``'通过率 - 坏率权衡曲线'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**

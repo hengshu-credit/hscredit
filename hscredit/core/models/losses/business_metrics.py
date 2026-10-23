@@ -48,11 +48,12 @@ class AUCMetric(BaseMetric):
 
     **参数**
 
-    :param name: 指标名称，默认 ``"AUC曲线下面积"``。
+    :param name: 指标名称，默认 ``"AUC曲线下面积"`` 。
+    :type name: str
 
     **属性**
 
-    ``greater_is_better=True``；指标越大越好，有效权重下必须同时存在好、坏样本。
+    ``greater_is_better=True`` ；指标越大越好，有效权重下必须同时存在好、坏样本。
 
     **参考样例**
 
@@ -70,6 +71,7 @@ class AUCMetric(BaseMetric):
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；低概率表示低风险。
         :param sample_weight: 可选一维非负有限权重，须等长且总和大于 0。
             权重用于统计，名单人数和阈值规则详见本类说明。
+
         :return: float，单位和分母详见本类说明；优化方向见 direction 属性。
 
         **参考样例**
@@ -89,12 +91,14 @@ class TopKCaptureMetric(BaseMetric):
 
     **参数**
 
-    :param top_ratio: 头部人数占比，范围 ``(0, 1]``，默认 0.05；人数向上取整。
-    :param name: 指标名称，默认 ``"头部坏样本捕获率"``。
+    :param top_ratio: 头部人数占比，范围 ``(0, 1]`` ，默认 0.05；人数向上取整。
+    :type top_ratio: float
+    :param name: 指标名称，默认 ``"头部坏样本捕获率"`` 。
+    :type name: str
 
     **属性**
 
-    ``greater_is_better=True``；没有有效坏样本时无法定义捕获率，将抛出异常。
+    ``greater_is_better=True`` ；没有有效坏样本时无法定义捕获率，将抛出异常。
     同分边界按相同比例计入，权重用于加权坏样本数。
 
     **参考样例**
@@ -114,6 +118,7 @@ class TopKCaptureMetric(BaseMetric):
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；低概率表示低风险。
         :param sample_weight: 可选一维非负有限权重，须等长且总和大于 0。
             权重用于统计，名单人数和阈值规则详见本类说明。
+
         :return: float，单位和分母详见本类说明；优化方向见 direction 属性。
 
         **参考样例**
@@ -136,12 +141,14 @@ class TopKLiftMetric(BaseMetric):
 
     **参数**
 
-    :param top_ratio: 头部人数占比，范围 ``(0, 1]``，默认 0.1；人数向上取整。
-    :param name: 指标名称，默认 ``"头部提升倍数"``。
+    :param top_ratio: 头部人数占比，范围 ``(0, 1]`` ，默认 0.1；人数向上取整。
+    :type top_ratio: float
+    :param name: 指标名称，默认 ``"头部提升倍数"`` 。
+    :type name: str
 
     **属性**
 
-    ``greater_is_better=True``；名单和总体均使用加权坏样本率。
+    ``greater_is_better=True`` ；名单和总体均使用加权坏样本率。
     名单权重为零或总体没有有效坏样本时抛出异常。
 
     **参考样例**
@@ -161,6 +168,7 @@ class TopKLiftMetric(BaseMetric):
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；低概率表示低风险。
         :param sample_weight: 可选一维非负有限权重，须等长且总和大于 0。
             权重用于统计，名单人数和阈值规则详见本类说明。
+
         :return: float，单位和分母详见本类说明；优化方向见 direction 属性。
 
         **参考样例**
@@ -186,12 +194,14 @@ class BadDebtMetric(BaseMetric):
 
     **参数**
 
-    :param approval_rate: 通过人数占比，范围 ``(0, 1]``，默认 0.3；人数向上取整。
-    :param name: 指标名称，默认 ``"通过客户坏账率"``。
+    :param approval_rate: 通过人数占比，范围 ``(0, 1]`` ，默认 0.3；人数向上取整。
+    :type approval_rate: float
+    :param name: 指标名称，默认 ``"通过客户坏账率"`` 。
+    :type name: str
 
     **属性**
 
-    ``greater_is_better=False``；越小越好。边界同分样本等比例通过，
+    ``greater_is_better=False`` ；越小越好。边界同分样本等比例通过，
     坏账率使用通过样本权重作为分母；通过样本权重为零时抛出异常。
 
     **参考样例**
@@ -211,6 +221,7 @@ class BadDebtMetric(BaseMetric):
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；低概率表示低风险。
         :param sample_weight: 可选一维非负有限权重，须等长且总和大于 0。
             权重用于统计，名单人数和阈值规则详见本类说明。
+
         :return: float，单位和分母详见本类说明；优化方向见 direction 属性。
 
         **参考样例**
@@ -232,12 +243,14 @@ class ApprovalRateMetric(BaseMetric):
 
     **参数**
 
-    :param target_bad_debt_rate: 观察坏账率上限，范围 ``[0, 1]``，默认 0.05。
-    :param name: 指标名称，默认 ``"坏账约束下最大通过率"``。
+    :param target_bad_debt_rate: 观察坏账率上限，范围 ``[0, 1]`` ，默认 0.05。
+    :type target_bad_debt_rate: float
+    :param name: 指标名称，默认 ``"坏账约束下最大通过率"`` 。
+    :type name: str
 
     **属性**
 
-    ``greater_is_better=True``；相同预测概率的客户必须同时通过。
+    ``greater_is_better=True`` ；相同预测概率的客户必须同时通过。
     样本权重同时用于累计通过率和累计坏账率。无可行阈值时返回 0。
     此值通过标签搜索评估集上的阈值，不能作为未见数据的坏账率保证。
 
@@ -258,6 +271,7 @@ class ApprovalRateMetric(BaseMetric):
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；低概率表示低风险。
         :param sample_weight: 可选一维非负有限权重，须等长且总和大于 0。
             权重用于统计，名单人数和阈值规则详见本类说明。
+
         :return: float，单位和分母详见本类说明；优化方向见 direction 属性。
 
         **参考样例**
@@ -286,13 +300,17 @@ class ClassificationCostMetric(BaseMetric):
     **参数**
 
     :param fn_cost: 漏抓坏客户的单位成本，非负有限数，默认 1.0。
+    :type fn_cost: float
     :param fp_cost: 误拒好客户的单位成本，非负有限数，默认 1.0。
-    :param threshold: 拒绝阈值，范围 ``[0, 1]``，默认 0.5；``p >= threshold`` 拒绝。
-    :param name: 指标名称，默认 ``"人均误判成本"``。
+    :type fp_cost: float
+    :param threshold: 拒绝阈值，范围 ``[0, 1]`` ，默认 0.5； ``p >= threshold`` 拒绝。
+    :type threshold: float
+    :param name: 指标名称，默认 ``"人均误判成本"`` 。
+    :type name: str
 
     **属性**
 
-    ``greater_is_better=False``；正确分类计零，错误分类按成本计入，并按样本权重平均。
+    ``greater_is_better=False`` ；正确分类计零，错误分类按成本计入，并按样本权重平均。
 
     **参考样例**
 
@@ -313,6 +331,7 @@ class ClassificationCostMetric(BaseMetric):
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；低概率表示低风险。
         :param sample_weight: 可选一维非负有限权重，须等长且总和大于 0。
             权重用于统计，名单人数和阈值规则详见本类说明。
+
         :return: float，单位和分母详见本类说明；优化方向见 direction 属性。
 
         **参考样例**
@@ -333,13 +352,17 @@ class ProfitMetric(BaseMetric):
     **参数**
 
     :param revenue: 好客户通过后的单位收益，非负有限数，默认 1.0。
+    :type revenue: float
     :param default_cost: 坏客户通过后的单位损失，非负有限数，默认 10.0。
-    :param cutoff: 审批阈值，范围 ``[0, 1]``，默认 0.5；``p < cutoff`` 通过。
-    :param name: 指标名称，默认 ``"人均审批利润"``。
+    :type default_cost: float
+    :param cutoff: 审批阈值，范围 ``[0, 1]`` ，默认 0.5； ``p < cutoff`` 通过。
+    :type cutoff: float
+    :param name: 指标名称，默认 ``"人均审批利润"`` 。
+    :type name: str
 
     **属性**
 
-    ``greater_is_better=True``；通过好客户计收益，通过坏客户计负损失，拒绝计零。
+    ``greater_is_better=True`` ；通过好客户计收益，通过坏客户计负损失，拒绝计零。
     分母为全量样本权重，因此各模型在同一评估集上可直接比较。
 
     **参考样例**
@@ -367,6 +390,7 @@ class ProfitMetric(BaseMetric):
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；低概率表示低风险。
         :param sample_weight: 可选一维非负有限权重，须等长且总和大于 0。
             权重用于统计，名单人数和阈值规则详见本类说明。
+
         :return: float，单位和分母详见本类说明；优化方向见 direction 属性。
 
         **参考样例**
@@ -387,8 +411,10 @@ def business_metric_for_loss(loss: BaseLoss) -> BaseMetric:
     指标复制构造时的业务参数，后续修改损失参数需要重新调用本函数。
 
     :param loss: BaseLoss 实例。
+    :type loss: BaseLoss
     :return: BaseMetric 实例。排序损失对应 AUC，KSFocusedLoss 对应 KS，
         成本、头部名单和审批损失对应其真实业务口径；其他损失返回 LossMetric。
+
     :raises TypeError: 参数不是 BaseLoss 实例。
 
     **参考样例**

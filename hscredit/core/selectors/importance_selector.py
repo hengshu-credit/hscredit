@@ -34,15 +34,62 @@ class FeatureImportanceSelector(BaseFeatureSelector):
 
     **参数**
 
+    :param report_history: 筛选过程历史保留策略，默认 ``"summary"`` 记录摘要；
+        ``"diagnostics"`` 额外记录诊断事件，``"full"`` 记录详细候选过程。
+        所有模式均受事件数和字节预算限制；截断历史不改变最终筛选结果。
+    :param max_report_events: 历史事件数量上限，默认 ``10000``；用于限制详细历史的存储。
+    :param max_report_bytes: 历史存储字节预算，默认 ``8 * 1024 * 1024`` （8 MiB）。
+
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param estimator: 评估器
+
         - 树模型: RandomForestClassifier, XGBClassifier, LGBMClassifier, CatBoostClassifier
+
         - 线性模型: LogisticRegression, LinearSVC 等
+
         - hscredit模型: XGBoost, LightGBM, CatBoost 等
-    :param threshold: 重要性阈值或保留特征数
+
+    :param threshold: 默认值为 ``0.0`` 。重要性阈值或保留特征数
+
         - 浮点数: 保留重要性 >= threshold的特征
+
         - 整数: 保留top-k个特征
+
+    :type threshold: Union[float, int]
     :param importance_getter: 重要性获取方式，默认为'auto'
+    :type importance_getter: Union[str, Callable[[Any], Any]]
     :param target: 目标变量列名，默认为'target'
+    :type target: str
 
     **参考样例**
 
@@ -61,14 +108,14 @@ class FeatureImportanceSelector(BaseFeatureSelector):
 
     **注意**
 
-    重要性来源依模型而定（树模型为 ``feature_importances_``，线性模型为 ``|coef_|``），
-    见 :func:`~hscredit.core.selectors.base.get_feature_importances`；不同来源不可直接横向
+    重要性来源依模型而定（树模型为 ``feature_importances_`` ，线性模型为 ``|coef_|`` ），
+    见  :func:`~hscredit.core.selectors.base.get_feature_importances` ；不同来源不可直接横向
     比较。基于 impurity 的树重要性对高基数特征有偏，必要时配合
-    :class:`NullImportanceSelector` 校正。
+    :class:`NullImportanceSelector`  校正。
 
     **引用**
 
-    嵌入式重要性筛选对齐 sklearn ``SelectFromModel``：
+    嵌入式重要性筛选对齐 sklearn ``SelectFromModel`` ：
     https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.SelectFromModel.html
     """
 

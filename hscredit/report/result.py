@@ -38,7 +38,7 @@ class ReportResult(dict):
     **参数**
 
     mode : str
-        ``strict`` 拒绝必需章节失败，``best_effort`` 保留成功表并记录失败。
+        ``strict`` 拒绝必需章节失败， ``best_effort`` 保留成功表并记录失败。
     metadata : dict, 可选
         本次运行的目标、字段及样本口径，不保存逐行个人数据。
 

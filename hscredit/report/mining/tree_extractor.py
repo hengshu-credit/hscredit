@@ -125,24 +125,61 @@ class TreeRuleExtractor(BaseRuleMiner):
     代码风格参考hscredit的binning模块，fit方法兼容scorecardpipeline风格。
     支持通过**kwargs传入任意sklearn树模型参数。
 
-    :param algorithm: 算法类型，'dt', 'rf', 'chi2', 'gbdt', 'xgb', 'isf'
+    **参数**
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param algorithm: 默认值为 ``'dt'`` 。算法类型，'dt', 'rf', 'chi2', 'gbdt', 'xgb', 'isf'
+    :type algorithm: str
     :param target: 目标变量列名，默认为'target'
-    :param exclude_cols: 需要排除的列名列表
+    :type target: str
+    :param exclude_cols: 默认值为 ``None`` 。需要排除的列名列表
+    :type exclude_cols: Optional[List[str]]
     :param features: 参与建树的字段名或字段名列表，默认None（使用全部候选字段）
-    :param feature_map: 字段名到字段含义的映射，用于规则报告展示
+    :type features: FeatureNames
+    :param feature_map: 默认值为 ``None`` 。字段名到字段含义的映射，用于规则报告展示
+    :type feature_map: Optional[Dict[str, str]]
     :param max_depth: 树的最大深度，默认5
+    :type max_depth: int
     :param min_samples_split: 分裂节点最小样本数，默认10
+    :type min_samples_split: int
     :param min_samples_leaf: 叶子节点最小样本数，默认5
+    :type min_samples_leaf: int
     :param n_estimators: 森林中树的数量，默认10
+    :type n_estimators: int
     :param max_features: 每棵树考虑的最大特征数，默认'sqrt'
+    :type max_features: str
     :param test_size: 测试集比例，默认0.3
+    :type test_size: float
     :param random_state: 随机种子，默认42
-    :param feature_trends: 特征趋势字典，如{'age': 1}表示正相关
+    :type random_state: int
+    :param feature_trends: 默认值为 ``None`` 。特征趋势字典，如{'age': 1}表示正相关
+    :type feature_trends: Optional[Dict[str, int]]
     :param chi2_threshold: 卡方分箱阈值，默认3.841
+    :type chi2_threshold: float
     :param kwargs: 其他树模型参数，直接传递给底层sklearn模型:
+
         - DecisionTreeClassifier: criterion, splitter, max_leaf_nodes, etc.
+
         - RandomForestClassifier: bootstrap, oob_score, class_weight, etc.
+
         - GradientBoostingClassifier: learning_rate, subsample, loss, etc.
+
         - IsolationForest: contamination, max_samples, etc.
 
     **参考样例**

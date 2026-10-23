@@ -15,10 +15,16 @@ class WeightedBCELoss(BaseLoss):
 
     数学公式: Loss = -[w_pos * y * log(p) + w_neg * (1-y) * log(1-p)]
 
+    **参数**
+
     :param pos_weight: 正样本权重，默认为1.0
+    :type pos_weight: float
     :param neg_weight: 负样本权重，默认为1.0
+    :type neg_weight: float
     :param auto_balance: 是否自动根据样本比例平衡权重，默认为False。如果为True，pos_weight和neg_weight将被忽略
+    :type auto_balance: bool
     :param name: 损失函数名称，默认为"weighted_bce"
+    :type name: str
 
     **参考样例**
 
@@ -151,9 +157,14 @@ class CostSensitiveLoss(BaseLoss):
 
     特别适合金融风控场景，因为漏抓坏客户的成本往往远大于误拒好客户的成本。
 
+    **参数**
+
     :param fn_cost: 假阴性成本（漏抓坏客户的成本），默认为1.0
+    :type fn_cost: float
     :param fp_cost: 假阳性成本（误拒好客户的成本），默认为1.0
+    :type fp_cost: float
     :param name: 损失函数名称，默认为"cost_sensitive"
+    :type name: str
 
     **参考样例**
 

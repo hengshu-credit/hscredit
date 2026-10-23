@@ -30,12 +30,21 @@ class AmountWeightedLoss(BaseLoss):
         w_i  = amount_i / mean(amount)      # 归一化权重
         Loss = weighted_mean(BCE_i, w_i)
 
-    :param amounts: 样本级金额/敞口数组, shape (n_samples,)。
-        可在构造时传入，也可通过 :meth:`set_sample_params` 动态设置。
+    **参数**
+
+    :param amounts: 默认值为 ``None`` 。样本级金额/敞口数组, shape (n_samples,)
+        可在构造时传入，也可通过  :meth:`set_sample_params`  动态设置。
+
+    :type amounts: Optional[np.ndarray]
     :param normalize: 是否对金额进行均值归一化，默认 True
+
         - 归一化后平均权重为 1.0，不影响学习率
+
+    :type normalize: bool
     :param floor_weight: 权重下限，防止低金额样本完全被忽略，默认 0.1
+    :type floor_weight: float
     :param name: 损失函数名称，默认 "amount_weighted_loss"
+    :type name: str
 
     **参考样例**
 
@@ -82,6 +91,8 @@ class AmountWeightedLoss(BaseLoss):
 
         :param amounts: 金额数组, shape (n_samples,)
             必须非负且有限，顺序与当前输入样本一致。
+
+        :type amounts: np.ndarray
         :return: self，原地更新；评估验证集时优先用 ``loss.metric(amounts=...)``
             创建副本，避免覆盖训练金额。
 
@@ -211,15 +222,28 @@ class ExpectedValueLoss(BaseLoss):
         w_i  = y_i × LGD_i × EAD_i + (1-y_i) × max(rate_i × EAD_i - cost_i, ε)
         Loss = weighted_mean(BCE_i, w_i)
 
+    **参数**
+
     :param lgd: 违约损失率，标量或数组，默认 0.5
+
         - 标量: 所有样本使用相同 LGD
+
         - 数组: 每个样本独立的 LGD, shape (n_samples,)
+
+    :type lgd: Union[float, np.ndarray]
     :param ead: 违约风险敞口，标量或数组，默认 None（使用全 1）
+
         - 通常等于授信余额或授信额度
+
+    :type ead: Optional[Union[float, np.ndarray]]
     :param rate: 年化收益率，标量或数组，默认 0.08（8%）
+    :type rate: Union[float, np.ndarray]
     :param cost: 单客运营成本，标量或数组，默认 0.0
+    :type cost: Union[float, np.ndarray]
     :param floor_weight: 权重下限，默认 0.1
+    :type floor_weight: float
     :param name: 损失函数名称，默认 "expected_value_loss"
+    :type name: str
 
     **参考样例**
 
@@ -273,10 +297,14 @@ class ExpectedValueLoss(BaseLoss):
     ) -> "ExpectedValueLoss":
         """设置样本级金融参数。
 
-        :param lgd: 违约损失率，标量或一维数组，范围 [0, 1]；None 保持原值。
-        :param ead: 违约风险敞口，非负标量或一维数组；None 保持原值。
-        :param rate: 年化收益率，非负标量或一维数组；None 保持原值。
-        :param cost: 单客运营成本，非负标量或一维数组；None 保持原值。
+        :param lgd: 默认值为 ``None`` 。违约损失率，标量或一维数组，范围 [0, 1]；None 保持原值
+        :type lgd: Optional[Union[float, np.ndarray]]
+        :param ead: 默认值为 ``None`` 。违约风险敞口，非负标量或一维数组；None 保持原值
+        :type ead: Optional[Union[float, np.ndarray]]
+        :param rate: 默认值为 ``None`` 。年化收益率，非负标量或一维数组；None 保持原值
+        :type rate: Optional[Union[float, np.ndarray]]
+        :param cost: 默认值为 ``None`` 。单客运营成本，非负标量或一维数组；None 保持原值
+        :type cost: Optional[Union[float, np.ndarray]]
         :return: self，原地更新；数组须有限且与之后计算的样本顺序一致。
 
         >>> loss = ExpectedValueLoss().set_sample_params(lgd=0.5, ead=[1000, 2000])

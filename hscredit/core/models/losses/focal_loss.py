@@ -21,11 +21,19 @@ class FocalLoss(BaseLoss):
         p_t = p if y=1 else 1-p
         α_t = α if y=1 else 1-α
 
+    **参数**
+
     :param alpha: 正样本权重，默认为0.25，用于平衡正负样本的总体权重
+    :type alpha: float
     :param gamma: 聚焦参数，默认为2.0，控制易分类样本的权重衰减程度
+
         - gamma=0: 等价于类别加权交叉熵
+
         - gamma越大，易分类样本权重越小
+
+    :type gamma: float
     :param name: 损失函数名称，默认为"focal_loss"
+    :type name: str
 
     **参考样例**
 

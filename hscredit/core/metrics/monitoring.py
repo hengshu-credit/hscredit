@@ -14,21 +14,22 @@ class MonitoringBaseline(ArtifactSerializableMixin, BaseEstimator):
     """单字段的版本化监控基准。
 
     **参数**
-    max_n_bins : int, default=10
-        数值字段的等频箱数，使用core.binning.QuantileBinning。
-    epsilon : float, default=1e-10
-        零占比平滑下限；原始占比仍在输出中保留。
-    min_bin_size : float, default=0.01
-        数值分箱的最小样本占比。
-    bin_params : dict, optional
-        传递给QuantileBinning的配置；不支持依赖真实标签的约束。
+
+    :param max_n_bins: 数值字段的最大等频箱数，默认 ``10`` ；通过 QuantileBinning 拟合。
+    :param epsilon: 零占比平滑下限，默认 ``1e-10`` ；原始占比仍保留在输出中。
+    :param min_bin_size: 每箱最小样本占比，默认 ``0.01`` 。
+    :param bin_params: QuantileBinning 参数字典，默认 ``None`` ；不支持依赖真实标签的约束。
+    :param feature_name: 特征名称，默认 ``None`` 时使用输入名称或默认名称。
 
     **属性**
-    version_ : str
-        冻结箱定义和基准计数的摘要。
+
+    - ``version_`` ：冻结分箱定义与基准计数的摘要。
 
     **参考样例**
-    >>> result = MonitoringBaseline().fit([1., 2., 3.]).evaluate([2., None, 5.])
+
+    >>> from hscredit.core.metrics import MonitoringBaseline
+    >>> baseline = MonitoringBaseline().fit([1., 2., 3.])
+    >>> result = baseline.evaluate([2., None, 5.])
     """
 
     artifact_kind = "监控基准"

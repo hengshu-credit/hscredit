@@ -35,8 +35,11 @@ def _check_input_data(
     """检查并处理输入数据.
 
     支持三种模式:
+
     1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+
     2. scorecardpipeline风格: fit(df) - df包含特征列和目标列
+
     3. 只传入X: fit(X) - 仅用于验证特征
 
     :param X: 输入数据
@@ -55,12 +58,13 @@ def _check_input_data(
 
 
 class LogicOperator(str, Enum):
-    """规则组合逻辑操作符枚举（继承 ``str``，可直接与字符串比较）。
+    """规则组合逻辑操作符枚举（继承 ``str`` ，可直接与字符串比较）。
 
     成员：
 
-    - ``AND`` = ``"and"``：与逻辑，所有子规则同时命中才算命中（取交集）
-    - ``OR`` = ``"or"``：或逻辑，任一子规则命中即算命中（取并集）
+    - ``AND`` = ``"and"`` ：与逻辑，所有子规则同时命中才算命中（取交集）
+
+    - ``OR`` = ``"or"`` ：或逻辑，任一子规则命中即算命中（取并集）
     """
 
     AND = "and"
@@ -70,6 +74,8 @@ class LogicOperator(str, Enum):
 @dataclass
 class RuleResult:
     """规则评估结果.
+
+    **参数**
 
     :param rule_id: 规则标识
     :param rule_name: 规则名称
@@ -191,14 +197,34 @@ class RuleSet(ParallelizableMixin):
     支持规则的层次化组合，可以包含单规则或嵌套规则集。
     支持且/或逻辑操作。
 
+    **参数**
+
     :param name: 规则集名称，默认为"RuleSet"
+    :type name: str
     :param logic: 逻辑操作符，'and' 表示所有规则都命中才算命中，'or' 表示任一规则命中就算命中
-    :param rules: 规则列表，可以是 Rule 或 RuleSet 对象
+    :type logic: Union[str, LogicOperator]
+    :param rules: 默认值为 ``None`` 。规则列表，可以是 Rule 或 RuleSet 对象
+    :type rules: Optional[List[Union[Rule, 'RuleSet']]]
     :param weight: 规则集权重，用于最终得分计算，默认为1.0
-    :param description: 规则集描述
-    :param n_jobs: 并行任务数，默认为-1
-    :param parallel_backend: joblib并行后端，默认为None
-    :param parallel_config: joblib扩展配置，默认为None
+    :type weight: float
+    :param description: 默认值为 ``''`` 。规则集描述
+    :type description: str
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
 
     **参考样例**
 
@@ -249,6 +275,7 @@ class RuleSet(ParallelizableMixin):
         """添加规则到规则集.
 
         :param rule: Rule 或 RuleSet 对象
+        :type rule: Union[Rule, 'RuleSet']
         :return: self，支持链式调用
         """
         self.rules.append(rule)
@@ -258,6 +285,7 @@ class RuleSet(ParallelizableMixin):
         """移除指定索引的规则.
 
         :param index: 规则索引
+        :type index: int
         :return: self，支持链式调用
         """
         if 0 <= index < len(self.rules):
@@ -268,7 +296,9 @@ class RuleSet(ParallelizableMixin):
         """评估规则集.
 
         :param X: 输入数据
-        :param return_details: 是否返回详细结果
+        :type X: pd.DataFrame
+        :param return_details: 默认值为 ``True`` 。是否返回详细结果
+        :type return_details: bool
         :return: (整体命中结果, 各规则详细结果列表)
 
         **参考样例**
@@ -324,7 +354,8 @@ class RuleSet(ParallelizableMixin):
     def get_all_rules(self, flatten: bool = False) -> List[Union[Rule, "RuleSet"]]:
         """获取所有规则.
 
-        :param flatten: 是否扁平化返回（展开嵌套规则集）
+        :param flatten: 默认值为 ``False`` 。是否扁平化返回（展开嵌套规则集）
+        :type flatten: bool
         :return: 规则列表
         """
         if not flatten:
@@ -384,24 +415,54 @@ class RulesClassifier(
 
     代码风格参考 binning 模块。
 
-    :param rules: 规则或规则集列表/单个对象，可以是 Rule、RuleSet 或混合
+    **参数**
+
+    :param rules: 默认值为 ``None`` 。规则或规则集列表/单个对象，可以是 Rule、RuleSet 或混合
+    :type rules: Optional[Union[Rule, RuleSet, List[Union[Rule, RuleSet]]]]
     :param logic: 最外层逻辑操作符，'and' 或 'or'，默认为 'or'
-    :param output_mode: 输出模式
+    :type logic: Union[str, LogicOperator]
+    :param output_mode: 默认值为 ``'final'`` 。输出模式
+
         - 'final': 只输出最终分类结果
+
         - 'individual': 输出每条规则的命中结果
+
         - 'both': 同时输出最终结果和单规则结果
+
         - 'reason': 输出带命中原因的结果
+
+    :type output_mode: str
     :param weights: 各规则/规则集的权重列表，用于加权投票，默认为None（等权重）
+    :type weights: Optional[List[float]]
     :param threshold: 分类阈值，用于概率输出，默认为0.5
+    :type threshold: float
     :param target: 目标变量列名，用于scorecardpipeline风格，默认为'target'
+    :type target: str
     :param verbose: 是否输出详细信息，默认为False
-    :param n_jobs: 并行任务数，默认为-1
-    :param parallel_backend: joblib并行后端，默认为None
-    :param parallel_config: joblib扩展配置，默认为None
+    :type verbose: bool
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
 
     属性:
+
     - classes_: 类别标签
+
     - n_features_in_: 输入特征数
+
     - feature_names_in_: 特征名称
 
     **参考样例**
@@ -518,20 +579,31 @@ class RulesClassifier(
         """拟合分类器（学习特征名）.
 
         支持三种模式:
+
         1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+
         2. scorecardpipeline风格: fit(df) - df包含特征列和目标列（由target参数指定）
+
         3. 仅验证: fit(X) - 仅验证特征，不学习y
 
         :param X: 训练数据
+
             - sklearn风格: 特征矩阵，shape (n_samples, n_features)
+
             - scorecardpipeline风格: 完整数据框，包含特征列和目标列
-        :param y: 目标变量（可选）
+
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量（可选）
+
             - sklearn风格: 传入目标变量
+
             - scorecardpipeline风格: 不传，从X中提取target列
+
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :param kwargs: 其他参数
-        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
-        :param eval_metric: 最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标。
-        :param eval_sample_weight: 评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权。
+        :param eval_set: 默认值为 ``None`` 。评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留
+        :param eval_metric: 默认值为 ``None`` 。最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标
+        :param eval_sample_weight: 默认值为 ``None`` 。评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权
         :return: 拟合后的分类器
 
         **参考样例**
@@ -673,8 +745,12 @@ class RulesClassifier(
         规则分类器通过统计特征在规则中的使用频率来计算重要性。
 
         :param importance_type: 重要性类型，默认'frequency'
+
             - 'frequency': 特征在规则中出现的次数
+
             - 'weighted': 考虑规则权重的加权频率
+
+        :type importance_type: str
         :return: 特征重要性Series
         """
         if not hasattr(self, "_is_fitted") or not self._is_fitted:
@@ -790,11 +866,17 @@ class RulesClassifier(
         无需fit即可直接预测。
 
         :param X: 输入数据
-        :param return_reason: 是否返回命中原因，当output_mode='reason'时自动为True
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param return_reason: 默认值为 ``False`` 。是否返回命中原因，当output_mode='reason'时自动为True
+        :type return_reason: bool
         :return: 根据output_mode返回不同格式的结果
+
             - 'final': np.ndarray，最终分类结果
+
             - 'individual': pd.DataFrame，每条规则的命中结果
+
             - 'both': tuple，(最终结果, 单规则结果)
+
             - 'reason': tuple，(最终结果, 命中原因列表)
         """
         X = self._prepare_prediction_input(X)
@@ -921,6 +1003,7 @@ class RulesClassifier(
         无需fit即可直接预测概率。
 
         :param X: 输入数据
+        :type X: Union[pd.DataFrame, np.ndarray]
         :return: 概率数组，shape (n_samples, 2)
         """
         X = self._prepare_prediction_input(X)
@@ -1004,6 +1087,7 @@ class RulesClassifier(
         """添加规则（拟合前使用）.
 
         :param rule: Rule 或 RuleSet 对象
+        :type rule: Union[Rule, RuleSet]
         :return: self，支持链式调用
         """
         if self.rules is None:
@@ -1030,8 +1114,11 @@ def create_and_ruleset(rules: List[Union[Rule, RuleSet]], name: str = "AND_RuleS
     """创建且逻辑规则集.
 
     :param rules: 规则列表
-    :param name: 规则集名称
-    :param description: 规则集描述
+    :type rules: List[Union[Rule, RuleSet]]
+    :param name: 默认值为 ``'AND_RuleSet'`` 。规则集名称
+    :type name: str
+    :param description: 默认值为 ``''`` 。规则集描述
+    :type description: str
     :return: RuleSet对象
     """
     return RuleSet(name=name, logic=LogicOperator.AND, rules=rules, description=description)
@@ -1041,8 +1128,11 @@ def create_or_ruleset(rules: List[Union[Rule, RuleSet]], name: str = "OR_RuleSet
     """创建或逻辑规则集.
 
     :param rules: 规则列表
-    :param name: 规则集名称
-    :param description: 规则集描述
+    :type rules: List[Union[Rule, RuleSet]]
+    :param name: 默认值为 ``'OR_RuleSet'`` 。规则集名称
+    :type name: str
+    :param description: 默认值为 ``''`` 。规则集描述
+    :type description: str
     :return: RuleSet对象
     """
     return RuleSet(name=name, logic=LogicOperator.OR, rules=rules, description=description)
@@ -1054,9 +1144,12 @@ def combine_rules(
     """组合多个规则为规则集.
 
     :param rules: 多个规则或规则集
-    :param logic: 逻辑操作符，'and' 或 'or'
-    :param name: 规则集名称
-    :param description: 规则集描述
+    :param logic: 默认值为 ``'or'`` 。逻辑操作符，'and' 或 'or'
+    :type logic: str
+    :param name: 默认值为 ``'Combined'`` 。规则集名称
+    :type name: str
+    :param description: 默认值为 ``''`` 。规则集描述
+    :type description: str
     :return: RuleSet对象
 
     **参考样例**

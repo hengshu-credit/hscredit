@@ -22,26 +22,94 @@ class KMeansBinning(BaseBinning):
     使用K-Means算法将特征值聚类成K个簇，每个簇作为一个分箱。
     根据聚类中心排序确定分箱边界（相邻聚类中心的中点）。
 
+    **参数**
+
+    :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
+        当fit时只传入df且y为None时，从df中提取该列作为目标变量。
+
+    :type target: str
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: Union[int, str]
+    :param decimal: 数值型切分点小数点保留精度，默认为4
+    :type decimal: int
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Dict[str, List]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]]
+
     :param max_n_bins: 最大分箱数，默认为5
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认为2
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+    :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认为None
+    :type max_bin_size: Optional[Union[float, int]]
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0
+    :type min_bad_rate: float
     :param monotonic: 是否要求坏样本率单调，默认为False
+    :type monotonic: Union[bool, str]
     :param special_codes: 特殊值列表，默认为None
+    :type special_codes: Optional[List]
     :param missing_separate: 是否将缺失值单独分为一箱，默认为True
+    :type missing_separate: bool
     :param random_state: 随机种子，用于K-Means初始化，默认为None
+    :type random_state: Optional[int]
     :param force_numerical: 是否强制作为数值型处理，默认为False（自动识别类别型）
+
         - True: 将所有特征视为数值型进行K-Means聚类分箱
+
         - False: 自动检测特征类型
+
+    :type force_numerical: bool
     :param n_init: K-Means初始化次数，默认为10
+    :type n_init: int
     :param max_iter: K-Means最大迭代次数，默认为300
+    :type max_iter: int
     :param verbose: 是否输出详细信息，默认为False
+    :type verbose: Union[bool, int]
 
     **属性**
 
     - splits_: 每个特征的分箱切分点
+
     - n_bins_: 每个特征的实际分箱数
+
     - bin_tables_: 每个特征的分箱统计表
 
     **参考样例**
@@ -125,12 +193,15 @@ class KMeansBinning(BaseBinning):
         """拟合 K-Means 分箱。
 
         对每个数值特征做一维 K-Means 聚类，以相邻聚类中心的中点作为切分点；类别特征按
-        类别成箱。支持 sklearn 风格 ``fit(X, y)`` 与 scorecardpipeline 风格 ``fit(df)``，
-        详见 :meth:`BaseBinning.fit`。
+        类别成箱。支持 sklearn 风格 ``fit(X, y)`` 与 scorecardpipeline 风格 ``fit(df)`` ，
+        详见  :meth:`BaseBinning.fit` 。
 
-        :param X: 训练数据，shape ``(n_samples, n_features)``，DataFrame 或 ndarray
-        :param y: 二分类目标变量（0=好/1=坏），仅用于生成分箱统计表；
+        :param X: 训练数据，shape ``(n_samples, n_features)`` ，DataFrame 或 ndarray
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。二分类目标变量（0=好/1=坏），仅用于生成分箱统计表
             scorecardpipeline 风格下可省略
+
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :param kwargs: 透传给基类的其他参数
         :return: 拟合后的分箱器自身（便于链式调用）
         """
@@ -445,14 +516,21 @@ class KMeansBinning(BaseBinning):
         将原始特征值转换为分箱索引、分箱标签或WOE值。
 
         :param X: 待转换数据, DataFrame或数组格式
-        :param metric: 转换类型, 可选值:
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param metric: 默认值为 ``'indices'`` 。转换类型, 可选值:
+
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
+
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
+
             - 'woe': 返回WOE值, 用于逻辑回归建模
+
+        :type metric: str
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
 
-        :example:
+        **参考样例**
+
         >>> binner = KMeansBinning()
         >>> binner.fit(X_train, y_train)
         >>>

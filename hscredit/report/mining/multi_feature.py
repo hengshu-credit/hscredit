@@ -65,23 +65,59 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
     代码风格参考hscredit的binning模块，fit方法兼容scorecardpipeline风格。
 
+    **参数**
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
     :param target: 目标变量列名，默认为'target'
-    :param exclude_cols: 需要排除的列名列表
+    :type target: str
+    :param exclude_cols: 默认值为 ``None`` 。需要排除的列名列表
+    :type exclude_cols: Optional[List[str]]
     :param features: 参与挖掘的字段名或字段名列表，默认None（使用全部候选字段）
-    :param feature_map: 字段名到字段含义的映射，用于规则报告展示
+    :type features: FeatureNames
+    :param feature_map: 默认值为 ``None`` 。字段名到字段含义的映射，用于规则报告展示
+    :type feature_map: Optional[Dict[str, str]]
     :param method: 分箱方法，取值与 `OptimalBinning.VALID_METHODS` 完全一致，不支持别名。
         默认为'quantile'
+
+    :type method: str
     :param max_n_bins: 最大分箱数，默认5。超过此值的数值型特征将分箱
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认2
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认0.01
+    :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认None
+    :type max_bin_size: Optional[Union[float, int]]
     :param monotonic: 坏样本率单调性约束，默认False
+    :type monotonic: Union[bool, str]
     :param cat_cutoff: 类别型变量处理阈值，默认None
+    :type cat_cutoff: Optional[Union[float, int]]
     :param min_samples: 最小样本数，默认10
+    :type min_samples: int
     :param min_lift: 最小lift阈值，默认1.1
+    :type min_lift: float
     :param special_codes: 特殊值列表，默认None
+    :type special_codes: Optional[List]
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: Union[bool, int]
     :param binning_kwargs: 分箱方法的其他参数，通过**kwargs传入
 
     **参考样例**
@@ -167,8 +203,11 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         """拟合挖掘器.
 
         :param X: 训练数据
-        :param y: 目标变量（可选）
-        :param features: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量（可选）
+        :type y: Optional[Union[pd.Series, np.ndarray]]
+        :param features: 默认值为 ``None`` 。本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
+        :type features: FeatureNames
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
@@ -339,8 +378,10 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
         :param feature1: 第一个特征
         :param feature2: 第二个特征
-        :param custom_splits1: 特征1的自定义分箱切分点
-        :param custom_splits2: 特征2的自定义分箱切分点
+        :param custom_splits1: 默认值为 ``None`` 。特征1的自定义分箱切分点
+        :type custom_splits1: Optional[List[float]]
+        :param custom_splits2: 默认值为 ``None`` 。特征2的自定义分箱切分点
+        :type custom_splits2: Optional[List[float]]
         :param kwargs: 其他参数
         :return: 交叉矩阵DataFrame
 
@@ -563,11 +604,16 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     ) -> pd.DataFrame:
         """获取所有特征对的交叉规则.
 
-        :param top_n: 每对特征的返回规则数
-        :param metric: 排序指标
-        :param max_feature_pairs: 最大特征对数量
-        :param min_samples: 最小样本数
-        :param min_lift: 最小lift
+        :param top_n: 默认值为 ``10`` 。每对特征的返回规则数
+        :type top_n: int
+        :param metric: 默认值为 ``'lift'`` 。排序指标
+        :type metric: str
+        :param max_feature_pairs: 默认值为 ``50`` 。最大特征对数量
+        :type max_feature_pairs: int
+        :param min_samples: 默认值为 ``None`` 。最小样本数
+        :type min_samples: Optional[int]
+        :param min_lift: 默认值为 ``None`` 。最小lift
+        :type min_lift: Optional[float]
         :return: 所有交叉规则DataFrame
         """
         self._check_fitted()
@@ -763,6 +809,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         """获取特征的分箱统计表（如果使用了hscredit分箱方法）.
 
         :param feature: 特征名
+        :type feature: str
         :return: 分箱统计表或None
         """
         self._check_fitted()
@@ -793,13 +840,21 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
     ):
         """绘制交叉热力图.
 
+        :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+        :type dpi: int
+
         :param feature1: 特征1
         :param feature2: 特征2
-        :param metric: 指标
-        :param figsize: 图大小
-        :param title: 自定义标题
-        :param save: 保存路径
+        :param metric: 默认值为 ``'lift'`` 。指标
+        :type metric: str
+        :param figsize: 默认值为 ``(12, 10)`` 。图大小
+        :type figsize: Tuple[int, int]
+        :param title: 默认值为 ``None`` 。自定义标题
+        :type title: Optional[str]
+        :param save: 默认值为 ``None`` 。保存路径
+        :type save: Optional[str]
         :param cmap: 颜色映射，默认使用RdYlGn
+        :type cmap: Optional[str]
         :return: matplotlib Figure对象
         """
         feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
@@ -856,8 +911,15 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         """绘制二维分箱图（主图+上下文分箱轴）.
 
         - 中心主图：二维网格指标热力图
+
         - 顶部：feature2 分箱轴（与主图共享x轴）
+
         - 右侧：feature1 分箱轴（与主图共享y轴）
+
+        **参数**
+
+        :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+        :type dpi: int
         """
         feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         try:

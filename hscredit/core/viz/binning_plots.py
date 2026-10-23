@@ -90,15 +90,20 @@ def _compute_bin_stats_from_raw_data(
     :param target: 目标变量（列名或数据）
     :param feature: 特征列名（当 data 为 DataFrame 时需要）
     :param method: 分箱方法，可选（与 OptimalBinning.VALID_METHODS 一致，共17种）：
+
         - 无监督方法: 'uniform'(等宽), 'quantile'(等频), 'kmeans'(K-Means聚类),
                     'kernel_density'(核密度)
+
         - 有监督方法: 'tree'(决策树), 'cart'(CART), 'chi'(卡方), 'mdlp'(信息论),
                     'best_ks'(最优KS), 'best_iv'(最优IV), 'best_lift'(最优Lift),
                     'target_bad_rate'(目标坏样本率), 'monotonic'(单调性),
                     'genetic'(遗传算法), 'smooth'(平滑)
+
         - 运筹规划方法: 'or_tools'(OR-Tools整数规划，需安装 ortools),
                     'cp_sat'(CP-SAT约束规划，需安装 ortools)
+
         默认: 'quantile'
+
     :param max_n_bins: 最大分箱数，默认10
     :param min_bin_size: 每箱最小样本占比，默认0.01
     :param rules: 自定义分箱边界（优先级高于method）
@@ -428,7 +433,8 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
         return super().get_extent(renderer)
 
     def get_bbox(self, renderer: Any):
-        """兼容 Matplotlib 3.7+ 的 ``OffsetBox`` 尺寸计算接口。"""
+        """兼容 Matplotlib 3.7+ 的 ``OffsetBox`` 尺寸计算接口。
+        """
         self._update_child_width(renderer)
         return super().get_bbox(renderer)
 
@@ -534,7 +540,7 @@ def _auto_rotate_horizontal_xticks(fig, ax, threshold: int = 35) -> None:
     """横向分箱图 x 轴（样本数）刻度方向自适应.
 
     默认垂直展示，避免相邻数值刻度相互重叠；当刻度文本最大长度超过 ``threshold``
-    时改为倾斜展示（角度由 :func:`_xtick_rotation_for_length` 动态决定）。
+    时改为倾斜展示（角度由  :func:`_xtick_rotation_for_length`  动态决定）。
 
     :param fig: 刻度所在 Figure（需先绘制以读取自动生成的刻度文本）
     :param ax: 横向模式下承载样本数的 x 轴 Axes
@@ -584,8 +590,7 @@ def bin_plot(
     bin_params=None,
     **kwargs,
 ):
-    """
-    特征分箱可视化图.
+    """特征分箱可视化图.
 
     支持两种使用方式：
 
@@ -611,35 +616,64 @@ def bin_plot(
         # 传入已计算好的分箱统计表
         bin_plot(feature_table, desc="特征描述")
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param data: 数据（DataFrame、Series 或分箱统计表）
-    :param target: 目标变量（列名、Series 或数组）
-    :param feature: 特征列名（当 data 为 DataFrame 且不明确时使用）
-    :param desc: 特征中文描述
-    :param figsize: 图像尺寸（创建新图时使用）
-    :param colors: 配色方案
-    :param save: 保存路径
+    :type data: Union[pd.DataFrame, pd.Series]
+    :param target: 默认值为 ``None`` 。目标变量（列名、Series 或数组）
+    :type target: Optional[Union[str, pd.Series, np.ndarray]]
+    :param feature: 默认值为 ``None`` 。特征列名（当 data 为 DataFrame 且不明确时使用）
+    :type feature: Optional[str]
+    :param desc: 默认值为 ``''`` 。特征中文描述
+    :type desc: str
+    :param figsize: 默认值为 ``(12, 7)`` 。图像尺寸（创建新图时使用）
+    :type figsize: tuple
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
-    :param max_len: 分箱标签最大长度
-    :param fontdict: 字体样式
-    :param hatch: 是否显示斜线
-    :param ending: 标题后缀
-    :param title: 完整标题（优先级高于 desc + ending）
-    :param max_n_bins: 分箱数量（仅用于方式1）
-    :param method: 分箱方法（仅用于方式1），可选 'quantile' 或 'uniform'
-    :param rules: 自定义分箱边界（仅用于方式1）
-    :param show_data_points: 是否显示数据点标记
-    :param show_overall_bad_rate: 是否显示整体坏样本率参考线
+    :type anchor: Optional[float]
+    :param max_len: 默认值为 ``35`` 。分箱标签最大长度
+    :type max_len: int
+    :param fontdict: 默认值为 ``None`` 。字体样式
+    :type fontdict: Optional[dict]
+    :param hatch: 默认值为 ``True`` 。是否显示斜线
+    :type hatch: bool
+    :param ending: 默认值为 ``'分箱图'`` 。标题后缀
+    :type ending: str
+    :param title: 默认值为 ``None`` 。完整标题（优先级高于 desc + ending）
+    :type title: Optional[str]
+    :param max_n_bins: 默认值为 ``10`` 。分箱数量（仅用于方式1）
+    :type max_n_bins: int
+    :param method: 默认值为 ``'quantile'`` 。分箱方法（仅用于方式1），可选 'quantile' 或 'uniform'
+    :type method: str
+    :param rules: 默认值为 ``None`` 。自定义分箱边界（仅用于方式1）
+    :type rules: Optional[List]
+    :param show_data_points: 默认值为 ``True`` 。是否显示数据点标记
+    :type show_data_points: bool
+    :param show_overall_bad_rate: 默认值为 ``True`` 。是否显示整体坏样本率参考线
+    :type show_overall_bad_rate: bool
     :param show_metric_summary: 是否显示左上角的指标角标（IV/KS/LIFT/趋势摘要），默认显示
-    :param metric_summary_layout: 指标摘要布局；``'compact'`` 为紧凑左对齐，
+    :type show_metric_summary: bool
+    :param metric_summary_layout: 默认值为 ``'compact'`` 。指标摘要布局； ``'compact'`` 为紧凑左对齐
         ``'full_width_center'`` 为与坐标轴等宽的单行居中摘要条
+
+    :type metric_summary_layout: str
     :param show_rate_axis: 是否显示坏样本率坐标轴刻度与标签（趋势线本身始终保留），默认显示
-    :param iv: 是否显示 IV 值（暂不支持）
-    :param result: 是否返回分箱统计表
-    :param ax: 可选的 matplotlib Axes 对象，用于在已有画布上绘图
+    :type show_rate_axis: bool
+    :param iv: 默认值为 ``True`` 。是否显示 IV 值（暂不支持）
+    :type iv: bool
+    :param result: 默认值为 ``False`` 。是否返回分箱统计表
+    :type result: bool
+    :param ax: 默认值为 ``None`` 。可选的 matplotlib Axes 对象，用于在已有画布上绘图
+    :type ax: Optional[Any]
     :param orientation: 图表方向，'horizontal'/'h'(横向，默认) 或 'vertical'/'v'(纵向)
+    :type orientation: str
     :param kwargs: 其他参数（兼容性）
     :return: 独立绘图时返回 Figure 或 (Figure, DataFrame)；传入 ax 时返回
-        Axes，``result=True`` 时返回 (Axes, DataFrame)
+        Axes， ``result=True`` 时返回 (Axes, DataFrame)
 
     **参考样例**
 
@@ -1095,21 +1129,23 @@ def corr_plot(
     dpi: int = 240,
     **kwargs,
 ):
-    """
-    特征相关性热力图.
+    """特征相关性热力图.
+
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
 
     :param data: 特征数据
-    :param figsize: 图像尺寸（创建新图时使用）
-    :param fontsize: 字体大小
-    :param mask: 是否只显示下三角
-    :param save: 保存路径
-    :param annot: 是否显示数值
-    :param max_len: 特征名最大长度
-    :param fmt: 数值格式
-    :param step: 色阶步数
-    :param linewidths: 边框宽度
-    :param linecolor: 边框颜色
-    :param ax: 可选的 matplotlib Axes 对象
+    :param figsize: 默认值为 ``(16, 8)`` 。图像尺寸（创建新图时使用）
+    :param fontsize: 默认值为 ``16`` 。字体大小
+    :param mask: 默认值为 ``False`` 。是否只显示下三角
+    :param save: 默认值为 ``None`` 。保存路径
+    :param annot: 默认值为 ``True`` 。是否显示数值
+    :param max_len: 默认值为 ``35`` 。特征名最大长度
+    :param fmt: 默认值为 ``'.2f'`` 。数值格式
+    :param step: 默认值为 ``11`` 。色阶步数
+    :param linewidths: 默认值为 ``0.1`` 。边框宽度
+    :param linecolor: 默认值为 ``'white'`` 。边框颜色
+    :param ax: 默认值为 ``None`` 。可选的 matplotlib Axes 对象
     :return: matplotlib Figure 或 Axes（传入 ax 时返回 ax）
 
     **参考样例**
@@ -1185,29 +1221,34 @@ def ks_plot(
     *,
     dpi: int = 240,
 ):
-    """
-    KS曲线和ROC曲线.
+    """KS曲线和ROC曲线.
+
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
 
     :param score: 预测分数或评分
     :param target: 真实标签
-    :param title: 图表标题
-    :param fontsize: 字体大小
-    :param figsize: 图像尺寸（创建新图时使用）
-    :param save: 保存路径
-    :param colors: 配色方案
+    :param title: 默认值为 ``''`` 。图表标题
+    :param fontsize: 默认值为 ``14`` 。字体大小
+    :param figsize: 默认值为 ``(16, 8)`` 。图像尺寸（创建新图时使用）
+    :param save: 默认值为 ``None`` 。保存路径
+    :param colors: 默认值为 ``None`` 。配色方案
     :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
-    :param axes: 可选的 matplotlib Axes 对象数组 [ax1, ax2]
-    :param ax: 可选的单个 Axes（配合 curve='ks'/'roc' 仅绘制单条曲线时使用）
-    :param curve: 绘制内容，默认 ``'both'``：
+    :param axes: 默认值为 ``None`` 。可选的 matplotlib Axes 对象数组 [ax1, ax2]
+    :param ax: 默认值为 ``None`` 。可选的单个 Axes（配合 curve='ks'/'roc' 仅绘制单条曲线时使用）
+    :param curve: 绘制内容，默认 ``'both'`` ：
 
-        - ``'both'``：同时绘制 KS 曲线与 ROC 曲线（需两个 Axes）
-        - ``'ks'``：仅绘制 KS 曲线（单个 Axes，便于嵌入组合图）
-        - ``'roc'``：仅绘制 ROC 曲线（单个 Axes）
+        - ``'both'`` ：同时绘制 KS 曲线与 ROC 曲线（需两个 Axes）
+
+        - ``'ks'`` ：仅绘制 KS 曲线（单个 Axes，便于嵌入组合图）
+
+        - ``'roc'`` ：仅绘制 ROC 曲线（单个 Axes）
 
     :param pos_label: 正样本标签，默认 1；字符串或非 0/1 标签必须显式指定
     :param score_direction: 分数方向，可选 auto（默认，AUC 小于 0.5 时自动反向）、
         higher_risk（值越大正样本风险越高）或 higher_safe（值越大越安全）
-    :param sample_weight: 可选非负样本权重；传入后曲线、AUC和覆盖率均按权重计算
+
+    :param sample_weight: 默认值为 ``None`` 。可选非负样本权重；传入后曲线、AUC和覆盖率均按权重计算
 
     同分样本按同一阈值整体累计；标签或分数缺失的样本成对删除，同一权重下KS与 ``metrics.ks`` 一致。
 
@@ -1372,21 +1413,23 @@ def hist_plot(
     dpi: int = 240,
     **kwargs,
 ):
-    """
-    特征值分布直方图.
+    """特征值分布直方图.
+
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
 
     :param score: 特征值
-    :param y_true: 标签
-    :param figsize: 图像尺寸（创建新图时使用）
-    :param bins: 分箱数
-    :param save: 保存路径
-    :param labels: 图例标签
-    :param desc: 描述
+    :param y_true: 默认值为 ``None`` 。标签
+    :param figsize: 默认值为 ``(15, 10)`` 。图像尺寸（创建新图时使用）
+    :param bins: 默认值为 ``30`` 。分箱数
+    :param save: 默认值为 ``None`` 。保存路径
+    :param labels: 默认值为 ``None`` 。图例标签
+    :param desc: 默认值为 ``''`` 。描述
     :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
-    :param fontsize: 字体大小
-    :param kde: 是否显示核密度估计
-    :param title: 完整标题（优先级高于 desc）
-    :param ax: 可选的 matplotlib Axes 对象
+    :param fontsize: 默认值为 ``14`` 。字体大小
+    :param kde: 默认值为 ``False`` 。是否显示核密度估计
+    :param title: 默认值为 ``None`` 。完整标题（优先级高于 desc）
+    :param ax: 默认值为 ``None`` 。可选的 matplotlib Axes 对象
     :param kwargs: 其他参数
     :return: matplotlib Figure 或 Axes（传入 ax 时返回 ax）
 
@@ -1516,31 +1559,36 @@ def psi_plot(
     bin_params=None,
     **kwargs,
 ):
-    """
-    PSI稳定性分析图.
+    """PSI稳定性分析图.
 
     支持两种输入方式：
+
     1. 直接传入原始分数数据（pd.Series 或单列 pd.DataFrame），自动分箱计算PSI
+
     2. 传入已计算好的分箱表（pd.DataFrame，含 '分箱' 列），直接绘图
+
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
 
     :param expected: 期望分布（原始数据或分箱表）
     :param actual: 实际分布（原始数据或分箱表）
-    :param y: 目标变量（pd.Series），用于绘制坏样本率折线图。当传入原始数据时，
+    :param y: 默认值为 ``None`` 。目标变量（pd.Series），用于绘制坏样本率折线图。当传入原始数据时
         应与 expected/actual 长度之和一致，按相同分箱计算坏样本率；为 None 时仅展示
         预期/实际样本占比，不创建坏样本率副轴和图例。
-    :param labels: 标签
-    :param desc: 描述
-    :param save: 保存路径
-    :param colors: 配色
-    :param figsize: 图像尺寸
+
+    :param labels: 默认值为 ``None`` 。标签
+    :param desc: 默认值为 ``''`` 。描述
+    :param save: 默认值为 ``None`` 。保存路径
+    :param colors: 默认值为 ``None`` 。配色
+    :param figsize: 默认值为 ``(15, 8)`` 。图像尺寸
     :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
-    :param width: 柱宽
-    :param result: 是否返回统计表
-    :param plot: 是否绘图
-    :param max_len: 标签最大长度
-    :param hatch: 是否显示斜线
-    :param title: 完整标题（优先级高于 desc）
-    :return: 当 ``result=True`` 时返回 PSI 分箱统计表（``pd.DataFrame``），否则返回图对象
+    :param width: 默认值为 ``0.35`` 。柱宽
+    :param result: 默认值为 ``False`` 。是否返回统计表
+    :param plot: 默认值为 ``True`` 。是否绘图
+    :param max_len: 默认值为 ``None`` 。标签最大长度
+    :param hatch: 默认值为 ``True`` 。是否显示斜线
+    :param title: 默认值为 ``None`` 。完整标题（优先级高于 desc）
+    :return: 当 ``result=True`` 时返回 PSI 分箱统计表（ ``pd.DataFrame`` ），否则返回图对象
 
     **参考样例**
 
@@ -1840,19 +1888,21 @@ def dataframe_plot(
     dpi: int = 240,
     **kwargs,
 ):
-    """
-    将DataFrame转换为图像.
+    """将DataFrame转换为图像.
+
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
 
     :param df: 数据框
-    :param row_height: 行高
-    :param fontsize: 字体大小
-    :param header_color: 表头颜色
-    :param row_colors: 行颜色
-    :param edge_color: 边框颜色
-    :param bbox: 边框
-    :param header_columns: 表头列数
-    :param ax: 坐标系
-    :param save: 保存路径
+    :param row_height: 默认值为 ``0.4`` 。行高
+    :param fontsize: 默认值为 ``14`` 。字体大小
+    :param header_color: 默认值为 ``None`` 。表头颜色
+    :param row_colors: 默认值为 ``None`` 。行颜色
+    :param edge_color: 默认值为 ``'w'`` 。边框颜色
+    :param bbox: 默认值为 ``[0, 0, 1, 1]`` 。边框
+    :param header_columns: 默认值为 ``0`` 。表头列数
+    :param ax: 默认值为 ``None`` 。坐标系
+    :param save: 默认值为 ``None`` 。保存路径
     :return: matplotlib Figure
 
     **参考样例**
@@ -1924,26 +1974,31 @@ def distribution_plot(
     overdue_operator: str = ">=",
     dpi: int = 240,
 ):
-    """
-    样本时间分布图.
+    """样本时间分布图.
 
     支持两种模式：
+
     1. 单目标模式：传入 target 列名，展示好/坏样本堆叠柱状图 + 坏样本率折线
+
     2. 多逾期口径模式：传入 overdue + dpds，展示样本总数柱状图 + 多条坏样本率折线
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param data: 数据集
-    :param date: 日期列名
-    :param target: 目标列名（单目标模式使用）
-    :param save: 保存路径
-    :param figsize: 图像尺寸
-    :param colors: 配色
-    :param freq: 日期频率，'D'/'W'/'M'/'Q'
+    :param date: 默认值为 ``'date'`` 。日期列名
+    :param target: 默认值为 ``None`` 。目标列名（单目标模式使用）
+    :type target: Optional[TargetInput]
+    :param save: 默认值为 ``None`` 。保存路径
+    :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸
+    :param colors: 默认值为 ``None`` 。配色
+    :param freq: 默认值为 ``'M'`` 。日期频率，'D'/'W'/'M'/'Q'
     :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
-    :param result: 是否返回统计表
-    :param hatch: 是否显示斜线
-    :param overdue: 逾期列名列表，如 ['dpd7', 'dpd15', 'dpd30']（多逾期口径模式）
-    :param dpds: 逾期阈值列表，与 overdue 一一对应，如 [1, 1, 1]
-    :param title: 图表标题
+    :param result: 默认值为 ``False`` 。是否返回统计表
+    :param hatch: 默认值为 ``True`` 。是否显示斜线
+    :param overdue: 默认值为 ``None`` 。逾期列名列表，如 ['dpd7', 'dpd15', 'dpd30']（多逾期口径模式）
+    :param dpds: 默认值为 ``None`` 。逾期阈值列表，与 overdue 一一对应，如 [1, 1, 1]
+    :param title: 默认值为 ``None`` 。图表标题
     :return: matplotlib Figure or pd.DataFrame
 
     **参考样例**
@@ -1957,10 +2012,12 @@ def distribution_plot(
     ...     overdue=['dpd7', 'dpd15', 'dpd30'], dpds=[1, 1, 1]
     ... )
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>=``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>=`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     if colors is None:
@@ -2849,38 +2906,79 @@ def bin_trend_plot(
     支持按时间维度（自动聚合）或指定维度列进行分组展示。
 
     :param data: 输入数据
+    :type data: pd.DataFrame
     :param feature: 特征列名
+    :type feature: str
     :param target: 目标变量列名（0/1）
-    :param group: 维度列名（单维或多维），用于分组展示
-    :param date: 日期列名，如提供则按日期分组
+    :type target: str
+    :param group: 默认值为 ``None`` 。维度列名（单维或多维），用于分组展示
+    :type group: Optional[Union[str, List[str]]]
+    :param date: 默认值为 ``None`` 。日期列名，如提供则按日期分组
+    :type date: Optional[str]
     :param freq: 日期聚合频率，'D'/'W'/'M'/'Q'，默认'M'
+    :type freq: str
     :param method: 分箱方法，取值与 OptimalBinning.VALID_METHODS 一致（共17种），
         如 'quantile'/'uniform'/'cart' 等，默认 'quantile'
+
+    :type method: str
     :param max_n_bins: 最大分箱数，默认10
+    :type max_n_bins: int
     :param min_bin_size: 最小箱占比，默认0.02
-    :param rules: 预定义分箱规则 {特征名: 分箱边界列表}
-    :param special_codes: 特殊值列表
+    :type min_bin_size: float
+    :param rules: 默认值为 ``None`` 。预定义分箱规则 {特征名: 分箱边界列表}
+    :type rules: Optional[Dict]
+    :param special_codes: 默认值为 ``None`` 。特殊值列表
+    :type special_codes: Optional[List]
     :param shared_bins: 各分组是否共享同一切分点，默认 'max_samples'
+
         - 'first': 使用第一个分组（最早时间/第一个维度值）的切分点
+
         - 'last': 使用最后一个分组（最近时间/最后一个维度值）的切分点
+
         - 'max_samples': 使用样本量最多的分组的切分点（默认）
+
         - False 或 None: 每个分组独立计算切分点
+
+    :type shared_bins: Optional[Union[str, bool]]
     :param sort_by: 排序列名，None表示不排序，默认按维度值排序
-    :param sort_order: 排序方向，'asc'/'desc'
-    :param max_groups: 最大展示分组数，None表示全部展示
-    :param figsize: 图像尺寸，None时自动计算；多列面板会按实际轴装饰自适应到最小安全间距
-    :param colors: 配色方案
-    :param title: 图表标题
-    :param show_overall: 是否显示整体样本面板
-    :param show_stats: 是否显示统计指标
+    :type sort_by: Optional[str]
+    :param sort_order: 默认值为 ``'asc'`` 。排序方向，'asc'/'desc'
+    :type sort_order: str
+    :param max_groups: 默认值为 ``None`` 。最大展示分组数，None表示全部展示
+    :type max_groups: Optional[int]
+    :param figsize: 默认值为 ``None`` 。图像尺寸，None时自动计算；多列面板会按实际轴装饰自适应到最小安全间距
+    :type figsize: Optional[tuple]
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param title: 默认值为 ``None`` 。图表标题
+    :type title: Optional[str]
+    :param show_overall: 默认值为 ``True`` 。是否显示整体样本面板
+    :type show_overall: bool
+    :param show_stats: 默认值为 ``True`` 。是否显示统计指标
+    :type show_stats: bool
     :param orientation: 图表方向，'vertical'（纵向，默认）或 'horizontal'
-    :param dpi: 图像分辨率
-    :param save: 保存路径
+    :type orientation: str
+    :param dpi: 默认值为 ``150`` 。图像分辨率
+    :type dpi: int
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
+    :type anchor: Optional[float]
     :param max_cols: 纵向布局每行最大子图数，默认 3；横向布局保持单列
-    :param n_jobs: 分箱统计并行工作数，默认 -1
-    :param parallel_backend: 并行后端，默认由共享并行运行时选择
-    :param parallel_config: 并行执行配置
+    :type max_cols: int
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
     :param kwargs: 其他参数
     :return: matplotlib Figure
 
@@ -2981,20 +3079,42 @@ def batch_bin_trend_plot(
     """批量绘制多个特征的风险趋势图.
 
     :param data: 输入数据
+    :type data: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param target: 目标变量列名
-    :param group: 维度列名
-    :param date: 日期列名
-    :param freq: 日期聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
-    :param sort_by: 特征排序指标，``'iv'``（默认）/ ``'ks'`` / ``'auc'``，决定绘图先后顺序
+    :type target: str
+    :param group: 默认值为 ``None`` 。维度列名
+    :type group: Optional[Union[str, List[str]]]
+    :param date: 默认值为 ``None`` 。日期列名
+    :type date: Optional[str]
+    :param freq: 日期聚合频率， ``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
+    :type freq: str
+    :param sort_by: 特征排序指标， ``'iv'`` （默认）/ ``'ks'`` / ``'auc'`` ，决定绘图先后顺序
+    :type sort_by: str
     :param max_features: 最大绘制特征数，默认 10
+    :type max_features: int
     :param figsize_per_feature: 每个特征的图尺寸，默认 None（由 bin_trend_plot 按面板数量和方向自动计算，
         并按实际轴装饰自适应相邻列间距）
-    :param save_dir: 保存目录，提供时各特征图按特征名保存为图片
+
+    :type figsize_per_feature: Optional[tuple]
+    :param save_dir: 默认值为 ``None`` 。保存目录，提供时各特征图按特征名保存为图片
+    :type save_dir: Optional[str]
     :param max_cols: 每个特征趋势图每行最大子图数，默认 3
-    :param n_jobs: 特征及分组统计的并行工作数，默认 -1
-    :param parallel_backend: 并行后端，默认由共享并行运行时选择
-    :param parallel_config: 并行执行配置
+    :type max_cols: int
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
     :param kwargs: 其他参数传递给 bin_trend_plot
     :return: 特征名到 ``Figure`` 的字典
 
@@ -3244,34 +3364,72 @@ def bin_overdues_plot(
     """绘制多个逾期天数的分箱图（横向展示）.
 
     支持两种输入方式：
+
     1. 原始数据 + overdue + dpds：根据原始数据计算分箱并绘图
+
     2. 分箱表（来自 feature_bin_stats）：直接解析多级表头分箱表并绘图
 
-    :param data: 输入数据（原始数据模式）或分箱表（当传入 bin_table 时忽略）
-    :param feature: 特征列名（原始数据模式需要）
-    :param overdue: 逾期天数列名列表，如 ['dpd7', 'dpd15', 'dpd30']
-    :param dpds: 逾期阈值列表，与 overdue 一一对应，如 [1, 1, 1]
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
+    :param data: 默认值为 ``None`` 。输入数据（原始数据模式）或分箱表（当传入 bin_table 时忽略）
+    :type data: Optional[pd.DataFrame]
+    :param feature: 默认值为 ``None`` 。特征列名（原始数据模式需要）
+    :type feature: Optional[str]
+    :param overdue: 默认值为 ``None`` 。逾期天数列名列表，如 ['dpd7', 'dpd15', 'dpd30']
+    :type overdue: Optional[List[str]]
+    :param dpds: 默认值为 ``None`` 。逾期阈值列表，与 overdue 一一对应，如 [1, 1, 1]
         表示逾期天数>=该阈值时视为坏样本
-    :param bin_table: 分箱表（来自 feature_bin_stats 的多级表头 DataFrame）
+
+    :type dpds: Optional[List[int]]
+    :param bin_table: 默认值为 ``None`` 。分箱表（来自 feature_bin_stats 的多级表头 DataFrame）
         传入后将直接使用分箱表绘图，忽略 data/overdue/dpds 参数
+
+    :type bin_table: Optional[pd.DataFrame]
     :param method: 分箱方法，默认 'quantile'
+    :type method: str
     :param max_n_bins: 最大分箱数，默认10
+    :type max_n_bins: int
     :param min_bin_size: 最小箱占比，默认0.02
-    :param rules: 预定义分箱规则 {特征名: 分箱边界列表}
+    :type min_bin_size: float
+    :param rules: 默认值为 ``None`` 。预定义分箱规则 {特征名: 分箱边界列表}
+    :type rules: Optional[Dict]
     :param shared_bins: 各逾期目标是否共享同一切分点，默认 'max_samples'
+
         - 'first': 使用第一个逾期定义的切分点
+
         - 'last': 使用最后一个逾期定义的切分点
+
         - 'max_samples': 使用有效样本量最多的逾期定义的切分点（默认）
+
         - False 或 None: 每个逾期定义独立计算切分点
-    :param figsize: 图像尺寸，None时自动计算
-    :param colors: 配色方案
-    :param title: 图表总标题
-    :param show_stats: 是否显示统计指标
-    :param max_cols: 每行最多显示几个子图
-    :param save: 保存路径
-    :param n_jobs: 多逾期统计的并行工作数，默认 -1
-    :param parallel_backend: 并行后端，默认由共享并行运行时选择
-    :param parallel_config: 并行执行配置
+
+    :type shared_bins: Optional[Union[str, bool]]
+    :param figsize: 默认值为 ``None`` 。图像尺寸，None时自动计算
+    :type figsize: Optional[tuple]
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param title: 默认值为 ``None`` 。图表总标题
+    :type title: Optional[str]
+    :param show_stats: 默认值为 ``True`` 。是否显示统计指标
+    :type show_stats: bool
+    :param max_cols: 默认值为 ``3`` 。每行最多显示几个子图
+    :type max_cols: int
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
     :param kwargs: 其他参数
     :return: matplotlib Figure
 
@@ -3296,10 +3454,12 @@ def bin_overdues_plot(
     ... )
     >>> fig = bin_overdues_plot(bin_table=bin_table)
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>=``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>=`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     reject_legacy_target_keywords(kwargs)
     validate_overdue_operator(overdue_operator)
@@ -3890,20 +4050,30 @@ def bin_2d_plot(
        :header-rows: 0
 
        * - KS 曲线
+
          - 特征2分箱图
+
          - 风险拒绝比
+
        * - 样本占比
+
          - 坏样本率
+
          - 特征1分箱图
+
        * - LIFT
+
          - 坏账改善
+
          - KS 曲线
 
-    - 两个单变量分箱图（复用 :func:`bin_plot`，与交叉热力图共用坐标系）：特征2分箱图
+    - 两个单变量分箱图（复用  :func:`bin_plot` ，与交叉热力图共用坐标系）：特征2分箱图
       （纵向，bin 落在 x 轴）置于第1行中列，与同列热力图（坏样本率/坏账改善）按列对齐；
       特征1分箱图（横向，bin 落在 y 轴）置于第2行右列，与同行热力图（样本占比/坏样本率）
       按行对齐
+
     - 两个 KS 曲线按一维分箱 WOE 风险方向，由分箱好坏样本计数重建，分置左上、右下角
+
     - 其余 5 格为两变量分箱交叉指标热力图（类似相关性图，均以百分数标注）：
       样本占比、坏样本率、LIFT、风险拒绝比、坏账改善
 
@@ -3919,20 +4089,35 @@ def bin_2d_plot(
     >>> b = OptimalBinning2D(max_n_bins=5).fit(df, y=df['target'], features=['f1', 'f2'])
     >>> bin_2d_plot(b)
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param data: DataFrame（方式1）或已拟合的 OptimalBinning2D（方式2）
-    :param features: [特征1, 特征2]，特征1 为行维度，特征2 为列维度（方式1 需要）
-    :param target: 目标列名或数组（方式1 需要）
-    :param binner: 已拟合的 OptimalBinning2D（可选，优先级高于由 data 构造）
-    :param method: 分箱方法（方式1 构造 OptimalBinning2D 时使用）
-    :param max_n_bins: 最大分箱数（方式1）
-    :param min_bin_size: 每箱最小样本占比（方式1）
-    :param figsize: 图像尺寸，None 时根据分箱数自动计算
-    :param colors: 配色方案
-    :param title: 图表总标题
-    :param annot: 热力图是否标注数值
-    :param fontsize: 单元格字体大小
-    :param save: 保存路径
-    :param bin_params: 透传给 OptimalBinning2D 的其他参数（方式1）
+    :param features: 默认值为 ``None`` 。[特征1, 特征2]，特征1 为行维度，特征2 为列维度（方式1 需要）
+    :type features: Optional[List[str]]
+    :param target: 默认值为 ``None`` 。目标列名或数组（方式1 需要）
+    :type target: Optional[Union[str, pd.Series, np.ndarray]]
+    :param binner: 默认值为 ``None`` 。已拟合的 OptimalBinning2D（可选，优先级高于由 data 构造）
+    :param method: 默认值为 ``'quantile'`` 。分箱方法（方式1 构造 OptimalBinning2D 时使用）
+    :type method: str
+    :param max_n_bins: 默认值为 ``5`` 。最大分箱数（方式1）
+    :type max_n_bins: int
+    :param min_bin_size: 默认值为 ``0.02`` 。每箱最小样本占比（方式1）
+    :type min_bin_size: Union[float, int]
+    :param figsize: 默认值为 ``None`` 。图像尺寸，None 时根据分箱数自动计算
+    :type figsize: Optional[tuple]
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param title: 默认值为 ``None`` 。图表总标题
+    :type title: Optional[str]
+    :param annot: 默认值为 ``True`` 。热力图是否标注数值
+    :type annot: bool
+    :param fontsize: 默认值为 ``10`` 。单元格字体大小
+    :type fontsize: int
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
+    :param bin_params: 默认值为 ``None`` 。透传给 OptimalBinning2D 的其他参数（方式1）
+    :type bin_params: Optional[Dict]
     :return: matplotlib Figure
 
     **参考样例**

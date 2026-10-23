@@ -24,33 +24,117 @@ class BestLiftBinning(BaseBinning):
     Lift = 箱内坏样本率 / 总体坏样本率。
 
     业务场景：
+
     - 高风险识别：寻找头部 Lift > 2 或尾部 Lift < 0.5 的分箱
+
     - 风险分层：最大化不同分箱间的风险差异
 
+    **参数**
+
+    :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
+        与显式参数重名或不存在的参数会被构造函数拒绝。
+
+    :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
+        当fit时只传入df且y为None时，从df中提取该列作为目标变量。
+
+    :type target: str
+    :param min_bad_rate: 每箱最小坏样本率，用于避免极端情况，默认为0.0
+    :type min_bad_rate: float
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: Union[int, str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Dict[str, List]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]]
+
     :param max_n_bins: 最大分箱数，默认为5
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认为2
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+
         - 如果 < 1, 表示占比 (如 0.01 表示 1%)
+
         - 如果 >= 1, 表示绝对数量 (如 100 表示最少100个样本)
+
+    :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认为0.5
+    :type max_bin_size: Optional[Union[float, int]]
     :param min_lift: 最小 Lift 阈值，默认为0（不限制）
+
         - 设为0：不限制，允许任何 Lift 值
+
         - 设为0.5：过滤掉 Lift > 0.5 的箱（用于识别极低风险）
+
         - 设为1.5：只保留 Lift > 1.5 的箱（用于识别极高风险）
+
+    :type min_lift: float
     :param monotonic: 坏样本率单调性约束，默认为True
+
         - False: 不要求单调性
+
         - True 或 'auto': 自动检测并应用最佳单调方向
+
         - 'ascending': 强制坏样本率递增
+
         - 'descending': 强制坏样本率递减
+
+    :type monotonic: Union[bool, str]
     :param n_prebins: 预分箱数量，默认为50
+
         - 预分箱越细，结果越精确，但计算量越大
+
+    :type n_prebins: int
     :param optimization: 优化目标，默认为'extreme'
+
         - 'extreme': 最大化极端箱的 Lift（头部最高或尾部最低）
+
         - 'spread': 最大化 Lift 分布范围（max - min）
+
         - 'iv': 最大化 IV 值
+
+    :type optimization: str
     :param missing_separate: 缺失值是否单独分箱，默认为True
+    :type missing_separate: bool
     :param special_codes: 特殊值列表，默认为None
+    :type special_codes: Optional[List]
     :param random_state: 随机种子，默认为None
+    :type random_state: Optional[int]
 
     **参考样例**
 
@@ -64,18 +148,22 @@ class BestLiftBinning(BaseBinning):
     **注意**
 
     Best Lift 分箱的特点:
+
     1. 关注头部/尾部的极端风险识别
+
     2. 支持单调性约束，保证业务可解释性
+
     3. 自动确定最优单调方向
+
     4. 高效的动态规划风格实现
 
-    其中 ``Lift（提升度）= 箱内坏样本率 / 总体坏样本率``，Lift>1 表示该箱风险高于均值。
+    其中 ``Lift（提升度）= 箱内坏样本率 / 总体坏样本率`` ，Lift>1 表示该箱风险高于均值。
 
     **引用**
 
     Lift / 提升度是响应模型与风险分层的标准评估口径，参见 Siddiqi, N. (2006).
     *Credit Risk Scorecards.* Wiley，以及营销响应模型中的 lift chart 概念
-    https://en.wikipedia.org/wiki/Lift_(data_mining)
+    Siddiqi (2006) 的模型区分度章节
     """
 
     def __init__(
@@ -133,8 +221,12 @@ class BestLiftBinning(BaseBinning):
     ) -> "BestLiftBinning":
         """拟合 Best Lift 分箱.
 
+        :param kwargs: 其他参数，传递给具体的分箱算法
+
         :param X: 训练数据
-        :param y: 目标变量
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :return: 拟合后的分箱器
         """
         # 检查输入数据
@@ -193,8 +285,11 @@ class BestLiftBinning(BaseBinning):
         """对数值型变量进行 Best Lift 分箱.
 
         算法流程：
+
         1. 等频预分割成 n_prebins 个初始箱
+
         2. 计算每个初始箱的统计信息
+
         3. 使用贪心算法合并分箱，优化目标函数
 
         :param X: 特征数据
@@ -639,15 +734,23 @@ class BestLiftBinning(BaseBinning):
         将原始特征值转换为分箱索引、分箱标签、WOE值或LIFT值。
 
         :param X: 待转换数据, DataFrame或数组格式
-        :param metric: 转换类型, 可选值:
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param metric: 默认值为 ``'indices'`` 。转换类型, 可选值:
+
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
+
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
+
             - 'woe': 返回WOE值, 用于逻辑回归建模
+
             - 'lift': 返回LIFT值, 用于评估分箱效果
+
+        :type metric: str
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
 
-        :example:
+        **参考样例**
+
         >>> binner = BestLiftBinning()
         >>> binner.fit(X_train, y_train)
         >>>
@@ -681,6 +784,7 @@ class BestLiftBinning(BaseBinning):
         """获取分箱统计表.
 
         :param feature: 特征名
+        :type feature: str
         :return: 分箱统计表
         """
         return self._get_lift_bin_table(feature)

@@ -17,10 +17,16 @@ class BadDebtLoss(BaseLoss):
 
     业务惩罚依赖硬阈值，训练仅使用 BCE 代理导数；本类不直接对坏账率求导。
 
+    **参数**
+
     :param target_approval_rate: 目标通过率，范围 (0, 1]，默认为0.3
+    :type target_approval_rate: float
     :param bad_debt_weight: 坏账率权重，默认为1.0
+    :type bad_debt_weight: float
     :param approval_weight: 通过率权重，默认为0.5
+    :type approval_weight: float
     :param name: 损失函数名称，默认为"bad_debt_loss"
+    :type name: str
 
     **参考样例**
 
@@ -136,8 +142,12 @@ class ApprovalRateLoss(BaseLoss):
 
     硬阈值通过率用于评估与模型选择；训练仅使用 BCE 代理导数。
 
+    **参数**
+
     :param target_bad_debt_rate: 目标坏账率，默认为0.05
+    :type target_bad_debt_rate: float
     :param name: 损失函数名称，默认为"approval_rate_loss"
+    :type name: str
 
     **参考样例**
 
@@ -224,12 +234,17 @@ class ApprovalRateLoss(BaseLoss):
 class ProfitMaxLoss(BaseLoss):
     """利润最大化损失函数，综合考虑坏账损失和利息收益最大化总利润。
 
-    训练目标为成本加权 BCE 代理；``profit()`` 单独计算实际阈值利润。
-    需要连续软利润目标时使用 ``ExpectedProfitLoss``。
+    训练目标为成本加权 BCE 代理； ``profit()`` 单独计算实际阈值利润。
+    需要连续软利润目标时使用 ``ExpectedProfitLoss`` 。
+
+    **参数**
 
     :param interest_income: 单位利息收益，默认为1.0
+    :type interest_income: float
     :param bad_debt_loss: 单位坏账损失，默认为10.0
+    :type bad_debt_loss: float
     :param name: 损失函数名称，默认为"profit_max_loss"
+    :type name: str
 
     **参考样例**
 

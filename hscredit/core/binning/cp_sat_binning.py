@@ -43,35 +43,116 @@ class CPSATBinning(BaseBinning):
 
     **参数**
 
+    :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
+        与显式参数重名或不存在的参数会被构造函数拒绝。
+
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: Union[int, str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Dict[str, List]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]]
+
     :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
         当fit时只传入df且y为None时，从df中提取该列作为目标变量。
+
+    :type target: str
     :param max_n_bins: 最大分箱数，默认为5
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认为2
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认为0.02
+
         - 如果 < 1, 表示占比 (如 0.02 表示 2%)
+
         - 如果 >= 1, 表示绝对数量 (如 100 表示最少100个样本)
+
+    :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认为None
+    :type max_bin_size: Optional[Union[float, int]]
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0
+    :type min_bad_rate: float
     :param monotonic: 坏样本率单调性约束，默认为'auto'
+
         - False: 不要求单调性
+
         - True 或 'auto': 自动检测并应用最佳单调方向
+
         - 'ascending': 强制坏样本率递增
+
         - 'descending': 强制坏样本率递减
+
+    :type monotonic: Union[bool, str]
     :param objective: 优化目标，默认为'iv'
+
         - 'iv': 最大化 IV 值（Information Value）
+
         - 'ks': 最大化 KS 统计量
+
         - 'gini': 最大化 Gini 系数
+
+    :type objective: str
     :param n_prebins: 预分箱数量（候选分割点数），默认为50
+
         - 候选点越多，求解越精确，但计算时间越长
+
+    :type n_prebins: int
     :param max_candidates: 最大候选分割点数，默认为100
+
         - 如果唯一值超过此数，将使用分位数采样
+
+    :type max_candidates: int
     :param time_limit: 求解时间限制（秒），默认为30
+
         - 超过此时间将返回当前找到的最优解
+
+    :type time_limit: int
     :param num_workers: 原生求解器线程数；默认 None，继承统一 n_jobs 预算
+
         - 可以设置为大于1以加速求解
+
+    :type num_workers: Optional[int]
     :param missing_separate: 缺失值是否单独分箱，默认为True
+    :type missing_separate: bool
     :param special_codes: 特殊值列表，默认为None
+    :type special_codes: Optional[List]
     :param random_state: 随机种子，默认为None
+    :type random_state: Optional[int]
 
     **参考样例**
 
@@ -94,11 +175,16 @@ class CPSATBinning(BaseBinning):
     **注意**
 
     CP-SAT 分箱的特点:
+
     1. 能够找到全局最优解（而非贪心算法的局部最优）
+
     2. 支持复杂的约束条件组合
+
     3. 计算时间可控，可设置时间限制
+
     4. 适合对分箱质量要求高的场景
-    5. 依赖可选包 ``ortools``，未安装时实例化会抛出 ImportError
+
+    5. 依赖可选包 ``ortools`` ，未安装时实例化会抛出 ImportError
 
     **引用**
 
@@ -176,8 +262,12 @@ class CPSATBinning(BaseBinning):
     ) -> "CPSATBinning":
         """拟合 CP-SAT 运筹规划分箱.
 
+        :param kwargs: 其他参数，传递给具体的分箱算法
+
         :param X: 训练数据
-        :param y: 目标变量（可选）
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量（可选）
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :return: 拟合后的分箱器
         """
         X, y = self._check_input(X, y)
@@ -222,9 +312,12 @@ class CPSATBinning(BaseBinning):
         """获取候选分割点和预计算的统计数据.
 
         :return: (candidates, positions, prefix_stats)
+
             - candidates: 候选分割点数组
+
             - positions: 包含边界的位置数组，长度为 n_candidates + 2
               positions[0] = 0, positions[1...n_candidates] = 分割点位置, positions[-1] = n_samples
+
             - prefix_stats: 前缀和统计 (prefix_bad, prefix_good)
         """
         x_vals = X.values
@@ -603,7 +696,40 @@ class CPSATBinning(BaseBinning):
     def transform(
         self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
-        """应用分箱转换."""
+        """应用分箱转换.
+
+        **参数**
+
+        :param X: 待转换的数据，shape (n_samples, n_features)
+
+            - 支持DataFrame或numpy数组
+
+            - 列名必须与fit时的特征名一致
+
+        :param metric: 转换类型，默认为'indices'
+
+            - 'indices': 返回分箱索引 (0, 1, 2, ...)
+
+                * 用途: 后续处理、特征工程
+
+                * 示例: [0, 1, 2, 0, 1, ...]
+
+            - 'bins': 返回分箱标签字符串
+
+                * 用途: 可视化、报告展示
+
+                * 示例: ['(-inf, 25]', '(25, 35]', '(35, 45]', ...]
+
+                * 类别型: ['北京,上海', '广州,深圳', ...]
+
+            - 'woe': 返回WOE值
+
+                * 用途: 逻辑回归建模
+
+                * 示例: [0.234, -0.456, 0.123, ...]
+
+        :param kwargs: 其他参数
+        """
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 

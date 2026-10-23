@@ -124,22 +124,23 @@ def _fit_monotone_quadratic(
 ) -> np.ndarray:
     """带单调约束的二次曲线最小二乘拟合.
 
-    拟合 ``y ≈ a·x² + b·x + c``，通过约束保证拟合曲线在 ``x`` 的取值区间内
+    拟合 ``y ≈ a·x² + b·x + c`` ，通过约束保证拟合曲线在 ``x`` 的取值区间内
     严格单调（抛物线顶点落在区间之外），避免无约束 ``np.polyfit`` 的顶点落入
     区间内部，导致二次项系数无法反映"单调趋势下的弯曲程度"。
 
     约束原理：导数 ``y' = 2a·x + b`` 是线性函数，其区间最值在端点处取得，
     因此只需约束两端点的导数符号即可保证整个区间单调：
 
-    - ``'descending'``：``y'(x_min) ≤ 0`` 且 ``y'(x_max) ≤ 0``（区间内只减不增）
-    - ``'ascending'``：``y'(x_min) ≥ 0`` 且 ``y'(x_max) ≥ 0``（区间内只增不减）
+    - ``'descending'`` ： ``y'(x_min) ≤ 0`` 且 ``y'(x_max) ≤ 0`` （区间内只减不增）
+
+    - ``'ascending'`` ： ``y'(x_min) ≥ 0`` 且 ``y'(x_max) ≥ 0`` （区间内只增不减）
 
     使用 SLSQP 约束优化求解（以无约束解为初值，允许不可行初值自动投影），
     优化失败时回退为无约束二次拟合。
 
     :param x: 自变量数组
     :param y: 因变量数组
-    :param trend: 目标单调方向，``'ascending'`` 或 ``'descending'``
+    :param trend: 目标单调方向， ``'ascending'`` 或 ``'descending'``
     :return: 拟合系数 ``[a, b, c]``
     """
     from scipy.optimize import minimize
@@ -200,19 +201,23 @@ def quadratic_curve_coefficient(
 
     :param bins: 分箱索引数组（整数）
     :param y: 目标变量 (0/1)，0=好样本，1=坏样本
-    :param metric: 拟合曲线类型，默认 ``'lift'``：
+    :param metric: 拟合曲线类型，默认 ``'lift'`` ：
 
-        - ``'lift'``：使用各箱 LIFT 值序列
-        - ``'bad_rate'``：使用各箱坏样本率序列
+        - ``'lift'`` ：使用各箱 LIFT 值序列
 
-    :param monotonic: 目标趋势，默认 ``'descending'``：
+        - ``'bad_rate'`` ：使用各箱坏样本率序列
 
-        - ``'ascending'``：期望曲线单调递增（使用单调约束二次拟合，
+    :param monotonic: 目标趋势，默认 ``'descending'`` ：
+
+        - ``'ascending'`` ：期望曲线单调递增（使用单调约束二次拟合，
           保证拟合曲线在区间内只增不减）
-        - ``'descending'``：期望曲线单调递减（使用单调约束二次拟合，
+
+        - ``'descending'`` ：期望曲线单调递减（使用单调约束二次拟合，
           保证拟合曲线在区间内只减不增）
-        - ``'valley'``：期望曲线先降后升（U 形，二次项系数为正）
-        - ``'peak'``：期望曲线先升后降（倒 U 形，二次项系数为负）
+
+        - ``'valley'`` ：期望曲线先降后升（U 形，二次项系数为正）
+
+        - ``'peak'`` ：期望曲线先升后降（倒 U 形，二次项系数为负）
 
     :return: 标准化后的二次项系数；曲线违反目标趋势时返回负值作为惩罚，
         有效箱数不足 3 或曲线为常数时返回 ``0.0``
@@ -394,7 +399,7 @@ def composite_binning_quality(
 ) -> float:
     """计算复合分箱质量评分.
 
-    在 :func:`quadratic_curve_coefficient` 之外，进一步将多项业务偏好加权汇总为
+    在  :func:`quadratic_curve_coefficient`  之外，进一步将多项业务偏好加权汇总为
     单一评分，用于驱动“最优分箱”搜索，使分箱在保持单调趋势的同时兼顾头尾区分度
     与样本占比。显式纳入目标的分量包括：二次曲线得分、头部累计收益、尾部压降收益、
     样本占比加权边际收益、边际收益递减惩罚、头尾样本占比下限偏好、
@@ -404,10 +409,12 @@ def composite_binning_quality(
 
     :param bins: 分箱索引数组（整数）
     :param y: 目标变量 (0/1)，0=好样本，1=坏样本
-    :param metric: 拟合曲线类型，``'lift'`` 或 ``'bad_rate'``，默认 ``'lift'``
-        （含义同 :func:`quadratic_curve_coefficient`）
-    :param monotonic: 目标趋势，``'ascending'`` / ``'descending'`` / ``'valley'`` /
-        ``'peak'``，默认 ``'descending'``（含义同 :func:`quadratic_curve_coefficient`）
+    :param metric: 拟合曲线类型， ``'lift'`` 或 ``'bad_rate'`` ，默认 ``'lift'``
+        （含义同  :func:`quadratic_curve_coefficient` ）
+
+    :param monotonic: 目标趋势， ``'ascending'`` / ``'descending'`` / ``'valley'`` /
+        ``'peak'`` ，默认 ``'descending'`` （含义同  :func:`quadratic_curve_coefficient` ）
+
     :return: 复合质量评分（float），越大表示分箱质量越好
 
     **参考样例**
@@ -485,30 +492,38 @@ def compute_bin_stats(
 
     **参数**
 
-    :param bins: 分箱索引数组（整数）。约定 ``-1`` 表示缺失值箱、``-2`` 表示特殊值箱，
+    :param bins: 分箱索引数组（整数）。约定 ``-1`` 表示缺失值箱、 ``-2`` 表示特殊值箱，
         两者在输出中被排到正常分箱之后
+
     :param y: 目标变量，含义随 ``target_type`` 而变：
 
-        - ``target_type='binary'``：0/1 数组（0=好样本，1=坏样本）
-        - ``target_type='continuous'``：连续值数组（如逾期金额、余额）
-        - ``target_type='amount_weighted'``：0/1 数组，并配合 ``amount`` 使用
+        - ``target_type='binary'`` ：0/1 数组（0=好样本，1=坏样本）
 
-    :param target_type: 目标变量类型，默认 ``'binary'``：
+        - ``target_type='continuous'`` ：连续值数组（如逾期金额、余额）
 
-        - ``'binary'``：二分类，计算 样本/好坏数、坏样本率、WOE、IV、LIFT、KS 等
-        - ``'continuous'``：连续目标，计算各箱均值/求和等金额统计，不计算 WOE/IV
-        - ``'amount_weighted'``：基于二元标签但所有统计按 ``amount`` 加权（金额维度坏账）
+        - ``target_type='amount_weighted'`` ：0/1 数组，并配合 ``amount`` 使用
+
+    :param target_type: 目标变量类型，默认 ``'binary'`` ：
+
+        - ``'binary'`` ：二分类，计算 样本/好坏数、坏样本率、WOE、IV、LIFT、KS 等
+
+        - ``'continuous'`` ：连续目标，计算各箱均值/求和等金额统计，不计算 WOE/IV
+
+        - ``'amount_weighted'`` ：基于二元标签但所有统计按 ``amount`` 加权（金额维度坏账）
 
     :param amount: 金额数组，仅 ``target_type='amount_weighted'`` 时必需，长度同 ``y``
-    :param epsilon: 平滑参数，避免 WOE/IV 计算中除零或取对数为 ``±inf``，默认 ``1e-10``
+    :param epsilon: 平滑参数，避免 WOE/IV 计算中除零或取对数为 ``±inf`` ，默认 ``1e-10``
     :param bin_labels: 可选的分箱区间标签列表，长度需与唯一分箱数一致；
         缺省时输出箱序号
-    :param round_digits: 是否对浮点列做四舍五入格式化，默认 ``True``；
+
+    :param round_digits: 是否对浮点列做四舍五入格式化，默认 ``True`` ；
         作为中间计算（如指标搜索）时应设为 ``False`` 以保留精度
+
     :param woe_clip: WOE 值截断阈值，默认 ``None`` 不截断。
-        当某箱无坏样本或无好样本时 WOE 可能趋于 ``±inf``，
-        设置后将 WOE 限制在 ``[-woe_clip, woe_clip]``，避免评分卡分数异常
-    :return: 分箱统计 DataFrame（中文列名）。``binary`` 模式主要列包括：
+        当某箱无坏样本或无好样本时 WOE 可能趋于 ``±inf`` ，
+        设置后将 WOE 限制在 ``[-woe_clip, woe_clip]`` ，避免评分卡分数异常
+
+    :return: 分箱统计 DataFrame（中文列名）。 ``binary`` 模式主要列包括：
         ``分箱`` / ``分箱标签`` / ``样本总数`` / ``好样本数`` / ``坏样本数`` /
         ``样本占比`` / ``坏样本率`` / ``WOE值`` / ``分档IV值`` / ``LIFT值`` /
         ``累积坏样本数`` / ``累积好样本数`` / ``分档KS值`` / ``坏账改善`` 等。
@@ -537,7 +552,7 @@ def compute_bin_stats(
     **引用**
 
     WOE / IV 的定义见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley；
-    本函数的 WOE 取 ``ln(坏样本占比 / 好样本占比)``，与 toad、scorecardpipeline 口径一致。
+    本函数的 WOE 取 ``ln(坏样本占比 / 好样本占比)`` ，与 toad、scorecardpipeline 口径一致。
     """
     bins, y = _validate_bin_arrays(bins, y, target_type)
     if not np.isfinite(epsilon) or epsilon <= 0:
@@ -1045,8 +1060,9 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
 
     **参数**
 
-    :param table: 分箱统计表，通常由 :func:`compute_bin_stats` 生成，
+    :param table: 分箱统计表，通常由  :func:`compute_bin_stats`  生成，
         需包含 ``分箱标签`` 列；为空表时原样返回
+
     :return: 在末尾添加 ``合计`` 行后的分箱表（不修改入参，返回新对象）
 
     **参考样例**

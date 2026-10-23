@@ -41,6 +41,7 @@ def _woe_iv_vectorized(
     :param woe_clip: WOE值截断阈值，默认None不截断
         当某个分箱无坏样本或无好样本时，WOE可能变得极大，
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内
+
     :return: (woe_array, bin_iv_array, total_iv)
     """
     good_counts = np.asarray(good_counts, dtype=np.float64)

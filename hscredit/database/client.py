@@ -77,7 +77,7 @@ class Database:
     def closed(self) -> bool:
         """数据库门面是否已经关闭。
 
-        :return: 已调用 :meth:`close` 时为 ``True``，否则为 ``False``。
+        :return: 已调用  :meth:`close`  时为 ``True`` ，否则为 ``False`` 。
         :rtype: bool
         """
 
@@ -90,12 +90,15 @@ class Database:
     def query(self, sql: str, params: Any = None, result: str = "dataframe") -> Any:
         """一次性执行查询并返回全部结果。
 
-        大结果集建议改用 :meth:`stream_query` 或 :meth:`read_query`，避免一次性占用过多内存。
+        大结果集建议改用  :meth:`stream_query`  或  :meth:`read_query` ，避免一次性占用过多内存。
 
         :param sql: 由当前数据库执行的查询 SQL。
-        :param params: 按底层驱动参数风格绑定的 SQL 参数，默认为 ``None``。
-        :param result: 结果类型，支持 ``dataframe``、``records`` 和 ``rows``。
-        :return: ``dataframe`` 返回 DataFrame；``records`` 返回记录字典列表；``rows`` 返回原始行列表。
+        :type sql: str
+        :param params: 按底层驱动参数风格绑定的 SQL 参数，默认为 ``None`` 。
+        :type params: Any
+        :param result: 默认值为 ``'dataframe'`` 。结果类型，支持 ``dataframe`` 、 ``records`` 和 ``rows``
+        :type result: str
+        :return: ``dataframe`` 返回 DataFrame； ``records`` 返回记录字典列表； ``rows`` 返回原始行列表。
         :raises StateError: 数据库门面已经关闭。
         :raises ValidationError: ``result`` 不是支持的结果类型。
         :raises DatabaseQueryError: 数据库执行查询失败。
@@ -113,7 +116,9 @@ class Database:
         """执行单条 DDL 或 DML SQL。
 
         :param sql: 要执行的 SQL。
-        :param params: 按底层驱动参数风格绑定的 SQL 参数，默认为 ``None``。
+        :type sql: str
+        :param params: 按底层驱动参数风格绑定的 SQL 参数，默认为 ``None`` 。
+        :type params: Any
         :return: 适配器报告的影响行数或原生执行结果。
         :raises StateError: 数据库门面已经关闭。
         :raises DatabaseQueryError: SQL 执行失败。
@@ -126,7 +131,9 @@ class Database:
         """使用多组绑定值批量执行同一条 SQL。
 
         :param sql: 带驱动占位符的 SQL。
+        :type sql: str
         :param values: 每行一组参数的可迭代对象。
+        :type values: Any
         :return: 适配器报告的累计影响行数或原生执行结果。
         :raises StateError: 数据库门面已经关闭。
         :raises DatabaseQueryError: 批量执行失败。
@@ -180,14 +187,16 @@ class Database:
     def write(self, resource: Any, data: Any = None, **options: Any) -> Any:
         """根据适配器类型写入 SQL 表或 NoSQL 资源。
 
-        SQL 数据库使用 ``write(表名, 数据, ...)``，默认按 ``mode="a"`` 进入
-        :meth:`stream_write` 流水线；目标表不存在时根据首批数据自动建表。Redis 和
+        SQL 数据库使用 ``write(表名, 数据, ...)`` ，默认按 ``mode="a"`` 进入
+        :meth:`stream_write`  流水线；目标表不存在时根据首批数据自动建表。Redis 和
         MongoDB 保持原有自适应单条/批量写入语义。
 
         :param resource: SQL 目标表限定名、Redis key/映射或 MongoDB collection。
-        :param data: SQL DataFrame/记录迭代器、Redis 值或 MongoDB 文档。
+        :type resource: Any
+        :param data: 默认值为 ``None`` 。SQL DataFrame/记录迭代器、Redis 值或 MongoDB 文档
+        :type data: Any
         :param options: SQL 写入模式、批次、键字段和方言参数，或 NoSQL 后端选项。
-        :return: SQL 返回 :class:`WriteResult`；NoSQL 返回 :class:`NoSQLWriteResult`。
+        :return: SQL 返回  :class:`WriteResult` ；NoSQL 返回  :class:`NoSQLWriteResult` 。
         :raises StateError: 数据库门面已经关闭。
         :raises DatabaseCapabilityError: 后端不能保证请求的写入语义。
         :raises DatabaseWriteError: SQL 表准备或分批写入失败。
@@ -214,7 +223,8 @@ class Database:
         return self._call_nosql("delete_many", resource, selector, **options)
 
     def delete(self, resource: Any, selector: Any = None, **options: Any) -> Any:
-        """根据输入形态与 ``many`` 选项自适应执行删除。"""
+        """根据输入形态与 ``many`` 选项自适应执行删除。
+        """
 
         return self._call_nosql("delete", resource, selector, **options)
 
@@ -271,19 +281,30 @@ class Database:
 
         当 ``json_fields`` 不为空时，适配器把 JSON 路径提取下推到数据库，只传输
         ``columns`` 和指定的 JSON 子字段，不返回原始大 JSON。JSON 字段定义格式为
-        ``{源字段: {输出字段: 路径或(路径, 默认值)}}``。
+        ``{源字段: {输出字段: 路径或(路径, 默认值)}}`` 。
 
         :param sql: 原始查询 SQL。JSON 投影会把该查询包装为子查询。
-        :param params: 原始 SQL 的绑定参数，默认为 ``None``。
+        :type sql: str
+        :param params: 原始 SQL 的绑定参数，默认为 ``None`` 。
+        :type params: Any
         :param chunksize: 每次向 DB-API 流式游标请求的最大行数，默认 50000。
-        :param progress: 是否显示读取进度，默认 ``False``。未知总数时显示累计行数、速度和耗时。
-        :param retain: 是否保留已经产生的分块，默认 ``True``。设为 ``False`` 后不能合并历史数据。
-        :param count_total: 是否为进度条自动执行 ``COUNT(1)``，默认 ``False``。
-        :param count_sql: 为进度条显式指定的统计 SQL；提供后会执行该 SQL。
-        :param total_rows: 已知总行数；提供后不执行统计 SQL。
-        :param columns: JSON 投影时原样保留的普通输出字段；不能包含 JSON 源字段。
+        :type chunksize: int
+        :param progress: 是否显示读取进度，默认 ``False`` 。未知总数时显示累计行数、速度和耗时。
+        :type progress: bool
+        :param retain: 是否保留已经产生的分块，默认 ``True`` 。设为 ``False`` 后不能合并历史数据。
+        :type retain: bool
+        :param count_total: 是否为进度条自动执行 ``COUNT(1)`` ，默认 ``False`` 。
+        :type count_total: bool
+        :param count_sql: 默认值为 ``None`` 。为进度条显式指定的统计 SQL；提供后会执行该 SQL
+        :type count_sql: Optional[str]
+        :param total_rows: 默认值为 ``None`` 。已知总行数；提供后不执行统计 SQL
+        :type total_rows: Optional[int]
+        :param columns: 默认值为 ``None`` 。JSON 投影时原样保留的普通输出字段；不能包含 JSON 源字段
+        :type columns: Optional[Sequence[str]]
         :param json_fields: JSON 源字段、输出字段、JSONPath 和可选默认值的嵌套映射。
-        :param result: 每个分块的结果类型，支持 ``dataframe``、``records`` 和 ``rows``。
+        :type json_fields: Optional[Mapping[str, Mapping[str, Any]]]
+        :param result: 默认值为 ``'dataframe'`` 。每个分块的结果类型，支持 ``dataframe`` 、 ``records`` 和 ``rows``
+        :type result: str
         :return: 可迭代、可主动停止并可合并已读数据的查询流。
         :rtype: QueryStream
         :raises ValidationError: 分块、进度、结果类型或 JSON 投影参数无效。
@@ -362,19 +383,29 @@ class Database:
     ) -> Any:
         """消费完整查询流，并在中断后直接返回已经读取的数据。
 
-        参数语义与 :meth:`stream_query` 一致，但本方法自动消费所有分块。发生
+        参数语义与  :meth:`stream_query`  一致，但本方法自动消费所有分块。发生
         ``KeyboardInterrupt`` 时会关闭底层资源，并按照 ``result`` 返回当前已合并数据。
 
         :param sql: 原始查询 SQL。
-        :param params: 原始 SQL 的绑定参数，默认为 ``None``。
+        :type sql: str
+        :param params: 原始 SQL 的绑定参数，默认为 ``None`` 。
+        :type params: Any
         :param chunksize: 每次请求的最大行数，默认 50000。
-        :param progress: 是否显示进度，默认 ``False``。
-        :param count_total: 是否自动执行 ``COUNT(1)`` 获取进度条总数，默认 ``False``。
-        :param count_sql: 为进度条显式指定的统计 SQL。
-        :param total_rows: 已知总行数。
-        :param columns: JSON 投影时原样保留的普通输出字段；不能包含 JSON 源字段。
-        :param json_fields: JSON 子字段投影映射。
-        :param result: 返回类型，支持 ``dataframe``、``records`` 和 ``rows``。
+        :type chunksize: int
+        :param progress: 是否显示进度，默认 ``False`` 。
+        :type progress: bool
+        :param count_total: 是否自动执行 ``COUNT(1)`` 获取进度条总数，默认 ``False`` 。
+        :type count_total: bool
+        :param count_sql: 默认值为 ``None`` 。为进度条显式指定的统计 SQL
+        :type count_sql: Optional[str]
+        :param total_rows: 默认值为 ``None`` 。已知总行数
+        :type total_rows: Optional[int]
+        :param columns: 默认值为 ``None`` 。JSON 投影时原样保留的普通输出字段；不能包含 JSON 源字段
+        :type columns: Optional[Sequence[str]]
+        :param json_fields: 默认值为 ``None`` 。JSON 子字段投影映射
+        :type json_fields: Optional[Mapping[str, Mapping[str, Any]]]
+        :param result: 默认值为 ``'dataframe'`` 。返回类型，支持 ``dataframe`` 、 ``records`` 和 ``rows``
+        :type result: str
         :return: 完整数据或中断前已读取的部分数据。
         :raises ValidationError: 查询或投影参数无效。
         :raises DatabaseQueryError: 流式查询失败。
@@ -417,9 +448,12 @@ class Database:
     ) -> Any:
         """读取数据库表结构并生成中文字段元数据宽表。
 
-        :param targets: 可选数据库或表目标，例如 ``risk``、``risk.events``；默认扫描适配器可见范围。
-        :param output: 可选 ``.xlsx`` 输出路径。提供时通过 ``dataframe2excel`` 导出。
-        :param excel_params: 传递给 ``dataframe2excel`` 的附加参数。
+        :param targets: 可选数据库或表目标，例如 ``risk`` 、 ``risk.events`` ；默认扫描适配器可见范围。
+        :type targets: Optional[Sequence[str]]
+        :param output: 默认值为 ``None`` 。可选 ``.xlsx`` 输出路径。提供时通过 ``dataframe2excel`` 导出
+        :type output: Optional[Any]
+        :param excel_params: 默认值为 ``None`` 。传递给 ``dataframe2excel`` 的附加参数
+        :type excel_params: Optional[Mapping[str, Any]]
         :return: 中文列名的表和字段信息 DataFrame；数据库原始元数据值保持不变。
         :rtype: pandas.DataFrame
         :raises ValidationError: 目标、输出扩展名或 Excel 参数无效。
@@ -532,8 +566,11 @@ class Database:
         """根据 DataFrame 字段和后端方言参数创建表。
 
         :param data: 用于推断字段结构的非空列 DataFrame。
+        :type data: pd.DataFrame
         :param table_name: 表名或 ``数据库名.表名`` 等限定名。
-        :param dialect_options: 后端专有建表参数，例如键、引擎、分区、字段类型和注释。
+        :type table_name: str
+        :param dialect_options: 默认值为 ``None`` 。后端专有建表参数，例如键、引擎、分区、字段类型和注释
+        :type dialect_options: Optional[Mapping[str, Any]]
         :return: 适配器返回的已执行 DDL 或原生结果。
         :raises InputValidationError: ``data`` 不是带字段的 DataFrame。
         :raises ValidationError: 表名或方言参数无效。
@@ -570,17 +607,25 @@ class Database:
     ) -> WriteResult:
         """把 DataFrame、DataFrame 分块或行记录迭代器流式写入目标表。
 
-        ``mode`` 默认为 ``a``。目标表不存在时，四种模式都会根据首个有效分块和
+        ``mode`` 默认为 ``a`` 。目标表不存在时，四种模式都会根据首个有效分块和
         ``dialect_options`` 创建表；已有表继续执行各模式原有的追加、覆盖、清空或重建语义。
 
         :param data: DataFrame、DataFrame 分块、记录字典或位置行的可迭代对象。
+        :type data: Any
         :param table_name: 目标表限定名。
-        :param mode: 写入模式。``a`` 追加且主键重复不覆盖；``r`` 追加且主键重复覆盖；
-            ``o`` 保留表结构并清空重写；``d`` 删除并按首批数据重建表后写入。
+        :type table_name: str
+        :param mode: 默认值为 ``'a'`` 。写入模式。 ``a`` 追加且主键重复不覆盖； ``r`` 追加且主键重复覆盖
+            ``o`` 保留表结构并清空重写； ``d`` 删除并按首批数据重建表后写入。
+
+        :type mode: str
         :param batch_size: 每个写入批次的最大行数，默认 10000。
-        :param key_columns: ``a`` 或 ``r`` 使用的显式键字段；未提供时由支持的适配器读取表元数据。
-        :param columns: 位置行字段名，或用于校验 DataFrame/记录字段顺序。
-        :param dialect_options: 传递给目标适配器的建表和写入选项。
+        :type batch_size: int
+        :param key_columns: 默认值为 ``None`` 。 ``a`` 或 ``r`` 使用的显式键字段；未提供时由支持的适配器读取表元数据
+        :type key_columns: Optional[Sequence[str]]
+        :param columns: 默认值为 ``None`` 。位置行字段名，或用于校验 DataFrame/记录字段顺序
+        :type columns: Optional[Sequence[str]]
+        :param dialect_options: 默认值为 ``None`` 。传递给目标适配器的建表和写入选项
+        :type dialect_options: Optional[Mapping[str, Any]]
         :return: 完成状态、接收/插入/更新/跳过行数及已提交批次数。
         :rtype: WriteResult
         :raises InputValidationError: 数据为空、批次字段不一致或缺少键字段。
@@ -889,7 +934,7 @@ class Database:
     def close(self) -> None:
         """关闭连接池或原生客户端；重复调用不产生副作用。
 
-        关闭后所有查询和写入方法都会抛出 :class:`~hscredit.exceptions.StateError`。
+        关闭后所有查询和写入方法都会抛出  :class:`~hscredit.exceptions.StateError` 。
         """
 
         if self._closed:

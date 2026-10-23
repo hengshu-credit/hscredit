@@ -27,7 +27,7 @@ class ExpectedProfitLoss(BaseLoss):
     """期望利润损失函数，将收益、坏账损失和通过决策融合为连续可微的期望利润优化目标。
 
     本损失通过 sigmoid 软通过门构造可微的利润代理。
-    :class:`ProfitMaxLoss` 则使用收益和坏账成本加权 BCE，两者目标不同。
+    :class:`ProfitMaxLoss`  则使用收益和坏账成本加权 BCE，两者目标不同。
 
     数学形式::
 
@@ -36,15 +36,29 @@ class ExpectedProfitLoss(BaseLoss):
         E[profit] = mean(approve_i × profit_i)
         Loss      = -E[profit] + bce_weight × BCE(y, p)
 
+    **参数**
+
     :param revenue: 好客户通过后的单位收益，默认 1.0
+
         - 内部经验: 可设为平均利息收入或客均贡献
+
+    :type revenue: float
     :param default_cost: 坏客户通过后的单位损失，默认 10.0
+
         - 内部经验: 通常为 revenue 的 5~20 倍，视业务坏账回收率而定
+
+    :type default_cost: float
     :param cutoff: 软通过阈值，预测概率低于此值的样本倾向通过，默认 0.5
+    :type cutoff: float
     :param temperature: sigmoid 平滑温度，越小通过决策越接近硬阈值，默认 0.1
+
         - 内部经验: 0.05~0.2 之间效果较好；太小梯度集中在阈值附近，太大退化为线性
+
+    :type temperature: float
     :param bce_weight: 基础交叉熵正则权重，防止利润梯度消失，默认 0.1
+    :type bce_weight: float
     :param name: 损失函数名称，默认 "expected_profit_loss"
+    :type name: str
 
     **参考样例**
 

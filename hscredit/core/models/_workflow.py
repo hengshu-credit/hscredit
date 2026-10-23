@@ -165,6 +165,7 @@ class TrainingProcessMixin:
 
         :param revision: 训练修订号，None 为最近一次 fit；取值见 get_training_history()['训练修订']。
             历史超出 max_history 时无法恢复，会明确报错。
+
         :return: 含训练修订、数据集、原生数据集、迭代、指标、数值的中文长表。
             不产生逐轮曲线的算法返回空表，最终评估请用 get_eval_results()。
 
@@ -184,6 +185,7 @@ class TrainingProcessMixin:
         :param revision: 训练修订号，None 为最近一次 fit；不是 Optuna Trial 编号。
         :return: 包含数据集、指标、数值的 DataFrame 副本；没有 eval_set 时返回空表。
             get_best_model() 默认全量重训，不会自动沿用搜索验证集；独立测试集用 evaluate() 计算。
+
         :raises ValueError: 指定修订已被历史保留策略移除。
 
         **参考样例**
@@ -224,8 +226,10 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         :param positive_class: 正类标签，默认模型约定的正类；信贷模型以1表示坏样本。
         :param score_direction: AUC/Gini 的方向；默认 higher_risk 保留反向预测的低 AUC，
             higher_safe 用于高值低风险，auto 仅在显式指定时自动判断。
+
         :param predict_params: 传给 predict_proba 的参数；评分卡可用 input_type='woe'/'raw'，
             返回值必须仍是概率，不能请求 raw_score/叶节点矩阵。
+
         :return: 指标名到数值的字典，不改写模型、报告缓存或 fit 的评估记录。
 
         **参考样例**
@@ -250,14 +254,18 @@ class ModelWorkflowMixin(TrainingProcessMixin):
 
         :param datasets: 与 eval_set 相同的具名字典/列表，元素为 (X, y) 或含目标列的 DataFrame。
             例如 {'训练': train_df, '验证': valid_df, '独立测试': test_df}；传完整数据时模型仅预测入模字段。
+
         :param target: 目标列名或报告多标签配置；None 继承模型目标列。overdue/dpds 模式不继承目标列。
         :param metrics: 统一指标名称/对象/列表；需与 evaluate 使用同一对象和参数。
             None 只输出报告默认指标，不自动把调参目标当作报告指标。
+
         :param sample_weight: 报告评估权重，可为列名、{数据集名: 权重}，或单数据集的权重数组。
             金额分析列 amount 与该参数作用不同，均不自动继承训练或搜索权重。
+
         :param kwargs: auto_model_report 的参数，如 excel_path、features、verbose、amount、date、
             prediction_method、prediction_kwargs、mode、return_result、with_plots、include_sample_records。
             默认返回 ModelReport；显式 return_result=True 改为 ReportResult 执行状态。
+
         :return: 默认 ModelReport，可调用 get_metrics()/get_training_process()/to_excel()；
             提供 excel_path 会同时导出。完整报告绑定模型状态，模型重训后需新建报告。
 
@@ -317,11 +325,13 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         :param cv: 默认 None 单次留出；显式整数>=2、分割器或索引对启用多折，最终仍返回单个模型。
         :param eval_set: 独立验证数据，支持 (X, y)、具名字典、列表、含目标列的 DataFrame。
             仅与 cv=None 配合，最后一集用于选参，其他集合仅监控；不并入最终重训。
+
         :param n_trials: 本次新增试验数量，默认100。
         :param sample_weight: 训练权重，按训练位置切分；不自动作为选模指标权重。
         :param validation_weight: 最后一个独立评估集的指标权重；内部分割请通过 evaluation_weight 配置。
         :param kwargs: ModelTuner 构造参数，如 direction、retention、fit_params、validation_fraction、
             random_state、n_jobs；timeout/show_progress_bar/evaluation_weight/groups 传给 fit。
+
         :return: 已拟合最佳模型，best.tuner 可查询参数点、各折效果、曲线和验证预测。
             没有可训练 fit 的组合对象应先对其基础模型或 ProbabilityCalibrator 调参。
 

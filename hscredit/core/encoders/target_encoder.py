@@ -15,7 +15,9 @@ class TargetEncoder(BaseEncoder):
     """目标编码器.
 
     用目标变量的均值对每个类别进行编码：
+
     - 对于分类任务：该类别的正样本比例
+
     - 对于回归任务：该类别的目标变量均值
 
     使用平滑技术防止过拟合：
@@ -23,21 +25,58 @@ class TargetEncoder(BaseEncoder):
 
     **参数**
 
-    :param features: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :param random_state: 随机种子，用于噪声生成，默认为None
+    :type random_state: Optional[int]
+    :param target: 默认值为 ``None`` 。scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
+    :type target: Optional[str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param passthrough_target: 是否在转换结果中保留目标列，默认 ``False`` 。
+        ``True`` 仅用于需要目标列的表格分析；连接预测 Pipeline 时应保持 ``False`` ，避免标签进入模型。
+
+    :type passthrough_target: bool
+
+    :param features: 默认值为 ``None`` 。需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :type features: Optional[List[str]]
     :param smoothing: 平滑参数，值越大收缩到全局均值的程度越大，默认为1.0
+    :type smoothing: float
     :param min_samples_leaf: 每个类别的最小样本数，少于该值则使用全局均值，默认为1
+    :type min_samples_leaf: int
     :param noise: 添加的高斯噪声标准差，用于防止过拟合，默认为None
+    :type noise: Optional[float]
     :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :type handle_unknown: str
     :param handle_missing: 处理缺失值的方式，默认为'value'
+    :type handle_missing: str
     :param drop_invariant: 是否删除方差为0的列，默认为False
+    :type drop_invariant: bool
     :param return_df: 是否返回DataFrame，默认为True
+    :type return_df: bool
     :param training_mode: 默认 in_sample；oof 时 fit_transform 返回折外编码，
         transform 仍使用全训练集最终映射，时间起始窗口未覆盖行保留 NaN
-    :param cv: 折数或 sklearn 切分器；分组通过 fit_transform(..., groups=...) 提供
+
+    :type training_mode: str
+    :param cv: 默认值为 ``5`` 。折数或 sklearn 切分器；分组通过 fit_transform(..., groups=...) 提供
+    :type cv: Any
 
     **属性**
 
     - mapping_: 目标编码映射字典，格式为 {col: {category: encoded_value}}
+
     - global_mean_: 全局目标均值
 
     **参考样例**
@@ -52,9 +91,9 @@ class TargetEncoder(BaseEncoder):
 
     **注意**
 
-    目标编码直接使用了标签信息，存在目标泄漏/过拟合风险，应配合 ``smoothing``、
-    ``min_samples_leaf``、``noise`` 等正则手段，并务必在训练集 fit、在验证/测试集
-    transform；若需更强的防泄漏，改用 :class:`CatBoostEncoder`（有序目标统计）。
+    目标编码直接使用了标签信息，存在目标泄漏/过拟合风险，应配合 ``smoothing`` 、
+    ``min_samples_leaf`` 、 ``noise`` 等正则手段，并务必在训练集 fit、在验证/测试集
+    transform；若需更强的防泄漏，改用  :class:`CatBoostEncoder` （有序目标统计）。
 
     **引用**
 

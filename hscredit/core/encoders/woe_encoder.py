@@ -22,36 +22,77 @@ class WOEEncoder(BaseEncoder):
 
     **参数**
 
-    :param features: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param passthrough_target: 是否在转换结果中保留目标列，默认 ``False`` 。
+        ``True`` 仅用于需要目标列的表格分析；连接预测 Pipeline 时应保持 ``False`` ，避免标签进入模型。
+
+    :type passthrough_target: bool
+
+    :param features: 默认值为 ``None`` 。需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :type features: Optional[List[str]]
     :param regularization: 正则化参数，防止除零，默认为1.0
+    :type regularization: float
     :param woe_clip: WOE值截断阈值，默认为5.0
         当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
         这会导致评分卡中对应分箱的分数异常。
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
         设置为None则不进行截断。
-    :param handle_unknown: transform 时遇到 fit 未见过的类别的处理方式，默认为 ``'value'``：
 
-        - ``'value'``：编码为 0.0（中性 WOE）
-        - ``'return_nan'``：编码为 NaN
-        - ``'error'``：抛出异常
+    :type woe_clip: Optional[float]
+    :param handle_unknown: transform 时遇到 fit 未见过的类别的处理方式，默认为 ``'value'`` ：
 
-    :param handle_missing: 缺失值（NaN）的处理方式，默认为 ``'value'``：
+        - ``'value'`` ：编码为 0.0（中性 WOE）
 
-        - ``'value'``：编码为 0.0（中性 WOE）
-        - ``'return_nan'``：编码为 NaN
-        - ``'error'``：fit/transform 遇缺失即抛出异常
+        - ``'return_nan'`` ：编码为 NaN
+
+        - ``'error'`` ：抛出异常
+
+    :type handle_unknown: str
+
+    :param handle_missing: 缺失值（NaN）的处理方式，默认为 ``'value'`` ：
+
+        - ``'value'`` ：编码为 0.0（中性 WOE）
+
+        - ``'return_nan'`` ：编码为 NaN
+
+        - ``'error'`` ：fit/transform 遇缺失即抛出异常
+
+    :type handle_missing: str
 
     :param drop_invariant: 是否删除方差为0的列，默认为False
+    :type drop_invariant: bool
     :param return_df: 是否返回DataFrame，默认为True
-    :param target: scorecardpipeline 风格的目标列名，提供后 fit 时从 X 中提取该列作为 y
+    :type return_df: bool
+    :param target: 默认值为 ``None`` 。scorecardpipeline 风格的目标列名，提供后 fit 时从 X 中提取该列作为 y
+    :type target: Optional[str]
     :param training_mode: 默认 in_sample；oof 时 fit_transform 生成折外训练编码，
         transform 使用全训练集映射。时间切分未覆盖的起始行保留 NaN，见 oof_coverage_。
-    :param cv: 折外编码的折数或 sklearn 切分器；fit_transform 的 groups 参数按位置传入
+
+    :type training_mode: str
+    :param cv: 默认值为 ``5`` 。折外编码的折数或 sklearn 切分器；fit_transform 的 groups 参数按位置传入
+    :type cv: Any
     :param random_state: 整数 cv 随机分折的种子，默认 42
+    :type random_state: Optional[int]
 
     **属性**
 
     - mapping_: WOE编码映射字典，格式为 {col: {category: woe_value}}
+
     - iv_: 各特征的IV值，格式为 {col: iv_value}
 
     **参考样例**
@@ -72,8 +113,8 @@ class WOEEncoder(BaseEncoder):
 
     **注意**
 
-    与 :class:`~hscredit.core.binning.BaseBinning` 的 ``metric='woe'`` 不同，本编码器
-    直接对原始类别取值计算 WOE、不做数值分箱，适合基数适中的类别特征。``regularization``
+    与  :class:`~hscredit.core.binning.BaseBinning`  的 ``metric='woe'`` 不同，本编码器
+    直接对原始类别取值计算 WOE、不做数值分箱，适合基数适中的类别特征。 ``regularization``
     采用加性平滑以避免某类别好/坏样本数为 0 时 WOE 取 ±∞。
 
     **引用**
@@ -116,6 +157,7 @@ class WOEEncoder(BaseEncoder):
             这可以防止因分箱中无坏样本或无好样本导致的极端WOE值，
             避免评分卡中对应分箱的分数过大。
             设置为None则不进行截断。
+
         :param handle_unknown: 处理未知类别的方式，默认为'value'
         :param handle_missing: 处理缺失值的方式，默认为'value'
         :param drop_invariant: 是否删除方差为0的列，默认为False
@@ -315,10 +357,13 @@ class WOEEncoder(BaseEncoder):
     def get_mapping(self, col: Optional[str] = None) -> Union[Dict, Dict[str, Dict]]:
         """获取WOE编码映射。
 
-        :param col: 列名。如果提供，返回该列的映射；
+        :param col: 默认值为 ``None`` 。列名。如果提供，返回该列的映射
             如果为None，返回所有列的映射
+
+        :type col: Optional[str]
         :return: WOE映射字典。当 col 指定时返回 {category: woe_value}，
             col 为 None 时返回 {col: {category: woe_value}}
+
         :raises NotFittedError: 当编码器尚未拟合时抛出
         :raises FeatureNotFoundError: 当指定的 col 不在编码器中时抛出
         """
@@ -336,9 +381,13 @@ class WOEEncoder(BaseEncoder):
         对每个已编码特征给出 IV 值及对应的预测能力评级，评级阈值为：
 
         - IV < 0.02：无预测力
+
         - 0.02 ≤ IV < 0.1：弱预测力
+
         - 0.1 ≤ IV < 0.3：中等预测力
+
         - 0.3 ≤ IV < 0.5：强预测力
+
         - IV ≥ 0.5：超强预测力（需检查是否标签泄漏）
 
         :return: 含 ``特征`` / ``IV值`` / ``预测能力`` 三列的 DataFrame，按 ``IV值`` 降序；
@@ -380,7 +429,8 @@ class WOEEncoder(BaseEncoder):
 
         导出格式与 toad.WOETransformer.export() 和 scorecardpipeline.WOETransformer.export() 保持一致。
 
-        :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
+        :param to_json: 默认值为 ``None`` 。可选，JSON 文件保存路径。如果提供，将规则保存到该文件
+        :type to_json: Optional[str]
         :return: WOE编码规则字典，格式为 {feature: {value: woe_value, ...}, ...}
 
         **参考样例**
@@ -451,9 +501,14 @@ class WOEEncoder(BaseEncoder):
         从字典或 JSON 文件加载WOE编码规则，支持 toad 和 scorecardpipeline 导出的格式。
 
         :param from_json: WOE规则字典或 JSON 文件路径
+
             - 字典: {'category': {'A': 0.5, 'B': -0.3}}
+
             - 文件路径: 'woe_rules.json'
+
+        :type from_json: Union[str, Dict]
         :param update: 是否更新现有规则（而非替换），默认为 False
+        :type update: bool
         :return: self，支持链式调用
 
         **参考样例**

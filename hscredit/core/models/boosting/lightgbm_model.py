@@ -63,7 +63,7 @@ def _lightgbm_fit_api(version: Optional[Version]) -> str:
     因此 3.3.0 及以上走 callbacks 路径以消除弃用告警，更早版本回退到 fit 参数。
 
     :param version: LightGBM 版本
-    :return: ``'legacy'``（< 3.3.0，用 fit 参数）或 ``'callbacks'``（≥ 3.3.0，用回调）
+    :return: ``'legacy'`` （< 3.3.0，用 fit 参数）或 ``'callbacks'`` （≥ 3.3.0，用回调）
     :raises ImportError: LightGBM 未安装时
     """
     if version is None:
@@ -110,37 +110,74 @@ class LightGBM(BaseRiskModel):
     **参数**
 
     :param num_leaves: 叶子节点数，默认31
+    :type num_leaves: int
     :param max_depth: 树最大深度，默认-1(无限制)
+    :type max_depth: int
     :param learning_rate: 学习率，默认0.1
+    :type learning_rate: float
     :param n_estimators: 树的数量，默认100
+    :type n_estimators: int
     :param min_child_samples: 叶子节点最小样本数，默认20
+    :type min_child_samples: int
     :param min_child_weight: 叶子节点最小权重和，默认1e-3
+    :type min_child_weight: float
     :param subsample: 样本采样比例，默认1.0
+    :type subsample: float
     :param colsample_bytree: 特征采样比例，默认1.0
+    :type colsample_bytree: float
     :param reg_alpha: L1正则化系数，默认0
+    :type reg_alpha: float
     :param reg_lambda: L2正则化系数，默认0
+    :type reg_lambda: float
     :param scale_pos_weight: 正负样本权重比，默认1
+    :type scale_pos_weight: float
     :param min_split_gain: 节点分裂所需的最小增益，默认0
+    :type min_split_gain: float
     :param boosting_type: 提升类型，默认'gbdt'
+
         - 'gbdt': 传统梯度提升树
+
         - 'dart': Dropouts meet Multiple Additive Regression Trees
+
         - 'goss': Gradient-based One-Side Sampling
+
         - 'rf': 随机森林
+
+    :type boosting_type: str
     :param objective: 目标函数，默认'binary'
+    :type objective: str
     :param eval_metric: 评估指标，可选名称、BaseMetric 对象或列表；自定义损失默认使用其配套指标
+
         - 多个指标时，默认使用第一个指标进行早停
+
+    :type eval_metric: Union[str, BaseMetric, List[Union[str, BaseMetric]], None]
     :param early_stopping_rounds: 早停轮数，默认None
+    :type early_stopping_rounds: Optional[int]
     :param early_stopping_metric: 用于早停的评估指标名称，默认None（使用第一个指标）
+
         - 当eval_metric有多个时，可通过此参数指定用哪个指标进行早停判断
+
+    :type early_stopping_metric: Optional[str]
     :param first_metric_only: 是否只用第一个评估指标进行早停，默认True
+
         - 当eval_metric为列表时，True表示只用第一个指标早停，False表示监控所有指标
+
+    :type first_metric_only: bool
     :param validation_fraction: 验证集比例，默认0.2
+    :type validation_fraction: float
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param n_jobs: 并行任务数，默认-1
+    :type n_jobs: int
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: bool
     :param params: LightGBM原生参数字典，默认None
+
         - 如果传入，将覆盖其他参数设置
+
         - 可直接使用LightGBM原生参数名
+
+    :type params: Optional[Dict[str, Any]]
     :param kwargs: 其他LightGBM参数
 
     **属性**
@@ -170,7 +207,8 @@ class LightGBM(BaseRiskModel):
 
     **参数补充**
 
-    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param scorecard_params: 默认值为 ``None`` 。概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba
+    :type scorecard_params: Optional[Dict[str, Any]]
     """
 
     _preserve_dataframe = True
@@ -288,14 +326,21 @@ class LightGBM(BaseRiskModel):
         """训练LightGBM模型.
 
         支持两种调用方式:
+
         1. 常规方式: fit(X, y)
+
         2. scorecardpipeline风格: fit(X) 在init中指定target
 
         :param X: 特征矩阵
-        :param y: 目标变量，可选
-        :param sample_weight: 样本权重
-        :param eval_set: [(X_valid, y_valid)]、具名字典、DataFrame列表或单个数据集；
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重
+        :type sample_weight: Optional[np.ndarray]
+        :param eval_set: 默认值为 ``None`` 。[(X_valid, y_valid)]、具名字典、DataFrame列表或单个数据集
             同 ModelReport.datasets 的容器规则，含标签的 DataFrame 通过 target 提取标签。
+
+        :type eval_set: Optional[List[Tuple]]
         :param fit_params: 其他fit参数
         :return: self
 
@@ -517,10 +562,12 @@ class LightGBM(BaseRiskModel):
         转换为两列概率，避免原生接口无法直接计算自定义目标概率的警告。
 
         :param X: 特征矩阵。
-        :param predict_params: LightGBM 原生预测参数，例如 ``num_iteration``。
-            显式设置 ``raw_score=True``、``pred_leaf=True`` 或 ``pred_contrib=True``
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param predict_params: LightGBM 原生预测参数，例如 ``num_iteration`` 。
+            显式设置 ``raw_score=True`` 、 ``pred_leaf=True`` 或 ``pred_contrib=True``
             时返回对应原生结果，不转换为概率。
-        :return: 默认返回形状为 ``(n_samples, 2)`` 的类别概率，列顺序为 ``classes_``。
+
+        :return: 默认返回形状为 ``(n_samples, 2)`` 的类别概率，列顺序为 ``classes_`` 。
 
         **参考样例**
 
@@ -554,8 +601,12 @@ class LightGBM(BaseRiskModel):
         """获取特征重要性.
 
         :param importance_type: 重要性类型，可选:
+
             - 'gain': 平均增益 (默认)
+
             - 'split': 分裂次数
+
+        :type importance_type: str
         :return: 特征重要性Series
         """
         self._require_fitted()
@@ -591,7 +642,8 @@ class LightGBM(BaseRiskModel):
     def plot_tree(self, tree_index: int = 0, **kwargs):
         """绘制树结构.
 
-        :param tree_index: 树的索引
+        :param tree_index: 默认值为 ``0`` 。树的索引
+        :type tree_index: int
         :param kwargs: 其他绘图参数
         """
         self._require_fitted()
@@ -600,7 +652,8 @@ class LightGBM(BaseRiskModel):
     def plot_importance(self, max_num_features: int = 10, **kwargs):
         """绘制特征重要性.
 
-        :param max_num_features: 显示的最大特征数
+        :param max_num_features: 默认值为 ``10`` 。显示的最大特征数
+        :type max_num_features: int
         :param kwargs: 其他绘图参数
         """
         self._require_fitted()
@@ -612,6 +665,7 @@ class LightGBM(BaseRiskModel):
         返回每棵树上的叶子节点索引，用于GBDT+LR等场景。
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 叶子节点索引，形状 (n_samples, n_trees)
 
         **参考样例**
@@ -649,6 +703,7 @@ class LightGBM(BaseRiskModel):
         """保存底层LightGBM模型（原生格式）.
 
         :param path: 保存路径（.txt/.bin 格式）
+        :type path: str
         """
         self._require_fitted()
         self._model.booster_.save_model(path)
@@ -658,6 +713,7 @@ class LightGBM(BaseRiskModel):
         """加载底层LightGBM模型（原生格式）.
 
         :param path: 模型路径
+        :type path: str
         :return: self
         """
         booster = lgb.Booster(model_file=path)

@@ -25,12 +25,18 @@ def correlation_matrix(
     """计算相关性矩阵.
 
     :param df: 输入数据
-    :param features: 指定分析的特征，None则分析全部数值型
-    :param method: 相关计算方法，默认 ``'pearson'``：
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。指定分析的特征，None则分析全部数值型
+    :type features: List[str]
+    :param method: 相关计算方法，默认 ``'pearson'`` ：
 
-        - ``'pearson'``：皮尔逊线性相关系数
-        - ``'spearman'``：斯皮尔曼秩相关（单调关系，抗非线性/异常值）
-        - ``'kendall'``：肯德尔 τ 秩相关（小样本/有序类别更稳健）
+        - ``'pearson'`` ：皮尔逊线性相关系数
+
+        - ``'spearman'`` ：斯皮尔曼秩相关（单调关系，抗非线性/异常值）
+
+        - ``'kendall'`` ：肯德尔 τ 秩相关（小样本/有序类别更稳健）
+
+    :type method: Literal['pearson', 'spearman', 'kendall']
     :return: 相关性矩阵DataFrame
 
     **参考样例**
@@ -65,13 +71,20 @@ def high_correlation_pairs(
     """高相关性特征对检测.
 
     :param df: 输入数据
-    :param features: 指定分析的特征
-    :param threshold: 高相关阈值
-    :param method: 相关计算方法，默认 ``'pearson'``：
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。指定分析的特征
+    :type features: List[str]
+    :param threshold: 默认值为 ``0.8`` 。高相关阈值
+    :type threshold: float
+    :param method: 相关计算方法，默认 ``'pearson'`` ：
 
-        - ``'pearson'``：皮尔逊线性相关系数
-        - ``'spearman'``：斯皮尔曼秩相关（单调关系，抗非线性/异常值）
-        - ``'kendall'``：肯德尔 τ 秩相关（小样本/有序类别更稳健）
+        - ``'pearson'`` ：皮尔逊线性相关系数
+
+        - ``'spearman'`` ：斯皮尔曼秩相关（单调关系，抗非线性/异常值）
+
+        - ``'kendall'`` ：肯德尔 τ 秩相关（小样本/有序类别更稳健）
+
+    :type method: Literal['pearson', 'spearman', 'kendall']
     :return: 高相关特征对DataFrame，列为['特征1', '特征2', '相关系数', '绝对相关系数', '相关评级']；
         若没有特征对达到threshold，则返回仅含'信息'列的提示性DataFrame
 
@@ -125,14 +138,22 @@ def correlation_filter(
     策略：保留与目标变量相关性高的特征
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param target: 目标变量
-    :param threshold: 高相关阈值
-    :param method: 相关计算方法，默认 ``'pearson'``：
+    :type target: str
+    :param threshold: 默认值为 ``0.8`` 。高相关阈值
+    :type threshold: float
+    :param method: 相关计算方法，默认 ``'pearson'`` ：
 
-        - ``'pearson'``：皮尔逊线性相关系数
-        - ``'spearman'``：斯皮尔曼秩相关（单调关系，抗非线性/异常值）
-        - ``'kendall'``：肯德尔 τ 秩相关（小样本/有序类别更稳健）
+        - ``'pearson'`` ：皮尔逊线性相关系数
+
+        - ``'spearman'`` ：斯皮尔曼秩相关（单调关系，抗非线性/异常值）
+
+        - ``'kendall'`` ：肯德尔 τ 秩相关（小样本/有序类别更稳健）
+
+    :type method: Literal['pearson', 'spearman', 'kendall']
     :return: 筛选后的特征列表
 
     **参考样例**
@@ -177,8 +198,11 @@ def vif_analysis(df: pd.DataFrame, features: List[str] = None, threshold: float 
     """VIF多重共线性分析.
 
     :param df: 输入数据
-    :param features: 指定分析的特征，None则分析全部数值型
-    :param threshold: VIF阈值
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。指定分析的特征，None则分析全部数值型
+    :type features: List[str]
+    :param threshold: 默认值为 ``10.0`` 。VIF阈值
+    :type threshold: float
     :return: VIF分析DataFrame
 
     **参考样例**

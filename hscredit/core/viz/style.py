@@ -110,7 +110,8 @@ _PALETTES = {
 def get_palette(name: str = "default"):
     """获取配色方案.
 
-    :param name: 方案名称，可选 'default'/'primary'(3色), 'extended', 'pink_purple', 'semantic'(语义色字典)
+    :param name: 默认值为 ``'default'`` 。方案名称，可选 'default'/'primary'(3色), 'extended', 'pink_purple', 'semantic'(语义色字典)
+    :type name: str
     :return: 颜色列表或字典
     """
     if name in _PALETTES:
@@ -268,7 +269,9 @@ def set_style(theme: str = "risk", chinese_font: bool = True):
     """设置全局可视化主题.
 
     :param theme: 主题名称，可选 'risk'(默认风控主题), 'minimal'(极简), 'report'(报告用)
-    :param chinese_font: 是否自动配置中文字体支持
+    :type theme: str
+    :param chinese_font: 默认值为 ``True`` 。是否自动配置中文字体支持
+    :type chinese_font: bool
     :raises ValueError: 未知主题名称
 
     用法::

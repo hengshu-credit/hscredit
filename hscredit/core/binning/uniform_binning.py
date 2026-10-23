@@ -17,24 +17,90 @@ class UniformBinning(BaseBinning):
     将特征值的范围等分为指定数量的区间，每个区间宽度相同。
     适用于数据分布相对均匀的场景。
 
+    **参数**
+
+    :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
+        与显式参数重名或不存在的参数会被构造函数拒绝。
+
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: Union[int, str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Dict[str, List]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, Sequence[bool]]]]]
+
     :param max_n_bins: 最大分箱数，默认为5
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认为2
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制
+    :type min_bin_size: Optional[Union[float, int]]
     :param max_bin_size: 每箱最大样本占比，默认为None
+    :type max_bin_size: Optional[Union[float, int]]
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0
+    :type min_bad_rate: float
     :param monotonic: 是否要求单调性，默认为False
+    :type monotonic: Union[bool, str]
     :param missing_separate: 缺失值是否单独分箱，默认为True
+    :type missing_separate: bool
     :param special_codes: 特殊值列表，默认为None，如[-999, -98]
+    :type special_codes: Optional[List]
     :param left_clip: 左侧截断分位数，默认为None，如0.01表示截断1%分位数以下的值
+    :type left_clip: Optional[float]
     :param right_clip: 右侧截断分位数，默认为None，如0.99表示截断99%分位数以上的值
+    :type right_clip: Optional[float]
     :param force_numerical: 是否强制作为数值型处理，默认为False（自动识别类别型）
+
         - True: 将所有特征视为数值型进行等距分箱（默认，因为等距分箱适用于数值型）
+
         - False: 自动检测特征类型（根据dtype判断）
+
+    :type force_numerical: bool
     :param random_state: 随机种子，默认为None
+    :type random_state: Optional[int]
     :param target: 使用完整数据框拟合时的目标列名，默认为 ``"target"``
+    :type target: str
     :param verbose: 是否输出详细信息，默认为False
+    :type verbose: Union[bool, int]
     :param decimal: 数值切点保留的小数位数，默认为4
+    :type decimal: int
     :param woe_clip: WOE 绝对值截断上限，默认为None
+    :type woe_clip: Optional[float]
 
     **参考样例**
 
@@ -55,12 +121,19 @@ class UniformBinning(BaseBinning):
     **注意**
 
     等距分箱的特点:
+
     1. 每个分箱的区间宽度相同
+
     2. 分箱边界由 (max - min) / n_bins 计算得出
+
     3. 支持通过left_clip/right_clip截断异常值
+
     4. 支持通过special_codes处理特殊值（如-999表示缺失）
+
     5. 默认force_numerical=False，自动识别类别型；如需强制数值等距分箱可显式设为 True
+
     6. 计算速度快，实现简单；为无监督方法，不使用标签 ``y`` 决定切分
+
     7. 对偏态分布或含极端值的特征不友好（可能某些箱样本极少），此时优先用等频分箱
 
     **引用**
@@ -131,8 +204,12 @@ class UniformBinning(BaseBinning):
     ) -> "UniformBinning":
         """拟合等距分箱.
 
+        :param kwargs: 其他参数，传递给具体的分箱算法
+
         :param X: 训练数据
-        :param y: 目标变量
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :return: 拟合后的分箱器
         """
         # 检查输入数据
@@ -283,14 +360,21 @@ class UniformBinning(BaseBinning):
         将原始特征值转换为分箱索引、分箱标签或WOE值。
 
         :param X: 待转换数据, DataFrame或数组格式
-        :param metric: 转换类型, 可选值:
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param metric: 默认值为 ``'indices'`` 。转换类型, 可选值:
+
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
+
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
+
             - 'woe': 返回WOE值, 用于逻辑回归建模
+
+        :type metric: str
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
 
-        :example:
+        **参考样例**
+
         >>> binner = UniformBinning()
         >>> binner.fit(X_train, y_train)
         >>>

@@ -237,7 +237,7 @@ class DatabaseQueryError(DatabaseError):
 class DatabaseWriteError(DatabaseError):
     """数据库写入失败，并可携带部分写入结果。
 
-    除 :class:`DatabaseError` 的 SQL 上下文属性外，``result`` 保存失败前已经提交的批次和行数统计。
+    除  :class:`DatabaseError`  的 SQL 上下文属性外， ``result`` 保存失败前已经提交的批次和行数统计。
     """
 
     def __init__(

@@ -53,13 +53,30 @@ class RuleFlow(ParallelizableMixin):
 
     **参数**
 
-    :param rules: 单条 :class:`Rule` 或规则列表，规则顺序即生产执行顺序
-    :param mode: 执行模式，``"serial"``/``"串行"`` 表示命中第一条规则后停止，
-        ``"parallel"``/``"并行"`` 表示所有规则都参与判断
+    :param rules: 单条  :class:`Rule`  或规则列表，规则顺序即生产执行顺序
+    :type rules: RuleInput
+    :param mode: 默认值为 ``'serial'`` 。执行模式， ``"serial"`` / ``"串行"`` 表示命中第一条规则后停止
+        ``"parallel"`` / ``"并行"`` 表示所有规则都参与判断
+
+    :type mode: str
     :param name: 规则流名称，默认 ``"RuleFlow"``
-    :param n_jobs: 并行任务数，默认为-1
-    :param parallel_backend: joblib并行后端，默认为None
-    :param parallel_config: joblib扩展配置，默认为None
+    :type name: Optional[str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
 
     **属性**
 
@@ -317,16 +334,23 @@ class RuleFlow(ParallelizableMixin):
 
         ``production_hits`` 支持三种格式：
 
-        - 单列命中规则：每行是 ``rule.name``、``[rule.name]``、空值或多个规则名列表
-        - 指定 ``hit_col``：从 DataFrame 的该列读取命中规则
+        - 单列命中规则：每行是 ``rule.name`` 、 ``[rule.name]`` 、空值或多个规则名列表
+
+        - 指定 ``hit_col`` ：从 DataFrame 的该列读取命中规则
+
         - 规则命中矩阵：列名为规则名称/表达式/展示名，值为 ``0/1`` 或 ``True/False``
 
         :param data: 生产订单原始字段数据 DataFrame
+        :type data: DataFrame
         :param production_hits: 每笔订单线上生产命中规则
-        :param hit_col: 命中规则列名；不传时优先识别 ``"命中规则"``，再识别规则命中矩阵
-        :param order_id_col: 订单 ID 字段；传入时按订单 ID 对齐，否则按行顺序/索引对齐
+        :type production_hits: Union[pd.DataFrame, pd.Series]
+        :param hit_col: 默认值为 ``None`` 。命中规则列名；不传时优先识别 ``"命中规则"`` ，再识别规则命中矩阵
+        :type hit_col: Optional[str]
+        :param order_id_col: 默认值为 ``None`` 。订单 ID 字段；传入时按订单 ID 对齐，否则按行顺序/索引对齐
+        :type order_id_col: Optional[str]
         :param include_data: 差异明细是否拼接原始订单字段，默认为 True
-        :return: ``(report, diff_detail)``。report 为规则一致性报告，diff_detail 为差异订单明细
+        :type include_data: bool
+        :return: ``(report, diff_detail)`` 。report 为规则一致性报告，diff_detail 为差异订单明细
         """
         self._validate_data(data)
         offline_prediction = self.predict(data)
@@ -410,10 +434,11 @@ class RuleFlow(ParallelizableMixin):
         """计算每笔样本在每条规则上的命中结果。
 
         串行模式下，前序规则已命中的样本不会继续流转到后续规则，后续规则列填充
-        ``<NA>``；并行模式下，每条规则都会对全量样本计算命中结果。返回结果保留
+        ``<NA>`` ；并行模式下，每条规则都会对全量样本计算命中结果。返回结果保留
         输入数据索引。
 
         :param data: 生产拼表后的变量取值明细
+        :type data: DataFrame
         :return: 每条规则命中明细以及规则集汇总列
         """
         self._validate_data(data)
@@ -634,10 +659,15 @@ class RuleFlow(ParallelizableMixin):
         """输出每条规则的流转命中报表。
 
         :param data: 生产拼表后的变量取值明细
-        :param date: 日期列名，传入后按 ``freq`` 生成 ``统计周期`` 分组
+        :type data: DataFrame
+        :param date: 默认值为 ``None`` 。日期列名，传入后按 ``freq`` 生成 ``统计周期`` 分组
+        :type date: Optional[str]
         :param freq: pandas 日期频率，兼容新旧别名，默认 ``"M"`` 月
-        :param group: 类别分组字段，支持单列或多列；可与 ``date`` 同时使用
+        :type freq: str
+        :param group: 默认值为 ``None`` 。类别分组字段，支持单列或多列；可与 ``date`` 同时使用
+        :type group: Optional[Union[str, Sequence[str]]]
         :param dropna: 是否丢弃分组字段缺失样本，默认为 True；False 时归入 ``"缺失"``
+        :type dropna: bool
         :return: 规则级流转命中报表
         """
         self._validate_data(data)
@@ -715,7 +745,7 @@ class RuleFlow(ParallelizableMixin):
     ) -> pd.DataFrame:
         """输出规则集整体通过与命中汇总。
 
-        分组参数与 :meth:`report` 一致；未传入分组时返回一行整体汇总。
+        分组参数与  :meth:`report`  一致；未传入分组时返回一行整体汇总。
         """
         self._validate_data(data)
         rows = []

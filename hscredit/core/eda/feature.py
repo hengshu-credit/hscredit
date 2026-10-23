@@ -121,18 +121,27 @@ def feature_type_inference(
     """自动推断特征类型.
 
     默认严格按照实际数据类型判断：
+
     - 数值类型（int/float）-> 'numerical'
+
     - 非数值类型（object/string/category）-> 'categorical'
 
     仅当用户指定参数时才进行特殊处理：
+
     - numeric_as_categorical: 将指定的数值列视为 categorical
+
     - force_numeric: 将指定的列视为 numerical
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param categorical_threshold: 保留参数，不再用于默认类型判断
+    :type categorical_threshold: int
     :param unique_ratio_threshold: 保留参数，不再用于默认类型判断
-    :param numeric_as_categorical: 强制视为分类变量的数值列名列表
-    :param force_numeric: 强制视为数值变量的列名列表
+    :type unique_ratio_threshold: float
+    :param numeric_as_categorical: 默认值为 ``None`` 。强制视为分类变量的数值列名列表
+    :type numeric_as_categorical: Optional[List[str]]
+    :param force_numeric: 默认值为 ``None`` 。强制视为数值变量的列名列表
+    :type force_numeric: Optional[List[str]]
     :return: 特征类型DataFrame
 
     **参考样例**
@@ -183,8 +192,11 @@ def numeric_distribution(df: pd.DataFrame, feature: str, n_bins: int = 20) -> pd
     """数值特征分布统计.
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param feature: 特征名
-    :param n_bins: 分箱数
+    :type feature: str
+    :param n_bins: 默认值为 ``20`` 。分箱数
+    :type n_bins: int
     :return: 分布统计DataFrame
 
     **参考样例**
@@ -228,8 +240,11 @@ def categorical_distribution(df: pd.DataFrame, feature: str, top_n: int = None) 
     """类别特征分布统计.
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param feature: 特征名
-    :param top_n: 仅显示前N个类别
+    :type feature: str
+    :param top_n: 默认值为 ``None`` 。仅显示前N个类别
+    :type top_n: int
     :return: 分布统计DataFrame
 
     **参考样例**
@@ -295,10 +310,27 @@ def outlier_detection(
 ) -> pd.DataFrame:
     """异常值检测.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
-    :param features: 指定检测的特征，None则检测全部数值型
-    :param method: 检测方法，'iqr'/'zscore'/'mad'
-    :param threshold: 阈值
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。指定检测的特征，None则检测全部数值型
+    :type features: List[str]
+    :param method: 默认值为 ``'iqr'`` 。检测方法，'iqr'/'zscore'/'mad'
+    :type method: Literal['iqr', 'zscore', 'mad']
+    :param threshold: 默认值为 ``1.5`` 。阈值
+    :type threshold: float
     :return: 异常值统计DataFrame
 
     **参考样例**
@@ -341,9 +373,25 @@ def rare_category_detection(
 ) -> pd.DataFrame:
     """稀有类别检测.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
-    :param features: 指定检测的特征，None则检测全部分类别
-    :param threshold: 稀有阈值（频率低于此值视为稀有）
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。指定检测的特征，None则检测全部分类别
+    :type features: List[str]
+    :param threshold: 默认值为 ``0.01`` 。稀有阈值（频率低于此值视为稀有）
+    :type threshold: float
     :return: 稀有类别统计DataFrame
 
     **参考样例**
@@ -385,8 +433,23 @@ def concentration_analysis(
 ) -> pd.DataFrame:
     """集中度分析(Gini系数).
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
-    :param features: 指定分析的特征，None则分析全部数值型
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。指定分析的特征，None则分析全部数值型
+    :type features: List[str]
     :return: 集中度分析DataFrame
 
     **参考样例**
@@ -432,10 +495,27 @@ def feature_stability_over_time(
 ) -> pd.DataFrame:
     """特征时序稳定性分析.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 指定分析的特征列表
+    :type features: List[str]
     :param date: 日期列名
-    :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
+    :type date: str
+    :param freq: 时间聚合频率， ``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
+    :type freq: str
     :return: 时序稳定性DataFrame
 
     **参考样例**

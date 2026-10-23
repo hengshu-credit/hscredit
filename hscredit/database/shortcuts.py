@@ -208,10 +208,15 @@ def query(
     """快捷执行一次性 SQL 查询。
 
     :param source: 数据库配置、Database 实例或原生 DB-API 连接。
+    :type source: Any
     :param sql: 查询 SQL。
-    :param params: 驱动绑定参数。
-    :param result: ``dataframe``、``records`` 或 ``rows``。
-    :param db_type: 原生连接无法自动识别时使用的数据库类型。
+    :type sql: str
+    :param params: 默认值为 ``None`` 。驱动绑定参数
+    :type params: Any
+    :param result: 默认值为 ``'dataframe'`` 。 ``dataframe`` 、 ``records`` 或 ``rows``
+    :type result: str
+    :param db_type: 默认值为 ``None`` 。原生连接无法自动识别时使用的数据库类型
+    :type db_type: Optional[str]
     :return: 对应格式的完整查询结果。
     """
 
@@ -228,9 +233,13 @@ def execute(
     """快捷执行单条 DDL 或 DML SQL。
 
     :param source: 数据库配置、Database 实例或原生 DB-API 连接。
+    :type source: Any
     :param sql: 要执行的 SQL。
-    :param params: 驱动绑定参数。
-    :param db_type: 可选数据库类型。
+    :type sql: str
+    :param params: 默认值为 ``None`` 。驱动绑定参数
+    :type params: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
     :return: 适配器报告的影响行数或原生结果。
     """
 
@@ -247,9 +256,13 @@ def executemany(
     """快捷批量执行同一条 SQL。
 
     :param source: 数据库配置、Database 实例或原生 DB-API 连接。
+    :type source: Any
     :param sql: 带驱动占位符的 SQL。
+    :type sql: str
     :param values: 多组绑定值。
-    :param db_type: 可选数据库类型。
+    :type values: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
     :return: 累计影响行数或原生结果。
     """
 
@@ -267,10 +280,14 @@ def stream_query(
     """快捷打开流式 SQL 查询；拥有的数据源随查询流关闭。
 
     :param source: 数据库配置、Database 实例或原生 DB-API 连接。
+    :type source: Any
     :param sql: 查询 SQL。
-    :param params: 驱动绑定参数。
-    :param db_type: 可选数据库类型。
-    :param options: 传递给 :meth:`Database.stream_query` 的分块、进度和 JSON 投影参数。
+    :type sql: str
+    :param params: 默认值为 ``None`` 。驱动绑定参数
+    :type params: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
+    :param options: 传递给  :meth:`Database.stream_query`  的分块、进度和 JSON 投影参数。
     :return: 可中断并可合并已读数据的 QueryStream。
     """
 
@@ -296,10 +313,14 @@ def read_query(
     """快捷消费流式 SQL 查询并返回合并结果。
 
     :param source: 数据库配置、Database 实例或原生 DB-API 连接。
+    :type source: Any
     :param sql: 查询 SQL。
-    :param params: 驱动绑定参数。
-    :param db_type: 可选数据库类型。
-    :param options: 传递给 :meth:`Database.read_query` 的选项。
+    :type sql: str
+    :param params: 默认值为 ``None`` 。驱动绑定参数
+    :type params: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
+    :param options: 传递给  :meth:`Database.read_query`  的选项。
     :return: DataFrame、记录字典列表或原始行列表。
     """
 
@@ -316,9 +337,12 @@ def export_schema(
     """快捷导出数据库表和字段元数据。
 
     :param source: 数据库配置、Database 实例或原生 DB-API 连接。
-    :param targets: 数据库或 ``数据库.表`` 目标。
-    :param db_type: 可选数据库类型。
-    :param options: 输出路径和 ``excel_params``。
+    :type source: Any
+    :param targets: 默认值为 ``None`` 。数据库或 ``数据库.表`` 目标
+    :type targets: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
+    :param options: 输出路径和 ``excel_params`` 。
     :return: 中文字段元数据 DataFrame。
     """
 
@@ -336,10 +360,14 @@ def create_table(
     """快捷根据 DataFrame 创建表。
 
     :param source: 数据库配置、Database 实例或原生 DB-API 连接。
+    :type source: Any
     :param data: 用于推断表结构的 DataFrame。
+    :type data: Any
     :param table_name: 目标表限定名。
-    :param db_type: 可选数据库类型。
-    :param options: 传递给 :meth:`Database.create_table` 的方言参数。
+    :type table_name: str
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
+    :param options: 传递给  :meth:`Database.create_table`  的方言参数。
     :return: 已执行 DDL 或适配器原生结果。
     """
 
@@ -357,9 +385,13 @@ def stream_write(
     """快捷流式写入 DataFrame 或记录迭代器。
 
     :param source: 数据库配置、Database 实例或原生 DB-API 连接。
+    :type source: Any
     :param data: DataFrame、分块或记录迭代器。
+    :type data: Any
     :param table_name: 目标表限定名。
-    :param db_type: 可选数据库类型。
+    :type table_name: str
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
     :param options: 写入模式、批次、键字段和方言参数。
     :return: WriteResult 写入统计。
     """
@@ -378,9 +410,13 @@ def read_one(
     """快捷读取单个 Redis key 或 MongoDB 文档。
 
     :param source: 数据库配置或 Database 实例。
+    :type source: Any
     :param resource: Redis key 或 MongoDB collection。
-    :param selector: MongoDB 查询条件。
-    :param db_type: 可选数据库类型。
+    :type resource: Any
+    :param selector: 默认值为 ``None`` 。MongoDB 查询条件
+    :type selector: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
     :param options: 后端读取选项。
     :return: 单值或单个文档。
     """
@@ -398,7 +434,7 @@ def read_many(
 ) -> Any:
     """快捷批量读取 Redis keys 或 MongoDB 文档。
 
-    参数与 :func:`read_one` 一致，返回后端批量读取结果。
+    参数与  :func:`read_one`  一致，返回后端批量读取结果。
     """
 
     return _invoke(source, "read_many", resource, selector, db_type=db_type, **options)
@@ -414,7 +450,7 @@ def read(
 ) -> Any:
     """快捷自适应执行单条或批量 NoSQL 读取。
 
-    参数与 :func:`read_one` 一致，具体单条/批量语义由适配器根据输入和选项确定。
+    参数与  :func:`read_one`  一致，具体单条/批量语义由适配器根据输入和选项确定。
     """
 
     return _invoke(source, "read", resource, selector, db_type=db_type, **options)
@@ -431,9 +467,13 @@ def write_one(
     """快捷写入单个 Redis key 或 MongoDB 文档。
 
     :param source: 数据库配置或 Database 实例。
+    :type source: Any
     :param resource: Redis key 或 MongoDB collection。
+    :type resource: Any
     :param data: 要写入的值或文档。
-    :param db_type: 可选数据库类型。
+    :type data: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
     :param options: 后端写入选项。
     :return: 后端写入结果。
     """
@@ -451,7 +491,7 @@ def write_many(
 ) -> Any:
     """快捷批量写入 Redis key-value 或 MongoDB 文档。
 
-    参数与 :func:`write_one` 一致，``data`` 为批量输入。
+    参数与  :func:`write_one`  一致， ``data`` 为批量输入。
     """
 
     return _invoke(source, "write_many", resource, data, db_type=db_type, **options)
@@ -467,13 +507,17 @@ def write(
 ) -> Any:
     """快捷写入 SQL 表，或自适应执行单条/批量 NoSQL 写入。
 
-    SQL 用法为 ``write(source, 表名, 数据, ...)``，默认 ``mode="a"``；目标表不存在时
-    根据首批数据自动创建。NoSQL 参数与 :func:`write_one` 一致，具体单条/批量语义由适配器确定。
+    SQL 用法为 ``write(source, 表名, 数据, ...)`` ，默认 ``mode="a"`` ；目标表不存在时
+    根据首批数据自动创建。NoSQL 参数与  :func:`write_one`  一致，具体单条/批量语义由适配器确定。
 
     :param source: 数据库配置、Database 实例或原生 DB-API 连接。
+    :type source: Any
     :param resource: SQL 目标表限定名、Redis key/映射或 MongoDB collection。
-    :param data: SQL DataFrame/记录迭代器、Redis 值或 MongoDB 文档。
-    :param db_type: 可选数据库类型。
+    :type resource: Any
+    :param data: 默认值为 ``None`` 。SQL DataFrame/记录迭代器、Redis 值或 MongoDB 文档
+    :type data: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
     :param options: SQL 写入模式、批次、键字段和方言参数，或 NoSQL 后端选项。
     :return: SQL WriteResult 或 NoSQLWriteResult。
     """
@@ -492,9 +536,13 @@ def delete_one(
     """快捷删除单个 Redis key 或 MongoDB 文档。
 
     :param source: 数据库配置或 Database 实例。
+    :type source: Any
     :param resource: Redis key 或 MongoDB collection。
-    :param selector: MongoDB 查询条件。
-    :param db_type: 可选数据库类型。
+    :type resource: Any
+    :param selector: 默认值为 ``None`` 。MongoDB 查询条件
+    :type selector: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
     :param options: 后端删除选项。
     :return: 后端删除结果。
     """
@@ -512,7 +560,7 @@ def delete_many(
 ) -> Any:
     """快捷批量删除 Redis keys 或 MongoDB 文档。
 
-    参数与 :func:`delete_one` 一致，返回后端批量删除结果。
+    参数与  :func:`delete_one`  一致，返回后端批量删除结果。
     """
 
     return _invoke(source, "delete_many", resource, selector, db_type=db_type, **options)
@@ -528,7 +576,7 @@ def delete(
 ) -> Any:
     """快捷自适应执行单条或批量 NoSQL 删除。
 
-    参数与 :func:`delete_one` 一致，具体单条/批量语义由适配器确定。
+    参数与  :func:`delete_one`  一致，具体单条/批量语义由适配器确定。
     """
 
     return _invoke(source, "delete", resource, selector, db_type=db_type, **options)
@@ -545,9 +593,13 @@ def exists(
     """快捷判断 Redis key 或 MongoDB 文档是否存在。
 
     :param source: 数据库配置或 Database 实例。
+    :type source: Any
     :param resource: Redis key 或 MongoDB collection。
-    :param selector: MongoDB 查询条件。
-    :param db_type: 可选数据库类型。
+    :type resource: Any
+    :param selector: 默认值为 ``None`` 。MongoDB 查询条件
+    :type selector: Any
+    :param db_type: 默认值为 ``None`` 。可选数据库类型
+    :type db_type: Optional[str]
     :param options: 后端查询选项。
     :return: 是否存在。
     :rtype: bool

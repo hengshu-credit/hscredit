@@ -104,23 +104,57 @@ class IVSelector(BaseFeatureSelector):
     IV是金融风控中衡量特征预测能力的核心指标。
 
     IV值解释:
+
     - < 0.02: 无预测能力
+
     - 0.02 - 0.1: 弱预测能力
+
     - 0.1 - 0.3: 中等预测能力
+
     - 0.3 - 0.5: 强预测能力
+
     - > 0.5: 极强预测能力（可能过拟合）
 
     **支持的数据类型:**
+
     - 数值型特征（int, float）
+
     - 类别型特征（object, category）
 
     **参数**
 
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param threshold: IV阈值，默认为0.02
+
         - 0.02: 仅保留IV值大于等于0.02的特征
+
     :param target: 目标变量列名，默认为'target'
+    :type target: str
     :param regularization: 正则化参数，默认为1.0
-    :param n_jobs: 并行计算的任务数
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
 
     **参考样例**
 
@@ -159,19 +193,25 @@ class IVSelector(BaseFeatureSelector):
 
     **参数**
 
-    除继承自 :class:`~hscredit.core.selectors.base.BaseFeatureSelector` 的通用参数
-    （``target`` / ``include`` / ``exclude`` / ``force_drop`` / ``n_jobs``）外：
+    除继承自  :class:`~hscredit.core.selectors.base.BaseFeatureSelector`  的通用参数
+    （ ``target`` / ``include`` / ``exclude`` / ``force_drop`` / ``n_jobs`` ）外：
 
-    :param threshold: IV 保留阈值，``IV >= threshold`` 的特征被保留，默认为 ``0.02``
+    :param threshold: IV 保留阈值， ``IV >= threshold`` 的特征被保留，默认为 ``0.02``
+    :type threshold: float
     :param regularization: 计算 WOE/IV 时的加性平滑系数，避免某类别好/坏样本数为 0
         导致取对数发散，默认为 ``1.0``
-    :param binner: 可选的已配置分箱器实例。未训练实例会自动训练，已训练实例直接复用
-    :param bin_params: 可选的 ``OptimalBinning`` 构造参数字典。未传 ``binner`` 时，
+
+    :type regularization: float
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例。未训练实例会自动训练，已训练实例直接复用
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传 ``binner`` 时
         内部创建分箱器并将原始数据转换为分箱 index 后计算 IV
 
+    :type bin_params: Optional[Dict[str, Any]]
+
     .. note::
-        本筛选器按特征的**唯一取值**直接计算 IV（类别型先 ``factorize``），适合已分箱
-        或基数较低的特征；连续特征建议先用 :class:`~hscredit.core.binning.OptimalBinning`
+        本筛选器按特征的 **唯一取值** 直接计算 IV（类别型先 ``factorize`` ），适合已分箱
+        或基数较低的特征；连续特征建议先用  :class:`~hscredit.core.binning.OptimalBinning`
         分箱后再筛选，或传入 ``binner`` 参数。
 
     **引用**

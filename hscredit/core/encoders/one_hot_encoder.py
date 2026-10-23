@@ -25,29 +25,75 @@ class OneHotEncoder(BaseEncoder):
 
     **参数**
 
-    :param features: 需要编码的列名列表。如果为None，则编码所有列
+    :param target: 默认值为 ``None`` 。scorecardpipeline风格的目标列名
+    :type target: Optional[str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param passthrough_target: 是否在转换结果中保留目标列，默认 ``False`` 。
+        ``True`` 仅用于需要目标列的表格分析；连接预测 Pipeline 时应保持 ``False`` ，避免标签进入模型。
+
+    :type passthrough_target: bool
+
+    :param features: 默认值为 ``None`` 。需要编码的列名列表。如果为None，则编码所有列
+    :type features: Optional[List[str]]
     :param drop: 是否删除某一列以避免多重共线性，默认为None
+
         - None: 保留所有列
+
         - 'first': 删除第一列
+
         - 'if_binary': 二值特征时删除一列
+
+    :type drop: Optional[str]
     :param handle_unknown: 处理未知类别的方式，默认为'ignore'
+
         - 'error': 抛出错误
+
         - 'ignore': 忽略（所有编码列为0）
+
+    :type handle_unknown: str
     :param handle_missing: 处理缺失值的方式，默认为'value'
+
         - 'value': 单独编码为'missing'列
+
         - 'error': 抛出错误
+
+    :type handle_missing: str
     :param use_cat_names: 是否使用类别值作为列名后缀，默认为True
+    :type use_cat_names: bool
     :param return_df: 是否返回DataFrame，默认为True
+    :type return_df: bool
     :param sparse_output: 是否原生构造稀疏输出；return_df=True 返回稀疏DataFrame，
         False 返回CSR（此时未编码透传列必须为数值），默认False
-    :param min_frequency: 低频类别合并门槛：正整数人数或 (0,1) 内比例
+
+    :type sparse_output: bool
+    :param min_frequency: 默认值为 ``None`` 。低频类别合并门槛：正整数人数或 (0,1) 内比例
+    :type min_frequency: Optional[Union[int, float]]
     :param max_categories: 每列最多保留的非缺失输出类别数，包含稀有类别桶；默认不限制
+    :type max_categories: Optional[int]
     :param max_output_bytes: 编码输出预计字节预算，超限在构造输出前报错；
         不包含上游输入、进程或全部运行时内存，默认不限制
+
+    :type max_output_bytes: Optional[int]
 
     **属性**
 
     - categories_: 各列的类别列表，格式为 {col: [category1, category2, ...]}
+
     - feature_names_: 编码后的特征名列表
 
     **参考样例**
@@ -68,7 +114,7 @@ class OneHotEncoder(BaseEncoder):
     **引用**
 
     虚拟变量（dummy variables）/ one-hot 编码是统计建模标准做法，参见 sklearn
-    ``OneHotEncoder``：
+    ``OneHotEncoder`` ：
     https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
     """
 
@@ -318,9 +364,10 @@ class OneHotEncoder(BaseEncoder):
 
         对每个原始列，取值为 1 的独热列对应类别即为原始类别；
         若所有独热列均为 0（如 drop 删除的参考类别或未知类别），则还原为 NaN。
-        缺失列（``{col}_missing``）激活时还原为 NaN。
+        缺失列（ ``{col}_missing`` ）激活时还原为 NaN。
 
         :param X: 编码后的数据
+        :type X: pd.DataFrame
         :return: 逆编码后的数据
         :raises NotFittedError: 当编码器尚未拟合时抛出
         """
@@ -386,7 +433,14 @@ class OneHotEncoder(BaseEncoder):
         return record["value"]
 
     def export_mapping(self, *, legacy=False):
-        """导出带类型记录的 JSON 映射，避免 JSON 字典键丢失类别类型。"""
+        """导出带类型记录的 JSON 映射，避免 JSON 字典键丢失类别类型。
+
+        **参数**
+
+        :param legacy: True返回旧Python字典结构（可能含NaN/非字符串键，不承诺JSON
+            保真）；遇业务类别与旧保留键冲突时拒绝。默认v2保留类别类型、schema及
+            推理参数。自定义cv对象只记录省略说明，完整重训状态应使用save_artifact。
+        """
         if not legacy:
             return super().export_mapping()
         payload = super().export_mapping(legacy=True)
@@ -413,7 +467,12 @@ class OneHotEncoder(BaseEncoder):
         return payload
 
     def import_mapping(self, mapping):
-        """加载当前带类型记录映射或旧版映射。"""
+        """加载当前带类型记录映射或旧版映射。
+
+        **参数**
+
+        :param mapping: 编码映射字典
+        """
         if mapping.get("format") == "hscredit-encoder-mapping":
             return super().import_mapping(mapping)
         version = mapping.get("onehot_version")
@@ -436,7 +495,7 @@ class OneHotEncoder(BaseEncoder):
 
         输出顺序与 transform 一致：未编码透传列在前，独热编码列在后。
 
-        :param input_features: 兼容 sklearn 接口的占位参数，未使用
+        :param input_features: 默认值为 ``None`` 。兼容 sklearn 接口的占位参数，未使用
         :return: 输出列名数组
         """
         other_cols = getattr(self, "_other_cols_", [])

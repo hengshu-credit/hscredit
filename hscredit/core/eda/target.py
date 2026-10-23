@@ -51,7 +51,7 @@ def _create_binary_target(
     :param df: 输入数据
     :param overdue_col: 逾期天数字段名
     :param dpd: 逾期定义天数
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
     :return: 二元目标变量 (0/1)，灰样本为NaN
     """
     validate_overdue_operator(overdue_operator)
@@ -63,7 +63,9 @@ def target_distribution(df: pd.DataFrame, target: str) -> pd.DataFrame:
     """目标变量分布统计.
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param target: 目标变量列名
+    :type target: str
     :return: 目标分布DataFrame，列包括[类别, 样本数, 占比, 累计占比]
 
     **参考样例**
@@ -105,11 +107,18 @@ def bad_rate_overall(
     支持单标签分析（通过target）或多标签分析（通过overdue+dpds）。
 
     :param df: 输入数据
-    :param target: 目标变量列名（单标签模式）
-    :param overdue: 逾期天数字段名或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
+    :type df: pd.DataFrame
+    :param target: 默认值为 ``None`` 。目标变量列名（单标签模式）
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
+
         - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+
+    :type dpds: Optional[Union[int, List[int]]]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
     :return: 单标签返回字典，多标签返回DataFrame
 
     **参考样例**
@@ -126,10 +135,12 @@ def bad_rate_overall(
     0  MOB1>7     9800    8820     980    10.00
     1  MOB1>30    9800    9400     400     4.08
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
 
     validate_dataframe(df)
@@ -169,12 +180,19 @@ def bad_rate_by_dimension(
     支持单标签或多标签分析。
 
     :param df: 输入数据
-    :param dim_col: 维度列名（如渠道、产品类型）
-    :param target: 目标变量列名（单标签模式）
-    :param overdue: 逾期天数字段名或列表
-    :param dpds: 逾期定义天数或列表
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param sort_by: 排序方式，'bad_rate'或'count'
+    :type df: pd.DataFrame
+    :param dim_col: 默认值为 ``None`` 。维度列名（如渠道、产品类型）
+    :type dim_col: str
+    :param target: 默认值为 ``None`` 。目标变量列名（单标签模式）
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或列表
+    :type overdue: Optional[Union[str, List[str]]]
+    :param dpds: 默认值为 ``None`` 。逾期定义天数或列表
+    :type dpds: Optional[Union[int, List[int]]]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
+    :param sort_by: 默认值为 ``'bad_rate'`` 。排序方式，'bad_rate'或'count'
+    :type sort_by: str
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
 
     **参考样例**
@@ -186,10 +204,12 @@ def bad_rate_by_dimension(
     >>> result = bad_rate_by_dimension(df, 'channel', overdue='MOB1', dpds=[7, 30])
     >>> print(result['MOB1>7'])
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
 
     dim_col = segment_col or dim_col
@@ -228,13 +248,21 @@ def bad_rate_trend(
     支持单标签或多标签分析。
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param date: 日期列名
-    :param target: 目标变量列名（单标签模式）
-    :param overdue: 逾期天数字段名或列表
-    :param dpds: 逾期定义天数或列表
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季度
-    :param dimensions: 分维度分析列表
+    :type date: str
+    :param target: 默认值为 ``None`` 。目标变量列名（单标签模式）
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或列表
+    :type overdue: Optional[Union[str, List[str]]]
+    :param dpds: 默认值为 ``None`` 。逾期定义天数或列表
+    :type dpds: Optional[Union[int, List[int]]]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
+    :param freq: 默认值为 ``'M'`` 。时间频率，'D'日/'W'周/'M'月/'Q'季度
+    :type freq: str
+    :param dimensions: 默认值为 ``None`` 。分维度分析列表
+    :type dimensions: Optional[List[str]]
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
 
     **参考样例**
@@ -246,10 +274,12 @@ def bad_rate_trend(
     >>> trend = bad_rate_trend(df, 'apply_date', overdue=['MOB1', 'MOB3'], dpds=30, freq='M')
     >>> print(trend['MOB1>30'])
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
 
     validate_dataframe(df, required_cols=[date])
@@ -284,13 +314,21 @@ def bad_rate_by_bins(
     支持单标签或多标签分析。
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param feature: 评分列名
-    :param target: 目标变量列名（单标签模式）
-    :param overdue: 逾期天数字段名或列表
-    :param dpds: 逾期定义天数或列表
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param max_n_bins: 分箱数
-    :param method: 分箱方法，'quantile'等频/'uniform'等距
+    :type feature: str
+    :param target: 默认值为 ``None`` 。目标变量列名（单标签模式）
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或列表
+    :type overdue: Optional[Union[str, List[str]]]
+    :param dpds: 默认值为 ``None`` 。逾期定义天数或列表
+    :type dpds: Optional[Union[int, List[int]]]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
+    :param method: 默认值为 ``'quantile'`` 。分箱方法，'quantile'等频/'uniform'等距
+    :type method: str
     :return: 单标签返回DataFrame，多标签返回{标签名: DataFrame}字典
 
     **参考样例**
@@ -302,10 +340,12 @@ def bad_rate_by_bins(
     >>> bins = bad_rate_by_bins(df, 'score', overdue=['MOB1', 'MOB3'], dpds=30, max_n_bins=10)
     >>> print(bins['MOB1>30'])
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
 
     validate_dataframe(df, required_cols=[feature])
@@ -340,9 +380,13 @@ def sample_distribution(
     """样本时间分布分析.
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param date: 日期列名
-    :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
-    :param target: 目标变量列名（如有）
+    :type date: str
+    :param freq: 时间聚合频率， ``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
+    :type freq: str
+    :param target: 默认值为 ``None`` 。目标变量列名（如有）
+    :type target: Optional[TargetInput]
     :return: 样本分布DataFrame
 
     **参考样例**

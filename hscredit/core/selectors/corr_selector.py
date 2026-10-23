@@ -158,30 +158,95 @@ class CorrSelector(BaseFeatureSelector):
 
     **参数**
 
+    :param report_history: 筛选过程历史保留策略，默认 ``"summary"`` 记录摘要；
+        ``"diagnostics"`` 额外记录诊断事件，``"full"`` 记录详细候选过程。
+        所有模式均受事件数和字节预算限制；截断历史不改变最终筛选结果。
+    :param max_report_events: 历史事件数量上限，默认 ``10000``；用于限制详细历史的存储。
+    :param max_report_bytes: 历史存储字节预算，默认 ``8 * 1024 * 1024`` （8 MiB）。
+
+    :param target: 目标变量列名，默认为 'target'。在 scorecardpipeline 风格中用于
+        从 DataFrame 中提取目标列；在 sklearn 风格中若 fit 传入了 y 参数则优先使用 y
+
+    :type target: str
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param threshold: 相关系数阈值，默认为0.7
+
         - 0.7: 移除与其它特征相关性超过0.7的特征
+
         - 范围: 0-1之间的浮点数
+
+    :type threshold: float
     :param method: 相关性计算方法，默认为'spearman'
+
         - 'pearson': 皮尔逊相关系数
+
         - 'spearman': 斯皮尔曼等级相关系数
+
         - 'kendall': 肯德尔相关系数
+
+    :type method: str
     :param metric: 用于决定保留哪个特征的指标，默认为'iv'
+
         - 'iv': 信息值（需要目标变量 y）
+
         - 'ks': KS 统计量
+
         - 'lift': LIFT 值
+
         - 'bad_rate': 坏样本率
+
         指标通过分箱后的 bin_tables_ 计算得到。
+
+    :type metric: str
     :param weights: 特征权重，用于决定保留哪个特征，默认为None
         如果同时传入 weights 和 metric，weights 优先。
+
+    :type weights: Optional[Union[pd.Series, Dict[str, float], List[float]]]
     :param bin_params: 透传给 OptimalBinning 的筛选前分箱参数，例如:
+
         - method: 分箱方法，默认'best_iv'
+
         - max_n_bins: 最大分箱数，默认5
+
         - min_bin_size: 最小分箱比例，默认0.01
+
         - missing_separate: 是否缺失单独分箱，默认True
+
         - prebinning: 预分箱方法
+
         等等，详见 OptimalBinning 文档。
+
+    :type bin_params: Optional[Dict[str, Any]]
     :param corr_block_size: 相关矩阵分块列数，默认为512。仅控制内存和任务粒度，
         不改变相关系数、筛选阈值或结果顺序。
+
+    :type corr_block_size: int
 
     **参考样例**
 

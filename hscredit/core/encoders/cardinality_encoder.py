@@ -23,26 +23,67 @@ class CardinalityEncoder(BaseEncoder):
 
     **参数**
 
-    :param features: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param target: 默认值为 ``None`` 。scorecardpipeline风格的目标列名。本编码器不使用此参数，仅为API一致性保留
+    :type target: Optional[str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param passthrough_target: 是否在转换结果中保留目标列，默认 ``False`` 。
+        ``True`` 仅用于需要目标列的表格分析；连接预测 Pipeline 时应保持 ``False`` ，避免标签进入模型。
+
+    :type passthrough_target: bool
+
+    :param features: 默认值为 ``None`` 。需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :type features: Optional[List[str]]
     :param max_categories: 每列最大类别数（含 other 标签，不含缺失及特殊值），默认为10
+    :type max_categories: int
     :param other_label: 合并后的标签名称，默认为 'other'，支持自定义
+    :type other_label: Any
     :param special_values: 需要独立成类的特殊值列表（如 [-999, 'unknown']），默认为None
+    :type special_values: Optional[List[Any]]
     :param handle_unknown: 处理未知类别的方式，默认为 'other'
+
         - 'other': 映射为 other_label
+
         - 'error': 抛出错误
+
         - 'return_nan': 返回 NaN
+
+    :type handle_unknown: str
     :param handle_missing: 处理缺失值的方式，默认为 'value'
+
         - 'value': 缺失值保持原样（NaN），独立成类
+
         - 'error': 抛出错误
+
         - 'return_nan': 返回 NaN
+
+    :type handle_missing: str
     :param drop_invariant: 是否删除方差为0的列，默认为False
+    :type drop_invariant: bool
     :param return_df: 是否返回DataFrame，默认为True
+    :type return_df: bool
 
     **属性**
 
-    - mapping\_: 编码映射字典，格式为 ``{col: {原始类别: 编码后类别}}``
-    - top_categories\_: 各列保留的高频类别列表，格式为 ``{col: [类别列表]}``
-    - category_counts\_: 各列训练集类别频次统计
+    - mapping\\_: 编码映射字典，格式为 ``{col: {原始类别: 编码后类别}}``
+
+    - top_categories\\_: 各列保留的高频类别列表，格式为 ``{col: [类别列表]}``
+
+    - category_counts\\_: 各列训练集类别频次统计
 
     **参考样例**
 
@@ -69,7 +110,7 @@ class CardinalityEncoder(BaseEncoder):
 
     **注意**
 
-    本编码器只做"高基数→低基数"的类别合并（频次 top-N 保留、其余归入 ``other_label``），
+    本编码器只做"高基数→低基数"的类别合并（频次 top-N 保留、其余归入 ``other_label`` ），
     输出仍为类别值，通常作为 WOE/Target/OneHot 等编码的前置步骤，用于抑制长尾稀有类别带来的
     过拟合与不稳定。合并依据为训练集频次，故为无监督步骤。
 
@@ -219,9 +260,11 @@ class CardinalityEncoder(BaseEncoder):
         """逆编码。
 
         将编码后的数据还原为原始类别值。
-        **注意**: 被合并为 other_label 的类别无法恢复为原始值，逆编码后仍为 other_label。
+
+        **注意** : 被合并为 other_label 的类别无法恢复为原始值，逆编码后仍为 other_label。
 
         :param X: 编码后的数据
+        :type X: pd.DataFrame
         :return: 逆编码后的数据
         """
         X = self._check_input(X).copy()
@@ -248,7 +291,8 @@ class CardinalityEncoder(BaseEncoder):
     def get_top_categories(self, col: Optional[str] = None) -> Union[list, Dict[str, list]]:
         """获取各列保留的高频类别。
 
-        :param col: 列名，如果为None则返回所有列
+        :param col: 默认值为 ``None`` 。列名，如果为None则返回所有列
+        :type col: Optional[str]
         :return: 类别列表或字典
         """
         if col is not None:

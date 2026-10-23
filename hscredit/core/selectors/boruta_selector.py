@@ -49,13 +49,54 @@ class BorutaSelector(BaseFeatureSelector):
 
     **参数**
 
-    :param estimator: 随机森林评估器
+    :param report_history: 筛选过程历史保留策略，默认 ``"summary"`` 记录摘要；
+        ``"diagnostics"`` 额外记录诊断事件，``"full"`` 记录详细候选过程。
+        所有模式均受事件数和字节预算限制；截断历史不改变最终筛选结果。
+    :param max_report_events: 历史事件数量上限，默认 ``10000``；用于限制详细历史的存储。
+    :param max_report_bytes: 历史存储字节预算，默认 ``8 * 1024 * 1024`` （8 MiB）。
+
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
+    :param estimator: 默认值为 ``None`` 。随机森林评估器
     :param n_estimators: 树的数量，默认为100
+    :type n_estimators: int
     :param max_iter: 最大迭代次数，默认为100
+    :type max_iter: int
     :param alpha: 多重检验校正前的显著性水平，默认为0.05
-    :param random_state: 随机种子
+    :type alpha: float
+    :param random_state: 默认值为 ``42`` 。随机种子
+    :type random_state: Optional[int]
     :param target: 目标变量列名，默认为'target'
-    :param n_jobs: 并行计算的任务数
+    :type target: str
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
 
     **参考样例**
 
@@ -77,7 +118,7 @@ class BorutaSelector(BaseFeatureSelector):
     **注意**
 
     Boruta 是 all-relevant（保留所有相关特征）而非 minimal-optimal 的方法，倾向于多保留
-    特征；计算量为 ``max_iter × n_estimators``，特征数多时较慢。
+    特征；计算量为 ``max_iter × n_estimators`` ，特征数多时较慢。
 
     **引用**
 

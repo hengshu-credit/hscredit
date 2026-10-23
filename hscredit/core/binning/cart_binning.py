@@ -24,37 +24,126 @@ class CartBinning(BaseBinning):
     基于决策树的分箱方法，参考 optbinning 的 CART 预分箱实现。
     使用 sklearn 的 DecisionTreeClassifier/Regressor 提取最优分割点。
 
+    **参数**
+
+    :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
+        与显式参数重名或不存在的参数会被构造函数拒绝。
+
+    :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
+        当fit时只传入df且y为None时，从df中提取该列作为目标变量。
+
+    :type target: str
+    :param min_bad_rate: 每箱最小坏样本率，用于避免极端情况，默认为0.0
+    :type min_bad_rate: float
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: Union[int, str]
+    :param verbose: 是否输出详细信息，默认为False
+    :type verbose: bool
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Dict[str, List]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]]
+
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认为2
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+
         - 如果 < 1, 表示占比 (如 0.01 表示 1%)
+
         - 如果 >= 1, 表示绝对数量 (如 100 表示最少100个样本)
+
+    :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认为None
+    :type max_bin_size: Optional[Union[float, int]]
     :param min_event_rate_diff: 相邻箱最小坏样本率差异，默认为0
+
         - 如果设置，会合并坏样本率差异过小的相邻箱
+
+    :type min_event_rate_diff: float
     :param max_pvalue: 最大 p-value 阈值，默认为None
+
         - 如果设置，会进行统计检验，合并差异不显著的相邻箱
+
+    :type max_pvalue: Optional[float]
     :param max_pvalue_policy: p-value 检验策略，默认为"consecutive"
+
         - "all": 检验所有箱对
+
         - "consecutive": 只检验相邻箱
+
+    :type max_pvalue_policy: str
     :param monotonic: 是否要求单调性，默认为False
+
         - False: 不要求
+
         - True 或 'auto': 自动判断单调方向
+
         - 'ascending': 强制递增
+
         - 'descending': 强制递减
+
+    :type monotonic: Union[bool, str]
     :param class_weight: 类别权重，默认为None
+
         - None: 不调整
+
         - "balanced": 自动根据类别频率调整
+
         - dict: 自定义权重，如 {0: 1, 1: 2}
+
+    :type class_weight: Optional[Union[str, Dict]]
     :param special_codes: 特殊值列表，默认为None
+    :type special_codes: Optional[List]
     :param missing_separate: 缺失值是否单独分箱，默认为True
+    :type missing_separate: bool
     :param random_state: 随机种子，默认为None
+    :type random_state: Optional[int]
 
     **属性**
 
     - splits_: 每个特征的分箱切分点
+
     - n_bins_: 每个特征的实际分箱数
+
     - bin_tables_: 每个特征的分箱统计表
+
     - tree_models_: 每个特征的决策树模型
 
     **参考样例**
@@ -68,14 +157,19 @@ class CartBinning(BaseBinning):
     **注意**
 
     CART 分箱的特点:
+
     1. 基于决策树的信息增益选择切分点
+
     2. 支持分类（二分类/多分类）和回归目标变量
+
     3. 可设置类别权重处理不平衡数据
+
     4. 支持 p-value 检验确保分箱统计显著性
+
     5. 支持单调性约束
 
-    与 :class:`TreeBinning` 的区别：CART 额外提供 p-value 显著性检验合并、相邻箱坏样本率
-    最小差异约束（``min_event_rate_diff``）及回归目标支持，预分箱流程对齐 optbinning。
+    与  :class:`TreeBinning`  的区别：CART 额外提供 p-value 显著性检验合并、相邻箱坏样本率
+    最小差异约束（ ``min_event_rate_diff`` ）及回归目标支持，预分箱流程对齐 optbinning。
 
     **引用**
 
@@ -145,7 +239,9 @@ class CartBinning(BaseBinning):
         """拟合 CART 分箱.
 
         :param X: 训练数据，shape (n_samples, n_features)
-        :param y: 目标变量，可以是二分类、多分类或连续型
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量，可以是二分类、多分类或连续型
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :param kwargs: 其他参数
         :return: 拟合后的分箱器
         """
@@ -691,14 +787,21 @@ class CartBinning(BaseBinning):
         将原始特征值转换为分箱索引、分箱标签或WOE值。
 
         :param X: 待转换数据, DataFrame或数组格式
-        :param metric: 转换类型, 可选值:
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param metric: 默认值为 ``'indices'`` 。转换类型, 可选值:
+
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
+
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
+
             - 'woe': 返回WOE值, 用于逻辑回归建模
+
+        :type metric: str
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
 
-        :example:
+        **参考样例**
+
         >>> binner = CARTBinning()
         >>> binner.fit(X_train, y_train)
         >>>

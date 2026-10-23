@@ -212,8 +212,11 @@ def make_colormap(name: str, colors: Optional[list] = None, n: int = 256):
     """根据统一色板创建 matplotlib colormap.
 
     :param name: colormap 名称
+    :type name: str
     :param colors: 颜色列表，默认使用蓝紫粉红连续色阶
-    :param n: 颜色采样数
+    :type colors: Optional[list]
+    :param n: 默认值为 ``256`` 。颜色采样数
+    :type n: int
     :return: LinearSegmentedColormap
     """
     return mcolors.LinearSegmentedColormap.from_list(
@@ -227,8 +230,10 @@ def make_risk_cmap(name: str = "hscredit_risk", n: int = 256):
     """创建风险连续色阶（低风险蓝紫 → 高风险粉红）。
 
     :param name: colormap 名称，默认 ``"hscredit_risk"``
+    :type name: str
     :param n: 颜色采样数，默认 256
-    :return: ``LinearSegmentedColormap``，可直接传给热力图的 ``cmap`` 参数
+    :type n: int
+    :return: ``LinearSegmentedColormap`` ，可直接传给热力图的 ``cmap`` 参数
     """
     return make_colormap(name, RISK_GRADIENT, n=n)
 
@@ -237,7 +242,9 @@ def make_diverging_cmap(name: str = "hscredit_diverging", n: int = 256):
     """创建发散色阶（主题蓝 → 近白 → 副主题红），适合带正负/中心值的热力图。
 
     :param name: colormap 名称，默认 ``"hscredit_diverging"``
+    :type name: str
     :param n: 颜色采样数，默认 256
+    :type n: int
     :return: ``LinearSegmentedColormap``
     """
     return make_colormap(name, DIVERGING_GRADIENT, n=n)
@@ -247,11 +254,14 @@ def get_psi_color(value: float) -> str:
     """根据 PSI 取值返回统一语义色（用于稳定性图表着色）。
 
     :param value: PSI 值
+    :type value: float
     :return: 颜色十六进制字符串：
 
-        - ``value < 0.10``：稳定色（STABLE_COLOR）
-        - ``0.10 <= value < 0.25``：变化色（CHANGING_COLOR）
-        - ``value >= 0.25``：不稳定色（UNSTABLE_COLOR）
+        - ``value < 0.10`` ：稳定色（STABLE_COLOR）
+
+        - ``0.10 <= value < 0.25`` ：变化色（CHANGING_COLOR）
+
+        - ``value >= 0.25`` ：不稳定色（UNSTABLE_COLOR）
     """
     if value < 0.10:
         return STABLE_COLOR
@@ -264,6 +274,7 @@ def get_series_colors(n: int) -> list:
     """获取 n 条数据系列的统一配色（主题色 + 副主题色 + 扩展色循环）.
 
     :param n: 需要的颜色数量
+    :type n: int
     :return: 长度为 n 的颜色列表，优先使用主题色与副主题色，再循环扩展色板
     """
     if n <= 0:
@@ -278,8 +289,10 @@ def setup_axis_style(ax, colors: Optional[list] = None, hide_top_right: bool = F
     """设置坐标轴样式.
 
     :param ax: matplotlib Axes 对象
-    :param colors: 边框颜色
-    :param hide_top_right: 是否隐藏顶部和右侧边框
+    :param colors: 默认值为 ``None`` 。边框颜色
+    :type colors: Optional[list]
+    :param hide_top_right: 默认值为 ``False`` 。是否隐藏顶部和右侧边框
+    :type hide_top_right: bool
     """
     if colors is None:
         colors = DEFAULT_COLORS
@@ -301,8 +314,10 @@ def save_figure(fig, save_path: Optional[str] = None, dpi: int = 240):
     """保存图表.
 
     :param fig: matplotlib Figure 对象
-    :param save_path: 保存路径（为 None 时不保存，直接返回）；目录不存在时自动创建
+    :param save_path: 默认值为 ``None`` 。保存路径（为 None 时不保存，直接返回）；目录不存在时自动创建
+    :type save_path: Optional[str]
     :param dpi: 分辨率，默认 240
+    :type dpi: int
 
     **参考样例**
 
@@ -325,9 +340,12 @@ def get_or_create_ax(
 
     如果传入 ax，则直接使用；否则创建新的 Figure 和 Axes。
 
-    :param figsize: 图像尺寸（创建新图时使用）
-    :param ax: 可选的 matplotlib Axes 对象
-    :param return_fig: 是否返回 Figure 对象
+    :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸（创建新图时使用）
+    :type figsize: Tuple[float, float]
+    :param ax: 默认值为 ``None`` 。可选的 matplotlib Axes 对象
+    :type ax: Optional[Any]
+    :param return_fig: 默认值为 ``True`` 。是否返回 Figure 对象
+    :type return_fig: bool
     :return: 如果 return_fig=True 返回 (fig, ax)，否则返回 ax
 
     **参考样例**
@@ -371,12 +389,18 @@ def create_legend(
     """创建图例.
 
     :param fig_or_ax: Figure 或 Axes 对象
-    :param loc: 图例位置
-    :param bbox_to_anchor: 锚点位置
-    :param ncol: 列数
-    :param frameon: 是否显示边框
-    :param handles: 图例句柄（可选）
-    :param labels: 图例标签（可选）
+    :param loc: 默认值为 ``'upper center'`` 。图例位置
+    :type loc: str
+    :param bbox_to_anchor: 默认值为 ``(0.5, 0.98)`` 。锚点位置
+    :type bbox_to_anchor: Tuple[float, float]
+    :param ncol: 默认值为 ``2`` 。列数
+    :type ncol: int
+    :param frameon: 默认值为 ``False`` 。是否显示边框
+    :type frameon: bool
+    :param handles: 默认值为 ``None`` 。图例句柄（可选）
+    :type handles: Optional[list]
+    :param labels: 默认值为 ``None`` 。图例标签（可选）
+    :type labels: Optional[list]
     :return: Legend 对象
     """
     if handles is None or labels is None:
@@ -394,7 +418,9 @@ def format_bin_label(label: str, max_len: int = 35) -> str:
     """格式化分箱标签.
 
     :param label: 原始标签
-    :param max_len: 最大长度
+    :type label: str
+    :param max_len: 默认值为 ``35`` 。最大长度
+    :type max_len: int
     :return: 格式化后的标签
     """
     import re

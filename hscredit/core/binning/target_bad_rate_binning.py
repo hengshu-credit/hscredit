@@ -19,30 +19,104 @@ class TargetBadRateBinning(BaseBinning):
 
     支持两种分箱模式：
 
-    **模式1：严格边界模式**（指定 target_bad_rates）
+    **模式1：严格边界模式** （指定 target_bad_rates）
     按目标坏样本率边界严格划分，确保每箱的坏样本率在指定区间内。
 
-    :param target_bad_rates: 目标坏样本率边界列表，例如 [0.05, 0.10, 0.20]
+    **参数**
+
+    :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
+        与显式参数重名或不存在的参数会被构造函数拒绝。
+
+    :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
+        当fit时只传入df且y为None时，从df中提取该列作为目标变量。
+
+    :type target: str
+    :param min_bad_rate: 每箱最小坏样本率，用于避免极端情况，默认为0.0
+    :type min_bad_rate: float
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: Union[int, str]
+    :param random_state: 随机种子，用于可复现性，默认为None
+    :type random_state: Optional[int]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Dict[str, List]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]]
+
+    :param target_bad_rates: 默认值为 ``None`` 。目标坏样本率边界列表，例如 [0.05, 0.10, 0.20]
+
         - 会产生 len(target_bad_rates)+1 个分箱
+
         - 第0箱：坏样本率 <= target_bad_rates[0]
+
         - 第1箱：target_bad_rates[0] < 坏样本率 <= target_bad_rates[1]
+
         - 依此类推
 
-    **模式2：自动模式**（不指定 target_bad_rates，指定 max_n_bins）
+    :type target_bad_rates: Optional[List[float]]
+
+    **模式2：自动模式** （不指定 target_bad_rates，指定 max_n_bins）
     自动寻找使每箱之间坏样本率差异最大的划分。
 
     :param max_n_bins: 最大分箱数，默认为5
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认为2
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+    :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认为None
+    :type max_bin_size: Optional[Union[float, int]]
     :param strict_mode: 是否严格模式（严格限制边界），默认为True
+
         - True: 严格按照目标坏样本率边界划分，可能产生空箱
+
         - False: 在满足约束下尽量接近目标坏样本率
+
+    :type strict_mode: bool
     :param merge_empty_bins: 是否合并空箱，默认为True
+    :type merge_empty_bins: bool
     :param monotonic: 是否要求单调性，默认为True
+    :type monotonic: bool
     :param missing_separate: 缺失值是否单独分箱，默认为True
+    :type missing_separate: bool
     :param special_codes: 特殊值列表，默认为None
+    :type special_codes: Optional[List]
     :param decimal: 切分点小数点保留精度，默认为4
+    :type decimal: int
 
     **参考样例**
 
@@ -126,8 +200,12 @@ class TargetBadRateBinning(BaseBinning):
     ) -> "TargetBadRateBinning":
         """拟合目标坏样本率分箱.
 
+        :param kwargs: 其他参数，传递给具体的分箱算法
+
         :param X: 训练数据
-        :param y: 目标变量
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :return: 拟合后的分箱器
         """
         X, y = self._check_input(X, y)
@@ -201,8 +279,11 @@ class TargetBadRateBinning(BaseBinning):
         """按目标坏样本率边界严格划分.
 
         算法思路：
+
         1. 将数据按特征值排序
+
         2. 计算每个可能切割点的累积坏样本率
+
         3. 找到累积坏样本率最接近目标边界的切割点
         """
         x_vals = X.values
@@ -607,7 +688,40 @@ class TargetBadRateBinning(BaseBinning):
     def transform(
         self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
     ) -> Union[pd.DataFrame, np.ndarray]:
-        """应用分箱转换."""
+        """应用分箱转换.
+
+        **参数**
+
+        :param X: 待转换的数据，shape (n_samples, n_features)
+
+            - 支持DataFrame或numpy数组
+
+            - 列名必须与fit时的特征名一致
+
+        :param metric: 转换类型，默认为'indices'
+
+            - 'indices': 返回分箱索引 (0, 1, 2, ...)
+
+                * 用途: 后续处理、特征工程
+
+                * 示例: [0, 1, 2, 0, 1, ...]
+
+            - 'bins': 返回分箱标签字符串
+
+                * 用途: 可视化、报告展示
+
+                * 示例: ['(-inf, 25]', '(25, 35]', '(35, 45]', ...]
+
+                * 类别型: ['北京,上海', '广州,深圳', ...]
+
+            - 'woe': 返回WOE值
+
+                * 用途: 逻辑回归建模
+
+                * 示例: [0.234, -0.456, 0.123, ...]
+
+        :param kwargs: 其他参数
+        """
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用fit方法")
 
@@ -625,6 +739,7 @@ class TargetBadRateBinning(BaseBinning):
         """获取坏样本率摘要.
 
         :param feature: 特征名
+        :type feature: str
         :return: 分箱坏样本率摘要表
         """
         if feature not in self.bin_tables_:

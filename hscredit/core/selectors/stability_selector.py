@@ -77,24 +77,72 @@ class StabilityAwareSelector(BaseFeatureSelector):
         score = iv_weight × IV_normalized − psi_weight × PSI_normalized
 
     筛选条件（同时满足）:
+
     1. IV >= iv_threshold
+
     2. PSI <= psi_threshold
+
     3. 综合评分 >= score_threshold
 
     **适用场景:**
+
     - 模型变量筛选阶段，避免选入"高区分但不稳定"的特征
+
     - 跨时间段 / OOT 验证时的特征稳健性筛选
 
+    **参数**
+
+    :param random_state: 随机种子，默认 ``None``；指定整数用于复现含随机性的评估步骤。
+
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param iv_threshold: IV下限，默认 0.02
+    :type iv_threshold: float
     :param psi_threshold: PSI上限，默认 0.25
+    :type psi_threshold: float
     :param score_threshold: 综合评分下限，默认 0.0
+    :type score_threshold: float
     :param iv_weight: IV 在综合评分中的权重，默认 0.6
+    :type iv_weight: float
     :param psi_weight: PSI 在综合评分中的权重，默认 0.4
-    :param oot_df: 用于计算 PSI 的 OOT 数据集（DataFrame），
+    :type psi_weight: float
+    :param oot_df: 默认值为 ``None`` 。用于计算 PSI 的 OOT 数据集（DataFrame）
         若不传则使用 fit 时的 X 进行随机对半拆分
+
+    :type oot_df: Optional[pd.DataFrame]
     :param psi_bins: PSI 分箱数，默认 10
-    :param target: 目标变量列名（当通过DataFrame入参时使用）
-    :param n_jobs: 并行数
+    :type psi_bins: int
+    :param target: 默认值为 ``'target'`` 。目标变量列名（当通过DataFrame入参时使用）
+    :type target: str
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
 
     **参考样例**
 
@@ -117,8 +165,8 @@ class StabilityAwareSelector(BaseFeatureSelector):
 
     本筛选器是"稳定性感知"的复合筛选（IV 区分力 + PSI 稳定性加权评分），并非 Meinshausen
     & Bühlmann 的 stability selection（重采样频率法）。IV 与 PSI 的定义与阈值分别见
-    :class:`~hscredit.core.selectors.IVSelector` 与
-    :class:`~hscredit.core.selectors.PSISelector`。
+    :class:`~hscredit.core.selectors.IVSelector`  与
+    :class:`~hscredit.core.selectors.PSISelector` 。
 
     **引用**
 

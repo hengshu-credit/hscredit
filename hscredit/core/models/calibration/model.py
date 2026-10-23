@@ -36,7 +36,8 @@ def _class_index(classes: np.ndarray, label: Any) -> int:
 
 
 def _assemble_binary_probabilities(positive: np.ndarray, classes: np.ndarray, positive_class: Any) -> np.ndarray:
-    """按 ``classes_`` 的真实顺序组装二分类概率矩阵。"""
+    """按 ``classes_`` 的真实顺序组装二分类概率矩阵。
+    """
     positive_index = _class_index(classes, positive_class)
     result = np.empty((len(positive), 2), dtype=float)
     result[:, positive_index] = positive
@@ -52,19 +53,36 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
     **参数**
 
     :param method: 校准方法，默认'platt'
+
         - 'platt': Platt Scaling (Sigmoid校准)
+
         - 'isotonic': 保序回归校准
+
         - 'beta': Beta分布校准
+
         - 'histogram': 直方图分箱校准
+
+    :type method: str
     :param calib_ratio: 用于校准的数据比例，默认0.2
+
         - 从训练集中划分出calib_ratio的数据用于校准
+
         - 如果为None，需要使用独立的校准集
+
+    :type calib_ratio: Optional[float]
     :param n_bins: 可靠性曲线的分箱数，默认10
+    :type n_bins: int
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param target: 目标列名，默认'target'
+
         - 用于从DataFrame中提取目标变量
-    :param positive_class: 正类标签；None 时使用基础模型 ``classes_[1]``。
-    :param calibrator_params: 传递给具体校准算法的可克隆参数字典。
+
+    :type target: str
+    :param positive_class: 默认值为 ``None`` 。正类标签；None 时使用基础模型 ``classes_[1]``
+    :type positive_class: Optional[Any]
+    :param calibrator_params: 默认值为 ``None`` 。传递给具体校准算法的可克隆参数字典
+    :type calibrator_params: Optional[Dict[str, Any]]
 
     **属性**
 
@@ -95,9 +113,12 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
 
     **参数补充**
 
-    :param model: 基础模型实例；校准器使用其概率输出，calib_ratio=None 时要求基础模型已拟合。
+    :param model: 默认值为 ``None`` 。基础模型实例；校准器使用其概率输出，calib_ratio=None 时要求基础模型已拟合
+    :type model: Optional[Any]
     :param history_policy: summary/diagnostics/full，默认 summary；控制原始参数保留范围，数值学习曲线均完整保留。
+    :type history_policy: str
     :param max_history: 最多保留的拟合历史条数，默认20；被移除的训练修订不能再查询。
+    :type max_history: int
     """
 
     CALIB_METHODS = {
@@ -135,7 +156,8 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         self._validate_parameters()
 
     def _validate_parameters(self) -> None:
-        """校验构造参数和经 ``set_params`` 修改后的状态。"""
+        """校验构造参数和经 ``set_params`` 修改后的状态。
+        """
         if self.method not in self.CALIB_METHODS:
             raise ValueError(f"不支持的校准方法: {self.method}，可选: {list(self.CALIB_METHODS.keys())}")
         if not isinstance(self.n_bins, int) or isinstance(self.n_bins, bool) or self.n_bins < 1:
@@ -178,24 +200,27 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
 
         支持两种传参风格：
 
-        **sklearn风格**::
+        **sklearn风格** ::
 
             calibrator = ProbabilityCalibrator(model=model, calib_ratio=None)
             calibrator.fit(X_calib, y_calib)
 
-        **scorecardpipeline风格**::
+        **scorecardpipeline风格** ::
 
             calibrator = ProbabilityCalibrator(model=model, calib_ratio=None)
             calibrator.fit(df_calib)  # df_calib包含target列
 
-        :param model: 已训练的基础模型
+        :param model: 默认值为 ``None`` 。已训练的基础模型
         :param X: 特征矩阵或包含target的DataFrame
-        :param y: 目标变量，可选
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
         :param target: 目标列名，默认使用初始化时设置的target
+        :type target: Optional[str]
         :param fit_params: 其他参数
-        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
-        :param eval_metric: 最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标。
-        :param eval_sample_weight: 评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权。
+        :param eval_set: 默认值为 ``None`` 。评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留
+        :param eval_metric: 默认值为 ``None`` 。最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标
+        :param eval_sample_weight: 默认值为 ``None`` 。评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权
         :return: self
 
         **参考样例**
@@ -292,6 +317,7 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         """预测校准后的概率.
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 两列概率数组，shape ``(n_samples, 2)``
         """
         check_is_fitted(self)
@@ -307,7 +333,9 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         """预测类别标签.
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :param threshold: 分类阈值，默认0.5
+        :type threshold: float
         :return: 预测类别
         """
         check_is_fitted(self)
@@ -388,8 +416,9 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         **参数补充**
 
         :param X: 二维特征或包含目标列的 DataFrame；与训练阶段使用相同字段和输入表示。
-        :param y: 一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征。
-        :param target: 校准对照表的单个目标列名，None 使用校准器配置；显式 y 优先。
+        :param y: 默认值为 ``None`` 。一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征
+        :param target: 默认值为 ``None`` 。校准对照表的单个目标列名，None 使用校准器配置；显式 y 优先
+        :type target: Optional[str]
 
         **参考样例**
 
@@ -411,11 +440,17 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         """绘制可靠性曲线.
 
         :param X: 特征矩阵或包含target的DataFrame
-        :param y: 目标变量，可选
-        :param target: 目标列名（scorecardpipeline风格使用）
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param target: 默认值为 ``None`` 。目标列名（scorecardpipeline风格使用）
+        :type target: Optional[str]
         :param figsize: 图表大小，默认(10, 8)
-        :param title: 图表标题，可选
+        :type figsize: Tuple[int, int]
+        :param title: 默认值为 ``None`` 。图表标题，可选
+        :type title: Optional[str]
         :param show: 是否显示图表，默认True
+        :type show: bool
         :return: matplotlib Figure对象
         """
         check_is_fitted(self)
@@ -436,6 +471,7 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         """直接校准概率（不通过模型）.
 
         :param y_prob: 原始概率
+        :type y_prob: Union[np.ndarray, pd.Series]
         :return: 校准后的概率
         """
         check_is_fitted(self)
@@ -451,6 +487,7 @@ class CalibratedModel(ModelWorkflowMixin, ArtifactSerializableMixin, ClassifierM
 
     :param base_model: 基础模型
     :param calibrator: 概率校准器实例
+    :type calibrator: ProbabilityCalibrator
 
     **参考样例**
 
@@ -492,6 +529,7 @@ class CalibratedModel(ModelWorkflowMixin, ArtifactSerializableMixin, ClassifierM
         将基础模型输出的原始概率经已拟合的校准器映射为更准确的概率。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 两列校准概率数组，shape ``(n_samples, 2)``
         """
         raw = np.asarray(self.base_model.predict_proba(X))
@@ -506,7 +544,9 @@ class CalibratedModel(ModelWorkflowMixin, ArtifactSerializableMixin, ClassifierM
         """基于校准后概率预测类别标签。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
+        :type X: Union[np.ndarray, pd.DataFrame]
         :param threshold: 判正阈值，校准概率 ``>= threshold`` 记为 1，默认为 ``0.5``
+        :type threshold: float
         :return: 0/1 类别数组
         """
         if not 0 <= threshold <= 1:
@@ -519,10 +559,11 @@ class CalibratedModel(ModelWorkflowMixin, ArtifactSerializableMixin, ClassifierM
         """将校准后概率线性映射为 0–1000 的风险评分（概率越低分越高）。
 
         采用 ``score = (1 - p) * 1000`` 的简易映射；若需标准 log-odds 评分卡刻度，
-        请改用 :class:`~hscredit.core.models.scorecard.ScoreCard` 或
-        :class:`~hscredit.core.models.scorecard.score_transformer.StandardScoreTransformer`。
+        请改用  :class:`~hscredit.core.models.scorecard.ScoreCard`  或
+        :class:`~hscredit.core.models.scorecard.score_transformer.StandardScoreTransformer` 。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 0–1000 区间的风险评分数组
         """
         proba = self.predict_proba(X)[:, _class_index(self.classes_, self.positive_class_)]
@@ -539,10 +580,15 @@ class CalibratedModel(ModelWorkflowMixin, ArtifactSerializableMixin, ClassifierM
         """评估校准后模型的区分度与校准度。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
-        :param y: 真实标签（0/1）
-        :param sample_weight: 样本权重；KS 与 Lift 不支持时发出一次中文警告。
-        :param metrics: 指标名列表；None 时返回 AUC、KS 和 Brier。
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。真实标签（0/1）
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重；KS 与 Lift 不支持时发出一次中文警告
+        :type sample_weight: Optional[np.ndarray]
+        :param metrics: 默认值为 ``None`` 。指标名列表；None 时返回 AUC、KS 和 Brier
+        :type metrics: Optional[List[str]]
         :param score_direction: higher_risk 表示值越大风险越高（概率默认）；higher_safe 表示值越大越安全；auto 仅显式指定时自动判断。
+        :type score_direction: str
         :return: 含 ``AUC`` / ``KS`` （区分度）与 ``Brier`` （校准度）的指标字典
 
         **参考样例**
@@ -586,9 +632,13 @@ def calibrate_model(
 
     :param model: 已训练的基础模型
     :param X_calib: 校准集特征或包含target的DataFrame
-    :param y_calib: 校准集标签，可选
+    :type X_calib: Union[np.ndarray, pd.DataFrame]
+    :param y_calib: 默认值为 ``None`` 。校准集标签，可选
+    :type y_calib: Optional[Union[np.ndarray, pd.Series]]
     :param method: 校准方法，默认'platt'
-    :param target: 目标列名（scorecardpipeline风格使用）
+    :type method: str
+    :param target: 默认值为 ``'target'`` 。目标列名（scorecardpipeline风格使用）
+    :type target: str
     :param kwargs: 其他参数
     :return: 拟合好的ProbabilityCalibrator
 

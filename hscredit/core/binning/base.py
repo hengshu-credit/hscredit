@@ -55,71 +55,156 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     """分箱算法基类.
 
     所有分箱算法都继承此类，实现统一的fit/transform接口。
-    支持16种分箱方法，适用于风控评分卡开发场景。
+    具体算法由子类实现；统一工厂  :class:`OptimalBinning`  提供 17 种方法。
 
     **参数**
 
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: HandleUnknown
+
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :type category_order: CategoryOrder
+
     :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
         当fit时只传入df且y为None时，从df中提取该列作为目标变量。
+
+    :type target: str
     :param missing_separate: 是否将缺失值单独分为一箱，默认为True
+    :type missing_separate: bool
     :param min_n_bins: 最小分箱数，默认为2
+    :type min_n_bins: int
     :param max_n_bins: 最大分箱数，默认为5
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制最小样本数
+
         - 如果 < 1, 表示占比 (如 0.01 表示 1%)
+
         - 如果 >= 1, 表示绝对数量 (如 100 表示最少100个样本)
+
+    :type min_bin_size: Optional[Union[float, int]]
     :param max_bin_size: 每箱最大样本数或占比，默认为None
+    :type max_bin_size: Optional[Union[float, int]]
     :param min_bad_rate: 每箱最小坏样本率，用于避免极端情况，默认为0.0
+    :type min_bad_rate: float
     :param monotonic: 坏样本率单调性约束，默认为False
+
         - False: 不要求单调性
+
         - True 或 'auto': 自动检测最佳趋势（允许单增、单减、正U、倒U）
+
         - 'auto_asc_desc': 自动检测，但只允许单增或单减（不允许U型）
+
         - 'auto_heuristic': 使用启发式方法自动确定单调方向
+
         - 'ascending': 强制坏样本率递增(分箱索引增大时坏样本率增大)
+
         - 'descending': 强制坏样本率递减(分箱索引增大时坏样本率减小)
+
         - 'peak': 倒U型/峰值（先增后降）
+
         - 'valley': U型/谷值（先降后增）
+
         - 'peak_heuristic': 使用启发式方法检测峰值
+
         - 'valley_heuristic': 使用启发式方法检测谷值
-    :param special_codes: 特殊值列表，这些值会被单独分箱，例如[-99, -98, 'missing']
-    :param cat_cutoff: 类别型变量处理阈值，默认为None
-        - 如果 < 1, 表示保留占比超过该值的类别
-        - 如果 >= 1, 表示保留频率最高的N个类别
-    :param user_splits: 用户自定义分箱规则，例如{'feature': [0, 10, 20, 30]}
-    :param user_splits_fixed: 用户切分点固定配置，可按字段或节点选择性固定
+
+    :type monotonic: Union[bool, str]
+    :param special_codes: 默认值为 ``None`` 。特殊值列表，这些值会被单独分箱，例如[-99, -98, 'missing']
+    :type special_codes: Optional[List]
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Union[Dict[str, List], Callable]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: UserSplitsFixed
     :param random_state: 随机种子，用于可复现性，默认为None
-    :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
-    :param parallel_backend: joblib并行后端，默认为None
-    :param parallel_config: joblib扩展配置，默认为None
+    :type random_state: Optional[int]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
     :param verbose: 是否输出详细信息，默认为False
+    :type verbose: Union[bool, int]
     :param decimal: 数值型切分点小数点保留精度，默认为4
+    :type decimal: int
     :param woe_clip: WOE值截断阈值，默认为None
         当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
         这会导致评分卡中对应分箱的分数异常。
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
         例如 woe_clip=5.0 可将WOE限制在[-5, 5]之间。
 
+    :type woe_clip: Optional[float]
+
     **属性**
 
     - splits_: 每个特征的分箱切分点，数值型特征为numpy数组，类别型特征为列表
+
     - n_bins_: 每个特征的实际分箱数
+
     - bin_tables_: 每个特征的分箱统计表，包含中文列名:
+
         - 分箱: 分箱索引
+
         - 分箱标签: 分箱区间标签
+
         - 样本总数: 样本数
+
         - 样本占比: 样本占比
+
         - 好样本数: 好样本数
+
         - 坏样本数: 坏样本数
+
         - 坏样本率: 坏样本率
+
         - 分档WOE值: WOE值
+
         - 分档IV值: IV值
+
         - 指标IV值: 总IV值
+
         - LIFT值: Lift值
+
         - 坏账改善: 坏账改善
+
         - 累积LIFT值: 累积Lift值
+
         - 累积坏账改善: 累积坏账改善
+
         - 累积好样本数: 累积好样本数
+
         - 累积坏样本数: 累积坏样本数
+
         - 分档KS值: KS值
+
     - feature_types_: 每个特征的类型 ('numerical' 或 'categorical')
 
     **支持的分箱方法**
@@ -142,7 +227,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     | best_lift | BestLiftBinning | Best Lift分箱，提升度优化 |
     | target_bad_rate | TargetBadRateBinning | 目标坏样本率分箱 |
     | kmeans | KMeansBinning | K-Means聚类分箱 |
-    | optimal | OptimalBinning | 统一接口，支持上述所有方法 |
+    | cp_sat | CPSATBinning | 基于 CP-SAT 求解器的约束规划分箱 |
 
     **参考样例**
 
@@ -190,17 +275,24 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     **注意**
 
     分箱算法的一般流程:
+
     1. fit(): 训练分箱模型
+
        - 数据预处理 (缺失值处理、特殊值处理)
+
        - 检测特征类型 (数值型/类别型)
+
        - 计算最优分箱切分点
+
        - 对数值型切分点进行四舍五入(精度由decimal参数控制)
+
        - 生成分箱统计表
 
     2. transform(): 应用分箱
+
        - 根据切分点对数据进行分箱
-       - 支持多种输出格式: 'indices'(分箱索引), 'labels'(分箱标签),
-         'woe'(WOE值), 'bin_code'(分箱编码)
+
+       - 支持多种输出格式: 'indices'(分箱索引), 'bins'(分箱标签)、'woe'(WOE值)
     """
 
     artifact_kind = "分箱器"
@@ -241,7 +333,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     )
 
     def __init_subclass__(cls, **kwargs):
-        """将具体分箱器的 ``fit`` 包装为估计器级事务。"""
+        """将具体分箱器的 ``fit`` 包装为估计器级事务。
+        """
         super().__init_subclass__(**kwargs)
         fit_method = cls.__dict__.get("fit")
         if fit_method is None or getattr(fit_method, "_hscredit_transactional_fit", False):
@@ -717,29 +810,46 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """拟合分箱。
 
         支持两种API风格：
+
         1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+
         2. scorecardpipeline风格: fit(df) - df是完整数据框，目标列名在初始化时通过target参数传入
 
         优先级规则：如果y不是None，直接使用y（优先）；否则从X中提取target列。
 
         :param X: 训练数据
+
             - sklearn风格: 特征矩阵，shape (n_samples, n_features)，可以是数值型或类别型特征
+
             - scorecardpipeline风格: 完整数据框，包含特征列和目标列
+
             - 支持DataFrame或numpy数组
-        :param y: 目标变量（可选）
+
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量（可选）
+
             - sklearn风格: 传入目标变量，必须是二分类 (0/1 或 False/True)
+
             - scorecardpipeline风格: 不传，从X中提取
+
             - 如果传入y，优先使用y而忽略X中的target列
+
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :param kwargs: 其他参数，传递给具体的分箱算法
         :return: 拟合后的分箱器
 
         **注意**
 
         fit方法会进行以下操作:
+
         1. 数据验证和预处理（通过_check_input方法）
+
         2. 识别特征类型 (数值型/类别型)
+
         3. 处理缺失值和特殊值
+
         4. 计算最优分箱切分点
+
         5. 生成分箱统计表
 
         **使用示例**
@@ -777,31 +887,52 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         这是分箱器的核心方法，用于将新数据应用到已训练的分箱规则。
 
         :param X: 待转换的数据，shape (n_samples, n_features)
+
             - 支持DataFrame或numpy数组
+
             - 列名必须与fit时的特征名一致
+
+        :type X: Union[pd.DataFrame, np.ndarray]
         :param metric: 转换类型，默认为'indices'
+
             - 'indices': 返回分箱索引 (0, 1, 2, ...)
+
                 * 用途: 后续处理、特征工程
+
                 * 示例: [0, 1, 2, 0, 1, ...]
+
             - 'bins': 返回分箱标签字符串
+
                 * 用途: 可视化、报告展示
+
                 * 示例: ['(-inf, 25]', '(25, 35]', '(35, 45]', ...]
+
                 * 类别型: ['北京,上海', '广州,深圳', ...]
+
             - 'woe': 返回WOE值
+
                 * 用途: 逻辑回归建模
+
                 * 示例: [0.234, -0.456, 0.123, ...]
+
+        :type metric: str
         :param kwargs: 其他参数
         :return: 转换后的数据，返回类型与输入类型一致
 
         **重要说明**
 
         1. metric参数是枚举值，只能使用以下3个值之一:
+
            - 'indices' (不是'分箱'、'索引'等中文)
+
            - 'bins' (不是'分箱标签'等中文)
+
            - 'woe' (不是'分档WOE值'等中文)
 
         2. 中文列名出现在分箱结果表中:
+
            - 使用 binner.get_bin_table(feature) 查看
+
            - 列名: '分箱', '样本总数', '坏样本率', '分档WOE值'等
 
         **参考样例**
@@ -827,8 +958,11 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         **处理特殊值**
 
         transform方法会自动处理:
+
         1. 缺失值: 如果missing_separate=True，分配到专门的缺失箱 (索引=-1)
+
         2. 特殊值: 如果指定了special_codes，分配到专门的特殊值箱 (索引=-2)
+
         3. 超出范围的值: 分配到最近的分箱
         """
         pass
@@ -866,19 +1000,34 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """拟合并应用分箱。
 
         支持两种API风格：
+
         1. sklearn风格: fit_transform(X, y) - X是特征矩阵，y是目标变量
+
         2. scorecardpipeline风格: fit_transform(df) - df是完整数据框，目标列名在初始化时通过target参数传入
 
         :param X: 训练数据
+
             - sklearn风格: 特征矩阵，shape (n_samples, n_features)
+
             - scorecardpipeline风格: 完整数据框，包含特征列和目标列
-        :param y: 目标变量（可选）
+
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量（可选）
+
             - sklearn风格: 传入目标变量
+
             - scorecardpipeline风格: 不传，从X中提取
+
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :param metric: 返回值的类型，默认为'indices'
+
             - 'indices': 返回分箱索引
+
             - 'bins': 返回分箱标签
+
             - 'woe': 返回WOE值
+
+        :type metric: str
         :return: 分箱后的数据
 
         **使用示例**
@@ -908,24 +1057,39 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """检查并准备输入数据，支持sklearn和scorecardpipeline两种API风格。
 
         该方法统一处理两种风格的输入：
+
         1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+
         2. scorecardpipeline风格: fit(df) - df是完整数据框，目标列名在初始化时通过target参数传入
 
         优先级规则：
+
         - 如果y不是None，直接使用y（优先）
+
         - 如果y是None且X是DataFrame，从X中提取target列
 
         :param X: 输入特征或完整数据框
+
             - sklearn风格: 特征矩阵，shape (n_samples, n_features)
+
             - scorecardpipeline风格: 完整数据框，包含特征和目标列
+
             - 支持DataFrame或numpy数组
+
         :param y: 目标变量（可选）
+
             - sklearn风格: 传入目标变量
+
             - scorecardpipeline风格: 不传，从X中提取
+
             - 支持pd.Series或numpy数组
+
         :return: (特征DataFrame, 目标Series)
+
             - 特征DataFrame: 纯特征数据，不含目标列
+
             - 目标Series: 二分类目标变量
+
         :raises ValueError: 如果输入数据格式不正确或目标变量不符合要求
 
         **使用示例**
@@ -1772,10 +1936,11 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def _enforce_bad_rate_constraints(self, X: pd.DataFrame, y: pd.Series) -> None:
         """合并退化分箱与坏样本率不达标的分箱。
 
-        - **退化分箱**：坏样本数为 0 或好样本数为 0（坏样本率为 0 或 1）。这类分箱的
+        - **退化分箱** ：坏样本数为 0 或好样本数为 0（坏样本率为 0 或 1）。这类分箱的
           WOE 会趋于 ±∞（受平滑参数影响表现为极端值，如 ±23），既使 IV 虚高、又让
           评分卡分数异常，始终予以合并。
-        - **坏样本率不达标分箱**：坏样本率低于 ``min_bad_rate`` 的分箱（仅当
+
+        - **坏样本率不达标分箱** ：坏样本率低于 ``min_bad_rate`` 的分箱（仅当
           ``min_bad_rate > 0`` 时生效）。
 
         合并策略：将违规分箱与相邻坏样本率最接近的分箱合并（删除对应切分点），
@@ -2323,7 +2488,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def _quadratic_curve_coefficient(self, values: np.ndarray, trend: Optional[str] = None) -> float:
         """计算曲线二次拟合系数。
 
-        ``trend`` 为 ``'ascending'``/``'descending'`` 时使用带单调约束的二次拟合，
+        ``trend`` 为 ``'ascending'`` / ``'descending'`` 时使用带单调约束的二次拟合，
         保证拟合曲线在区间内单调（抛物线顶点落在区间之外）；
         其他情况（如 U 形/倒 U 形）使用无约束二次拟合。
         """
@@ -2479,9 +2644,13 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         **判断逻辑**
 
         1. 将输入转换为 pd.Series（如果是 np.ndarray）
+
         2. 如果 str(dtype) 是 "object", "string", "category"，认为是类别型
+
         3. 如果 dtype 是数值型，先判断是否为布尔型（bool 视为类别型）
+
         4. 数值型特征只有在明确设置 cat_cutoff 且满足条件时，才视为类别型
+
         5. 否则认为是数值型
         """
         # 有序编码是类别变量的内部数值表示，必须强制走具体方法的数值算法。
@@ -2712,7 +2881,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         以 ``bin_tables_`` 的 '分箱' → '分箱标签' 为唯一映射来源，保证 ``transform(metric='bins')``
         的标签与 ``get_bin_table`` 完全一致（左闭右开 [a, b) 风格），并正确处理缺失值(-1)/
         特殊值(-2)箱。当某分箱索引未出现在分箱表中时（如测试集落入训练集空箱），
-        数值型回退到由切分点生成的标签，否则回退为 ``bin_{i}``。
+        数值型回退到由切分点生成的标签，否则回退为 ``bin_{i}`` 。
 
         :param feature: 特征名
         :param bins: 分箱索引数组，shape (n_samples,)
@@ -2752,6 +2921,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """获取指定特征的分箱表.
 
         :param feature: 特征名
+        :type feature: str
         :return: 分箱统计表（返回副本，修改不会影响分箱器内部数据）
         :raises NotFittedError: 如果分箱器尚未拟合
         :raises FeatureNotFoundError: 如果特征不存在
@@ -2807,6 +2977,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         类别型特征：返回 List[List] 分组列表。
 
         :param feature: 特征名
+        :type feature: str
         :return: 切分点列表
         """
         if not self._is_fitted:
@@ -2823,7 +2994,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         数值型变量返回切分点列表，类别型变量返回分组列表。
 
         :return: 分箱规则字典
+
             - 数值型: key为特征名，value为切分点列表，如 [25, 35, 45, 55]
+
             - 类别型: key为特征名，value为分组列表，如 [['A', 'B'], ['C'], [np.nan]]
 
         **参考样例**
@@ -2887,8 +3060,12 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         支持数值型切分点和类别型分组列表。
 
         :param rules: 分箱规则字典
+
             - 数值型: {'age': [25, 35, 45, 55]}
+
             - 类别型: {'city': [['北京', '上海'], ['广州', '深圳'], [np.nan]]}
+
+        :type rules: Dict[str, Union[List, List[List]]]
 
         调用本方法时沿用增量覆盖语义，导入后可立即 transform。随后调用 fit 时，
         仅把最近一次导入规则中同时属于本轮 X 的特征作为候选输入；普通分箱器仍
@@ -2985,10 +3162,16 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         **参数**
 
         :param splits_dict: 新的切分点字典，格式与 export_rules() 返回的相同
+
             - 数值型: {'age': [25, 35, 45, 55]}
+
             - 类别型: {'city': [['北京', '上海'], ['广州', '深圳'], [np.nan]]}
-        :param X: 可选，训练数据。如果提供，会重新计算分箱统计表
-        :param y: 可选，目标变量
+
+        :type splits_dict: Dict[str, Union[List, List[List]]]
+        :param X: 默认值为 ``None`` 。可选，训练数据。如果提供，会重新计算分箱统计表
+        :type X: Optional[Union[pd.DataFrame, np.ndarray]]
+        :param y: 默认值为 ``None`` 。可选，目标变量
+        :type y: Optional[Union[pd.Series, np.ndarray]]
 
         **返回**
 
@@ -3081,14 +3264,19 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """绘制分箱图.
 
         :param feature: 特征名
+        :type feature: str
         :param save: 图片保存路径，默认为None
+        :type save: Optional[str]
         :param kwargs: 其他绘图参数
 
         **注意**
 
         绘制内容包括:
+
         1. 各分箱的样本数分布
+
         2. 各分箱的坏样本率
+
         3. 各分箱的WOE值
 
         :return: matplotlib Figure 对象
@@ -3109,10 +3297,14 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         数值型变量返回切分点列表，类别型变量返回分组列表。
         同时导出WOE映射信息，支持加载后直接进行WOE转换。
 
-        :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
+        :param to_json: 默认值为 ``None`` 。可选，JSON 文件保存路径。如果提供，将规则保存到该文件
+        :type to_json: Optional[str]
         :return: 分箱规则字典
+
             - 数值型: {'age': [25, 35, 45, 55]}
+
             - 类别型: {'city': [['北京', '上海'], ['广州', '深圳'], [np.nan]]}
+
             - WOE映射: {'_woe_maps_': {'age': {0: 0.5, 1: -0.3, ...}}}
 
         **参考样例**
@@ -3189,9 +3381,14 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         同时加载WOE映射信息，支持加载后直接进行WOE转换。
 
         :param from_json: 分箱规则字典或 JSON 文件路径
+
             - 字典: {'age': [25, 35, 45, 55]}
+
             - 文件路径: 'binning_rules.json'
+
+        :type from_json: Union[str, Dict]
         :param update: 是否更新现有规则（而非替换），默认为 False
+        :type update: bool
         :return: self，支持链式调用
 
         **参考样例**

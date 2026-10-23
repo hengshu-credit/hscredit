@@ -90,11 +90,16 @@ def get_feature_importances(estimator) -> np.ndarray:
     """从任意模型中提取特征重要性.
 
     兼容以下模型类型:
+
     - 树模型 (feature_importances_): sklearn RandomForest/GradientBoosting,
       hscredit RiskModels, XGBClassifier, LGBMClassifier, CatBoostClassifier
+
     - 线性模型 (coef_): sklearn LogisticRegression, LinearSVC 等
+
     - 原生 xgboost Booster (get_score)
+
     - 原生 lightgbm Booster (feature_importance)
+
     - 原生 catboost CatBoost (get_feature_importance)
 
     **参数**
@@ -153,13 +158,19 @@ class SelectionReportCollector:
     """特征筛选报告收集器.
 
     聚合多个已拟合筛选器的结果并生成汇总报告。
-    当前通过 ``add_report`` 手动添加，不会自动挂接 sklearn Pipeline。
+    支持从已拟合筛选器、Pipeline、组合筛选器或报告快照采集；采集操作不会触发重新拟合。
 
-    **使用方式**
+    **属性**
+
+    - ``reports`` ：已采集的阶段报告副本。
+
+    - ``created_at`` ：收集器创建时间。
+
+    **参考样例**
 
     ::
 
-        >>> from hscredit.core.selection import (
+        >>> from hscredit.core.selectors import (
         ...     SelectionReportCollector,
         ...     VarianceSelector,
         ...     CorrSelector
@@ -181,6 +192,18 @@ class SelectionReportCollector:
         >>>
         >>> # 导出为DataFrame
         >>> df = collector.to_dataframe()
+
+    **参数**
+
+    :param source: 可选的已拟合筛选器、Pipeline、列表或完整筛选报告；默认 ``None`` ，稍后调用 ``add_source`` 。
+    :param relation: 来源关系，默认 ``"auto"`` 自动识别； ``"independent"`` 独立比较，
+        ``"sequential"`` 顺序筛选， ``"intersection"`` 取交集， ``"union"`` 取并集。
+        普通列表默认按独立来源比较，不能据此推断逐步剔除漏斗。
+
+    :param strict: 默认 ``True`` ，严格校验来源的报告完整性； ``False`` 允许保留不完整报告及其诊断信息。
+
+    :param name: 流程名称，用于报告中显示，默认值为 "特征筛选流程"
+    :type name: str
     """
 
     def __init__(self, name: str = "特征筛选流程", *, source=None, relation="auto", strict=True):
@@ -221,7 +244,9 @@ class SelectionReportCollector:
         **参数**
 
         :param selector: 已拟合的筛选器对象，必须实现 `get_selection_report()` 方法
+        :type selector: 'BaseFeatureSelector'
         :param stage_name: 阶段名称，如 '粗筛'、'精筛' 等，默认根据已有报告数量自动生成
+        :type stage_name: Optional[str]
 
         :returns: self（支持链式调用）
 
@@ -270,7 +295,15 @@ class SelectionReportCollector:
         return self
 
     def add_source(self, source, stage_name=None):
-        """添加已拟合单项、Pipeline、列表或完整报告，保存隔离快照。"""
+        """添加已拟合单项、Pipeline、列表或完整报告，保存隔离快照。
+
+        **参数**
+
+        :param source: 已拟合筛选器、Pipeline、列表或完整筛选报告；与构造参数 ``source`` 相同。
+        :param stage_name: 阶段名称，默认 ``None`` 时自动编号。
+
+        :return: 收集器自身，支持链式调用。
+        """
         return self.add_report(source, stage_name=stage_name)
 
     def get_report(self):
@@ -293,14 +326,21 @@ class SelectionReportCollector:
 
         **返回字典键值说明**
 
-        - **流程名称** (`str`): 筛选流程名称
-        - **创建时间** (`str`): 报告创建时间，格式为 YYYY-MM-DD HH:MM:SS
-        - **筛选轮次** (`int`): 执行的筛选阶段总数
-        - **原始特征数** (`int`): 第一阶段输入的特征数量
-        - **最终特征数** (`int`): 最后一个阶段输出的特征数量
-        - **累计剔除特征数** (`int`): 所有阶段累计剔除的特征总数
-        - **特征保留率** (`str`): 特征保留比例，格式为 "XX.XX%"，无记录时为 "N/A"
-        - **筛选器列表** (`List[Dict]`): 各阶段的筛选器详情列表，每项包含阶段、筛选器、输入、输出、剔除、阈值
+        - **流程名称**  (`str`): 筛选流程名称
+
+        - **创建时间**  (`str`): 报告创建时间，格式为 YYYY-MM-DD HH:MM:SS
+
+        - **筛选轮次**  (`int`): 执行的筛选阶段总数
+
+        - **原始特征数**  (`int`): 第一阶段输入的特征数量
+
+        - **最终特征数**  (`int`): 最后一个阶段输出的特征数量
+
+        - **累计剔除特征数**  (`int`): 所有阶段累计剔除的特征总数
+
+        - **特征保留率**  (`str`): 特征保留比例，格式为 "XX.XX%"，无记录时为 "N/A"
+
+        - **筛选器列表**  (`List[Dict]`): 各阶段的筛选器详情列表，每项包含阶段、筛选器、输入、输出、剔除、阈值
 
         :returns: 包含汇总统计和阶段详情的字典，无记录时返回包含 "状态" 和 "message" 的字典
 
@@ -320,6 +360,8 @@ class SelectionReportCollector:
         >>> summary = collector.get_summary()
         >>> print(f"原始特征数: {summary['原始特征数']}, 最终特征数: {summary['最终特征数']}")
         原始特征数: 5, 最终特征数: ...
+
+        独立来源之间不可相减时，整体特征数与累计剔除数返回 ``None`` ，保留率为“不适用”；请读取各阶段明细。
         """
         if len(self.reports) == 0:
             return {"状态": "无筛选记录", "message": "请先添加筛选器报告"}
@@ -403,11 +445,15 @@ class SelectionReportCollector:
 
         **返回 DataFrame 列说明**
 
-        - **特征** (`str`): 特征名称
-        - **阶段** (`str`): 筛选阶段的名称
-        - **筛选器** (`str`): 该阶段使用的筛选器类名
-        - **状态** (`str`): 特征在当前阶段的状态，取值为 '选中'、'剔除' 或 '未处理'
-        - **得分/原因** (`Any`): 选中特征的得分，或剔除特征的原因
+        - **特征**  (`str`): 特征名称
+
+        - **阶段**  (`str`): 筛选阶段的名称
+
+        - **筛选器**  (`str`): 该阶段使用的筛选器类名
+
+        - **状态**  (`str`): 特征在当前阶段的状态，取值为 '选中'、'剔除' 或 '未处理'
+
+        - **得分/原因**  (`Any`): 选中特征的得分，或剔除特征的原因
 
         :returns: 特征追踪 DataFrame，无记录时返回空 DataFrame
 
@@ -483,11 +529,15 @@ class SelectionReportCollector:
 
         **返回 DataFrame 列说明**
 
-        - **特征** (`str`): 被剔除的特征名称
-        - **阶段** (`str`): 该特征被剔除的阶段名称
-        - **筛选器** (`str`): 该阶段使用的筛选器类名
-        - **剔除原因** (`str`): 特征被剔除的原因描述
-        - **得分** (`Any`): 特征在筛选器中的得分，无得分时为 'N/A'
+        - **特征**  (`str`): 被剔除的特征名称
+
+        - **阶段**  (`str`): 该特征被剔除的阶段名称
+
+        - **筛选器**  (`str`): 该阶段使用的筛选器类名
+
+        - **剔除原因**  (`str`): 特征被剔除的原因描述
+
+        - **得分**  (`Any`): 特征在筛选器中的得分，无得分时为 'N/A'
 
         :returns: 剔除特征汇总 DataFrame，无记录时返回空 DataFrame
 
@@ -542,12 +592,19 @@ class SelectionReportCollector:
 
         **返回 DataFrame 列说明**
 
-        - **阶段** (`str`): 筛选阶段的名称
-        - **筛选器** (`str`): 该阶段使用的筛选器类名
-        - **阈值** (`Any`): 该阶段使用的筛选阈值
-        - **输入特征数** (`int`): 该阶段输入的特征数量
-        - **选中特征数** (`int`): 该阶段输出的特征数量
-        - **剔除特征数** (`int`): 该阶段剔除的特征数量
+        - **阶段**  (`str`): 筛选阶段的名称
+
+        - **筛选器**  (`str`): 该阶段使用的筛选器类名
+
+        - **阈值**  (`Any`): 该阶段使用的筛选阈值
+
+        - **输入特征数**  (`int`): 该阶段输入的特征数量
+
+        - **选中特征数**  (`int`): 该阶段输出的特征数量
+
+        - **剔除特征数**  (`int`): 该阶段剔除的特征数量
+
+        :param kind: 返回表种类： ``"summary"`` （默认）返回阶段摘要， ``"details"`` 返回逐特征明细。
 
         :returns: 筛选结果汇总 DataFrame，无记录时返回空 DataFrame
 
@@ -601,7 +658,9 @@ class SelectionReportCollector:
         **打印内容**
 
         - 筛选流程名称和创建时间
+
         - 筛选轮次、原始/最终特征数、累计剔除数、特征保留率
+
         - 各阶段筛选器详情（阶段名、筛选器名称、输入/输出/剔除特征数）
 
         **参考样例**
@@ -676,28 +735,60 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
 
     **参数**
 
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param target: 目标变量列名，默认为 'target'。在 scorecardpipeline 风格中用于
         从 DataFrame 中提取目标列；在 sklearn 风格中若 fit 传入了 y 参数则优先使用 y
-    :param include: 强制保留的特征列表，这些特征无论如何都会被保留
-    :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
-    :param binner: 可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
-    :param bin_params: 可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时，
+
+    :type target: str
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
         基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
-    :param threshold: 筛选阈值，不同筛选器含义不同
-    :param n_jobs: 并行工作数，默认为 -1；None 沿用旧串行行为
-    :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
-    :param parallel_backend: joblib 并行后端，默认为 None
-    :param parallel_config: joblib 扩展配置，默认为 None
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param threshold: 默认值为 ``0.0`` 。筛选阈值，不同筛选器含义不同
+    :type threshold: Union[float, int, str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
 
     **属性**
 
     - selected_features_: 选中保留的特征列表
+
     - removed_features_: 被剔除的特征列表
+
     - dropped_: 被剔除的特征及原因 DataFrame，包含 '特征' 和 '剔除原因' 两列
+
     - scores_: 各特征的筛选得分的 Series
+
     - n_features_in_: fit 时输入的特征数量
+
     - forced_dropped_: 被强制剔除的特征列表
+
     - include_: 处理后的强制保留特征列表（字符串会被转为单元素列表）
+
     - exclude_: 处理后的强制剔除特征列表（包含 force_drop 的合并结果）
 
     **参考样例**
@@ -737,6 +828,11 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         >>> report = selector.get_selection_report()
         >>> print(f"输入: {report['输入特征数']}, 输出: {report['选中特征数']}")
         输入: 2, 输出: 1
+
+    **引用**
+
+    ``fit`` / ``transform`` / ``get_support`` 遵循估计器与特征筛选接口习惯，参见
+    `scikit-learn 估计器开发指南 <https://scikit-learn.org/stable/developers/develop.html>`_。
     """
 
     def __init_subclass__(cls, **kwargs):
@@ -746,7 +842,13 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         cls._sklearn_auto_wrap_output_keys = set()
 
     def set_output(self, *, transform=None):
-        """配置输出容器；按本次输入决定目标列，不改写拟合字段或报告快照。"""
+        """配置输出容器；按本次输入决定目标列，不改写拟合字段或报告快照。
+
+        **参数**
+
+        :param transform: 输出容器： ``None`` （默认）保持配置； ``"default"`` 使用原生输出，
+            ``"pandas"`` 返回 DataFrame， ``"polars"`` 返回 Polars DataFrame（需要安装 polars）。
+        """
         if transform is not None:
             if transform not in {"default", "pandas", "polars"}:
                 raise ValidationError("transform 必须为 default、pandas 或 polars")
@@ -793,7 +895,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         :param include: 强制保留的特征列表，这些特征无论如何都会被保留
         :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
         :param binner: 可选的已配置分箱器实例，支持已训练或未训练状态，不接受分箱器类
-        :param bin_params: 可选的 ``OptimalBinning`` 构造参数字典；``binner`` 优先
+        :param bin_params: 可选的 ``OptimalBinning`` 构造参数字典； ``binner`` 优先
         :param threshold: 筛选阈值，不同筛选器含义不同
         :param n_jobs: 并行工作数，默认为 -1；None 沿用旧串行行为
         :param force_drop: 强制剔除的特征列表，效果与 exclude 合并
@@ -867,11 +969,12 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
 
         **API 风格**
 
-        1. **sklearn 风格**: ``fit(X, y)`` — X 是特征矩阵，y 是目标变量
-        2. **scorecardpipeline 风格**: ``fit(df)`` — df 是包含特征和目标列的完整 DataFrame，
+        1. **sklearn 风格** : ``fit(X, y)`` — X 是特征矩阵，y 是目标变量
+
+        2. **scorecardpipeline 风格** : ``fit(df)`` — df 是包含特征和目标列的完整 DataFrame，
            目标列名通过初始化参数 target 指定
 
-        **优先级规则**: 如果 y 不为 None，使用 sklearn 风格；否则检查 X 中是否包含 target 列。
+        **优先级规则** : 如果 y 不为 None，使用 sklearn 风格；否则检查 X 中是否包含 target 列。
 
         **参数**
 
@@ -929,7 +1032,28 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> "BaseFeatureSelector":
-        """事务式拟合筛选器，失败时恢复进入本次拟合前的完整状态。"""
+        """拟合筛选器并记录中文筛选报告。
+
+        使用隔离候选对象训练，成功后提交状态；失败时保留本次调用前的已拟合状态。
+
+        **参数**
+
+        :param X: DataFrame 或二维数组，形状为 ``(样本数, 特征数)`` 。
+        :param y: 一维目标，默认 ``None`` 时按构造参数 ``target`` 从 DataFrame 提取；
+            显式 ``y`` 优先。无监督筛选器可不提供目标。
+
+        :return: 已拟合的筛选器自身。
+        :raises ValidationError: 输入为空、字段或标签不满足筛选器要求时。
+
+        **参考样例**
+
+        >>> import pandas as pd
+        >>> from hscredit.core.selectors import VarianceSelector
+        >>> X = pd.DataFrame({"评分": [500, 550, 600], "常量": [1, 1, 1]})
+        >>> selector = VarianceSelector(threshold=0.0, n_jobs=1).fit(X)
+        >>> selector.transform(X).columns.tolist()
+        ['评分']
+        """
         started = perf_counter()
         candidate = clone(self)
         if hasattr(self, "_sklearn_output_config"):
@@ -1317,7 +1441,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
     ) -> "BaseFeatureSelector":
         """拟合筛选器，学习特征重要性。
 
-        支持两种 API 风格：sklearn 风格 ``fit(X, y)`` 和 scorecardpipeline 风格 ``fit(df)``。
+        支持两种 API 风格：sklearn 风格 ``fit(X, y)`` 和 scorecardpipeline 风格 ``fit(df)`` 。
 
         **参数**
 
@@ -1549,7 +1673,8 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         return self._normalize_binned_output(X_binned, X)
 
     def _resolve_binner(self) -> Optional[Any]:
-        """按 ``binner > bin_params`` 解析有效分箱器。"""
+        """按 ``binner > bin_params`` 解析有效分箱器。
+        """
         if self.binner is not None:
             if isinstance(self.binner, type):
                 raise ValidationError("binner 必须传入配置好的分箱器实例，不能传入分箱器类")
@@ -1733,10 +1858,14 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         **参数**
 
         :param X: 输入数据，支持 DataFrame、numpy 数组或特征名列表
+        :type X: Union[pd.DataFrame, np.ndarray, List[str]]
 
         :returns: 筛选后的数据，类型与输入一致
+
             - DataFrame输入：默认选中特征加输入中已有的target列；target_rm=True时只输出特征
+
             - ndarray输入：返回选中列的ndarray
+
             - 列表输入：返回筛选后的特征名列表
 
         :raises NotFittedError: 当筛选器尚未拟合时
@@ -1806,7 +1935,9 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         **参数**
 
         :param X: 输入特征矩阵（DataFrame 或 numpy 数组），或包含目标列的完整数据框
-        :param y: 目标变量，可选
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[pd.Series, np.ndarray]]
 
         :returns: 筛选后的特征数据
         """
@@ -1849,12 +1980,22 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         return self.get_support_mask()
 
     def get_support(self, indices: bool = False) -> np.ndarray:
-        """返回选择掩码；``indices=True`` 时返回选中列位置。"""
+        """返回选择掩码； ``indices=True`` 时返回选中列位置。
+
+        **参数**
+
+        :param indices: 默认 ``False`` 返回与拟合特征顺序一致的布尔掩码； ``True`` 返回选中特征的整数位置。
+        """
         mask = self.get_support_mask()
         return np.flatnonzero(mask) if indices else mask
 
     def get_feature_names_out(self, input_features=None) -> np.ndarray:
-        """返回转换后的字段名，兼容 sklearn Pipeline。"""
+        """返回转换后的字段名，兼容 sklearn Pipeline。
+
+        **参数**
+
+        :param input_features: 可选输入特征名，默认 ``None`` 使用拟合时记录的名称；传入时须与拟合特征一致。
+        """
         if not hasattr(self, "_is_fitted"):
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
         if not isinstance(self.target_rm, (bool, np.bool_)):
@@ -1883,22 +2024,37 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
 
         **返回字典键值说明**
 
-        - **筛选器** (`str`): 筛选器类名
-        - **筛选方法** (`str`): 筛选方法名称
-        - **时间戳** (`str`): 报告生成时间，格式为 YYYY-MM-DD HH:MM:SS
-        - **阈值** (`Any`): 筛选阈值
-        - **参数** (`Dict`): 筛选器初始化参数（过滤后的有效参数）
-        - **强制操作** (`Dict` | `None`): 强制保留/剔除的特征信息
-        - **输入特征数** (`int`): fit 时的输入特征数量
-        - **选中特征数** (`int`): 选中的特征数量
-        - **剔除特征数** (`int`): 被剔除的特征数量
-        - **特征保留率** (`str`): 保留比例，格式为 "XX.XX%"
-        - **选中特征** (`List[str]`): 选中特征名称列表
-        - **剔除特征** (`List[str]`，可选): 被剔除特征名称列表
-        - **剔除原因** (`List[str]`，可选): 各剔除特征对应的原因
-        - **剔除详情** (`List[Dict]`，可选): 剔除特征的详细信息
-        - **特征得分** (`Dict`): 各特征得分的字典
-        - **得分统计** (`Dict`，可选): 得分的统计摘要（最大值、最小值、平均值、中位数）
+        - **筛选器**  (`str`): 筛选器类名
+
+        - **筛选方法**  (`str`): 筛选方法名称
+
+        - **时间戳**  (`str`): 报告生成时间，格式为 YYYY-MM-DD HH:MM:SS
+
+        - **阈值**  (`Any`): 筛选阈值
+
+        - **参数**  (`Dict`): 筛选器初始化参数（过滤后的有效参数）
+
+        - **强制操作**  (`Dict` | `None`): 强制保留/剔除的特征信息
+
+        - **输入特征数**  (`int`): fit 时的输入特征数量
+
+        - **选中特征数**  (`int`): 选中的特征数量
+
+        - **剔除特征数**  (`int`): 被剔除的特征数量
+
+        - **特征保留率**  (`str`): 保留比例，格式为 "XX.XX%"
+
+        - **选中特征**  (`List[str]`): 选中特征名称列表
+
+        - **剔除特征**  (`List[str]`，可选): 被剔除特征名称列表
+
+        - **剔除原因**  (`List[str]`，可选): 各剔除特征对应的原因
+
+        - **剔除详情**  (`List[Dict]`，可选): 剔除特征的详细信息
+
+        - **特征得分**  (`Dict`): 各特征得分的字典
+
+        - **得分统计**  (`Dict`，可选): 得分的统计摘要（最大值、最小值、平均值、中位数）
 
         :returns: 包含筛选结果的字典，未拟合时返回包含 "状态" 和 "message" 的字典
 
@@ -2033,15 +2189,22 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
 
         **summary 模式返回列说明**
 
-        - **筛选器** (`str`): 筛选器类名
-        - **筛选方法** (`str`): 筛选方法名称
-        - **阈值** (`Any`): 筛选阈值
-        - **输入特征数** (`int`): 输入特征数量
-        - **选中特征数** (`int`): 选中特征数量
-        - **剔除特征数** (`int`): 剔除特征数量
-        - **保留率** (`str`): 特征保留比例
+        - **筛选器**  (`str`): 筛选器类名
 
-        :param kind: details返回完整逐特征决策表，summary返回单行统计
+        - **筛选方法**  (`str`): 筛选方法名称
+
+        - **阈值**  (`Any`): 筛选阈值
+
+        - **输入特征数**  (`int`): 输入特征数量
+
+        - **选中特征数**  (`int`): 选中特征数量
+
+        - **剔除特征数**  (`int`): 剔除特征数量
+
+        - **保留率**  (`str`): 特征保留比例
+
+        :param kind: 默认值为 ``'details'`` 。details返回完整逐特征决策表，summary返回单行统计
+        :type kind: str
         :returns: 与其它筛选器相同结构的明细，或显式选择的单行汇总
 
         **参考样例**
@@ -2084,9 +2247,11 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
 
         **返回 DataFrame 列说明**
 
-        - **特征** (`str`): 特征名称
-        - **得分** (`float`): 特征在筛选器中的得分
-        - **状态** (`str`): 特征状态，取值为 '选中' 或 '剔除'
+        - **特征**  (`str`): 特征名称
+
+        - **得分**  (`float`): 特征在筛选器中的得分
+
+        - **状态**  (`str`): 特征状态，取值为 '选中' 或 '剔除'
 
         按拟合输入顺序排列；不同算法得分方向不同，完整语义见get_selection_details。
 
@@ -2130,8 +2295,9 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
 
         **返回 DataFrame 列说明**
 
-        - **特征** (`str`): 被剔除的特征名称
-        - **剔除原因** (`str`): 特征被剔除的原因描述
+        - **特征**  (`str`): 被剔除的特征名称
+
+        - **剔除原因**  (`str`): 特征被剔除的原因描述
 
         :returns: 包含被剔除特征及原因的 DataFrame，无数据时返回仅含列名的空 DataFrame
 
@@ -2184,14 +2350,44 @@ class CompositeFeatureSelector(BaseFeatureSelector):
 
     **参数**
 
+    :param bin_params: 默认值为 ``None`` 。可选的 OptimalBinning 构造参数
+    :type bin_params: Optional[Dict[str, Any]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param selectors: 筛选器列表，按执行顺序排列
-    :param strategy: 组合策略，可选 'sequential' 或 'intersection'
+    :type selectors: List[BaseFeatureSelector]
+    :param strategy: 默认值为 ``'sequential'`` 。组合策略，可选 'sequential' 或 'intersection'
+
         - 'sequential': 按顺序筛选，每轮剔除不满足条件的特征
+
         - 'intersection': 取所有筛选器选中特征的交集
-    :param include: 强制保留的特征列表，这些特征无论如何都会被保留
-    :param exclude: 强制剔除的特征列表，这些特征无论如何都会被剔除
+
+    :type strategy: str
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
     :param target: 目标变量列名，默认为 'target'
-    :param binner: 可选的分箱器
+    :type target: str
+    :param binner: 默认值为 ``None`` 。可选的分箱器
+    :type binner: Optional[Any]
 
     **参考样例**
 
@@ -2455,5 +2651,10 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         self._bind_parallel_config_to_child(selector)
 
     def get_selection_report_df(self, kind: str = "details") -> pd.DataFrame:
-        """与单项筛选器相同的固定列明细；完整子步骤使用collect_selection_report。"""
+        """与单项筛选器相同的固定列明细；完整子步骤使用collect_selection_report。
+
+        **参数**
+
+        :param kind: 默认值为 ``'details'`` 。details返回完整逐特征决策表，summary返回单行统计
+        """
         return super().get_selection_report_df(kind=kind)

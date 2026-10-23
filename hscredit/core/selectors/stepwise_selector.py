@@ -50,36 +50,106 @@ class StepwiseSelector(BaseFeatureSelector):
 
     **参数**
 
+    :param report_history: 筛选过程历史保留策略，默认 ``"summary"`` 记录摘要；
+        ``"diagnostics"`` 额外记录诊断事件，``"full"`` 记录详细候选过程。
+        所有模式均受事件数和字节预算限制；截断历史不改变最终筛选结果。
+    :param max_report_events: 历史事件数量上限，默认 ``10000``；用于限制详细历史的存储。
+    :param max_report_bytes: 历史存储字节预算，默认 ``8 * 1024 * 1024`` （8 MiB）。
+
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param threshold: 默认值为 ``0.0`` 。筛选阈值，不同筛选器含义不同
+    :type threshold: Union[float, int, str]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param estimator: 评估器类型，默认为'logit'
+
         - 'logit': 逻辑回归
+
         - 'ols': 最小二乘回归
+
         - 或传入 sklearn 兼容的评估器对象
+
+    :type estimator: Union[str, object]
     :param direction: 选择方向，默认为'both'
+
         - 'forward': 前向选择，从空模型开始逐步添加特征
+
         - 'backward': 后向消除，从全特征开始逐步剔除特征
+
         - 'both': 双向选择，结合前向和后向
+
+    :type direction: str
     :param criterion: 筛选准则，默认为'aic'
+
         - 'aic': Akaike信息准则（越小越好）
+
         - 'bic': 贝叶斯信息准则（越小越好）
+
         - 'ks': Kolmogorov-Smirnov统计量（越大越好，仅适用于logit）
+
         - 'auc': AUC值（越大越好，仅适用于logit）
+
+    :type criterion: str
     :param max_features: 最大特征数量，默认为None（不限制）
+
         - 如果为整数，限制选中的特征数量
+
         - 如果为浮点数（0-1），限制为总特征数的比例
+
+    :type max_features: Optional[Union[int, float]]
     :param p_enter: 前向进入阈值，默认为0.01
+
         - 特征加入后模型改善需要超过此阈值（对于AIC/BIC）
+
         - 或特征p值需要低于此阈值（对于p_value_enter）
+
+    :type p_enter: float
     :param p_remove: 后向剔除阈值，默认为0.01
+
         - 特征剔除后模型改善需要超过此阈值
+
+    :type p_remove: float
     :param p_value_enter: 双向选择中特征p值阈值，默认为0.2
+
         - 在双向选择中，p值超过此阈值的特征会被剔除
+
+    :type p_value_enter: float
     :param intercept: 是否包含截距项，默认为True
+    :type intercept: bool
     :param max_iter: 最大迭代次数，默认为100
+    :type max_iter: int
     :param verbose: 是否打印详细信息，默认为False
+    :type verbose: bool
     :param target: 目标变量列名，默认为'target'
-    :param include: 强制保留的特征列表
-    :param exclude: 强制剔除的特征列表
-    :param n_jobs: 并行任务数（保留参数，暂未使用）
+    :type target: str
+    :param include: 默认值为 ``None`` 。强制保留的特征列表
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表
+    :type exclude: Optional[List[str]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
 
     **属性**
 
@@ -113,7 +183,7 @@ class StepwiseSelector(BaseFeatureSelector):
 
     逐步回归参见 Hocking, R. R. (1976). *The Analysis and Selection of Variables in
     Linear Regression.* Biometrics；准则出处：AIC = Akaike (1974)、BIC = Schwarz (1978)。
-    实现风格对齐 toad / scorecardpipeline 的 ``stepwise``。
+    实现风格对齐 toad / scorecardpipeline 的 ``stepwise`` 。
     """
 
     method_name = "逐步回归筛选"

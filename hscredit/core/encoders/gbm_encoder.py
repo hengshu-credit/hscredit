@@ -34,34 +34,83 @@ class GBMEncoder(BaseEncoder):
     将样本在树中的位置（叶子节点）转换为特征。
 
     支持多种输出格式:
+
     - 'leaves': 叶子节点索引
+
     - 'onehot': 叶子节点独热编码
+
     - 'probability': 预测概率
+
     - 'embedding': 树路径 embedding
 
     **参数**
 
-    :param features: 需要编码的列名列表。如果为None，则使用所有特征列
+    :param target: 默认值为 ``None`` 。scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
+    :type target: Optional[str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param passthrough_target: 是否在转换结果中保留目标列，默认 ``False`` 。
+        ``True`` 仅用于需要目标列的表格分析；连接预测 Pipeline 时应保持 ``False`` ，避免标签进入模型。
+
+    :type passthrough_target: bool
+
+    :param features: 默认值为 ``None`` 。需要编码的列名列表。如果为None，则使用所有特征列
+    :type features: Optional[List[str]]
     :param model_type: GBM模型类型，可选 'xgboost'、'lightgbm'、'catboost'，默认为'xgboost'
+    :type model_type: Literal['xgboost', 'lightgbm', 'catboost']
     :param n_estimators: 树的数量，默认为100
+    :type n_estimators: int
     :param max_depth: 树的最大深度，默认为5
+    :type max_depth: int
     :param learning_rate: 学习率，默认为0.1
+    :type learning_rate: float
     :param subsample: 样本采样比例，默认为0.8
+    :type subsample: float
     :param colsample_bytree: 特征采样比例，默认为0.8
+    :type colsample_bytree: float
     :param min_child_samples: 叶子节点最小样本数，默认为20
+    :type min_child_samples: int
     :param random_state: 随机种子，用于可复现性，默认为None
+    :type random_state: Optional[int]
     :param output_type: 输出特征类型，默认为'leaves'
+
         - 'leaves': 返回每棵树上的叶子节点索引
+
         - 'onehot': 对叶子节点进行独热编码
+
         - 'probability': 返回预测概率（仅分类任务）
+
         - 'embedding': 返回树路径的embedding表示
+
+    :type output_type: Literal['leaves', 'onehot', 'probability', 'embedding']
     :param drop_origin: 是否删除原始特征列，默认为True（推荐，避免原始类别特征影响下游模型）
+    :type drop_origin: bool
     :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :type handle_unknown: str
     :param handle_missing: 处理缺失值的方式，默认为'value'
+    :type handle_missing: str
     :param drop_invariant: 是否删除方差为0的列，默认为False
+    :type drop_invariant: bool
     :param return_df: 是否返回DataFrame，默认为True
+    :type return_df: bool
     :param model_params: 额外的模型参数，用于覆盖默认参数，默认为None
+    :type model_params: Optional[Dict[str, Any]]
     :param task: 任务类型，'classification' 或 'regression'，默认为'classification'
+    :type task: Literal['classification', 'regression']
 
     **说明**
 
@@ -71,18 +120,27 @@ class GBMEncoder(BaseEncoder):
     **属性**
 
     - model_: 训练好的GBM模型
+
     - n_trees_: 树的数量
+
     - n_features_: 原始特征数量
+
     - leaf_indices_: 每棵树的叶子节点索引映射
+
     - feature_names_: 编码后的特征名列表
+
     - classes_: 类别标签（分类任务）
+
     - mapping_: 类别特征编码映射（仅当输入包含object/category类型列时填充）
 
     **缺失值支持**
 
     XGBoost、LightGBM 和 CatBoost 都原生支持缺失值处理：
+
     - XGBoost: 自动学习缺失值的最优分裂方向
+
     - LightGBM: 自动处理缺失值，无需填充
+
     - CatBoost: 将缺失值作为特殊类别处理
 
     对于类别特征中的缺失值，在编码为数值时会保留np.nan格式
@@ -671,7 +729,7 @@ class GBMEncoder(BaseEncoder):
         使用每棵树的输出作为embedding的一个维度。
 
         :param X: 输入数据
-        :return: embedding DataFrame，列名为 ``gbm_emb_*``，与 ``feature_names_`` 保持一致
+        :return: embedding DataFrame，列名为 ``gbm_emb_*`` ，与 ``feature_names_`` 保持一致
         """
         # 统一使用叶子索引作为embedding（跨模型通用方法）
         leaf_df = self._transform_to_leaves(X)
@@ -753,6 +811,7 @@ class GBMEncoder(BaseEncoder):
         """绘制树结构。
 
         :param tree_idx: 树的索引，默认为0（第一棵树）
+        :type tree_idx: int
         :param kwargs: 传递给plot_tree的其他参数
         :raises NotImplementedError: 当模型类型不支持可视化时抛出
         """

@@ -93,7 +93,7 @@ def install_lightgbm_sklearn_compat(lightgbm_module, lightgbm_version, sklearn_v
 def install_lightgbm_verbosity_compat(lightgbm_module, lightgbm_version) -> None:
     """为旧 LightGBM 保留重置参数之前显式配置的日志级别。
 
-    LightGBM 4.0–4.4 的自定义目标函数会执行 ``reset_parameter``，其 C++
+    LightGBM 4.0–4.4 的自定义目标函数会执行 ``reset_parameter`` ，其 C++
     实现在没有日志参数时意外重置为 INFO，导致 ``verbose=False`` 失效。
     4.5.0 已通过上游 PR #6428 修复；这里仅给受影响版本补传已有日志设置，
     不修改全局 logger，也不拦截 Python 警告。显式重置日志级别仍优先。

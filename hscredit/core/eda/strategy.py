@@ -56,9 +56,13 @@ def approval_badrate_tradeoff(
     以及 KS 值，用于向业务方解释策略调整影响。
 
     :param y_true: 真实标签序列（0/1）
+    :type y_true: pd.Series
     :param score: 模型评分序列（越高越优质）
+    :type score: pd.Series
     :param n_points: 阈值点数量，默认 100
-    :param score_low_risk: 'high' 表示高分为低风险（通过），'low' 表示低分为低风险
+    :type n_points: int
+    :param score_low_risk: 默认值为 ``'high'`` 。'high' 表示高分为低风险（通过），'low' 表示低分为低风险
+    :type score_low_risk: str
     :return: 权衡表 DataFrame
 
     **参考样例**
@@ -133,11 +137,17 @@ def score_strategy_simulation(
     便于与当前策略对比，做"如果把阈值调整到X会怎样"的仿真。
 
     :param df: 输入 DataFrame
+    :type df: pd.DataFrame
     :param score_col: 评分列名
+    :type score_col: str
     :param target: 目标变量列名（0/1）
+    :type target: str
     :param thresholds: 评分阈值列表（通过/拒绝切割点）
-    :param amount: 金额列名（可选），提供时计算通过金额和坏账金额
-    :param score_low_risk: 'high' 表示高分为低风险，'low' 表示低分为低风险
+    :type thresholds: List[float]
+    :param amount: 默认值为 ``None`` 。金额列名（可选），提供时计算通过金额和坏账金额
+    :type amount: Optional[str]
+    :param score_low_risk: 默认值为 ``'high'`` 。'high' 表示高分为低风险，'low' 表示低分为低风险
+    :type score_low_risk: str
     :return: 各阈值下的策略仿真结果 DataFrame
 
     **参考样例**
@@ -236,11 +246,17 @@ def vintage_performance_summary(
     可传入多个 MOB 观测点（如 [3,6,9,12]）。
 
     :param df: 输入 DataFrame
+    :type df: pd.DataFrame
     :param vintage_col: Vintage 列名（如放款年月 '2024-01'）
+    :type vintage_col: str
     :param mob_col: 当前账龄（月）列名
+    :type mob_col: str
     :param target: 坏标签列名（0/1）
-    :param mob_points: 关注的 MOB 观测点列表，None 时自动取所有整数 MOB
-    :param amount: 金额列名（可选），提供时输出金额加权坏率
+    :type target: str
+    :param mob_points: 默认值为 ``None`` 。关注的 MOB 观测点列表，None 时自动取所有整数 MOB
+    :type mob_points: Optional[List[int]]
+    :param amount: 默认值为 ``None`` 。金额列名（可选），提供时输出金额加权坏率
+    :type amount: Optional[str]
     :return: Vintage 绩效汇总宽表，行=vintage，列=MOB_X_坏率
 
     **参考样例**
@@ -356,30 +372,44 @@ def roll_rate_matrix(
     量化各 DPD 状态段的资产质量改善（变好）、保持与恶化（变坏）程度，
     辅助信贷风险的动态监控与预警。
 
-    **样本选取说明**：
+    **样本选取说明** ：
     应选取观察点之前已放款、且在观察点之后仍有未结清余额（贷款表现）的样本。
     调用方需在传入 DataFrame 前完成此过滤：剔除观察点前已提前结清的贷款，
     以及观察点之后才新发放的贷款，确保每笔样本在观察期（t0）和表现期（t1）
     均有有效 DPD 记录，避免已结清或未成熟贷款混入造成分布失真。
 
     :param df: 输入 DataFrame（须已完成上述样本过滤）
+    :type df: pd.DataFrame
     :param dpd_t0: 观察期 DPD 列名（t0 时刻逾期天数）
+    :type dpd_t0: str
     :param dpd_t1: 表现期 DPD 列名（t1 时刻逾期天数）
+    :type dpd_t1: str
     :param bins: DPD 分档断点，默认 [0, 1, 7, 15, 30, 60, 90, 120, inf]
+    :type bins: Optional[List[int]]
     :param labels: 各档标签，默认 ['D0','D1-7','D8-15','D16-30','D31-60','D61-90','D91-120','D120+']
-    :param mob_t0: 观察点账龄（MOB），用于表头标注，如 12 表示 "MOB12"
-    :param mob_t1: 表现点账龄（MOB），用于表头标注，如 18 表示 "MOB18"
-    :param date_t0: 观察点日期字符串（可选），如 '2023-06'，用于表头描述
-    :param date_t1: 表现点日期字符串（可选），如 '2023-12'，用于表头描述
-    :param amount: 贷款金额列名（可选），提供时额外输出金额口径矩阵与比例矩阵
+    :type labels: Optional[List[str]]
+    :param mob_t0: 默认值为 ``None`` 。观察点账龄（MOB），用于表头标注，如 12 表示 "MOB12"
+    :type mob_t0: Optional[int]
+    :param mob_t1: 默认值为 ``None`` 。表现点账龄（MOB），用于表头标注，如 18 表示 "MOB18"
+    :type mob_t1: Optional[int]
+    :param date_t0: 默认值为 ``None`` 。观察点日期字符串（可选），如 '2023-06'，用于表头描述
+    :type date_t0: Optional[str]
+    :param date_t1: 默认值为 ``None`` 。表现点日期字符串（可选），如 '2023-12'，用于表头描述
+    :type date_t1: Optional[str]
+    :param amount: 默认值为 ``None`` 。贷款金额列名（可选），提供时额外输出金额口径矩阵与比例矩阵
+    :type amount: Optional[str]
     :return: 包含以下键的字典：
 
-        - ``'元信息'``: 观察点/表现点描述、总订单数、订单口径变好/保持/变坏笔数
+        - ``'元信息'`` : 观察点/表现点描述、总订单数、订单口径变好/保持/变坏笔数
           及占比；若提供 amount 则同时包含金额口径汇总
-        - ``'计数矩阵'``: 多层列索引的迁移计数宽表，含变好/保持/变坏/合计汇总列
-        - ``'订单比例矩阵'``: 基于订单数行归一化的迁移概率（原始小数），含变好/保持/变坏汇总列
-        - ``'金额矩阵'``: 当 ``amount`` 提供时，金额口径的迁移宽表，含汇总列
-        - ``'金额比例矩阵'``: 当 ``amount`` 提供时，基于金额行归一化的迁移比例（原始小数）
+
+        - ``'计数矩阵'`` : 多层列索引的迁移计数宽表，含变好/保持/变坏/合计汇总列
+
+        - ``'订单比例矩阵'`` : 基于订单数行归一化的迁移概率（原始小数），含变好/保持/变坏汇总列
+
+        - ``'金额矩阵'`` : 当 ``amount`` 提供时，金额口径的迁移宽表，含汇总列
+
+        - ``'金额比例矩阵'`` : 当 ``amount`` 提供时，基于金额行归一化的迁移比例（原始小数）
 
     **参考样例**
 
@@ -585,11 +615,17 @@ def label_leakage_check(
     可快速识别训练数据中存在未来信息的特征。
 
     :param df: 输入 DataFrame
+    :type df: pd.DataFrame
     :param features: 待检测特征列表
+    :type features: List[str]
     :param target: 目标变量列名（0/1）
+    :type target: str
     :param threshold_iv: IV 泄露阈值，超过则告警，默认 0.5
+    :type threshold_iv: float
     :param threshold_auc: AUC 泄露阈值，超过则告警，默认 0.9
-    :param max_n_bins: IV 计算分箱数
+    :type threshold_auc: float
+    :param max_n_bins: 默认值为 ``10`` 。IV 计算分箱数
+    :type max_n_bins: int
     :return: 标签泄露检测结果 DataFrame
 
     **参考样例**
@@ -677,9 +713,13 @@ def multi_label_correlation(
     以及选择最优目标变量。
 
     :param df: 输入 DataFrame
+    :type df: pd.DataFrame
     :param labels: 标签列名列表（均须为 0/1）
-    :param method: 相关系数方法，'pearson' 或 'spearman'
+    :type labels: List[str]
+    :param method: 默认值为 ``'pearson'`` 。相关系数方法，'pearson' 或 'spearman'
+    :type method: str
     :param threshold: 高相关告警阈值（绝对值），默认 0.7
+    :type threshold: float
     :return: 相关性矩阵 DataFrame，附带高相关标签对描述
 
     **参考样例**

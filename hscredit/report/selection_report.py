@@ -361,7 +361,7 @@ def save_selection_report(
     :param report: SelectionReport 快照。
     :param path: 输出名称或带 .xlsx/.json 后缀的期望名称；实际文件位于版本目录。
     :param formats: 支持 xlsx/json，默认同时生成。
-    :param overwrite: 是否允许更新同名发布清单，不删除旧版本。
+    :param overwrite: 默认值为 ``False`` 。是否允许更新同名发布清单，不删除旧版本
 
     **参考样例**
 

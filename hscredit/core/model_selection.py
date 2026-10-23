@@ -48,10 +48,14 @@ def time_train_test_split(
     """按时间顺序切分训练集和测试集.
 
     :param data: 输入数据
+    :type data: pd.DataFrame
     :param time_col: 时间列
-    :param test_size: 未指定 cutoff 时的测试集比例或样本数
-    :param cutoff: 可选切分时间；训练集早于该时间，测试集不早于该时间
+    :type time_col: str
+    :param test_size: 默认值为 ``0.2`` 。未指定 cutoff 时的测试集比例或样本数
+    :type test_size: Union[float, int]
+    :param cutoff: 默认值为 ``None`` 。可选切分时间；训练集早于该时间，测试集不早于该时间
     :param gap: 训练集与测试集之间排除的样本行数，默认 0
+    :type gap: int
     :return: ``(训练集, 测试集)``
     """
     if not isinstance(gap, (int, np.integer)) or gap < 0:
@@ -109,10 +113,13 @@ def oot_split(
     """按明确时间边界切分开发集和时间外样本集.
 
     :param data: 输入数据
+    :type data: pd.DataFrame
     :param time_col: 时间列
+    :type time_col: str
     :param oot_start: OOT 起始时间，包含该边界
     :param oot_end: OOT 结束时间，包含该边界；默认使用全部后续样本
-    :param gap: OOT 前排除的样本行数
+    :param gap: 默认值为 ``0`` 。OOT 前排除的样本行数
+    :type gap: int
     :return: ``(开发集, OOT集)``
     """
     development, oot = time_train_test_split(
@@ -147,12 +154,15 @@ def group_train_test_split(
     """按组随机切分，保证同一组不会同时出现在训练集和测试集.
 
     :param X: 特征数据
-    :param y: 可选目标变量
-    :param groups: 与 X 等长的分组数组
-    :param group: X 为 DataFrame 时可直接指定分组列
-    :param test_size: 测试组比例
-    :param random_state: 随机种子
-    :return: 未传 y 时返回 ``X_train, X_test``；传 y 时返回
+    :param y: 默认值为 ``None`` 。可选目标变量
+    :param groups: 默认值为 ``None`` 。与 X 等长的分组数组
+    :param group: 默认值为 ``None`` 。X 为 DataFrame 时可直接指定分组列
+    :type group: Optional[str]
+    :param test_size: 默认值为 ``0.2`` 。测试组比例
+    :type test_size: float
+    :param random_state: 默认值为 ``None`` 。随机种子
+    :type random_state: Optional[int]
+    :return: 未传 y 时返回 ``X_train, X_test`` ；传 y 时返回
         ``X_train, X_test, y_train, y_test``
     """
     if groups is not None and group is not None:

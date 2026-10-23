@@ -43,33 +43,81 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     代码风格参考hscredit的binning模块，fit方法兼容scorecardpipeline风格。
     支持hscredit中所有分箱方法。
 
+    **参数**
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
     :param target: 目标变量列名，默认为'target'
-    :param exclude_cols: 需要排除的列名列表
+    :type target: str
+    :param exclude_cols: 默认值为 ``None`` 。需要排除的列名列表
+    :type exclude_cols: Optional[List[str]]
     :param features: 参与挖掘的字段名或字段名列表，默认None（使用全部候选字段）
-    :param feature_map: 字段名到字段含义的映射，用于规则报告展示
+    :type features: FeatureNames
+    :param feature_map: 默认值为 ``None`` 。字段名到字段含义的映射，用于规则报告展示
+    :type feature_map: Optional[Dict[str, str]]
     :param method: 分箱方法，取值与 `OptimalBinning.VALID_METHODS` 完全一致，不支持别名。
         默认为'mdlp'
+
+    :type method: str
     :param max_n_bins: 最大分箱数，默认20。同binning模块的max_n_bins
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认2。同binning模块的min_n_bins
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认0.05
+
         - 如果 < 1, 表示占比 (如 0.05 表示 5%)
+
         - 如果 >= 1, 表示绝对数量
+
+    :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认None
+    :type max_bin_size: Optional[Union[float, int]]
     :param monotonic: 坏样本率单调性约束，默认False
+
         - False: 不要求单调性
+
         - True 或 'auto': 自动检测并应用最佳单调方向
+
         - 'ascending': 强制坏样本率递增
+
         - 'descending': 强制坏样本率递减
+
         - 'peak': 允许单峰形态(先升后降)
+
         - 'valley': 允许单谷形态(先降后升)
+
+    :type monotonic: Union[bool, str]
     :param min_chi2_threshold: 卡方分箱合并阈值，默认3.841 (p=0.05, df=1)
+    :type min_chi2_threshold: float
     :param significance_level: 卡方显著性水平，默认0.05
+    :type significance_level: float
     :param min_lift: 最小lift阈值，用于筛选规则，默认1.1
+    :type min_lift: float
     :param min_samples: 最小样本数，默认10。同binning模块的约束
+    :type min_samples: int
     :param special_codes: 特殊值列表，这些值会被单独处理，默认None
+    :type special_codes: Optional[List]
     :param cat_cutoff: 类别型变量处理阈值，默认None
+    :type cat_cutoff: Optional[Union[float, int]]
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: Union[bool, int]
     :param binning_kwargs: 分箱方法的其他参数，通过**kwargs传入
 
     **参考样例**
@@ -158,8 +206,11 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         """拟合挖掘器.
 
         :param X: 训练数据，DataFrame或numpy数组
-        :param y: 目标变量（可选）
-        :param features: 本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量（可选）
+        :type y: Optional[Union[pd.Series, np.ndarray]]
+        :param features: 默认值为 ``None`` 。本次拟合使用的字段名或字段名列表，优先于构造参数 ``features``
+        :type features: FeatureNames
         :param kwargs: 额外参数，可覆盖初始化参数
         :return: self
         """
@@ -579,7 +630,9 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         """分析单个特征.
 
         :param feature: 特征名
-        :param max_n_bins: 分箱数量（None则使用初始化参数）
+        :type feature: str
+        :param max_n_bins: 默认值为 ``None`` 。分箱数量（None则使用初始化参数）
+        :type max_n_bins: Optional[int]
         :param kwargs: 其他覆盖参数
         :return: 各阈值指标DataFrame
         """
@@ -656,6 +709,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         """获取特征的分箱统计表（如果使用了hscredit分箱方法）.
 
         :param feature: 特征名
+        :type feature: str
         :return: 分箱统计表或None
         """
         self._check_fitted()
@@ -683,11 +737,19 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
     ):
         """绘制特征分析图.
 
+        :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+        :type dpi: int
+
         :param feature: 特征名
-        :param metric: 可视化指标
-        :param figsize: 图大小
-        :param title: 自定义标题
-        :param save: 保存路径
+        :type feature: str
+        :param metric: 默认值为 ``'lift'`` 。可视化指标
+        :type metric: str
+        :param figsize: 默认值为 ``(12, 6)`` 。图大小
+        :type figsize: Tuple[int, int]
+        :param title: 默认值为 ``None`` 。自定义标题
+        :type title: Optional[str]
+        :param save: 默认值为 ``None`` 。保存路径
+        :type save: Optional[str]
         :return: matplotlib.pyplot对象
         """
         try:

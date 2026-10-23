@@ -128,11 +128,11 @@ class SelectionReport:
 
     **参数**
 
-    :param summary: 固定结构的阶段汇总。
-    :param details: 每阶段每个输入字段的决策明细。
-    :param metrics: 多指标长表。
-    :param history: 迭代事件表。
-    :param metadata: 拟合快照和诊断，不含逐行训练样本。
+    :param summary: 默认值为 ``None`` 。固定结构的阶段汇总
+    :param details: 默认值为 ``None`` 。每阶段每个输入字段的决策明细
+    :param metrics: 默认值为 ``None`` 。多指标长表
+    :param history: 默认值为 ``None`` 。迭代事件表
+    :param metadata: 默认值为 ``None`` 。拟合快照和诊断，不含逐行训练样本
 
     **属性**
 

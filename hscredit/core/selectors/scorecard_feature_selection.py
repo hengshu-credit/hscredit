@@ -40,48 +40,105 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
     按如下顺序执行特征筛选：
 
     1. 缺失率筛选（NullSelector）
+
     2. IV值筛选（IVSelector）
+
     3. 相关性筛选（CorrSelector）
+
     4. 单一值筛选（ModeSelector）
 
     与 scorecardpipeline.FeatureSelection 的思路一致，
     但参数命名和基础行为遵循 hscredit 风格：
 
     - 缺失率阈值使用 ``null_threshold``
+
     - IV阈值使用 ``iv_threshold``
+
     - 相关性阈值使用 ``corr_threshold``
+
     - 单一值占比阈值使用 ``mode_threshold``
+
     - 强制保留使用 ``include``
+
     - 强制剔除使用 ``exclude`` / ``force_drop``
+
     - 支持 sklearn 风格 ``fit(X, y)``
+
     - 支持 scorecardpipeline 风格 ``fit(df)``
 
     **参数**
 
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
     :param null_threshold: 缺失率阈值，默认为0.95；设为None可关闭该阶段
+    :type null_threshold: Optional[float]
     :param iv_threshold: IV阈值，默认为0.02；设为None可关闭该阶段
+    :type iv_threshold: Optional[float]
     :param corr_threshold: 相关性阈值，默认为0.7；设为None可关闭该阶段
+    :type corr_threshold: Optional[float]
     :param mode_threshold: 单一值占比阈值，默认为0.95；设为None可关闭该阶段
+    :type mode_threshold: Optional[float]
     :param corr_method: 相关系数计算方法，默认为'pearson'
+
         - 'pearson': 皮尔逊相关系数
+
         - 'spearman': 斯皮尔曼等级相关系数
+
         - 'kendall': 肯德尔相关系数
+
+    :type corr_method: str
     :param corr_metric: 相关性筛选的保留指标，默认为'iv'
+
         - 'iv': 信息值（需要目标变量y）
+
         - 'ks': KS统计量
+
         - 'lift': LIFT值
+
         - 'bad_rate': 坏样本率
+
         指标通过分箱后的bin_tables_计算得到。
-    :param corr_weights: 自定义相关性筛选权重，优先级高于corr_metric
-    :param corr_binning_params: 透传给CorrSelector的分箱参数
+
+    :type corr_metric: str
+    :param corr_weights: 默认值为 ``None`` 。自定义相关性筛选权重，优先级高于corr_metric
+    :type corr_weights: Optional[Union[pd.Series, Dict[str, float], List[float]]]
+    :param corr_binning_params: 默认值为 ``None`` 。透传给CorrSelector的分箱参数
+    :type corr_binning_params: Optional[Dict[str, Any]]
     :param iv_regularization: IV计算正则项，默认为1.0
+    :type iv_regularization: float
     :param mode_dropna: 计算单一值占比时是否排除缺失值，默认为True
+    :type mode_dropna: bool
     :param target: 目标变量列名，默认为'target'
-    :param include: 强制保留特征列表
-    :param exclude: 强制剔除特征列表
-    :param force_drop: 强制剔除特征列表，最终会合并到exclude
+    :type target: str
+    :param include: 默认值为 ``None`` 。强制保留特征列表
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除特征列表
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除特征列表，最终会合并到exclude
+    :type force_drop: Optional[List[str]]
     :param target_rm: 默认False保留已有目标列；仅显式True时移除目标
-    :param n_jobs: 并行任务数
+    :type target_rm: bool
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
 
     **参考样例**
 
@@ -186,7 +243,14 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         X: Union[pd.DataFrame, np.ndarray],
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> "ScorecardFeatureSelection":
-        """拟合评分卡风格筛选器并同步兼容属性。"""
+        """拟合评分卡风格筛选器并同步兼容属性。
+
+        **参数**
+
+        :param X: DataFrame 或二维数组，形状为 ``(样本数, 特征数)`` 。
+        :param y: 一维目标，默认 ``None`` 时按构造参数 ``target`` 从 DataFrame 提取；
+            显式 ``y`` 优先。无监督筛选器可不提供目标。
+        """
         return super().fit(X, y)
 
     def _finalize_fit(self) -> None:
@@ -197,7 +261,12 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         self,
         X: Union[pd.DataFrame, np.ndarray, List[str]],
     ) -> Union[pd.DataFrame, np.ndarray, List[str]]:
-        """根据筛选结果转换数据。"""
+        """根据筛选结果转换数据。
+
+        **参数**
+
+        :param X: 输入数据，支持 DataFrame、numpy 数组或特征名列表
+        """
         transformed = super().transform(X)
 
         if self.target_rm and isinstance(transformed, pd.DataFrame) and self.target in transformed.columns:

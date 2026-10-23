@@ -159,22 +159,73 @@ class VIFSelector(BaseFeatureSelector):
     **算法说明：**
 
     采用迭代剔除策略：
+
     1. 计算所有特征的VIF值
+
     2. 如果最大VIF > threshold，剔除VIF最大的特征
+
     3. 重新计算剩余特征的VIF
+
     4. 重复步骤2-3，直到所有VIF <= threshold
 
     这种方法避免了"一刀切"地剔除所有高VIF特征的问题。
 
     **参数**
 
+    :param report_history: 筛选过程历史保留策略，默认 ``"summary"`` 记录摘要；
+        ``"diagnostics"`` 额外记录诊断事件，``"full"`` 记录详细候选过程。
+        所有模式均受事件数和字节预算限制；截断历史不改变最终筛选结果。
+    :param max_report_events: 历史事件数量上限，默认 ``10000``；用于限制详细历史的存储。
+    :param max_report_bytes: 历史存储字节预算，默认 ``8 * 1024 * 1024`` （8 MiB）。
+
+    :param target: 目标变量列名，默认为 'target'。在 scorecardpipeline 风格中用于
+        从 DataFrame 中提取目标列；在 sklearn 风格中若 fit 传入了 y 参数则优先使用 y
+
+    :type target: str
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param threshold: VIF阈值，默认为4.0
+
         - 4.0: 移除VIF值超过4的特征
+
         - 范围: 正数
+
+    :type threshold: float
     :param missing: 缺失值填充值，默认为-1
+    :type missing: float
     :param max_iter: 最大迭代次数，默认为100
-    :param n_jobs: 并行计算的任务数
+    :type max_iter: int
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
     :param verbose: 是否显示详细过程，默认为False
+    :type verbose: bool
 
     **参考样例**
 
@@ -192,7 +243,7 @@ class VIFSelector(BaseFeatureSelector):
 
     **引用**
 
-    方差膨胀因子 ``VIF_i = 1 / (1 - R_i²)``（``R_i²`` 为特征 i 对其余特征回归的判定系数），
+    方差膨胀因子 ``VIF_i = 1 / (1 - R_i²)`` （ ``R_i²`` 为特征 i 对其余特征回归的判定系数），
     经验上 VIF>5（严格 >10）提示多重共线性。参见 Kutner, M. et al. (2004). *Applied
     Linear Statistical Models*；https://en.wikipedia.org/wiki/Variance_inflation_factor
     """

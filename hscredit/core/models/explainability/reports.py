@@ -46,14 +46,19 @@ def model_explain_report(
 ) -> pd.DataFrame:
     """生成模型特征解释报告.
 
-    不依赖 SHAP，优先复用模型自身 ``get_feature_importances``，再依次回退到
-    ``feature_importances_`` / ``coef_``，用于没有安装解释扩展包时的基础模型解释。
+    不依赖 SHAP，优先复用模型自身 ``get_feature_importances`` ，再依次回退到
+    ``feature_importances_`` / ``coef_`` ，用于没有安装解释扩展包时的基础模型解释。
 
     :param model: 已训练模型
-    :param X: 特征矩阵，可选，用于推断特征名
+    :type model: BaseRiskModel
+    :param X: 默认值为 ``None`` 。特征矩阵，可选，用于推断特征名
+    :type X: Optional[Union[np.ndarray, pd.DataFrame]]
     :param importance_type: 模型重要性类型，默认 ``'gain'``
-    :param top_n: 返回前 N 个特征，None 表示全部返回
+    :type importance_type: str
+    :param top_n: 默认值为 ``None`` 。返回前 N 个特征，None 表示全部返回
+    :type top_n: Optional[int]
     :param normalize: 是否增加归一化重要性列，默认 True
+    :type normalize: bool
     :return: 模型解释报告 DataFrame，列名为中文
 
     **参考样例**

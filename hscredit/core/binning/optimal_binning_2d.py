@@ -83,9 +83,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             正整数表示样本数，默认 0.02
         :param method: 分箱方法，默认 'quantile'（等频）
         :param monotonic: 单调性约束，默认 False。设为 'ascending'/'descending'/True 时，
-            作为**硬约束**作用于二维合并：最终各轴向相邻分箱的坏样本率保证满足单调趋势
+            作为 **硬约束** 作用于二维合并：最终各轴向相邻分箱的坏样本率保证满足单调趋势
             （通过持续合并违例相邻分箱实现，可能使二维分箱数低于 max_n_bins_2d）
-            ``ascending`` 表示特征值越大坏样本率越高（越大越差），``descending`` 表示
+            ``ascending`` 表示特征值越大坏样本率越高（越大越差）， ``descending`` 表示
             特征值越大坏样本率越低（越大越好）；自动模式复用内部一维分箱器识别的方向。
         :param max_n_bins_2d: 相邻格子合并后的最大二维分箱数，默认使用 max_n_bins。
             统计所有已观测普通/缺失组合，特殊值保留箱不计入
@@ -111,7 +111,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     扩展参数
         :param x_params: 额外参数仅传递给特征1的内部 OptimalBinning
         :param y_params: 额外参数仅传递给特征2的内部 OptimalBinning
-            参数优先级统一为：显式 ``_x``/``_y`` 参数 > ``x_params``/``y_params`` > 全局参数。
+            参数优先级统一为：显式 ``_x`` / ``_y`` 参数 > ``x_params`` / ``y_params`` > 全局参数。
             所有参数会在构造内部 ``OptimalBinning`` 前完成合并和校验。
 
     其他参数
@@ -125,22 +125,58 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         :param retain_training_data: 是否在内存实例中保留训练数据，默认 False；
             任何 artifact/pickle 序列化都会剥离训练数据
 
+    :param user_splits_fixed_x: x 轴用户节点固定配置，默认 ``None``；支持布尔值或布尔序列，语义同一维分箱。
+    :param user_splits_fixed_y: y 轴用户节点固定配置，默认 ``None``；支持布尔值或布尔序列，语义同一维分箱。
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     **属性**
 
     - binner_x_: 特征1的分箱器
+
     - binner_y_: 特征2的分箱器
+
     - splits_x_: 特征1的切分点
+
     - splits_y_: 特征2的切分点
+
     - n_bins_x_: 特征1的分箱数
+
     - n_bins_y_: 特征2的分箱数
+
     - solution_: 预分箱网格到最终二维分箱索引的映射矩阵；存在缺失值时追加缺失行/列
+
     - n_bins_2d_: 合并后的最终二维分箱数
+
     - binning_table_: 合并后的二维分箱统计表
+
     - grid_table_: 二维预分箱网格单元统计表
+
     - cross_table_: ``grid_table_`` 的兼容别名
+
     - iv_joint_: 最终二维联合分箱 IV
+
     - iv_interaction_: ``iv_joint_`` 的兼容别名，不代表严格的交互增益
+
     - optimization_status_: 当前为 ``HEURISTIC``
+
     - is_optimal_: 当前为 False
 
     **参考样例**
@@ -165,7 +201,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
     **引用**
 
-    二维分箱接口参考 optbinning 的 ``OptimalBinning2D``；本实现使用相邻区域贪心合并，
+    二维分箱接口参考 optbinning 的 ``OptimalBinning2D`` ；本实现使用相邻区域贪心合并，
     不等同于其数学规划全局求解：
     Navas-Palencia, G. (2020). *Optimal binning: mathematical programming
     formulation.* arXiv:2001.08025. https://arxiv.org/abs/2001.08025 ；
@@ -408,11 +444,18 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """将新数据映射到二维分箱.
 
         :param X: 待转换的数据
+        :type X: Union[pd.DataFrame, np.ndarray]
         :param metric: 转换类型，可选值:
+
             - 'indices': 返回合并后的二维分箱索引 (0, 1, 2, ...)，默认
+
             - 'bins': 返回合并后的二维分箱标签
+
             - 'woe': 返回合并后的 WOE 值
+
             - 'event_rate': 返回合并后的坏样本率
+
+        :type metric: Literal['indices', 'bins', 'woe', 'event_rate']
         :return: 转换后的数据
 
         **参考样例**
@@ -484,15 +527,25 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """获取二维预分箱网格单元统计表.
 
         :return: 交叉分箱统计表，包含以下列：
+
             - 分箱, 分箱标签: 当前预分箱网格单元索引和标签
+
             - 二维分箱, 二维分箱标签: 网格单元最终归属的二维区域
+
             - 特征1名称, 特征2名称: 特征名
+
             - 特征1分箱, 特征2分箱: 单特征分箱索引
+
             - 特征1标签, 特征2标签: 单特征分箱标签
+
             - 样本总数, 好样本数, 坏样本数: 样本统计
+
             - 坏样本率: 坏样本占比
+
             - 样本占比: 交叉区间样本占全量样本的比例
+
             - 分档WOE值, 分档IV值: WOE/IV统计
+
             - LIFT值: 提升度
         """
         if not self._is_fitted:
@@ -548,10 +601,13 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """获取分箱统计表.
 
         与 OptimalBinning 的 get_bin_table 保持一致。
+
         - 若指定特征名，返回该特征的独立分箱表（等同于 OptimalBinning.get_bin_table）
+
         - 若不指定（默认 None），返回合并后的二维分箱表
 
-        :param feature: 特征名，None 时返回最终二维分箱表
+        :param feature: 默认值为 ``None`` 。特征名，None 时返回最终二维分箱表
+        :type feature: Optional[str]
         :return: 分箱统计表
 
         **参考样例**
@@ -583,11 +639,16 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
         与 OptimalBinning 的 get_stats 保持一致。
 
-        :param feature: 特征名，None 时返回两个特征的统计字典
+        :param feature: 默认值为 ``None`` 。特征名，None 时返回两个特征的统计字典
+        :type feature: Optional[str]
         :return: 统计信息字典
+
             - 'n_bins': 分箱数
+
             - 'bin_table': 分箱统计表
+
             - 'iv': IV值
+
             - 'ks': KS值
 
         **参考样例**
@@ -645,7 +706,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
         与 OptimalBinning 的 get_splits 保持一致。
 
-        :param feature: 特征名，None 时返回两个特征的切分点字典
+        :param feature: 默认值为 ``None`` 。特征名，None 时返回两个特征的切分点字典
+        :type feature: Optional[str]
         :return: 切分点数组或字典
 
         **参考样例**
@@ -709,8 +771,11 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """导入分箱规则.
 
         :param rules: 分箱规则字典，格式同 export_rules
+        :type rules: Dict[str, List]
         :param X: 可选的重新拟合特征数据；默认训练数据已释放时必须提供
-        :param y: 可选的重新拟合目标数据；必须与 X 同时提供
+        :type X: Optional[Union[pd.DataFrame, np.ndarray]]
+        :param y: 默认值为 ``None`` 。可选的重新拟合目标数据；必须与 X 同时提供
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :return: self
 
         **参考样例**
@@ -775,15 +840,25 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """绘制二维分箱热力图.
 
         :param metric: 显示指标，可选 'bad_rate'（默认）、'woe'、'iv'、'lift'、'count'
-        :param figsize: 图像尺寸
-        :param cmap: 配色方案
-        :param annot: 是否在热力图中显示数值
-        :param fmt: 数值格式
-        :param title: 图表标题
-        :param xlabel: X轴标签
-        :param ylabel: Y轴标签
-        :param save: 保存路径
-        :param ax: 可选的 matplotlib Axes 对象
+        :type metric: Literal['bad_rate', 'woe', 'iv', 'lift', 'count']
+        :param figsize: 默认值为 ``None`` 。图像尺寸
+        :type figsize: Optional[tuple]
+        :param cmap: 默认值为 ``None`` 。配色方案
+        :type cmap: Optional[str]
+        :param annot: 默认值为 ``True`` 。是否在热力图中显示数值
+        :type annot: bool
+        :param fmt: 默认值为 ``'.2%'`` 。数值格式
+        :type fmt: str
+        :param title: 默认值为 ``None`` 。图表标题
+        :type title: Optional[str]
+        :param xlabel: 默认值为 ``None`` 。X轴标签
+        :type xlabel: Optional[str]
+        :param ylabel: 默认值为 ``None`` 。Y轴标签
+        :type ylabel: Optional[str]
+        :param save: 默认值为 ``None`` 。保存路径
+        :type save: Optional[str]
+        :param ax: 默认值为 ``None`` 。可选的 matplotlib Axes 对象
+        :type ax: Optional[Any]
         :param kwargs: 其他参数传递给 seaborn.heatmap
         :return: matplotlib Figure 或 Axes
         """
@@ -964,14 +1039,20 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     ) -> Any:
         """快捷绘制二维分箱联合分析图.
 
-        该方法等价于 ``hscredit.core.viz.bin_2d_plot(self, ...)``。
+        该方法等价于 ``hscredit.core.viz.bin_2d_plot(self, ...)`` 。
 
-        :param figsize: 图像尺寸
-        :param colors: 配色方案
-        :param title: 图表总标题
-        :param annot: 热力图是否标注数值
-        :param fontsize: 单元格字体大小
-        :param save: 保存路径
+        :param figsize: 默认值为 ``None`` 。图像尺寸
+        :type figsize: Optional[tuple]
+        :param colors: 默认值为 ``None`` 。配色方案
+        :type colors: Optional[List[str]]
+        :param title: 默认值为 ``None`` 。图表总标题
+        :type title: Optional[str]
+        :param annot: 默认值为 ``True`` 。热力图是否标注数值
+        :type annot: bool
+        :param fontsize: 默认值为 ``10`` 。单元格字体大小
+        :type fontsize: int
+        :param save: 默认值为 ``None`` 。保存路径
+        :type save: Optional[str]
         :return: matplotlib Figure
         """
         if not self._is_fitted:
@@ -1297,12 +1378,12 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     def _merge_2d_bins(self, event: np.ndarray, nonevent: np.ndarray) -> np.ndarray:
         """贪心合并相邻网格生成二维分箱（两阶段）.
 
-        阶段一（样本量 + 分箱数）：在满足 ``min_bin_size``、``max_n_bins_2d`` 约束下，
+        阶段一（样本量 + 分箱数）：在满足 ``min_bin_size`` 、 ``max_n_bins_2d`` 约束下，
         优先合并过小分箱并尽量减少 IV 损失（单调违例数仅作轻量 tiebreak）。
 
         阶段二（单调性硬约束）：当设置了单调趋势时，持续合并违反趋势的相邻分箱，
         直到任意轴向相邻分箱坏样本率均满足单调性。合并只会增大分箱，不会破坏
-        样本量与分箱数约束，因此最终结果同时满足三者，且**保证零单调违例**。
+        样本量与分箱数约束，因此最终结果同时满足三者，且 **保证零单调违例** 。
         """
         if event.shape != nonevent.shape or event.ndim != 2:
             raise ValueError("二维好坏样本矩阵形状不一致")

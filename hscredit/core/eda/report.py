@@ -81,22 +81,37 @@ def eda_summary(
 ) -> Dict[str, pd.DataFrame]:
     """EDA分析摘要.
 
-    快速生成数据集的关键分析结果
+        快速生成数据集的关键分析结果
 
-    :param df: 输入数据
-    :param target: 目标变量名（可选）
-    :param features: 特征列表（可选）
-    :param date: 日期列名（可选）
-    :param mode: strict 遇必需章节失败抛异常；best_effort 记录原因并继续
-    :param return_result: True 返回兼容字典的 ReportResult，含完整章节状态
-    :return: EDA摘要字典
+        :param df: 输入数据
+        :param target: 目标变量名（可选）
+        :param features: 特征列表（可选）
+        :param date: 日期列名（可选）
+        :param mode: strict 遇必需章节失败抛异常；best_effort 记录原因并继续
+        :param return_result: True 返回兼容字典的 ReportResult，含完整章节状态
+        :return: EDA摘要字典
 
-    **参考样例**
+        **参考样例**
 
-    >>> summary = eda_summary(df, target='fpd15', date='apply_date')
-    >>> for key, value in summary.items():
-    ...     print(f"\n=== {key} ===")
-    ...     print(value)
+        >>> summary = eda_summary(df, target='fpd15', date='apply_date')
+        >>> for key, value in summary.items():
+        ...     print(f"=== {key} ===")
+        ...     print(value)
+
+    **参数**
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
     """
     result = _execute_eda_report(df, target, features, date, {}, n_jobs, parallel_backend, parallel_config, mode, False)
     return result if return_result else dict(result)
@@ -118,13 +133,33 @@ def generate_report(
 ) -> Dict[str, pd.DataFrame]:
     """生成完整EDA报告.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
-    :param target: 目标变量名
-    :param features: 特征列表
-    :param date: 日期列名
-    :param config: 配置参数
-    :param mode: strict 拒绝必需章节失败；best_effort 保留成功结果并记录原因
-    :param return_result: True 返回含章节状态和发布清单的 ReportResult
+    :type df: pd.DataFrame
+    :param target: 默认值为 ``None`` 。目标变量名
+    :type target: str
+    :param features: 默认值为 ``None`` 。特征列表
+    :type features: List[str]
+    :param date: 默认值为 ``None`` 。日期列名
+    :type date: str
+    :param config: 默认值为 ``None`` 。配置参数
+    :type config: Dict
+    :param mode: 默认值为 ``'best_effort'`` 。strict 拒绝必需章节失败；best_effort 保留成功结果并记录原因
+    :type mode: str
+    :param return_result: 默认值为 ``False`` 。True 返回含章节状态和发布清单的 ReportResult
+    :type return_result: bool
     :return: 完整报告字典
 
     **参考样例**
@@ -151,10 +186,15 @@ def export_report_to_excel(
     使用 hscredit 的 ExcelWriter 生成专业格式的 Excel 报告。
 
     :param report: 报告字典
+    :type report: Dict[str, pd.DataFrame]
     :param filepath: 导出文件路径
-    :param sheet_name_mapping: 工作表名称映射
+    :type filepath: str
+    :param sheet_name_mapping: 默认值为 ``None`` 。工作表名称映射
+    :type sheet_name_mapping: Dict[str, str]
     :param theme_color: 主题颜色，默认 '2639E9'（蓝色）
+    :type theme_color: str
     :param auto_width: 是否自动调整列宽，默认 True
+    :type auto_width: bool
 
     **参考样例**
 
@@ -231,8 +271,11 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
     """生成HTML报告.
 
     :param report: 报告字典
+    :type report: Dict[str, pd.DataFrame]
     :param filepath: 导出文件路径
-    :param title: 报告标题
+    :type filepath: str
+    :param title: 默认值为 ``'EDA分析报告'`` 。报告标题
+    :type title: str
 
     **参考样例**
 

@@ -83,19 +83,33 @@ def roc_plot(
 ) -> plt.Figure:
     """绘制ROC曲线.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param y_true: 真实标签
+    :type y_true: Union[pd.Series, np.ndarray]
     :param y_score: 预测概率分数
-    :param ax: matplotlib Axes对象，None时自动创建
+    :type y_score: Union[pd.Series, np.ndarray]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象，None时自动创建
+    :type ax: Optional[plt.Axes]
     :param figsize: 图像尺寸，默认(8, 8)
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param show_auc: 是否显示AUC值
-    :param show_diagonal: 是否显示对角线（随机猜测线）
-    :param label: 曲线标签（多模型对比时使用）
-    :param save: 保存路径
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'ROC Curve'`` 。图表标题
+    :type title: str
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param show_auc: 默认值为 ``True`` 。是否显示AUC值
+    :type show_auc: bool
+    :param show_diagonal: 默认值为 ``True`` 。是否显示对角线（随机猜测线）
+    :type show_diagonal: bool
+    :param label: 默认值为 ``None`` 。曲线标签（多模型对比时使用）
+    :type label: Optional[str]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param pos_label: 正样本标签，默认为1
-    :param score_direction: 同 ``metrics.auc``，默认auto；higher_risk保留原始方向，higher_safe表示高分安全
-    :param sample_weight: 可选非负样本权重，与 ``metrics.auc`` 和 ``ks_plot`` 使用相同口径
+    :param score_direction: 同 ``metrics.auc`` ，默认auto；higher_risk保留原始方向，higher_safe表示高分安全
+    :type score_direction: str
+    :param sample_weight: 默认值为 ``None`` 。可选非负样本权重，与 ``metrics.auc`` 和 ``ks_plot`` 使用相同口径
     :param kwargs: 其他参数传递给plt.plot
     :return: matplotlib Figure对象
 
@@ -161,16 +175,29 @@ def pr_plot(
 ) -> plt.Figure:
     """绘制Precision-Recall曲线.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param y_true: 真实标签
+    :type y_true: Union[pd.Series, np.ndarray]
     :param y_score: 预测概率分数
-    :param ax: matplotlib Axes对象
+    :type y_score: Union[pd.Series, np.ndarray]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
     :param figsize: 图像尺寸，默认(8, 8)
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param show_ap: 是否显示Average Precision
-    :param show_baseline: 是否显示基线（随机猜测）
-    :param label: 曲线标签
-    :param save: 保存路径
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'Precision-Recall Curve'`` 。图表标题
+    :type title: str
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param show_ap: 默认值为 ``True`` 。是否显示Average Precision
+    :type show_ap: bool
+    :param show_baseline: 默认值为 ``True`` 。是否显示基线（随机猜测）
+    :type show_baseline: bool
+    :param label: 默认值为 ``None`` 。曲线标签
+    :type label: Optional[str]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -236,16 +263,28 @@ def lift_plot(
 
     Lift = (该分箱坏样本率) / (整体坏样本率)
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param y_true: 真实标签
+    :type y_true: Union[pd.Series, np.ndarray]
     :param y_score: 预测概率分数
+    :type y_score: Union[pd.Series, np.ndarray]
     :param n_bins: 最大等频分箱数，默认10；同分样本放入同一箱，实际箱数可能更少。
-    :param sample_weight: 可选评估权重；样本深度仍按人数，箱内指标按权重统计。
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param show_baseline: 是否显示基线（Lift=1）
-    :param save: 保存路径
+    :type n_bins: int
+    :param sample_weight: 默认值为 ``None`` 。可选评估权重；样本深度仍按人数，箱内指标按权重统计
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'Lift 提升图'`` 。图表标题
+    :type title: str
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param show_baseline: 默认值为 ``True`` 。是否显示基线（Lift=1）
+    :type show_baseline: bool
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -342,15 +381,27 @@ def gain_plot(
 
     Gain表示捕获的坏样本比例。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param y_true: 真实标签
+    :type y_true: Union[pd.Series, np.ndarray]
     :param y_score: 预测概率分数
+    :type y_score: Union[pd.Series, np.ndarray]
     :param n_bins: 分箱数，默认10
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param show_baseline: 是否显示基线（随机模型）
-    :param save: 保存路径
+    :type n_bins: int
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'Cumulative Gain Chart'`` 。图表标题
+    :type title: str
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param show_baseline: 默认值为 ``True`` 。是否显示基线（随机模型）
+    :type show_baseline: bool
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -424,16 +475,29 @@ def confusion_matrix_plot(
 ) -> plt.Figure:
     """绘制混淆矩阵热力图.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param y_true: 真实标签
+    :type y_true: Union[pd.Series, np.ndarray]
     :param y_pred: 预测标签
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param cmap: 颜色映射
-    :param normalize: 归一化方式，None/'true'/'pred'/'all'
-    :param show_values: 是否显示数值
-    :param show_metrics: 是否显示评估指标
-    :param save: 保存路径
+    :type y_pred: Union[pd.Series, np.ndarray]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(8, 6)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'混淆矩阵'`` 。图表标题
+    :type title: str
+    :param cmap: 默认值为 ``None`` 。颜色映射
+    :type cmap: Optional[Any]
+    :param normalize: 默认值为 ``None`` 。归一化方式，None/'true'/'pred'/'all'
+    :type normalize: Optional[str]
+    :param show_values: 默认值为 ``True`` 。是否显示数值
+    :type show_values: bool
+    :param show_metrics: 默认值为 ``True`` 。是否显示评估指标
+    :type show_metrics: bool
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -517,15 +581,27 @@ def calibration_plot(
 
     评估模型预测概率的可靠性。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param y_true: 真实标签
+    :type y_true: Union[pd.Series, np.ndarray]
     :param y_score: 预测概率分数
+    :type y_score: Union[pd.Series, np.ndarray]
     :param n_bins: 分箱数，默认10
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param show_histogram: 是否显示样本分布直方图
-    :param save: 保存路径
+    :type n_bins: int
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(8, 8)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'校准曲线'`` 。图表标题
+    :type title: str
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param show_histogram: 默认值为 ``True`` 。是否显示样本分布直方图
+    :type show_histogram: bool
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -612,17 +688,31 @@ def score_dist_plot(
 ) -> plt.Figure:
     """绘制评分分布对比图（好/坏样本分布对比）.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据DataFrame
-    :param feature: 评分列名
-    :param target: 目标变量列名，None时不区分好坏
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param n_bins: 直方图分箱数
-    :param kde: 是否显示核密度估计曲线
-    :param show_stats: 是否显示统计信息
-    :param save: 保存路径
+    :type df: Union[pd.DataFrame, pd.Series]
+    :param feature: 默认值为 ``None`` 。评分列名
+    :type feature: Optional[str]
+    :param target: 默认值为 ``None`` 。目标变量列名，None时不区分好坏
+    :type target: Optional[TargetInput]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(12, 6)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``None`` 。图表标题
+    :type title: Optional[str]
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param n_bins: 默认值为 ``30`` 。直方图分箱数
+    :type n_bins: int
+    :param kde: 默认值为 ``True`` 。是否显示核密度估计曲线
+    :type kde: bool
+    :param show_stats: 默认值为 ``True`` 。是否显示统计信息
+    :type show_stats: bool
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -783,17 +873,31 @@ def score_bin_plot(
 
     使用 bin_plot（横向） + dataframe_plot 实现。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据DataFrame
+    :type df: pd.DataFrame
     :param feature: 评分列名
+    :type feature: str
     :param target: 目标变量列名
+    :type target: str
     :param max_n_bins: 分箱数，默认10
-    :param method: 分箱方式，'quantile'(等频)或'uniform'(等宽)
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param show_table: 是否显示数据表格
-    :param save: 保存路径
+    :type max_n_bins: int
+    :param method: 默认值为 ``'quantile'`` 。分箱方式，'quantile'(等频)或'uniform'(等宽)
+    :type method: str
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(12, 6)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``None`` 。图表标题
+    :type title: Optional[str]
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param show_table: 默认值为 ``True`` 。是否显示数据表格
+    :type show_table: bool
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -897,15 +1001,27 @@ def threshold_analysis_plot(
 
     展示不同阈值下的各项评估指标，帮助选择最优决策阈值。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param y_true: 真实标签
+    :type y_true: Union[pd.Series, np.ndarray]
     :param y_score: 预测概率分数
-    :param thresholds: 阈值数组，None时自动生成
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param metrics: 要显示的指标列表
-    :param save: 保存路径
+    :type y_score: Union[pd.Series, np.ndarray]
+    :param thresholds: 默认值为 ``None`` 。阈值数组，None时自动生成
+    :type thresholds: Optional[np.ndarray]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(12, 8)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'Threshold Analysis'`` 。图表标题
+    :type title: str
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param metrics: 默认值为 ``['precision', 'recall', 'f1', 'approval_rate']`` 。要显示的指标列表
+    :type metrics: List[str]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -998,14 +1114,25 @@ def strategy_compare_plot(
 ) -> plt.Figure:
     """绘制多策略效果对比图.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param strategies: 策略列表，每项为包含策略指标的字典
         例如: [{'name': '策略A', 'approval_rate': 0.8, 'bad_rate': 0.05, 'ks': 0.45}, ...]
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param metrics: 要对比的指标
-    :param save: 保存路径
+
+    :type strategies: List[Dict[str, Any]]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(12, 8)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'Strategy Comparison'`` 。图表标题
+    :type title: str
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param metrics: 默认值为 ``['approval_rate', 'bad_rate', 'ks']`` 。要对比的指标
+    :type metrics: List[str]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -1087,17 +1214,31 @@ def vintage_plot(
 
     展示不同放款月份的资产在不同账龄(MOB)时的逾期率表现。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据DataFrame
+    :type df: pd.DataFrame
     :param mob_col: MOB（账龄）列名
+    :type mob_col: str
     :param target: 目标变量列名（逾期标识）
-    :param vintage_col: 放款月份/批次列名，None时不区分批次
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param max_mob: 最大MOB显示值
-    :param show_heatmap: 是否同时显示热力图
-    :param save: 保存路径
+    :type target: str
+    :param vintage_col: 默认值为 ``None`` 。放款月份/批次列名，None时不区分批次
+    :type vintage_col: Optional[str]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(14, 8)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``None`` 。图表标题
+    :type title: Optional[str]
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param max_mob: 默认值为 ``None`` 。最大MOB显示值
+    :type max_mob: Optional[int]
+    :param show_heatmap: 默认值为 ``False`` 。是否同时显示热力图
+    :type show_heatmap: bool
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -1191,16 +1332,29 @@ def feature_importance_plot(
 ) -> plt.Figure:
     """绘制特征重要性图.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param features: 特征名称列表
+    :type features: List[str]
     :param importance: 特征重要性值列表
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param top_n: 显示前N个特征，None时显示全部
-    :param orientation: 是否水平显示
-    :param show_values: 是否显示数值
-    :param save: 保存路径
+    :type importance: Union[List[float], np.ndarray]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(10, 8)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'Feature Importance'`` 。图表标题
+    :type title: str
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param top_n: 默认值为 ``20`` 。显示前N个特征，None时显示全部
+    :type top_n: Optional[int]
+    :param orientation: 默认值为 ``'horizontal'`` 。是否水平显示
+    :type orientation: str
+    :param show_values: 默认值为 ``True`` 。是否显示数值
+    :type show_values: bool
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -1291,19 +1445,35 @@ def approval_rate_trend_plot(
 ) -> plt.Figure:
     """绘制审批通过率趋势图.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据DataFrame
+    :type df: pd.DataFrame
     :param date: 日期列名
-    :param decision_col: 决策结果列名（通过/拒绝），None时使用score_col+threshold
-    :param score_col: 评分列名（用于计算通过/拒绝）
-    :param threshold: 通过阈值（分数>=threshold为通过）
-    :param freq: 时间频率，'D'/'W'/'M'/'Q'
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param show_bad_rate: 是否同时显示逾期率趋势
-    :param target: 目标变量列名（show_bad_rate=True时需要）
-    :param save: 保存路径
+    :type date: str
+    :param decision_col: 默认值为 ``None`` 。决策结果列名（通过/拒绝），None时使用score_col+threshold
+    :type decision_col: Optional[str]
+    :param score_col: 默认值为 ``None`` 。评分列名（用于计算通过/拒绝）
+    :type score_col: Optional[str]
+    :param threshold: 默认值为 ``None`` 。通过阈值（分数>=threshold为通过）
+    :type threshold: Optional[float]
+    :param freq: 默认值为 ``'M'`` 。时间频率，'D'/'W'/'M'/'Q'
+    :type freq: str
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(14, 6)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``None`` 。图表标题
+    :type title: Optional[str]
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param show_bad_rate: 默认值为 ``True`` 。是否同时显示逾期率趋势
+    :type show_bad_rate: bool
+    :param target: 默认值为 ``None`` 。目标变量列名（show_bad_rate=True时需要）
+    :type target: Optional[TargetInput]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -1425,20 +1595,37 @@ def bad_rate_trend_plot(
 ) -> plt.Figure:
     """绘制坏样本率趋势图（支持分维度和多逾期标签展示）.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据DataFrame
+    :type df: pd.DataFrame
     :param date: 日期列名
-    :param target: 目标变量列名（单标签模式）
-    :param overdue: 逾期天数字段名或列表，优先于 target
-    :param dpds: 逾期定义天数或列表，与 overdue 配合生成标签
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param group: 维度列名（如客户等级），None时不分维度
-    :param freq: 时间频率，'D'/'W'/'M'/'Q'
-    :param ax: matplotlib Axes对象
-    :param figsize: 图像尺寸
-    :param title: 图表标题
-    :param colors: 配色方案
-    :param show_sample_count: 是否显示样本数柱状图
-    :param save: 保存路径
+    :type date: str
+    :param target: 默认值为 ``None`` 。目标变量列名（单标签模式）
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或列表，优先于 target
+    :type overdue: Optional[Union[str, List[str]]]
+    :param dpds: 默认值为 ``None`` 。逾期定义天数或列表，与 overdue 配合生成标签
+    :type dpds: Optional[Union[int, List[int]]]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
+    :param group: 默认值为 ``None`` 。维度列名（如客户等级），None时不分维度
+    :type group: Optional[str]
+    :param freq: 默认值为 ``'M'`` 。时间频率，'D'/'W'/'M'/'Q'
+    :type freq: str
+    :param ax: 默认值为 ``None`` 。matplotlib Axes对象
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(14, 6)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``None`` 。图表标题
+    :type title: Optional[str]
+    :param colors: 默认值为 ``None`` 。配色方案
+    :type colors: Optional[List[str]]
+    :param show_sample_count: 默认值为 ``True`` 。是否显示样本数柱状图
+    :type show_sample_count: bool
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :param kwargs: 其他参数
     :return: matplotlib Figure对象
 
@@ -1447,10 +1634,12 @@ def bad_rate_trend_plot(
     >>> fig = bad_rate_trend_plot(df, 'apply_date', target='target')
     >>> fig = bad_rate_trend_plot(df, 'apply_date', overdue='MOB1', dpds=[7, 30])
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     reject_legacy_target_keywords(kwargs)
     df, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)

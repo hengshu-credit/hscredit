@@ -66,14 +66,24 @@ def rule_swap_plot(
 
     三个面板依次展示规则命中样本数、LIFT 值和策略通过率变化。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param pipeline: 规则置换流程明细表，通常来自
-        :func:`~hscredit.report.rule_swap_analysis` 的 ``swap_pipeline``，
+        :func:`~hscredit.report.rule_swap_analysis`  的 ``swap_pipeline`` ，
         需含 ``规则分类`` / ``样本总数`` / ``坏样本率`` / ``LIFT值`` / ``通过率(绝对值)`` 列
+
+    :type pipeline: pd.DataFrame
     :param rule_categories: 参与对比的规则分类，默认
         ``['OUT-OUT拒绝', 'IN-OUT置出', 'OUT-IN置入']``
-    :param figsize: 图像尺寸
-    :param title: 总标题
-    :param save: 保存路径
+
+    :type rule_categories: Optional[List[str]]
+    :param figsize: 默认值为 ``(15, 5)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'规则置换分析'`` 。总标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: matplotlib Figure
 
     **参考样例**
@@ -159,14 +169,24 @@ def strategy_simulation_plot(
 ) -> Figure:
     """绘制候选评分阈值的通过率与坏率双轴图.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param simulation: 策略仿真结果表
-    :param threshold_col: 评分阈值列名
-    :param approval_col: 通过率列名，数值单位为百分数
-    :param bad_rate_col: 通过人群坏率列名，数值单位为百分数
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type simulation: pd.DataFrame
+    :param threshold_col: 默认值为 ``'评分阈值'`` 。评分阈值列名
+    :type threshold_col: str
+    :param approval_col: 默认值为 ``'通过率(%)'`` 。通过率列名，数值单位为百分数
+    :type approval_col: str
+    :param bad_rate_col: 默认值为 ``'通过人群坏率(%)'`` 。通过人群坏率列名，数值单位为百分数
+    :type bad_rate_col: str
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(10, 5)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'评分阈值策略仿真'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: matplotlib Figure
 
     **参考样例**
@@ -233,16 +253,27 @@ def feature_trend_by_time(
 ) -> Figure:
     """特征随时间的统计趋势图，检测特征偏移.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据集
+    :type df: pd.DataFrame
     :param feature: 特征列名
+    :type feature: str
     :param date: 日期列名
-    :param target: 目标变量（stat='badrate'时必需）
-    :param stat: 'mean'/'median'/'psi'/'badrate'
-    :param freq: 'M'月/'Q'季/'W'周
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type date: str
+    :param target: 默认值为 ``None`` 。目标变量（stat='badrate'时必需）
+    :type target: Optional[str]
+    :param stat: 默认值为 ``'mean'`` 。'mean'/'median'/'psi'/'badrate'
+    :type stat: str
+    :param freq: 默认值为 ``'M'`` 。'M'月/'Q'季/'W'周
+    :type freq: str
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(12, 5)`` 。图像尺寸
+    :param title: 默认值为 ``None`` 。图标题
+    :type title: Optional[str]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -312,14 +343,23 @@ def feature_drift_comparison(
 ) -> Figure:
     """多特征偏移瀑布图：颜色标注偏移等级.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df_base: 基准数据集（训练集）
+    :type df_base: pd.DataFrame
     :param df_target: 目标数据集（测试集/OOT）
+    :type df_target: pd.DataFrame
     :param features: 待分析特征列表
-    :param top_n: 按PSI降序显示前N个
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type features: List[str]
+    :param top_n: 默认值为 ``20`` 。按PSI降序显示前N个
+    :type top_n: int
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(12, 8)`` 。图像尺寸
+    :param title: 默认值为 ``'特征分布偏移（PSI）'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -391,15 +431,25 @@ def feature_effectiveness_by_segment(
 ) -> Figure:
     """特征在不同客群下的有效性对比柱状图.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据集
+    :type df: pd.DataFrame
     :param feature: 特征列名
+    :type feature: str
     :param target: 目标变量列名
+    :type target: str
     :param segment_col: 客群列名
-    :param metric: 'iv' / 'ks' / 'auc'
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type segment_col: str
+    :param metric: 默认值为 ``'iv'`` 。'iv' / 'ks' / 'auc'
+    :type metric: str
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸
+    :param title: 默认值为 ``None`` 。图标题
+    :type title: Optional[str]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -467,16 +517,25 @@ def feature_cross_heatmap(
 ) -> Figure:
     """两特征交叉分析热力图：行=feature_x，列=feature_y，格=坏率/样本数/LIFT.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据集
+    :type df: pd.DataFrame
     :param feature_x: 行特征
     :param feature_y: 列特征
-    :param target: 目标变量
-    :param stat: 'badrate'/'count'/'lift'
-    :param max_n_bins: 数值型特征分箱数
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :param target: 默认值为 ``None`` 。目标变量
+    :type target: str
+    :param stat: 默认值为 ``'badrate'`` 。'badrate'/'count'/'lift'
+    :type stat: str
+    :param max_n_bins: 默认值为 ``5`` 。数值型特征分箱数
+    :type max_n_bins: int
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :param figsize: 默认值为 ``(10, 8)`` 。图像尺寸
+    :param title: 默认值为 ``None`` 。图标题
+    :type title: Optional[str]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -552,14 +611,24 @@ def population_drift_monitor(
 ) -> Figure:
     """多期客群偏移监控大图（PSI热力图 + 趋势折线）.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df_list: 多期数据集列表（第一期为基准）
+    :type df_list: List[pd.DataFrame]
     :param labels: 各期标签
+    :type labels: List[str]
     :param features: 特征列表
-    :param target: 目标变量（可选）
-    :param top_n_drift: 偏移最大的Top N特征
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type features: List[str]
+    :param target: 默认值为 ``None`` 。目标变量（可选）
+    :type target: Optional[str]
+    :param top_n_drift: 默认值为 ``5`` 。偏移最大的Top N特征
+    :type top_n_drift: int
+    :param figsize: 默认值为 ``(14, 10)`` 。图像尺寸
+    :param title: 默认值为 ``'客群偏移监控'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -628,18 +697,28 @@ def segment_scorecard_comparison(
 ) -> Figure:
     """按客群分组的评分指标对比柱状图.
 
-    每个指标单独一个子图，对比 **同一指标在不同客群下的差异** （各指标量纲不同，
+    每个指标单独一个子图，对比  **同一指标在不同客群下的差异**  （各指标量纲不同，
     分子图展示可避免 KS/AUC/LIFT 因量纲差异而无法横向比较）。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据集
+    :type df: pd.DataFrame
     :param score_col: 评分列名
+    :type score_col: str
     :param target: 目标变量列名
+    :type target: str
     :param segment_col: 客群列名
+    :type segment_col: str
     :param metrics: 展示指标，默认 ['KS','AUC','LIFT@10%']
-    :param ax: matplotlib Axes（仅单指标时生效；多指标时自动创建子图）
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type metrics: List[str]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes（仅单指标时生效；多指标时自动创建子图）
+    :param figsize: 默认值为 ``(14, 6)`` 。图像尺寸
+    :param title: 默认值为 ``'分客群评分效果对比'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**

@@ -81,54 +81,117 @@ class XGBoost(BaseRiskModel):
     **参数**
 
     :param max_depth: 树最大深度，默认6
+
         - 内部经验: 特征>1000时建议5-13，否则3-9
+
+    :type max_depth: int
     :param learning_rate: 学习率，默认0.1
+
         - 内部经验: 一般0.01-0.3，常用0.1
+
+    :type learning_rate: float
     :param n_estimators: 树的数量，默认100
+
         - 内部经验: 样本>10000时50-300，否则20-100
+
+    :type n_estimators: int
     :param min_child_weight: 叶子节点最小样本权重和，默认1
+
         - 内部经验: 样本>10000时10-2000，否则10-300
+
+    :type min_child_weight: float
     :param subsample: 样本采样比例，默认0.8
+
         - 内部经验: 常用0.6-0.9防止过拟合
+
+    :type subsample: float
     :param colsample_bytree: 特征采样比例，默认0.8
+
         - 内部经验: 常用0.6-0.9防止过拟合
+
+    :type colsample_bytree: float
     :param colsample_bylevel: 每层的特征采样比例，默认1.0
+    :type colsample_bylevel: float
     :param reg_alpha: L1正则化系数，默认0
+
         - 内部经验: 常用0, 0.01, 0.1, 1, 10, 100
+
+    :type reg_alpha: float
     :param reg_lambda: L2正则化系数，默认1
+    :type reg_lambda: float
     :param scale_pos_weight: 正负样本权重比，默认'auto'
+
         - 'auto': 自动计算 (当bad_rate<0.05时)
+
         - float: 自定义权重
+
         - 内部经验: 当bad_rate<0.05时设置0.05 * n_samples / n_positive
+
+    :type scale_pos_weight: Union[str, float]
     :param gamma: 节点分裂所需的最小损失减少，默认0
+    :type gamma: float
     :param max_delta_step: 每棵树权重改变的最大步长，默认0
+    :type max_delta_step: float
     :param tree_method: 树构建算法，默认'hist'
+
         - 'hist': 直方图算法（推荐，速度快）
+
         - 'exact': 精确贪心算法
+
         - 'approx': 近似算法
+
         - 'gpu_hist': GPU直方图算法
+
+    :type tree_method: str
     :param objective: 目标函数，默认'binary:logistic'
+    :type objective: str
     :param eval_metric: 评估指标，可选名称、名称列表或 BaseMetric 对象；自定义损失默认使用其配套指标
+
         - 支持'ks'作为自定义评估指标（风控常用）
+
         - 多个指标时，默认使用第一个指标进行早停
+
+    :type eval_metric: Union[str, List[str], BaseMetric, None]
     :param early_stopping_rounds: 早停轮数，默认None
+
         - 连续N轮没有改善则停止训练
+
         - XGBoost 2.0+ 需要在构造函数中传入此参数
+
+    :type early_stopping_rounds: Optional[int]
     :param early_stopping_metric: 用于早停的评估指标名称，默认None（使用第一个指标）
+
         - 当eval_metric有多个时，指定用哪个指标进行早停判断
+
         - XGBoost 2.0+ 使用方式: 传入metric名称，如 'auc', 'logloss', 'error'
+
         - 注意: 指标名称必须是eval_metric中指定的名称之一
+
         - 例如: eval_metric=['auc','logloss']时，可指定'auc'或'logloss'作为早停指标
+
+    :type early_stopping_metric: Optional[str]
     :param early_stopping_data: 用于早停的验证集名称，默认None（使用第一个验证集）
+
         - XGBoost内部会自动命名为'validation_0', 'validation_1'等
+
         - 通常不需要指定，除非有多个验证集
+
+    :type early_stopping_data: Optional[str]
     :param validation_fraction: 验证集比例，默认0.2
+    :type validation_fraction: float
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param n_jobs: 并行任务数，默认-1
+    :type n_jobs: int
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: bool
     :param params: XGBoost原生参数字典，默认None
+
         - 如果传入，将覆盖其他参数设置
+
         - 可直接使用XGBoost原生参数名
+
+    :type params: Optional[Dict[str, Any]]
     :param kwargs: 其他XGBoost参数
 
     **属性**
@@ -186,7 +249,8 @@ class XGBoost(BaseRiskModel):
 
     **参数补充**
 
-    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param scorecard_params: 默认值为 ``None`` 。概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba
+    :type scorecard_params: Optional[Dict[str, Any]]
     """
 
     _preserve_dataframe = True
@@ -303,14 +367,21 @@ class XGBoost(BaseRiskModel):
         """训练XGBoost模型.
 
         支持两种调用方式:
+
         1. 常规方式: fit(X, y)
+
         2. scorecardpipeline风格: fit(X) 在init中指定target
 
         :param X: 特征矩阵
-        :param y: 目标变量，可选
-        :param sample_weight: 样本权重
-        :param eval_set: [(X_valid, y_valid)]、具名字典、DataFrame列表或单个数据集；
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重
+        :type sample_weight: Optional[np.ndarray]
+        :param eval_set: 默认值为 ``None`` 。[(X_valid, y_valid)]、具名字典、DataFrame列表或单个数据集
             同 ModelReport.datasets 的容器规则，含标签的 DataFrame 通过 target 提取标签。
+
+        :type eval_set: Optional[List[Tuple]]
         :param fit_params: 其他fit参数
         :return: self
 
@@ -622,11 +693,18 @@ class XGBoost(BaseRiskModel):
         """获取特征重要性.
 
         :param importance_type: 重要性类型，可选:
+
             - 'gain': 平均增益 (默认)
+
             - 'weight': 分裂次数
+
             - 'cover': 平均覆盖度
+
             - 'total_gain': 总增益
+
             - 'total_cover': 总覆盖度
+
+        :type importance_type: str
         :return: 特征重要性Series
         """
         self._require_fitted()
@@ -665,7 +743,8 @@ class XGBoost(BaseRiskModel):
     def plot_tree(self, num_trees: int = 0, **kwargs):
         """绘制树结构.
 
-        :param num_trees: 树的索引
+        :param num_trees: 默认值为 ``0`` 。树的索引
+        :type num_trees: int
         :param kwargs: 其他绘图参数
         """
         self._require_fitted()
@@ -674,7 +753,8 @@ class XGBoost(BaseRiskModel):
     def plot_importance(self, max_num_features: int = 10, **kwargs):
         """绘制特征重要性.
 
-        :param max_num_features: 显示的最大特征数
+        :param max_num_features: 默认值为 ``10`` 。显示的最大特征数
+        :type max_num_features: int
         :param kwargs: 其他绘图参数
         """
         self._require_fitted()
@@ -686,6 +766,7 @@ class XGBoost(BaseRiskModel):
         返回每棵树上的叶子节点索引，用于GBDT+LR等场景。
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 叶子节点索引，形状 (n_samples, n_trees)
 
         **参考样例**
@@ -725,6 +806,7 @@ class XGBoost(BaseRiskModel):
         """保存底层XGBoost模型（原生格式）.
 
         :param path: 保存路径（.json/.ubj/.bin 格式）
+        :type path: str
         """
         self._require_fitted()
         self._model.save_model(path)
@@ -734,6 +816,7 @@ class XGBoost(BaseRiskModel):
         """加载底层XGBoost模型（原生格式）.
 
         :param path: 模型路径
+        :type path: str
         :return: self
         """
         self._model = xgb.XGBClassifier()

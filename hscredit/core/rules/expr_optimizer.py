@@ -27,8 +27,8 @@ from typing import Set, List, Optional, Union
 def _canonical(node: "ExprNode") -> str:
     """返回节点的规范化字符串（统一空白），用于等价比较。
 
-    复用节点的 :meth:`ExprNode.to_string` 输出（已将 ``and``/``or`` 统一为
-    ``&``/``|`` 符号），仅压缩多余空白，做大小写敏感的精确比较，避免误判不同列名/
+    复用节点的  :meth:`ExprNode.to_string`  输出（已将 ``and`` / ``or`` 统一为
+    ``&`` / ``|`` 符号），仅压缩多余空白，做大小写敏感的精确比较，避免误判不同列名/
     字面量为等价。
     """
     return " ".join(node.to_string().split())
@@ -123,13 +123,14 @@ class BinaryOpNode(ExprNode):
     def simplify(self):
         """简化二元运算表达式。
 
-        仅做 **保证等价** 的化简，确保化简前后表达式逻辑完全一致：
+        仅做  **保证等价**  的化简，确保化简前后表达式逻辑完全一致：
 
-        - 幂等律：``A & A = A``、``A | A = A``
-        - 吸收律：``A & (A | B) = A``、``A | (A & B) = A``（含交换形式）
+        - 幂等律： ``A & A = A`` 、 ``A | A = A``
 
-        这些定律只对 ``&``/``|`` 成立，对 ``^``（异或）不成立（``A ^ A = False``），
-        故仅在 ``&``/``|`` 上启用；吸收律仅在内层运算符与外层 *相反* 时成立。
+        - 吸收律： ``A & (A | B) = A`` 、 ``A | (A & B) = A`` （含交换形式）
+
+        这些定律只对 ``&`` / ``|`` 成立，对 ``^`` （异或）不成立（ ``A ^ A = False`` ），
+        故仅在 ``&`` / ``|`` 上启用；吸收律仅在内层运算符与外层 *相反* 时成立。
         """
         # 递归简化子节点
         self.left = self.left.simplify()
@@ -160,7 +161,7 @@ class BinaryOpNode(ExprNode):
     def _flatten_same_op(node: ExprNode, op: str) -> List[str]:
         """沿同一运算符 ``op`` 展开 node，返回各操作数的规范化字符串列表。
 
-        例如 ``A | B | C`` 沿 ``|`` 展开为 ``[A, B, C]``，用于吸收律中判断某子表达式
+        例如 ``A | B | C`` 沿 ``|`` 展开为 ``[A, B, C]`` ，用于吸收律中判断某子表达式
         是否为内层运算的操作数之一。
         """
         if isinstance(node, BinaryOpNode) and node.op == op:
@@ -287,11 +288,12 @@ class ExprParser:
     def _preprocess(self, expr: str) -> str:
         """预处理表达式：将 pandas 逻辑运算符统一替换为 Python 布尔运算符。
 
-        pandas eval 中 ``&``/``|``/``~`` 作为逐元素逻辑运算符使用，其相对比较运算符的
-        优先级与 Python 位运算符相反——pandas 中比较运算符优先级更高，``&``/``|`` 的行为
-        类似 ``and``/``or``。为借助 :mod:`ast` 解析出与 pandas 一致的结合关系，必须在
-        **所有括号层级** 将其替换为 ``and``/``or``/``not``。若仅在顶层替换，嵌套括号内的
-        ``&``/``|`` 会被 ast 当作高优先级位运算符，与比较运算符结合成链式比较而错误折叠，
+        pandas eval 中 ``&`` / ``|`` / ``~`` 作为逐元素逻辑运算符使用，其相对比较运算符的
+        优先级与 Python 位运算符相反——pandas 中比较运算符优先级更高， ``&`` / ``|`` 的行为
+        类似 ``and`` / ``or`` 。为借助  :mod:`ast`  解析出与 pandas 一致的结合关系，必须在
+
+        **所有括号层级**  将其替换为 ``and`` / ``or`` / ``not`` 。若仅在顶层替换，嵌套括号内的
+        ``&`` / ``|`` 会被 ast 当作高优先级位运算符，与比较运算符结合成链式比较而错误折叠，
         丢失括号导致优化前后语义不一致。
 
         字符串字面量（单/双引号）与反引号列名内部的符号原样保留，避免误转换。
@@ -446,17 +448,20 @@ def optimize_expr(expr: str) -> str:
     """简化规则表达式字符串。
 
     解析表达式为表达式树后，应用以下布尔代数定律做等价化简，并去除冗余括号、
-    将 ``and``/``or`` 统一为 ``&``/``|``：
+    将 ``and`` / ``or`` 统一为 ``&`` / ``|`` ：
 
-    - **幂等律（Idempotent）**：``A & A → A``，``A | A → A``
-    - **吸收律（Absorption）**：``A | (A & B) → A``，``A & (A | B) → A``
-    - **双重否定（Double negation）**：``~~A → A``
+    - **幂等律（Idempotent）** ： ``A & A → A`` ， ``A | A → A``
+
+    - **吸收律（Absorption）** ： ``A | (A & B) → A`` ， ``A & (A | B) → A``
+
+    - **双重否定（Double negation）** ： ``~~A → A``
 
     .. note::
         化简基于子表达式字符串的规范化比较，仅识别字面等价的原子条件，不做跨变量的
         逻辑推理（如 ``age > 18`` 与 ``age >= 19`` 不会被判定为等价）。
 
-    :param expr: 原始规则表达式字符串，支持 ``&``/``|``/``~``/``and``/``or``/``not``
+    :param expr: 原始规则表达式字符串，支持 ``&`` / ``|`` / ``~`` / ``and`` / ``or`` / ``not``
+    :type expr: str
     :return: 化简后的等价表达式字符串
 
     **参考样例**
@@ -476,11 +481,12 @@ def optimize_expr(expr: str) -> str:
 def beautify_expr(expr: str) -> str:
     """美化规则表达式字符串。
 
-    在不改变逻辑的前提下规范化表达式的书写：将 ``and``/``or``/``not`` 统一为
-    ``&``/``|``/``~`` 符号形式，按运算符结合律去除同级冗余括号，得到格式一致、
-    便于展示与比较的表达式。与 :func:`optimize_expr` 的区别在于不做幂等/吸收等化简。
+    在不改变逻辑的前提下规范化表达式的书写：将 ``and`` / ``or`` / ``not`` 统一为
+    ``&`` / ``|`` / ``~`` 符号形式，按运算符结合律去除同级冗余括号，得到格式一致、
+    便于展示与比较的表达式。与  :func:`optimize_expr`  的区别在于不做幂等/吸收等化简。
 
     :param expr: 原始规则表达式字符串
+    :type expr: str
     :return: 美化后的等价表达式字符串
 
     **参考样例**
@@ -496,15 +502,16 @@ def beautify_expr(expr: str) -> str:
 def get_expr_variables(expr: str) -> List[str]:
     """提取规则表达式中引用的变量（列）名。
 
-    用正则匹配表达式中的标识符，剔除 ``and``/``or``/``not``/``True``/``False``/
-    ``None``/``inf``/``nan`` 等保留字，返回去重后的变量名列表。
+    用正则匹配表达式中的标识符，剔除 ``and`` / ``or`` / ``not`` / ``True`` / ``False`` /
+    ``None`` / ``inf`` / ``nan`` 等保留字，返回去重后的变量名列表。
 
     .. note::
-        返回顺序 **不保证稳定**（基于集合去重）。如需有序且能正确处理含空格/中文/
-        反引号的列名，请使用 :func:`hscredit.core.rules.get_columns_from_query`
+        返回顺序  **不保证稳定** （基于集合去重）。如需有序且能正确处理含空格/中文/
+        反引号的列名，请使用  :func:`hscredit.core.rules.get_columns_from_query`
         （返回去重并按字母排序的列表）。
 
     :param expr: 规则表达式字符串
+    :type expr: str
     :return: 表达式引用的变量名列表（去重，顺序不保证）
 
     **参考样例**

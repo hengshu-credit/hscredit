@@ -67,12 +67,18 @@ def iv_analysis(
     复用 hscredit.core.metrics.IV_table
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param feature: 特征名
+    :type feature: str
     :param target: 目标变量名
-    :param max_n_bins: 分箱数
-    :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
-        （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
+    :type target: str
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
+    :param method: 分箱方法，取值同  :class:`~hscredit.core.binning.OptimalBinning`
+        （如 ``'quantile'`` 等频、 ``'tree'`` 决策树、 ``'chi'`` 卡方、 ``'mdlp'`` 信息论、
         ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
+
+    :type method: str
     :return: IV分析结果字典，包含[特征名, IV值, 预测能力, 分箱明细]
 
     **参考样例**
@@ -118,14 +124,34 @@ def batch_iv_analysis(
 
     复用 hscredit.core.metrics.batch_iv
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param target: 目标变量名
-    :param max_n_bins: 分箱数
-    :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
-        （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
+    :type target: str
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
+    :param method: 分箱方法，取值同  :class:`~hscredit.core.binning.OptimalBinning`
+        （如 ``'quantile'`` 等频、 ``'tree'`` 决策树、 ``'chi'`` 卡方、 ``'mdlp'`` 信息论、
         ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
-    :param return_details: 是否返回详细分箱结果
+
+    :type method: str
+    :param return_details: 默认值为 ``False`` 。是否返回详细分箱结果
+    :type return_details: bool
     :return: IV分析结果DataFrame，列包括[特征名, IV值, 预测能力, 分箱数]
 
     **参考样例**
@@ -184,12 +210,18 @@ def woe_analysis(
     复用 hscredit.core.metrics.IV_table 获取WOE值
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param feature: 特征名
+    :type feature: str
     :param target: 目标变量名
-    :param max_n_bins: 分箱数
-    :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
-        （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
+    :type target: str
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
+    :param method: 分箱方法，取值同  :class:`~hscredit.core.binning.OptimalBinning`
+        （如 ``'quantile'`` 等频、 ``'tree'`` 决策树、 ``'chi'`` 卡方、 ``'mdlp'`` 信息论、
         ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
+
+    :type method: str
     :return: WOE分析DataFrame
 
     **参考样例**
@@ -225,12 +257,18 @@ def binning_bad_rate(
     复用 hscredit.core.metrics.compute_bin_stats
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param feature: 特征名
+    :type feature: str
     :param target: 目标变量名
-    :param max_n_bins: 分箱数
-    :param method: 分箱方法，取值同 :class:`~hscredit.core.binning.OptimalBinning`
-        （如 ``'quantile'`` 等频、``'tree'`` 决策树、``'chi'`` 卡方、``'mdlp'`` 信息论、
+    :type target: str
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
+    :param method: 分箱方法，取值同  :class:`~hscredit.core.binning.OptimalBinning`
+        （如 ``'quantile'`` 等频、 ``'tree'`` 决策树、 ``'chi'`` 卡方、 ``'mdlp'`` 信息论、
         ``'best_iv'`` 最优IV 等），默认 ``'quantile'``
+
+    :type method: str
     :return: 分箱逾期率DataFrame
 
     **参考样例**
@@ -276,9 +314,13 @@ def monotonicity_check(
     检查特征分箱后的逾期率是否单调变化
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param feature: 特征名
+    :type feature: str
     :param target: 目标变量名
-    :param max_n_bins: 分箱数
+    :type target: str
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
     :return: 单调性检验结果
 
     **参考样例**
@@ -335,8 +377,11 @@ def univariate_auc(df: pd.DataFrame, feature: str, target: str) -> Dict[str, Uni
     """单变量AUC分析.
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param feature: 特征名
+    :type feature: str
     :param target: 目标变量名
+    :type target: str
     :return: AUC分析结果
 
     **参考样例**
@@ -393,10 +438,27 @@ def feature_importance_ranking(
 
     综合IV和AUC等多个指标评估特征重要性
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param target: 目标变量名
-    :param metrics: 评估指标列表
+    :type target: str
+    :param metrics: 默认值为 ``['iv', 'auc']`` 。评估指标列表
+    :type metrics: List[str]
     :return: 特征重要性DataFrame
 
     **参考样例**

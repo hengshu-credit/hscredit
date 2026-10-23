@@ -40,7 +40,7 @@ class TuningObjective:
 
     **参数**
 
-    本类无需实例化。各方法接收0/1标签和坏样本概率；``get`` 可绑定业务参数。
+    本类无需实例化。各方法接收0/1标签和坏样本概率； ``get`` 可绑定业务参数。
 
     **属性**
 
@@ -91,6 +91,7 @@ class TuningObjective:
         :param score_direction: higher_risk（默认，越大风险越高）、auto（显式兼容自动方向）
             或 higher_safe（越大风险越低）。固定坏样本概率评价可显式使用 higher_risk，
             或直接传入不会自动翻向的 AUCMetric 指标对象。
+
         :param kwargs: 可传 sample_weight。
         :return: [0, 1] 内的AUC；非法输入抛异常，不伪装成0分。
         """
@@ -285,14 +286,15 @@ class Metric:
 
     :param metric: 内置名称、BaseMetric、BaseLoss，或 ``(y_true, probability)->float`` 函数。
         BaseLoss 自动转换为配套指标。sklearn scorer 与框架回调需先还原为概率指标。
+
     :param name: 展示名称；多目标搜索中不可重名。
     :param direction: maximize 或 minimize；默认内置/指标对象自行声明。
         裸函数必须显式传方向，也可先用 make_metric 包装。
 
     **属性**
 
-    name、direction、scorer；``log_loss`` 为正交叉熵，默认最小化。
-    ``logloss`` 与 ``log_loss`` 都是正交叉熵、默认最小化；负交叉熵使用 ``neg_log_loss``。
+    name、direction、scorer； ``log_loss`` 为正交叉熵，默认最小化。
+    ``logloss`` 与 ``log_loss`` 都是正交叉熵、默认最小化；负交叉熵使用 ``neg_log_loss`` 。
     字符串 ``auc`` 与 ``AUCMetric()`` 均保留坏样本概率方向。
 
     **参考样例**

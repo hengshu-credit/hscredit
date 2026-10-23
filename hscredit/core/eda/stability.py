@@ -136,9 +136,13 @@ def psi_analysis(
     复用 hscredit.core.metrics.psi_table
 
     :param base_df: 基准数据集
+    :type base_df: pd.DataFrame
     :param current_df: 当前数据集
+    :type current_df: pd.DataFrame
     :param feature: 特征名
-    :param max_n_bins: 分箱数
+    :type feature: str
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
     :return: PSI分析结果字典
 
     **参考样例**
@@ -176,12 +180,31 @@ def batch_psi_analysis(
 ) -> pd.DataFrame:
     """批量PSI时间稳定性分析.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param date: 日期列名
+    :type date: str
     :param base_period: 基准期（如'2023-01'）
+    :type base_period: str
     :param compare_periods: 对比期列表
-    :param max_n_bins: 分箱数
+    :type compare_periods: List[str]
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
     :return: 批量PSI结果DataFrame
 
     **参考样例**
@@ -248,11 +271,17 @@ def csi_analysis(
     复用 hscredit.core.metrics.csi
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param feature: 特征名
+    :type feature: str
     :param target: 目标变量名
+    :type target: str
     :param date: 日期列名
+    :type date: str
     :param base_period: 基准期
+    :type base_period: str
     :param compare_period: 对比期
+    :type compare_period: str
     :return: CSI分析结果
 
     **参考样例**
@@ -296,11 +325,29 @@ def time_psi_tracking(
 
     计算每个特征在不同时间段的PSI值变化趋势
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param date: 日期列名
-    :param freq: 时间聚合频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
-    :param max_n_bins: 分箱数
+    :type date: str
+    :param freq: 时间聚合频率， ``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
+    :type freq: str
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
     :return: PSI时序追踪DataFrame
 
     **参考样例**
@@ -383,11 +430,29 @@ def stability_report(
 
     包含PSI分析和时间稳定性评估
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param date: 日期列名
-    :param target: 目标变量名（可选）
-    :param psi_threshold: PSI阈值
+    :type date: str
+    :param target: 默认值为 ``None`` 。目标变量名（可选）
+    :type target: str
+    :param psi_threshold: 默认值为 ``0.1`` 。PSI阈值
+    :type psi_threshold: float
     :return: 综合稳定性报告DataFrame
 
     **参考样例**
@@ -454,20 +519,44 @@ def psi_cross_analysis(
     """PSI交叉分析 - 计算两两组之间的PSI矩阵.
 
     支持两种方式分组：
+
     1. 自动分组：指定日期列(date)和频率(freq)，按时间自动分组
+
     2. 手工分组：指定分组列(group)，使用已有分组
 
     计算每两组之间的PSI值，返回PSI矩阵或长格式DataFrame.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 特征列表
-    :param date: 日期列名（自动分组模式）
-    :param group: 分组列名（手工分组模式）
+    :type features: List[str]
+    :param date: 默认值为 ``None`` 。日期列名（自动分组模式）
+    :type date: Optional[str]
+    :param group: 默认值为 ``None`` 。分组列名（手工分组模式）
+    :type group: Optional[str]
     :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季度，默认'M'
+    :type freq: str
     :param max_n_bins: PSI计算分箱数，默认10
-    :param return_matrix: 是否返回矩阵格式，True返回方阵矩阵，False返回长格式
+    :type max_n_bins: int
+    :param return_matrix: 默认值为 ``True`` 。是否返回矩阵格式，True返回方阵矩阵，False返回长格式
+    :type return_matrix: bool
     :return:
+
         - return_matrix=True: 返回 {特征名: PSI矩阵DataFrame} 字典
+
         - return_matrix=False: 返回长格式DataFrame [特征名, 组1, 组2, PSI值, 稳定性]
 
     **参考样例**
@@ -568,11 +657,28 @@ def feature_drift_report(
     返回含 PSI / 均值变化 / 缺失率变化 / 偏移等级 的汇总表，
     可用于上线前的数据质量检查和模型再训练决策。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df_base: 基准数据集（如训练集）
+    :type df_base: pd.DataFrame
     :param df_target: 目标数据集（如生产数据）
-    :param features: 特征列表，None 时取两个数据集的公共数值列
-    :param method: 偏移度量方法，目前仅支持 'psi'
+    :type df_target: pd.DataFrame
+    :param features: 默认值为 ``None`` 。特征列表，None 时取两个数据集的公共数值列
+    :param method: 默认值为 ``'psi'`` 。偏移度量方法，目前仅支持 'psi'
+    :type method: str
     :param max_n_bins: PSI 计算分箱数，默认 10
+    :type max_n_bins: int
     :return: 特征偏移报告 DataFrame，含 特征名/PSI/均值变化/缺失率变化/偏移等级
 
     **参考样例**
@@ -636,11 +742,27 @@ def score_drift_report(
     比较基准评分与目标评分分布，输出 PSI、均值/中位数/标准差变化，
     以及可选的 KS/AUC 变化，用于模型监控场景的评分稳定性预警。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param score_base: 基准评分 Series
+    :type score_base: pd.Series
     :param score_target: 目标评分 Series
-    :param y_base: 基准真实标签（0/1），可选，提供时计算模型性能变化
-    :param y_target: 目标真实标签（0/1），可选
+    :type score_target: pd.Series
+    :param y_base: 默认值为 ``None`` 。基准真实标签（0/1），可选，提供时计算模型性能变化
+    :param y_target: 默认值为 ``None`` 。目标真实标签（0/1），可选
     :param max_n_bins: PSI 分箱数，默认 10
+    :type max_n_bins: int
     :return: 偏移报告字典，含 PSI / 分布统计 / 模型性能变化
 
     **参考样例**
@@ -774,15 +896,34 @@ def model_drift_report(
 
     从已训练模型生成基准集/目标集评分，统一输出评分漂移、特征漂移和摘要信息。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param model: 已训练模型，需提供 ``predict_score`` 或 ``predict_proba``
     :param X_base: 基准特征数据，如训练集或上线基准窗口
+    :type X_base: pd.DataFrame
     :param X_target: 目标特征数据，如生产监控窗口
-    :param y_base: 基准真实标签，可选
-    :param y_target: 目标真实标签，可选
+    :type X_target: pd.DataFrame
+    :param y_base: 默认值为 ``None`` 。基准真实标签，可选
+    :param y_target: 默认值为 ``None`` 。目标真实标签，可选
     :param features: 参与特征漂移监控的字段，默认取两个数据集公共数值列
-    :param score_method: 评分口径，``'auto'`` / ``'score'`` / ``'proba'``
+    :type features: Optional[List[str]]
+    :param score_method: 默认值为 ``'auto'`` 。评分口径， ``'auto'`` / ``'score'`` / ``'proba'``
+    :type score_method: str
     :param max_n_bins: PSI 分箱数，默认 10
-    :param predict_kwargs: 透传给模型预测方法的参数
+    :type max_n_bins: int
+    :param predict_kwargs: 默认值为 ``None`` 。透传给模型预测方法的参数
+    :type predict_kwargs: Optional[dict]
     :return: 字典，包含 ``评分漂移`` / ``特征漂移`` / ``漂移摘要``
 
     **参考样例**

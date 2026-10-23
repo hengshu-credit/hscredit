@@ -51,18 +51,48 @@ class MultiLabelRuleMiner(BaseRuleMiner):
     支持同时针对多个标签挖掘规则，并分析规则在不同标签下的有效性差异。
 
     典型应用场景：
+
     - 长短期标签都有效的强规则（稳定拒绝规则）
+
     - 仅短期标签有效（可能是偶发风险，谨慎使用）
+
     - 仅长期标签有效（长期风险，可做预警规则）
+
     - 两标签均无效（噪声规则，丢弃）
 
-    :param labels: 标签列名列表，如 ['mob3_30', 'mob6_30']
-    :param label_names: 标签中文名列表，如 ['短期标签(MOB3@30)', '长期标签(MOB6@30)']
+    **参数**
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param labels: 默认值为 ``None`` 。标签列名列表，如 ['mob3_30', 'mob6_30']
+    :type labels: Optional[List[str]]
+    :param label_names: 默认值为 ``None`` 。标签中文名列表，如 ['短期标签(MOB3@30)', '长期标签(MOB6@30)']
+    :type label_names: Optional[List[str]]
     :param min_support: 最小支持度（规则覆盖率），默认 0.02
+    :type min_support: float
     :param min_lift: 最小 LIFT 值，默认 1.5
+    :type min_lift: float
     :param max_rules: 每个特征最大规则数，默认 10
+    :type max_rules: int
     :param max_n_bins: 数值特征分箱数，默认 10
-    :param exclude_cols: 需要排除的列名列表
+    :type max_n_bins: int
+    :param exclude_cols: 默认值为 ``None`` 。需要排除的列名列表
+    :type exclude_cols: Optional[List[str]]
 
     **参考样例**
 
@@ -139,8 +169,10 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         """拟合多标签规则挖掘器.
 
         :param X: 输入数据 DataFrame，须包含 labels 指定的标签列
-        :param y: 忽略
-        :param features: 需要挖掘的特征列表，为 None 时自动选择数值特征
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。忽略
+        :param features: 默认值为 ``None`` 。需要挖掘的特征列表，为 None 时自动选择数值特征
+        :type features: Optional[List[str]]
         :return: self
         """
         working = copy.copy(self)
@@ -278,13 +310,22 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         """获取筛选后的规则表.
 
         :param effectiveness: 筛选条件
+
             - 'both': 所有标签均有效
+
             - 'any': 任一标签有效（默认）
+
             - 'short_only': 仅第一个标签有效
+
             - 'long_only': 仅最后一个标签有效
+
             - 'all': 不做筛选
-        :param min_lift_per_label: 覆盖最小 LIFT 阈值，为 None 时使用 self.min_lift
-        :param top_n: 返回前 N 条规则
+
+        :type effectiveness: str
+        :param min_lift_per_label: 默认值为 ``None`` 。覆盖最小 LIFT 阈值，为 None 时使用 self.min_lift
+        :type min_lift_per_label: Optional[float]
+        :param top_n: 默认值为 ``None`` 。返回前 N 条规则
+        :type top_n: Optional[int]
         :return: 规则 DataFrame
         """
         if not self._is_fitted:

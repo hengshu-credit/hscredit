@@ -78,30 +78,62 @@ class NGBoost(BaseRiskModel):
     **参数**
 
     :param n_estimators: 提升迭代次数（基学习器数量），默认500
+    :type n_estimators: int
     :param learning_rate: 学习率，默认0.01
+
         - NGBoost对学习率较敏感，通常使用较小的值
+
+    :type learning_rate: float
     :param minibatch_frac: 每次迭代使用的样本比例，默认1.0
+
         - 设为<1.0可进行随机梯度提升，加速训练
+
+    :type minibatch_frac: float
     :param col_sample: 每次迭代使用的特征比例，默认1.0
+
         - 类似XGBoost的colsample_bytree
+
+    :type col_sample: float
     :param base_max_depth: 基学习器（决策树）最大深度，默认3
+
         - NGBoost使用回归树作为基学习器
+
+    :type base_max_depth: int
     :param base_criterion: 基学习器分裂准则，默认'friedman_mse'
+    :type base_criterion: str
     :param base_min_samples_split: 基学习器节点分裂最小样本数，默认2
+    :type base_min_samples_split: int
     :param base_min_samples_leaf: 基学习器叶子节点最小样本数，默认1
+    :type base_min_samples_leaf: int
     :param natural_gradient: 是否使用自然梯度，默认True
+
         - True: 使用自然梯度（推荐）
+
         - False: 使用普通梯度
+
+    :type natural_gradient: bool
     :param objective: 目标函数，默认'binary'
-    :param eval_metric: 评估指标，可选列表
+    :type objective: str
+    :param eval_metric: 默认值为 ``None`` 。评估指标，可选列表
+    :type eval_metric: Union[str, List[str], None]
     :param early_stopping_rounds: 早停轮数，默认None
+
         - 连续N轮验证集loss没有改善则停止训练
+
+    :type early_stopping_rounds: Optional[int]
     :param validation_fraction: 验证集比例，默认0.2
+    :type validation_fraction: float
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param n_jobs: 并行任务数，默认-1（NGBoost基学习器内部使用）
+    :type n_jobs: int
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: bool
     :param params: NGBoost原生参数字典，默认None
+
         - 如果传入，将覆盖其他参数设置
+
+    :type params: Optional[Dict[str, Any]]
     :param kwargs: 其他NGBoost参数
 
     **属性**
@@ -142,7 +174,8 @@ class NGBoost(BaseRiskModel):
 
     **参数补充**
 
-    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param scorecard_params: 默认值为 ``None`` 。概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba
+    :type scorecard_params: Optional[Dict[str, Any]]
     """
 
     def __init__(
@@ -229,14 +262,21 @@ class NGBoost(BaseRiskModel):
         """训练NGBoost模型.
 
         支持两种调用方式:
+
         1. 常规方式: fit(X, y)
+
         2. scorecardpipeline风格: fit(X) 在init中指定target
 
         :param X: 特征矩阵
-        :param y: 目标变量，可选
-        :param sample_weight: 样本权重
-        :param eval_set: [(X_val, y_val)]、具名字典、DataFrame列表或单个数据集；
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重
+        :type sample_weight: Optional[np.ndarray]
+        :param eval_set: 默认值为 ``None`` 。[(X_val, y_val)]、具名字典、DataFrame列表或单个数据集
             含标签的 DataFrame 通过 target 提取标签。原生早停使用最后一集，所有集合均记录评估。
+
+        :type eval_set: Optional[List[Tuple]]
         :param fit_params: 其他fit参数
         :return: self
 
@@ -490,6 +530,7 @@ class NGBoost(BaseRiskModel):
         支持传入包含target列的数据框（scorecardpipeline风格）。
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 预测概率，形状 (n_samples, 2)
         """
         self._require_fitted()
@@ -502,6 +543,7 @@ class NGBoost(BaseRiskModel):
         返回NGBoost分布对象，可用于获取预测不确定性。
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: NGBoost分布对象
 
         **参考样例**
@@ -522,6 +564,7 @@ class NGBoost(BaseRiskModel):
         对于二分类(Bernoulli)，使用第一个参数(p)的特征重要性。
 
         :param importance_type: 重要性类型（保留参数，NGBoost使用基学习器默认重要性）
+        :type importance_type: str
         :return: 特征重要性Series
         """
         self._require_fitted()
@@ -565,6 +608,7 @@ class NGBoost(BaseRiskModel):
         返回每个迭代阶段的预测结果列表。
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 预测结果列表，长度为n_estimators
         """
         self._require_fitted()
@@ -577,6 +621,7 @@ class NGBoost(BaseRiskModel):
         返回每个迭代阶段的完整分布预测。
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 分布对象列表
         """
         self._require_fitted()
@@ -586,8 +631,10 @@ class NGBoost(BaseRiskModel):
     def plot_importance(self, max_num_features: int = 10, figsize: Tuple = (10, 6), **kwargs):
         """绘制特征重要性.
 
-        :param max_num_features: 显示的最大特征数
-        :param figsize: 图像大小
+        :param max_num_features: 默认值为 ``10`` 。显示的最大特征数
+        :type max_num_features: int
+        :param figsize: 默认值为 ``(10, 6)`` 。图像大小
+        :type figsize: Tuple
         :param kwargs: 其他绘图参数
         """
         import matplotlib.pyplot as plt
@@ -606,6 +653,7 @@ class NGBoost(BaseRiskModel):
         """保存底层NGBoost模型（pickle格式）.
 
         :param path: 保存路径（.pkl格式）
+        :type path: str
         """
         from ....utils import save_pickle
 
@@ -617,6 +665,7 @@ class NGBoost(BaseRiskModel):
         """加载底层NGBoost模型（pickle格式）.
 
         :param path: 模型路径（.pkl格式）
+        :type path: str
         :return: self
         """
         from ....utils import load_pickle

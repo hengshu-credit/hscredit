@@ -89,19 +89,20 @@ __all__ = [
 
 
 class Dimension:
-    """搜索空间维度基类（仿 ``skopt.space.Dimension``）。
+    """搜索空间维度基类（仿 ``skopt.space.Dimension`` ）。
 
-    所有维度对象携带 ``name`` 与 ``to_spec`` 方法：``to_spec`` 返回内部 DSL 字典，
-    由 :func:`normalize_search_space` 统一消费。用户通常不直接实例化本类，
+    所有维度对象携带 ``name`` 与 ``to_spec`` 方法： ``to_spec`` 返回内部 DSL 字典，
+    由  :func:`normalize_search_space`  统一消费。用户通常不直接实例化本类，
     而是通过 ``Real`` / ``Integer`` / ``Categorical`` 等子类构造。
 
     **参数**
 
-    :param name: 维度名，仅用于记录，可选；搜索空间字典的键即最终参数名
+    :param name: 默认值为 ``None`` 。维度名，仅用于记录，可选；搜索空间字典的键即最终参数名
+    :type name: Optional[str]
 
     **属性**
 
-    - ``name``: 维度名
+    - ``name`` : 维度名
 
     **参考样例**
 
@@ -130,15 +131,20 @@ class Dimension:
 
 
 class IntDistribution(Dimension):
-    """整数维度（同名于 ``optuna.distributions.IntDistribution``）。
+    """整数维度（同名于 ``optuna.distributions.IntDistribution`` ）。
 
     **参数**
 
     :param low: 下界（含）
+    :type low: int
     :param high: 上界（含）
+    :type high: int
     :param log: 是否在对数尺度上采样，默认 False；与 ``step`` 互斥
+    :type log: bool
     :param step: 采样步长，默认 1；仅当 ``log=False`` 生效
-    :param name: 维度名，仅用于记录，可选
+    :type step: int
+    :param name: 默认值为 ``None`` 。维度名，仅用于记录，可选
+    :type name: Optional[str]
 
     **属性**
 
@@ -166,7 +172,8 @@ class IntDistribution(Dimension):
         self.log = bool(log)
 
     def to_spec(self) -> dict:
-        """返回整数闭区间和可选步长、对数采样标记，参见 ``Dimension.to_spec``。"""
+        """返回整数闭区间和可选步长、对数采样标记，参见 ``Dimension.to_spec`` 。
+        """
         spec: dict = {"type": "int", "low": self.low, "high": self.high}
         if self.log:
             spec["log"] = True
@@ -176,15 +183,20 @@ class IntDistribution(Dimension):
 
 
 class FloatDistribution(Dimension):
-    """浮点维度（同名于 ``optuna.distributions.FloatDistribution``）。
+    """浮点维度（同名于 ``optuna.distributions.FloatDistribution`` ）。
 
     **参数**
 
     :param low: 下界（含）
+    :type low: float
     :param high: 上界（含）
+    :type high: float
     :param log: 是否在对数尺度上采样，默认 False；与 ``step`` 互斥
+    :type log: bool
     :param step: 采样步长，默认 None（连续采样）；与 ``log`` 互斥
-    :param name: 维度名，仅用于记录，可选
+    :type step: Optional[float]
+    :param name: 默认值为 ``None`` 。维度名，仅用于记录，可选
+    :type name: Optional[str]
 
     **属性**
 
@@ -219,7 +231,8 @@ class FloatDistribution(Dimension):
         self._q = float(_q) if _q is not None else None
 
     def to_spec(self) -> dict:
-        """返回浮点边界与分布参数，参见 ``Dimension.to_spec``。"""
+        """返回浮点边界与分布参数，参见 ``Dimension.to_spec`` 。
+        """
         if self._distribution is not None:
             spec = {"type": self._distribution, "low": self.low, "high": self.high}
             if self._q is not None:
@@ -234,12 +247,14 @@ class FloatDistribution(Dimension):
 
 
 class CategoricalDistribution(Dimension):
-    """类别维度（同名于 ``optuna.distributions.CategoricalDistribution``）。
+    """类别维度（同名于 ``optuna.distributions.CategoricalDistribution`` ）。
 
     **参数**
 
     :param choices: 候选值列表
-    :param name: 维度名，仅用于记录，可选
+    :type choices: Sequence[Any]
+    :param name: 默认值为 ``None`` 。维度名，仅用于记录，可选
+    :type name: Optional[str]
 
     **属性**
 
@@ -261,24 +276,30 @@ class CategoricalDistribution(Dimension):
         self.choices = list(choices)
 
     def to_spec(self) -> dict:
-        """返回类别候选值的副本，参见 ``Dimension.to_spec``。"""
+        """返回类别候选值的副本，参见 ``Dimension.to_spec`` 。
+        """
         return {"type": "categorical", "choices": list(self.choices)}
 
 
 class NormalDistribution(Dimension):
-    """正态/对数正态维度（仿 hyperopt ``hp.normal`` / ``hp.lognormal``）。
+    """正态/对数正态维度（仿 hyperopt ``hp.normal`` / ``hp.lognormal`` ）。
 
     Optuna 无原生正态采样，在 [Φ(-4), Φ(4)] 区间采样后经逆 CDF
-    变换为截断正态分布；``log=True`` 时对结果取指数。
+    变换为截断正态分布； ``log=True`` 时对结果取指数。
     量化发生在最终值空间，结果允许超出未量化区间约半个 q。
 
     **参数**
 
     :param mu: 均值
+    :type mu: float
     :param sigma: 标准差，需 > 0
+    :type sigma: float
     :param q: 量化步长，默认 None（不量化）
+    :type q: Optional[float]
     :param log: 是否为对数正态，默认 False
-    :param name: 维度名，仅用于记录，可选
+    :type log: bool
+    :param name: 默认值为 ``None`` 。维度名，仅用于记录，可选
+    :type name: Optional[str]
 
     **属性**
 
@@ -306,7 +327,8 @@ class NormalDistribution(Dimension):
         self.log = bool(log)
 
     def to_spec(self) -> dict:
-        """返回正态参数及未量化的截断区间，参见 ``Dimension.to_spec``。"""
+        """返回正态参数及未量化的截断区间，参见 ``Dimension.to_spec`` 。
+        """
         # 按状态返回具体类型字符串，便于 _space_param_from_dict 的 param_type 分支识别
         if self.log and self.q is not None:
             param_type = "qlognormal"
@@ -335,24 +357,32 @@ class NormalDistribution(Dimension):
 
 
 class Integer(IntDistribution):
-    """整数维度（仿 ``skopt.space.Integer``）。
+    """整数维度（仿 ``skopt.space.Integer`` ）。
 
     推荐用于整数超参数。上下界均包含，只接受整数，避免静默截断。
 
     **参数**
 
     :param low: 下界（含）
+    :type low: int
     :param high: 上界（含）
-    :param prior: ``'uniform'`` 或 ``'log-uniform'``；对数模式要求 low > 0。
-    :param base: 对数底数兼容字段，须为正数且不为 1；不影响对数均匀分布。
-    :param transform: 兼容字段，允许 None、``'identity'``、``'normalize'``；
+    :type high: int
+    :param prior: 默认值为 ``'uniform'`` 。 ``'uniform'`` 或 ``'log-uniform'`` ；对数模式要求 low > 0
+    :type prior: str
+    :param base: 默认值为 ``10`` 。对数底数兼容字段，须为正数且不为 1；不影响对数均匀分布
+    :type base: int
+    :param transform: 默认值为 ``None`` 。兼容字段，允许 None、 ``'identity'`` 、 ``'normalize'``
         输出始终为原始参数值，不做模型输入变换。
-    :param name: 维度名；字典中可省略，维度列表中必须指定。
-    :param dtype: 采样结果的数值类型，默认 ``np.int64``（返回 Python int）。
+
+    :type transform: Optional[str]
+    :param name: 默认值为 ``None`` 。维度名；字典中可省略，维度列表中必须指定
+    :type name: Optional[str]
+    :param dtype: 采样结果的数值类型，默认 ``np.int64`` （返回 Python int）。
+    :type dtype: Any
 
     **属性**
 
-    ``low``、``high``、``prior``、``base``、``transform``、``name``、``dtype``。
+    ``low`` 、 ``high`` 、 ``prior`` 、 ``base`` 、 ``transform`` 、 ``name`` 、 ``dtype`` 。
 
     **参考样例**
 
@@ -385,7 +415,8 @@ class Integer(IntDistribution):
         self.dtype = dtype
 
     def to_spec(self) -> dict:
-        """返回整数区间及可选 dtype，参见 ``Dimension.to_spec``。"""
+        """返回整数区间及可选 dtype，参见 ``Dimension.to_spec`` 。
+        """
         spec = super().to_spec()
         if self.dtype is not np.int64:
             spec["dtype"] = self.dtype
@@ -393,29 +424,36 @@ class Integer(IntDistribution):
 
 
 class Real(FloatDistribution):
-    """实数维度（仿 ``skopt.space.Real``）。
+    """实数维度（仿 ``skopt.space.Real`` ）。
 
     **参数**
 
     :param low: 下界（含）
+    :type low: float
     :param high: 上界（含）
-    :param prior: 采样先验，``'uniform'``（默认）或 ``'log-uniform'``（对数均匀）
-    :param base: 对数底数兼容字段，须为正数且不为 1；不影响对数均匀分布。
-    :param transform: 兼容字段，允许 None、``'identity'``、``'normalize'``；
+    :type high: float
+    :param prior: 采样先验， ``'uniform'`` （默认）或 ``'log-uniform'`` （对数均匀）
+    :type prior: str
+    :param base: 默认值为 ``10`` 。对数底数兼容字段，须为正数且不为 1；不影响对数均匀分布
+    :type base: int
+    :param transform: 默认值为 ``None`` 。兼容字段，允许 None、 ``'identity'`` 、 ``'normalize'``
         输出始终为原始参数值，不做模型输入变换。
-    :param name: 维度名；字典中可省略，维度列表中必须指定。
+
+    :type transform: Optional[str]
+    :param name: 默认值为 ``None`` 。维度名；字典中可省略，维度列表中必须指定
+    :type name: Optional[str]
     :param dtype: 返回参数的数值类型，默认 float。
+    :type dtype: Any
 
     **属性**
 
-    ``low``、``high``、``prior``、``base``、``transform``、``name``、``dtype``。
+    ``low`` 、 ``high`` 、 ``prior`` 、 ``base`` 、 ``transform`` 、 ``name`` 、 ``dtype`` 。
 
     **参考样例**
 
     >>> space = {'learning_rate': Real(0.001, 0.1, prior='log-uniform')}
     >>> space['learning_rate'].to_spec()['log']
     True
-
     """
 
     def __init__(
@@ -443,7 +481,8 @@ class Real(FloatDistribution):
         self.dtype = dtype
 
     def to_spec(self) -> dict:
-        """返回实数闭区间及可选对数标记、dtype，参见 ``Dimension.to_spec``。"""
+        """返回实数闭区间及可选对数标记、dtype，参见 ``Dimension.to_spec`` 。
+        """
         spec: dict = {"type": "float", "low": self.low, "high": self.high}
         if self.log:
             spec["log"] = True
@@ -453,20 +492,26 @@ class Real(FloatDistribution):
 
 
 class Categorical(CategoricalDistribution):
-    """类别维度（仿 ``skopt.space.Categorical``）。
+    """类别维度（仿 ``skopt.space.Categorical`` ）。
 
     **参数**
 
     :param categories: 候选值列表
-    :param prior: 与候选等长的非负权重；不必归一化，总和必须大于 0。
+    :type categories: Sequence[Any]
+    :param prior: 默认值为 ``None`` 。与候选等长的非负权重；不必归一化，总和必须大于 0
         权重为 0 的候选不会被采样，也不能作为手工搜索点。
-    :param transform: 兼容字段，支持 None、``'identity'``、``'onehot'``、
-        ``'string'``、``'label'``；输出仍为原始候选值。
-    :param name: 维度名；字典中可省略，维度列表中必须指定。
+
+    :type prior: Optional[List[float]]
+    :param transform: 默认值为 ``None`` 。兼容字段，支持 None、 ``'identity'`` 、 ``'onehot'`` 、
+        ``'string'`` 、 ``'label'`` ；输出仍为原始候选值。
+
+    :type transform: Optional[str]
+    :param name: 默认值为 ``None`` 。维度名；字典中可省略，维度列表中必须指定
+    :type name: Optional[str]
 
     **属性**
 
-    ``choices``、``prior``、``transform``、``name``。
+    ``choices`` 、 ``prior`` 、 ``transform`` 、 ``name`` 。
 
     **参考样例**
 
@@ -490,7 +535,8 @@ class Categorical(CategoricalDistribution):
         self.transform = transform
 
     def to_spec(self) -> dict:
-        """返回候选值及可选先验权重，参见 ``Dimension.to_spec``。"""
+        """返回候选值及可选先验权重，参见 ``Dimension.to_spec`` 。
+        """
         spec = super().to_spec()
         if self.prior is not None:
             spec["prior"] = list(self.prior)
@@ -510,13 +556,18 @@ def suggest_int(
     step: int = 1,
     log: bool = False,
 ) -> IntDistribution:
-    """整数参数（同名于 ``optuna.Trial.suggest_int``）。
+    """整数参数（同名于 ``optuna.Trial.suggest_int`` ）。
 
     :param name: 参数名
+    :type name: str
     :param low: 下界（含）
+    :type low: int
     :param high: 上界（含）
+    :type high: int
     :param step: 采样步长，默认 1
+    :type step: int
     :param log: 是否对数尺度采样，默认 False
+    :type log: bool
     :return: 整数维度对象
 
     **参考样例**
@@ -533,13 +584,18 @@ def suggest_float(
     step: Optional[float] = None,
     log: bool = False,
 ) -> FloatDistribution:
-    """浮点参数（同名于 ``optuna.Trial.suggest_float``）。
+    """浮点参数（同名于 ``optuna.Trial.suggest_float`` ）。
 
     :param name: 参数名
+    :type name: str
     :param low: 下界（含）
+    :type low: float
     :param high: 上界（含）
+    :type high: float
     :param step: 采样步长，默认 None（连续）
+    :type step: Optional[float]
     :param log: 是否对数尺度采样，默认 False
+    :type log: bool
     :return: 浮点维度对象
 
     **参考样例**
@@ -550,10 +606,12 @@ def suggest_float(
 
 
 def suggest_categorical(name: str, choices: Sequence[Any]) -> CategoricalDistribution:
-    """类别参数（同名于 ``optuna.Trial.suggest_categorical``）。
+    """类别参数（同名于 ``optuna.Trial.suggest_categorical`` ）。
 
     :param name: 参数名
+    :type name: str
     :param choices: 候选值列表
+    :type choices: Sequence[Any]
     :return: 类别维度对象
 
     **参考样例**
@@ -564,12 +622,16 @@ def suggest_categorical(name: str, choices: Sequence[Any]) -> CategoricalDistrib
 
 
 def suggest_discrete_uniform(name: str, low: float, high: float, q: float) -> FloatDistribution:
-    """等间距离散浮点参数（同名于 optuna 已弃用的 ``suggest_discrete_uniform``）。
+    """等间距离散浮点参数（同名于 optuna 已弃用的 ``suggest_discrete_uniform`` ）。
 
     :param name: 参数名
+    :type name: str
     :param low: 下界（含）
+    :type low: float
     :param high: 上界（含）
+    :type high: float
     :param q: 步长
+    :type q: float
     :return: 浮点维度对象（带 step）
 
     **参考样例**
@@ -580,11 +642,14 @@ def suggest_discrete_uniform(name: str, low: float, high: float, q: float) -> Fl
 
 
 def suggest_uniform(name: str, low: float, high: float) -> FloatDistribution:
-    """均匀浮点参数（同名于 Optuna 已弃用的 ``suggest_uniform``）。
+    """均匀浮点参数（同名于 Optuna 已弃用的 ``suggest_uniform`` ）。
 
     :param name: 参数名
+    :type name: str
     :param low: 下界（含）
+    :type low: float
     :param high: 上界（含）
+    :type high: float
     :return: 连续浮点维度对象
 
     **参考样例**
@@ -595,11 +660,14 @@ def suggest_uniform(name: str, low: float, high: float) -> FloatDistribution:
 
 
 def suggest_loguniform(name: str, low: float, high: float) -> FloatDistribution:
-    """对数均匀浮点参数（同名于 optuna 已弃用的 ``suggest_loguniform``）。
+    """对数均匀浮点参数（同名于 optuna 已弃用的 ``suggest_loguniform`` ）。
 
     :param name: 参数名
+    :type name: str
     :param low: 下界（含，需 > 0）
+    :type low: float
     :param high: 上界（含）
+    :type high: float
     :return: 浮点维度对象（log=True）
 
     **参考样例**
@@ -616,11 +684,14 @@ def suggest_loguniform(name: str, low: float, high: float) -> FloatDistribution:
 
 
 def uniform(name: str, low: float, high: float) -> FloatDistribution:
-    """均匀分布浮点参数（同名于 ``hyperopt.hp.uniform``）。
+    """均匀分布浮点参数（同名于 ``hyperopt.hp.uniform`` ）。
 
     :param name: 参数名
+    :type name: str
     :param low: 下界（含）
+    :type low: float
     :param high: 上界（含）
+    :type high: float
     :return: 浮点维度对象
 
     **参考样例**
@@ -631,11 +702,14 @@ def uniform(name: str, low: float, high: float) -> FloatDistribution:
 
 
 def loguniform(name: str, low: float, high: float) -> FloatDistribution:
-    """对数均匀分布浮点参数（同名于 ``hyperopt.hp.loguniform``）。
+    """对数均匀分布浮点参数（同名于 ``hyperopt.hp.loguniform`` ）。
 
     :param name: 参数名
+    :type name: str
     :param low: 对数空间下界（含）
+    :type low: float
     :param high: 对数空间上界（含）
+    :type high: float
     :return: 浮点维度对象（log=True）
 
     **参考样例**
@@ -646,12 +720,16 @@ def loguniform(name: str, low: float, high: float) -> FloatDistribution:
 
 
 def quniform(name: str, low: float, high: float, q: float) -> FloatDistribution:
-    """量化均匀分布浮点参数（同名于 ``hyperopt.hp.quniform``）。
+    """量化均匀分布浮点参数（同名于 ``hyperopt.hp.quniform`` ）。
 
     :param name: 参数名
+    :type name: str
     :param low: 下界（含）
+    :type low: float
     :param high: 上界（含）
+    :type high: float
     :param q: 量化步长
+    :type q: float
     :return: 浮点维度对象（带 step）
 
     **参考样例**
@@ -662,12 +740,16 @@ def quniform(name: str, low: float, high: float, q: float) -> FloatDistribution:
 
 
 def qloguniform(name: str, low: float, high: float, q: float) -> FloatDistribution:
-    """量化对数均匀分布浮点参数（同名于 ``hyperopt.hp.qloguniform``）。
+    """量化对数均匀分布浮点参数（同名于 ``hyperopt.hp.qloguniform`` ）。
 
     :param name: 参数名
+    :type name: str
     :param low: 对数空间下界（含）
+    :type low: float
     :param high: 对数空间上界（含）
+    :type high: float
     :param q: 最终值空间的量化步长
+    :type q: float
     :return: 量化对数均匀维度对象
 
     **参考样例**
@@ -678,10 +760,12 @@ def qloguniform(name: str, low: float, high: float, q: float) -> FloatDistributi
 
 
 def choice(name: str, options: Sequence[Any]) -> CategoricalDistribution:
-    """类别参数（同名于 ``hyperopt.hp.choice``）。
+    """类别参数（同名于 ``hyperopt.hp.choice`` ）。
 
     :param name: 参数名
+    :type name: str
     :param options: 候选值列表
+    :type options: Sequence[Any]
     :return: 类别维度对象
 
     **参考样例**
@@ -697,14 +781,17 @@ def randint(
     low: Optional[int] = None,
     upper: Optional[int] = None,
 ) -> IntDistribution:
-    """整数参数（同名于 ``hyperopt.hp.randint``）。
+    """整数参数（同名于 ``hyperopt.hp.randint`` ）。
 
     hyperopt ``hp.randint(label, upper)`` 返回 [0, upper) 内整数；本实现支持
     可选 ``low`` 参数扩展为 [low, upper)。
 
     :param name: 参数名
-    :param upper: 上界（不含）
+    :type name: str
+    :param upper: 默认值为 ``None`` 。上界（不含）
+    :type upper: Optional[int]
     :param low: 下界（含），默认 0
+    :type low: Optional[int]
     :return: 整数维度对象
 
     **参考样例**
@@ -731,11 +818,14 @@ def randint(
 
 
 def normal(name: str, mu: float, sigma: float) -> NormalDistribution:
-    """正态分布参数（同名于 ``hyperopt.hp.normal``）。
+    """正态分布参数（同名于 ``hyperopt.hp.normal`` ）。
 
     :param name: 参数名
+    :type name: str
     :param mu: 均值
+    :type mu: float
     :param sigma: 标准差（> 0）
+    :type sigma: float
     :return: 正态维度对象
 
     **参考样例**
@@ -746,12 +836,16 @@ def normal(name: str, mu: float, sigma: float) -> NormalDistribution:
 
 
 def qnormal(name: str, mu: float, sigma: float, q: float) -> NormalDistribution:
-    """量化正态分布参数（同名于 ``hyperopt.hp.qnormal``）。
+    """量化正态分布参数（同名于 ``hyperopt.hp.qnormal`` ）。
 
     :param name: 参数名
+    :type name: str
     :param mu: 均值
+    :type mu: float
     :param sigma: 标准差（> 0）
+    :type sigma: float
     :param q: 量化步长
+    :type q: float
     :return: 正态维度对象（带 q）
 
     **参考样例**
@@ -762,11 +856,14 @@ def qnormal(name: str, mu: float, sigma: float, q: float) -> NormalDistribution:
 
 
 def lognormal(name: str, mu: float, sigma: float) -> NormalDistribution:
-    """对数正态分布参数（同名于 ``hyperopt.hp.lognormal``）。
+    """对数正态分布参数（同名于 ``hyperopt.hp.lognormal`` ）。
 
     :param name: 参数名
+    :type name: str
     :param mu: 对数空间均值
+    :type mu: float
     :param sigma: 对数空间标准差（> 0）
+    :type sigma: float
     :return: 正态维度对象（log=True）
 
     **参考样例**
@@ -777,12 +874,16 @@ def lognormal(name: str, mu: float, sigma: float) -> NormalDistribution:
 
 
 def qlognormal(name: str, mu: float, sigma: float, q: float) -> NormalDistribution:
-    """量化对数正态分布参数（同名于 ``hyperopt.hp.qlognormal``）。
+    """量化对数正态分布参数（同名于 ``hyperopt.hp.qlognormal`` ）。
 
     :param name: 参数名
+    :type name: str
     :param mu: 对数空间均值
+    :type mu: float
     :param sigma: 对数空间标准差（> 0）
+    :type sigma: float
     :param q: 量化步长
+    :type q: float
     :return: 正态维度对象（log=True，带 q）
 
     **参考样例**

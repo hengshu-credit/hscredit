@@ -56,23 +56,50 @@ class KSSelector(BaseFeatureSelector):
 
     **参数**
 
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param threshold: KS 保留阈值，范围为 [0, 1]，默认为 0.1；等于阈值时保留
+    :type threshold: float
     :param target: 目标变量列名，默认为 'target'；目标必须同时包含 0 和 1，且无缺失
-    :param include: 强制保留的字段，遵循基类约定跳过指标计算
-    :param exclude: 强制剔除的字段，优先于 include，跳过指标计算
-    :param force_drop: 额外强制剔除字段，与 exclude 合并
-    :param n_jobs: 并行工作数，默认为 -1；1 或 None 表示串行
-    :param binner: 可选分箱器实例，未拟合时自动训练，已拟合时复用规则
-    :param bin_params: 可选 OptimalBinning 构造参数，binner 优先
-    :param parallel_backend: 可选 joblib 并行后端
-    :param parallel_config: 可选 joblib 并行配置
+    :type target: str
+    :param include: 默认值为 ``None`` 。强制保留的字段，遵循基类约定跳过指标计算
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的字段，优先于 include，跳过指标计算
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。额外强制剔除字段，与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param binner: 默认值为 ``None`` 。可选分箱器实例，未拟合时自动训练，已拟合时复用规则
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选 OptimalBinning 构造参数，binner 优先
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
 
     **属性**
 
     - scores_: 参与计算的各字段 KS 值，pd.Series，名称为“KS值”
+
     - selected_features_: 按原始列顺序保留的字段列表，不含目标列
+
     - removed_features_: 剔除字段列表
+
     - dropped_: 中文剔除详情，包含“特征”“剔除原因”“KS值”“阈值”
+
     - n_features_in_: 输入特征数量，不含目标列
 
     **参考样例**

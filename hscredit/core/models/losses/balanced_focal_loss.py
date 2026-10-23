@@ -18,10 +18,11 @@ class BalancedFocalLoss(BaseLoss):
 
     核心改进（相比标准 FocalLoss）:
 
-    1. **有效样本数加权**: 基于 *Class-Balanced Loss* 论文，用
+    1. **有效样本数加权** : 基于 *Class-Balanced Loss* 论文，用
        ``E_n = (1 - β^n) / (1 - β)`` 自动计算正负样本权重，
        比手动设置 alpha 更鲁棒。
-    2. **标签平滑**: 将硬标签 {0,1} 软化为 {ε/2, 1-ε/2}，
+
+    2. **标签平滑** : 将硬标签 {0,1} 软化为 {ε/2, 1-ε/2}，
        减少过拟合并提升梯度稳定性。
 
     数学形式::
@@ -34,17 +35,34 @@ class BalancedFocalLoss(BaseLoss):
         w_t      = alpha if y=1 else 1-alpha
         Loss     = -w_t × (1-p_t)^γ × log(p_t)
 
+    **参数**
+
     :param gamma: 聚焦参数，默认 2.0
+
         - gamma=0 且 label_smoothing=0 时退化为类别加权交叉熵
+
         - gamma 越大，易分类样本权重衰减越快
+
+    :type gamma: float
     :param beta: 有效样本数衰减因子，默认 0.999
+
         - 内部经验: 0.99~0.9999 之间；样本量越大建议 beta 越接近 1
+
+    :type beta: float
     :param label_smoothing: 标签平滑系数，默认 0.0（不启用）
+
         - 内部经验: 0.01~0.1 之间可改善校准; 过大会降低区分度
+
+    :type label_smoothing: float
     :param auto_alpha: 是否自动根据有效样本数计算 alpha，默认 True
+
         - 当 auto_alpha=False 时回退为固定 alpha
+
+    :type auto_alpha: bool
     :param alpha: 固定正样本权重，仅在 auto_alpha=False 时生效，默认 0.25
+    :type alpha: float
     :param name: 损失函数名称，默认 "balanced_focal_loss"
+    :type name: str
 
     **参考样例**
 

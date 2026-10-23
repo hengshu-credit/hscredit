@@ -33,29 +33,38 @@ class SklearnRiskModel(BaseRiskModel):
     """基于 sklearn 集成分类器的风控模型基类。
 
     将任意 sklearn 分类器（通过 ``estimator_class`` 传入）封装为 hscredit 统一接口，
-    继承 :class:`~hscredit.core.models.base.BaseRiskModel`，提供 ``fit`` /
+    继承  :class:`~hscredit.core.models.base.BaseRiskModel` ，提供 ``fit`` /
     ``predict`` / ``predict_proba`` / ``get_feature_importances`` / ``evaluate`` /
-    ``save_model`` / ``load_model`` 及 scorecardpipeline 风格（``fit(df)`` 自动提取
-    ``target`` 列）。具体模型由子类 :class:`RandomForest` /
-    :class:`ExtraTrees` / :class:`GradientBoosting` 指定。
+    ``save_model`` / ``load_model`` 及 scorecardpipeline 风格（ ``fit(df)`` 自动提取
+    ``target`` 列）。具体模型由子类  :class:`RandomForest`  /
+    :class:`ExtraTrees`  /  :class:`GradientBoosting`  指定。
 
     **参数**
 
-    :param estimator_class: sklearn 分类器类（如 ``RandomForestClassifier``），由子类传入
-    :param objective: 任务类型，默认 ``'binary'``（二分类）
+    :param estimator_class: sklearn 分类器类（如 ``RandomForestClassifier`` ），由子类传入
+    :param objective: 任务类型，默认 ``'binary'`` （二分类）
+    :type objective: str
     :param eval_metric: 评估指标名或列表，默认 ``None``
+    :type eval_metric: Union[str, List[str], None]
     :param validation_fraction: 验证集占比，默认 ``0.2``
+    :type validation_fraction: float
     :param random_state: 随机种子，默认 ``None``
-    :param n_jobs: 并行任务数，默认 ``-1``（用满 CPU；``GradientBoosting`` 不支持，自动忽略）
+    :type random_state: Optional[int]
+    :param n_jobs: 并行任务数，默认 ``-1`` （用满 CPU； ``GradientBoosting`` 不支持，自动忽略）
+    :type n_jobs: int
     :param verbose: 是否输出训练日志，默认 ``False``
+    :type verbose: bool
     :param scorecard_params: 概率评分卡部分覆盖参数，默认 PDO=50、基准分=600、范围0-1000
+    :type scorecard_params: Optional[Dict[str, Any]]
     :param kwargs: 透传给底层 sklearn 分类器的其他超参数
 
     **属性**
 
-    - ``feature_importances_``: 特征重要性数组（兼容 sklearn）
-    - ``feature_names_in_`` / ``n_features_in_``: 输入特征名/数量
-    - ``classes_``: 类别标签
+    - ``feature_importances_`` : 特征重要性数组（兼容 sklearn）
+
+    - ``feature_names_in_`` / ``n_features_in_`` : 输入特征名/数量
+
+    - ``classes_`` : 类别标签
 
     **参考样例**
 
@@ -109,7 +118,9 @@ class SklearnRiskModel(BaseRiskModel):
         """训练模型.
 
         支持两种调用方式:
+
         1. 常规方式: fit(X, y)
+
         2. scorecardpipeline风格: fit(X) 在init中指定target
 
         eval_set 支持 (X, y) 列表、具名字典及含 target 的 DataFrame 列表，
@@ -121,9 +132,13 @@ class SklearnRiskModel(BaseRiskModel):
         **参数补充**
 
         :param X: 二维特征或包含目标列的 DataFrame；与训练阶段使用相同字段和输入表示。
-        :param y: 一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征。
-        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
-        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重
+        :type sample_weight: Optional[np.ndarray]
+        :param eval_set: 默认值为 ``None`` 。评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留
+        :type eval_set: Optional[List[Tuple]]
         :param fit_params: 传给底层 fit 的参数。eval_metric 可覆盖构造器指标；sklearn 模型可传 eval_sample_weight。原生参数须与后端一致。
 
         **参考样例**
@@ -200,6 +215,7 @@ class SklearnRiskModel(BaseRiskModel):
         """预测类别标签。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 预测类别数组（0/1）
         :raises NotFittedError: 模型尚未训练时
         """
@@ -213,7 +229,8 @@ class SklearnRiskModel(BaseRiskModel):
         """预测各类别概率。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
-        :return: 概率数组，shape ``(n_samples, 2)``，第 1 列为正类（坏样本）概率
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :return: 概率数组，shape ``(n_samples, 2)`` ，第 1 列为正类（坏样本）概率
         :raises NotFittedError: 模型尚未训练时
         """
         self._require_fitted()
@@ -223,8 +240,10 @@ class SklearnRiskModel(BaseRiskModel):
     def get_feature_importances(self, importance_type: str = "gain") -> pd.Series:
         """获取特征重要性（基于底层模型的不纯度下降）。
 
-        :param importance_type: 重要性类型，默认 ``'gain'``（sklearn 树模型仅支持基于
-            不纯度的 ``feature_importances_``，该参数为与 boosting 模型接口对齐而保留）
+        :param importance_type: 重要性类型，默认 ``'gain'`` （sklearn 树模型仅支持基于
+            不纯度的 ``feature_importances_`` ，该参数为与 boosting 模型接口对齐而保留）
+
+        :type importance_type: str
         :return: 以特征名为索引、按重要性降序的 Series
         :raises NotFittedError: 模型尚未训练时
         """
@@ -266,6 +285,7 @@ class SklearnRiskModel(BaseRiskModel):
         """保存底层sklearn模型（pickle格式）.
 
         :param path: 保存路径
+        :type path: str
         """
         from ....utils import save_pickle
 
@@ -277,6 +297,7 @@ class SklearnRiskModel(BaseRiskModel):
         """加载底层sklearn模型（pickle格式）.
 
         :param path: 模型路径
+        :type path: str
         :return: self
         """
         from ....utils import load_pickle
@@ -303,20 +324,32 @@ class RandomForest(SklearnRiskModel):
     **参数**
 
     :param n_estimators: 树的数量，默认100
+    :type n_estimators: int
     :param max_depth: 树最大深度，默认None
+    :type max_depth: Optional[int]
     :param min_samples_split: 节点分裂最小样本数，默认2
+    :type min_samples_split: Union[int, float]
     :param min_samples_leaf: 叶子节点最小样本数，默认1
+    :type min_samples_leaf: Union[int, float]
     :param max_features: 最大特征数，默认'sqrt'
+    :type max_features: Union[str, int, float]
     :param bootstrap: 是否使用自助采样，默认True
+    :type bootstrap: bool
     :param class_weight: 类别权重，默认None
+    :type class_weight: Optional[Union[str, Dict]]
     :param criterion: 分裂标准，默认'gini'
+    :type criterion: str
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param n_jobs: 并行任务数，默认-1
+    :type n_jobs: int
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: bool
 
     **参数补充**
 
-    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param scorecard_params: 默认值为 ``None`` 。概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba
+    :type scorecard_params: Optional[Dict[str, Any]]
     :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
@@ -378,20 +411,32 @@ class ExtraTrees(SklearnRiskModel):
     **参数**
 
     :param n_estimators: 树的数量，默认100
+    :type n_estimators: int
     :param max_depth: 树最大深度，默认None
+    :type max_depth: Optional[int]
     :param min_samples_split: 节点分裂最小样本数，默认2
+    :type min_samples_split: Union[int, float]
     :param min_samples_leaf: 叶子节点最小样本数，默认1
+    :type min_samples_leaf: Union[int, float]
     :param max_features: 最大特征数，默认'sqrt'
+    :type max_features: Union[str, int, float]
     :param bootstrap: 是否使用自助采样，默认False
+    :type bootstrap: bool
     :param class_weight: 类别权重，默认None
+    :type class_weight: Optional[Union[str, Dict]]
     :param criterion: 分裂标准，默认'gini'
+    :type criterion: str
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param n_jobs: 并行任务数，默认-1
+    :type n_jobs: int
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: bool
 
     **参数补充**
 
-    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param scorecard_params: 默认值为 ``None`` 。概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba
+    :type scorecard_params: Optional[Dict[str, Any]]
     :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
@@ -452,22 +497,36 @@ class GradientBoosting(SklearnRiskModel):
     **参数**
 
     :param n_estimators: 树的数量，默认100
+    :type n_estimators: int
     :param learning_rate: 学习率，默认0.1
+    :type learning_rate: float
     :param max_depth: 树最大深度，默认3
+    :type max_depth: int
     :param min_samples_split: 节点分裂最小样本数，默认2
+    :type min_samples_split: Union[int, float]
     :param min_samples_leaf: 叶子节点最小样本数，默认1
+    :type min_samples_leaf: Union[int, float]
     :param subsample: 样本采样比例，默认1.0
+    :type subsample: float
     :param max_features: 最大特征数，默认None
+    :type max_features: Optional[Union[str, int, float]]
     :param criterion: 分裂标准，默认'friedman_mse'
+    :type criterion: str
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: bool
 
     **参数补充**
 
-    :param validation_fraction: 内部验证比例；GradientBoosting 仅在 n_iter_no_change 非 None 时启用，外部 eval_set 不替换该原生早停划分。
-    :param n_iter_no_change: 原生内部早停耐心轮数，None 禁用；ModelTuner 最终 full_data=True 重训会关闭。
-    :param n_jobs: 统一并行预算；-1 自动使用可用资源，1为串行，不传给原生不支持该参数的算法。
-    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param validation_fraction: 默认值为 ``0.1`` 。内部验证比例；GradientBoosting 仅在 n_iter_no_change 非 None 时启用，外部 eval_set 不替换该原生早停划分
+    :type validation_fraction: float
+    :param n_iter_no_change: 默认值为 ``None`` 。原生内部早停耐心轮数，None 禁用；ModelTuner 最终 full_data=True 重训会关闭
+    :type n_iter_no_change: Optional[int]
+    :param n_jobs: 默认值为 ``1`` 。统一并行预算；-1 自动使用可用资源，1为串行，不传给原生不支持该参数的算法
+    :type n_jobs: int
+    :param scorecard_params: 默认值为 ``None`` 。概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba
+    :type scorecard_params: Optional[Dict[str, Any]]
     :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
@@ -536,15 +595,21 @@ class GradientBoosting(SklearnRiskModel):
         """训练模型.
 
         支持两种调用方式:
+
         1. 常规方式: fit(X, y)
+
         2. scorecardpipeline风格: fit(X) 在init中指定target
 
         **参数补充**
 
         :param X: 二维特征或包含目标列的 DataFrame；与训练阶段使用相同字段和输入表示。
-        :param y: 一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征。
-        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
-        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重
+        :type sample_weight: Optional[np.ndarray]
+        :param eval_set: 默认值为 ``None`` 。评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留
+        :type eval_set: Optional[List[Tuple]]
         :param fit_params: 传给底层 fit 的参数。eval_metric 可覆盖构造器指标；sklearn 模型可传 eval_sample_weight。原生参数须与后端一致。
 
         **参考样例**
@@ -563,20 +628,31 @@ class SVM(SklearnRiskModel):
     **参数**
 
     :param C: 正则强度倒数，默认 ``1.0``
+    :type C: float
     :param kernel: 核函数，默认 ``'rbf'``
+    :type kernel: str
     :param degree: 多项式核次数，默认 ``3``
+    :type degree: int
     :param gamma: 核系数，默认 ``'scale'``
-    :param probability: 是否启用概率估计，只允许 ``True``
+    :type gamma: Union[str, float]
+    :param probability: 默认值为 ``True`` 。是否启用概率估计，只允许 ``True``
+    :type probability: bool
     :param class_weight: 类别权重，默认 ``None``
+    :type class_weight: Optional[Union[str, Dict]]
     :param random_state: 随机种子，默认 ``None``
+    :type random_state: Optional[int]
     :param n_jobs: hscredit 包装层并行预算，不传给 SVC，默认 ``1``
+    :type n_jobs: int
     :param verbose: 是否输出训练日志，默认 ``False``
+    :type verbose: bool
 
     **属性**
 
-    - ``classes_``: 训练类别标签
-    - ``feature_names_in_``: 训练字段名称
-    - ``tuner``: 最近一次调优使用的 ModelTuner
+    - ``classes_`` : 训练类别标签
+
+    - ``feature_names_in_`` : 训练字段名称
+
+    - ``tuner`` : 最近一次调优使用的 ModelTuner
 
     **参考样例**
 
@@ -588,10 +664,15 @@ class SVM(SklearnRiskModel):
     **参数补充**
 
     :param coef0: SVM 的 poly/sigmoid 核常数项，默认0.0。
+    :type coef0: float
     :param shrinking: 是否使用 SVM shrinking 启发式，默认 True。
-    :param tol: 原生求解器的收敛容差；越小通常需要更多迭代。
-    :param max_iter: 求解器迭代上限；SVM 的 -1 表示不设上限。
-    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :type shrinking: bool
+    :param tol: 默认值为 ``0.001`` 。原生求解器的收敛容差；越小通常需要更多迭代
+    :type tol: float
+    :param max_iter: 默认值为 ``-1`` 。求解器迭代上限；SVM 的 -1 表示不设上限
+    :type max_iter: int
+    :param scorecard_params: 默认值为 ``None`` 。概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba
+    :type scorecard_params: Optional[Dict[str, Any]]
     :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
@@ -661,21 +742,33 @@ class DecisionTreeClassifier(SklearnRiskModel):
     **参数**
 
     :param criterion: 节点划分质量指标，默认 ``'gini'``
+    :type criterion: str
     :param splitter: 节点划分策略，默认 ``'best'``
+    :type splitter: str
     :param max_depth: 最大树深，默认 ``None``
+    :type max_depth: Optional[int]
     :param min_samples_split: 节点分裂最小样本数，默认 ``2``
+    :type min_samples_split: Union[int, float]
     :param min_samples_leaf: 叶节点最小样本数，默认 ``1``
+    :type min_samples_leaf: Union[int, float]
     :param max_features: 每次分裂考虑的最大特征数，默认 ``None``
+    :type max_features: Optional[Union[str, int, float]]
     :param class_weight: 类别权重，默认 ``None``
+    :type class_weight: Optional[Union[str, Dict]]
     :param ccp_alpha: 最小代价复杂度剪枝系数，默认 ``0.0``
+    :type ccp_alpha: float
     :param random_state: 随机种子，默认 ``None``
+    :type random_state: Optional[int]
     :param n_jobs: hscredit 包装层并行预算，不传给底层决策树，默认 ``1``
+    :type n_jobs: int
 
     **属性**
 
-    - ``feature_importances_``: 决策树原生特征重要性
-    - ``classes_``: 训练类别标签
-    - ``feature_names_in_``: 训练字段名称
+    - ``feature_importances_`` : 决策树原生特征重要性
+
+    - ``classes_`` : 训练类别标签
+
+    - ``feature_names_in_`` : 训练字段名称
 
     **参考样例**
 
@@ -686,7 +779,8 @@ class DecisionTreeClassifier(SklearnRiskModel):
 
     **参数补充**
 
-    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param scorecard_params: 默认值为 ``None`` 。概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba
+    :type scorecard_params: Optional[Dict[str, Any]]
     :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 

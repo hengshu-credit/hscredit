@@ -46,46 +46,140 @@ class ORBinning(BaseBinning):
 
     **参数**
 
+    :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
+        与显式参数重名或不存在的参数会被构造函数拒绝。
+
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: Union[int, str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Dict[str, List]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]]
+
     :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
         当fit时只传入df且y为None时，从df中提取该列作为目标变量。
+
+    :type target: str
     :param max_n_bins: 最大分箱数，默认为5
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认为2
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01
+
         - 如果 < 1, 表示占比 (如 0.01 表示 1%)
+
         - 如果 >= 1, 表示绝对数量 (如 100 表示最少100个样本)
+
+    :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认为None
+    :type max_bin_size: Optional[Union[float, int]]
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0
+    :type min_bad_rate: float
     :param monotonic: 坏样本率单调性约束，默认为auto
+
         - False: 不要求单调性
+
         - True 或 'auto': 自动检测并应用最佳单调方向
+
         - 'ascending': 强制坏样本率递增
+
         - 'descending': 强制坏样本率递减
+
+    :type monotonic: Union[bool, str]
     :param objective: 优化目标，默认为'iv'
+
         - 'iv': 最大化 IV 值
+
         - 'ks': 最大化 KS 统计量
+
         - 'gini': 最大化 Gini 系数
+
         - 'entropy': 最小化熵（信息增益最大）
+
         - 'chi2': 最大化卡方统计量
+
         - 'custom': 使用自定义目标函数（通过 custom_objective 参数传入）
-    :param custom_objective: 自定义目标函数，当 objective='custom' 时使用
+
+    :type objective: str
+    :param custom_objective: 默认值为 ``None`` 。自定义目标函数，当 objective='custom' 时使用
+
         - 类型: Callable[[List[Dict], int, int], float]
+
         - 参数: bin_stats(List[Dict]) 每个箱的统计信息, total_good(int) 总好样本数, total_bad(int) 总坏样本数
+
         - 返回: float 目标函数值，越大越好（OR-Tools 求解器始终最大化）
+
         - 箱统计字典包含: 'count', 'good', 'bad', 'bad_rate', 'good_rate', 'lift', 'woe'
+
+    :type custom_objective: Optional[callable]
     :param n_prebins: 预分箱数量（候选分割点数），默认为20
+
         - 候选点越多，求解越精确，但计算时间越长
+
+    :type n_prebins: int
     :param max_candidates: 最大候选分割点数，默认为100
+
         - 如果唯一值超过此数，将使用分位数采样
+
+    :type max_candidates: int
     :param time_limit: 求解时间限制（秒），默认为60
+
         - 超过此时间将返回当前找到的最优解
+
+    :type time_limit: int
     :param use_cp_sat: 是否使用真正的 CP-SAT 求解器，默认为False
+
         - False: 使用启发式+DP组合算法，速度快，结果接近最优
+
         - True: 使用 CP-SAT 约束规划求解器，保证全局最优解
+
+    :type use_cp_sat: bool
     :param num_workers: 原生求解器线程数；默认 None，继承统一 n_jobs 预算
+
         - 可以设置为大于1以加速求解（仅在 use_cp_sat=True 时生效）
+
+    :type num_workers: Optional[int]
     :param missing_separate: 缺失值是否单独分箱，默认为True
+    :type missing_separate: bool
     :param special_codes: 特殊值列表，默认为None
+    :type special_codes: Optional[List]
     :param random_state: 随机种子，默认为None
+    :type random_state: Optional[int]
 
     **参考样例**
 
@@ -140,10 +234,15 @@ class ORBinning(BaseBinning):
     **注意**
 
     OR-Tools 分箱的特点:
+
     1. 能够找到全局最优解（而非贪心算法的局部最优）
+
     2. 支持复杂的约束条件组合
+
     3. 支持自定义目标函数，实现复合指标优化
+
     4. 计算时间较长，适合对分箱质量要求高的场景
+
     5. 可以设置时间限制，在时间和精度之间权衡
 
     **自定义目标函数示例**
@@ -178,8 +277,8 @@ class ORBinning(BaseBinning):
     最优分箱的数学规划建模参考 optbinning：Navas-Palencia, G. (2020). *Optimal
     binning: mathematical programming formulation.* arXiv:2001.08025.
     https://arxiv.org/abs/2001.08025 ；求解器为 Google OR-Tools
-    https://developers.google.com/optimization 。与 :class:`CPSATBinning` 相比，
-    本类额外支持自定义目标函数与启发式+DP 快速模式（``use_cp_sat=False``）。
+    https://developers.google.com/optimization 。与  :class:`CPSATBinning`  相比，
+    本类额外支持自定义目标函数与启发式+DP 快速模式（ ``use_cp_sat=False`` ）。
     """
 
     def __init__(
@@ -258,18 +357,31 @@ class ORBinning(BaseBinning):
         """拟合 OR-Tools 运筹规划分箱.
 
         支持两种API风格：
+
         1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+
         2. scorecardpipeline风格: fit(df) - df是完整数据框，目标列名在初始化时通过target参数传入
 
         优先级规则：如果y不是None，直接使用y（优先）；否则从X中提取target列。
 
+        :param kwargs: 其他参数，传递给具体的分箱算法
+
         :param X: 训练数据
+
             - sklearn风格: 特征矩阵，shape (n_samples, n_features)
+
             - scorecardpipeline风格: 完整数据框，包含特征列和目标列
-        :param y: 目标变量（可选）
+
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量（可选）
+
             - sklearn风格: 传入目标变量
+
             - scorecardpipeline风格: 不传，从X中提取
+
             - 如果传入y，优先使用y而忽略X中的target列
+
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :return: 拟合后的分箱器
         """
         # 检查输入数据
@@ -631,7 +743,9 @@ class ORBinning(BaseBinning):
         """添加 IV 最大化目标函数到 CP-SAT 模型.
 
         由于 IV 涉及非线性（log），我们使用分段近似：
+
         1. 预计算每个可能箱的 IV 贡献
+
         2. 使用整数目标变量近似
         """
         n_candidates = len(x)
@@ -2139,14 +2253,21 @@ class ORBinning(BaseBinning):
         将原始特征值转换为分箱索引、分箱标签或WOE值。
 
         :param X: 待转换数据, DataFrame或数组格式
-        :param metric: 转换类型, 可选值:
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param metric: 默认值为 ``'indices'`` 。转换类型, 可选值:
+
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
+
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
+
             - 'woe': 返回WOE值, 用于逻辑回归建模
+
+        :type metric: str
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
 
-        :example:
+        **参考样例**
+
         >>> binner = ORBinning(objective='iv')
         >>> binner.fit(X_train, y_train)
         >>>
@@ -2210,14 +2331,18 @@ class CustomObjectives:
 
         目标：最大化（所有分箱中LIFT最大的那一箱的LIFT值）+ IV 值
 
-        :param lift_weight: 最大LIFT项权重
-        :param iv_weight: IV 项权重
+        :param lift_weight: 默认值为 ``0.1`` 。最大LIFT项权重
+        :type lift_weight: float
+        :param iv_weight: 默认值为 ``1.0`` 。IV 项权重
+        :type iv_weight: float
         :return: 目标函数
 
         **原理**
 
         LIFT = 箱内坏样本率 / 总体坏样本率
+
         - LIFT > 1: 该箱坏样本率高于平均水平
+
         - LIFT < 1: 该箱坏样本率低于平均水平
 
         通过最大化最大LIFT，鼓励产生至少一个强区分能力的分箱.
@@ -2255,8 +2380,10 @@ class CustomObjectives:
 
         目标：最大化（所有分箱中LIFT最小的那一箱的LIFT值）+ IV 值
 
-        :param lift_weight: 最小LIFT项权重
-        :param iv_weight: IV 项权重
+        :param lift_weight: 默认值为 ``0.1`` 。最小LIFT项权重
+        :type lift_weight: float
+        :param iv_weight: 默认值为 ``1.0`` 。IV 项权重
+        :type iv_weight: float
         :return: 目标函数
 
         **原理**
@@ -2296,8 +2423,10 @@ class CustomObjectives:
 
         目标：最大化（最大LIFT值 + 最小LIFT值）+ IV 值
 
-        :param lift_weight: LIFT和项权重
-        :param iv_weight: IV 项权重
+        :param lift_weight: 默认值为 ``0.1`` 。LIFT和项权重
+        :type lift_weight: float
+        :param iv_weight: 默认值为 ``1.0`` 。IV 项权重
+        :type iv_weight: float
         :return: 目标函数
 
         **原理**
@@ -2342,8 +2471,10 @@ class CustomObjectives:
 
         目标：最大化（最大LIFT离1的距离）+ IV 值
 
-        :param lift_weight: 最大LIFT距离项权重
-        :param iv_weight: IV 项权重
+        :param lift_weight: 默认值为 ``0.1`` 。最大LIFT距离项权重
+        :type lift_weight: float
+        :param iv_weight: 默认值为 ``1.0`` 。IV 项权重
+        :type iv_weight: float
         :return: 目标函数
 
         **原理**
@@ -2386,8 +2517,10 @@ class CustomObjectives:
 
         目标：最大化（最小LIFT离1的距离）+ IV 值
 
-        :param lift_weight: 最小LIFT距离项权重
-        :param iv_weight: IV 项权重
+        :param lift_weight: 默认值为 ``0.1`` 。最小LIFT距离项权重
+        :type lift_weight: float
+        :param iv_weight: 默认值为 ``1.0`` 。IV 项权重
+        :type iv_weight: float
         :return: 目标函数
 
         **原理**
@@ -2430,8 +2563,10 @@ class CustomObjectives:
 
         目标：最大化（最大LIFT离1的距离 + 最小LIFT离1的距离）+ IV 值
 
-        :param lift_weight: LIFT距离和项权重
-        :param iv_weight: IV 项权重
+        :param lift_weight: 默认值为 ``0.1`` 。LIFT距离和项权重
+        :type lift_weight: float
+        :param iv_weight: 默认值为 ``1.0`` 。IV 项权重
+        :type iv_weight: float
         :return: 目标函数
 
         **原理**
@@ -2475,8 +2610,10 @@ class CustomObjectives:
 
         同时考虑 KS 统计量和 IV 值。
 
-        :param ks_weight: KS 项权重
-        :param iv_weight: IV 项权重
+        :param ks_weight: 默认值为 ``0.5`` 。KS 项权重
+        :type ks_weight: float
+        :param iv_weight: 默认值为 ``1.0`` 。IV 项权重
+        :type iv_weight: float
         :return: 目标函数
         """
 
@@ -2519,8 +2656,10 @@ class CustomObjectives:
 
         鼓励 WOE 在各箱之间有较大差异，提高区分度。
 
-        :param variance_weight: WOE 方差项权重
-        :param iv_weight: IV 项权重
+        :param variance_weight: 默认值为 ``0.1`` 。WOE 方差项权重
+        :type variance_weight: float
+        :param iv_weight: 默认值为 ``1.0`` 。IV 项权重
+        :type iv_weight: float
         :return: 目标函数
         """
 

@@ -20,18 +20,25 @@ class MetricSpec:
 class BinStatsAccumulator:
     """流式累计固定整数分箱的好坏样本数。
 
+    每个批次必须使用同一套分箱规则；累计器不重新拟合切点，不保留逐行数据。
+
     **参数**
-    feature, target, binning_version : str, optional
-        字段、目标和分箱语义版本。update不重新拟合切点。
-    strict_identity : bool, default=False
-        True要求上述三个标识齐全，合并时拒绝不同分箱；False兼容由调用方保证口径的旧用法。
+
+    :param feature: 特征名，默认 ``None`` ；严格模式下须为非空字符串。
+    :param target: 目标名称，默认 ``None`` ；严格模式下须为非空字符串。
+    :param binning_version: 分箱语义版本，默认 ``None`` ；严格模式下须为非空字符串。
+    :param strict_identity: 默认 ``False`` ，由调用方保证同一口径； ``True`` 要求三个标识齐全。
+        合并时无论是否严格模式，都必须具有相同统计口径。
 
     **属性**
-    rows_seen_ : int
-        已累计行数。
+
+    - ``rows_seen_`` ：已累计的总行数。
+    - ``counts_`` ：每个整数箱号对应的好、坏样本计数。
 
     **参考样例**
-    >>> table = BinStatsAccumulator().update([0, 1], [0, 1]).finalize()
+
+    >>> from hscredit.core.metrics import BinStatsAccumulator
+    >>> table = BinStatsAccumulator().update([0, 1, 0, 1], [0, 1, 1, 0]).finalize()
     """
 
     def __init__(self, *, feature=None, target=None, binning_version=None, strict_identity=False):
@@ -46,6 +53,15 @@ class BinStatsAccumulator:
         self.bin_dtype_ = None
 
     def update(self, bins, y):
+        """累计一个数据批次。
+
+        **参数**
+
+        :param bins: 固定规则得到的一维整数箱号，与 ``y`` 等长。
+        :param y: 一维二分类标签，只允许 ``0`` 和 ``1`` ， ``1`` 表示坏样本。
+
+        :return: 累计器自身。
+        """
         bins, y = _validate_bin_arrays(bins, y)
         self.bin_dtype_ = bins.dtype if self.bin_dtype_ is None else np.result_type(self.bin_dtype_, bins.dtype)
         codes, inverse = np.unique(bins, return_inverse=True)
@@ -58,6 +74,14 @@ class BinStatsAccumulator:
         return self
 
     def merge(self, other):
+        """合并同口径累计器。
+
+        **参数**
+
+        :param other: 具有相同 MetricSpec 的另一累计器；其统计加入当前累计器。
+
+        :return: 累计器自身。
+        """
         if not isinstance(other, BinStatsAccumulator) or self.spec != other.spec:
             raise ValueError("只能合并相同字段、目标和分箱版本的统计")
         if other.bin_dtype_ is not None:

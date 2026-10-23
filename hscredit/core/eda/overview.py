@@ -80,6 +80,7 @@ def data_info(df: pd.DataFrame) -> pd.DataFrame:
     """数据集基础信息统计.
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :return: 数据集信息DataFrame，列包括[信息项, 值]
 
     **参考样例**
@@ -146,8 +147,11 @@ def missing_analysis(df: pd.DataFrame, threshold: float = 0.0, features: List[st
     """缺失值分析.
 
     :param df: 输入数据
-    :param threshold: 缺失率阈值，仅返回缺失率>=该值的特征
-    :param features: 指定分析的特征列表，None则分析全部
+    :type df: pd.DataFrame
+    :param threshold: 默认值为 ``0.0`` 。缺失率阈值，仅返回缺失率>=该值的特征
+    :type threshold: float
+    :param features: 默认值为 ``None`` 。指定分析的特征列表，None则分析全部
+    :type features: List[str]
     :return: 缺失值分析DataFrame，列包括[特征名, 缺失数, 缺失率, 非空数, 查得率]
 
     **参考样例**
@@ -226,56 +230,112 @@ def feature_summary(
     整合特征基础统计、IV、KS、PSI和模型特征重要性，快速获取数据集特征详情。
 
     无论字段是字符还是数字，返回列名都是一致的：
+
     - 数值型特征：分位数返回对应分位点的数值
+
     - 类别型特征：分位数返回按类别样本数逆序排列后对应分位点的类别值
 
     :param df: 训练/基准数据集
-    :param mode: 模型重要性失败策略，strict 抛出含章节状态的异常，best_effort 警告并保留成功结果
+    :type df: pd.DataFrame
+    :param mode: 默认值为 ``'best_effort'`` 。模型重要性失败策略，strict 抛出含章节状态的异常，best_effort 警告并保留成功结果
+    :type mode: str
     :param return_result: True 返回 ReportResult；默认 DataFrame 的 attrs 保留分析状态及完整性
-    :param features: 特征列表，None则分析全部
-    :param y: 目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/特征重要性
-    :param val_df: 验证集，用于计算PSI，不传则使用psi_method指定的方式
-    :param models: 已训练好的模型字典，格式{'模型名': model}，用于获取特征重要性
+    :type return_result: bool
+    :param features: 默认值为 ``None`` 。特征列表，None则分析全部
+    :type features: List[str]
+    :param y: 默认值为 ``None`` 。目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/特征重要性
+    :type y: Optional[Union[str, pd.Series, np.ndarray, List, Tuple]]
+    :param val_df: 默认值为 ``None`` 。验证集，用于计算PSI，不传则使用psi_method指定的方式
+    :type val_df: Optional[pd.DataFrame]
+    :param models: 默认值为 ``None`` 。已训练好的模型字典，格式{'模型名': model}，用于获取特征重要性
+
         - model需要支持feature_importances_属性或get_feature_importance()方法
-    :param model_type: 模型类型，用于自动训练模型提取特征重要性，可选'xgboost'/'lightgbm'/'catboost'/'randomforest'
-    :param model_params: 模型参数，配合model_type使用
+
+    :type models: Optional[Dict[str, Any]]
+    :param model_type: 默认值为 ``None`` 。模型类型，用于自动训练模型提取特征重要性，可选'xgboost'/'lightgbm'/'catboost'/'randomforest'
+    :type model_type: Optional[Literal['xgboost', 'lightgbm', 'catboost', 'randomforest']]
+    :param model_params: 默认值为 ``None`` 。模型参数，配合model_type使用
+    :type model_params: Optional[Dict]
     :param max_n_bins: IV、趋势和PSI共用的最大分箱数，默认10
+    :type max_n_bins: int
     :param psi_method: PSI计算方式
+
         - 'random_split': 随机拆分两份数据计算PSI（默认）
+
         - 'group': 按psi_group_col指定的分组列计算PSI
+
         - 'date': 按psi_date_col指定的日期列分组计算PSI
-    :param group: 分组列名（当psi_method='group'时使用）
-    :param date: 日期列名（当psi_method='date'时使用）
+
+    :type psi_method: Literal['random_split', 'group', 'date']
+    :param group: 默认值为 ``None`` 。分组列名（当psi_method='group'时使用）
+    :type group: Optional[str]
+    :param date: 默认值为 ``None`` 。日期列名（当psi_method='date'时使用）
+    :type date: Optional[str]
     :param freq: 时间频率，'D'/'W'/'M'/'Q'，默认'M'
+    :type freq: str
     :param psi_test_size: 随机拆分比例（当psi_method='random_split'时使用），默认0.3
+    :type psi_test_size: float
     :param percentiles: 分位数点，默认[0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]
-    :param random_state: 随机种子
-    :param numeric_as_categorical: 强制视为分类变量的数值列名列表（仅当指定时才生效）
-    :param force_numeric: 强制视为数值变量的列名列表（仅当指定时才生效）
-    :param n_jobs: 并行工作数。-1根据数据规模保守推断，1为串行，正整数为明确指定
-    :param parallel_backend: 显式 joblib 后端；指定后优先于自动后端选择
-    :param parallel_config: 统一并行扩展配置，不会被函数原地修改
-    :param show_progress: 是否显示已处理字段数、总字段数和当前处理字段
+    :type percentiles: List[float]
+    :param random_state: 默认值为 ``42`` 。随机种子
+    :type random_state: int
+    :param numeric_as_categorical: 默认值为 ``None`` 。强制视为分类变量的数值列名列表（仅当指定时才生效）
+    :type numeric_as_categorical: Optional[List[str]]
+    :param force_numeric: 默认值为 ``None`` 。强制视为数值变量的列名列表（仅当指定时才生效）
+    :type force_numeric: Optional[List[str]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: int
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param show_progress: 默认值为 ``False`` 。是否显示已处理字段数、总字段数和当前处理字段
+    :type show_progress: bool
     :param method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
-    :param bin_params: 传给OptimalBinning的扩展参数。外层 method、max_n_bins、
+    :type method: str
+    :param bin_params: 默认值为 ``None`` 。传给OptimalBinning的扩展参数。外层 method、max_n_bins、
         random_state 的优先级高于其中的同名键；user_splits 字典按原字段名配置
+
+    :type bin_params: Optional[Dict[str, Any]]
     :return: 综合特征描述DataFrame，包含以下列：
+
         - 基础统计: 特征名、字段类型、样本数、缺失数/率、唯一值数、众数等
+
         - 分布统计: 最小值、最大值、平均值、标准差、各分位数
+
         - 质量指标: 零值率、负值率、重复率
+
         - 预测指标（传入y时）: IV、KS、趋势
+
         - 稳定性指标: PSI
+
         - 重要性指标（传入models时）: 各模型特征重要性
 
     所有比例字段返回0~1原始小数，所有数值指标均保留底层计算完整精度；展示格式由
     pandas Styler或ExcelWriter的percent_cols等外部配置负责。
 
     趋势列说明:
+
         - ascending: 坏样本率单调递增
+
         - descending: 坏样本率单调递减
+
         - peak: 倒U型趋势（先增后减）
+
         - valley: U型趋势（先减后增）
+
         - categorical: 类别型特征
+
         - unknown: 无法确定趋势
 
     **参考样例**
@@ -461,8 +521,11 @@ def numeric_summary(df: pd.DataFrame, features: List[str] = None, percentiles: L
     """数值特征详细统计.
 
     :param df: 输入数据
-    :param features: 指定分析的特征列表，None则分析全部数值型特征
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。指定分析的特征列表，None则分析全部数值型特征
+    :type features: List[str]
     :param percentiles: 额外分位数，默认[0.01, 0.05, 0.95, 0.99]
+    :type percentiles: List[float]
     :return: 数值特征统计DataFrame
 
     **参考样例**
@@ -522,8 +585,11 @@ def category_summary(df: pd.DataFrame, features: List[str] = None, max_categorie
     """类别特征统计.
 
     :param df: 输入数据
-    :param features: 指定分析的特征列表，None则分析全部分类别特征
-    :param max_categories: 显示最常见的N个类别
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。指定分析的特征列表，None则分析全部分类别特征
+    :type features: List[str]
+    :param max_categories: 默认值为 ``10`` 。显示最常见的N个类别
+    :type max_categories: int
     :return: 类别特征统计DataFrame
 
     **参考样例**
@@ -578,9 +644,13 @@ def data_quality_report(
     """数据质量综合报告.
 
     :param df: 输入数据
-    :param features: 指定分析的特征列表，None则分析全部
-    :param missing_threshold: 缺失率阈值，超过视为质量问题
-    :param constant_threshold: 常数比例阈值，超过视为准常数特征
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。指定分析的特征列表，None则分析全部
+    :type features: List[str]
+    :param missing_threshold: 默认值为 ``0.5`` 。缺失率阈值，超过视为质量问题
+    :type missing_threshold: float
+    :param constant_threshold: 默认值为 ``0.95`` 。常数比例阈值，超过视为准常数特征
+    :type constant_threshold: float
     :return: 数据质量报告DataFrame，列包括[特征名, 问题类型, 严重程度, 建议处理]
 
     **参考样例**
@@ -679,42 +749,92 @@ def population_stability_monitor(
     分析实际样本（actual）在各维度下的客群占比变化。
 
     适用场景:
+
     - 模型上线后监控生产客群是否偏离训练样本分布
+
     - 对比不同时间段（如各月、各季度）的客群结构变化
+
     - 分析不同渠道、产品线的客群构成差异
+
     - 快速识别客群漂移（Population Drift）风险
 
     指标说明:
+
     - 占比: 该分层在总样本中的比例（默认）
+
     - 样本数: 该分层的样本数量
+
     - 绝对变化率: actual占比 - expected占比（百分点差值）
+
     - 相对变化率: (actual占比 - expected占比) / expected占比 × 100%
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param expected: 期望/基准数据集（如训练集、历史样本），用于构建分层标准
+    :type expected: pd.DataFrame
     :param actual: 实际/监控数据集（如生产数据、近期样本），用于分析客群变化
+    :type actual: pd.DataFrame
     :param segment_cols: 客群分层变量，支持单变量或多变量交叉
+
         - 字符串: 单一变量（如'收入'）
+
         - 列表: 多变量交叉（如['收入层级', '信用等级']）
+
+    :type segment_cols: Union[str, List[str]]
     :param method: 分箱方法（当传入bin_edges时此参数忽略）
+
         - 'quantile': 等频分箱（默认，客群规模相近）
+
         - 'uniform': 等距分箱
+
         - 'tree': 决策树分箱
+
+    :type method: str
     :param max_n_bins: 分箱数，默认5层
-    :param rules: 自定义分箱边界，格式{变量名: [边界列表]}
+    :type max_n_bins: int
+    :param rules: 默认值为 ``None`` 。自定义分箱边界，格式{变量名: [边界列表]}
+
         - 传入后直接使用，无需expected数据集计算分箱
-    :param date: 时间列，用于时间维度监控（如各月对比）
+
+    :type rules: Optional[Dict[str, List]]
+    :param date: 默认值为 ``None`` 。时间列，用于时间维度监控（如各月对比）
+    :type date: Optional[str]
     :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季，默认'M'
-    :param group: 分类列，用于分类维度监控（如各渠道对比）
+    :type freq: str
+    :param group: 默认值为 ``None`` 。分类列，用于分类维度监控（如各渠道对比）
+    :type group: Optional[str]
     :param metrics: 统计指标，支持单选或多选
+
         - '占比': 占比百分比（默认）
+
         - '样本数': 样本数量
+
         - '绝对变化率': 占比差值（actual - expected）
+
         - '相对变化率': 占比变化百分比
+
         - 列表: 多指标同时显示，如['占比', '样本数', '绝对变化率']
-    :param sort_by: 排序依据，可选'expected'/'actual_首列'/'actual_末列'
-    :param sort_order: 排序方式，'desc'降序/'asc'升序
+
+    :type metrics: Union[str, List[str]]
+    :param sort_by: 默认值为 ``None`` 。排序依据，可选'expected'/'actual_首列'/'actual_末列'
+    :type sort_by: Optional[str]
+    :param sort_order: 默认值为 ``'desc'`` 。排序方式，'desc'降序/'asc'升序
+    :type sort_order: Literal['desc', 'asc']
     :return: 客群监控结果DataFrame
+
         - Index: 分层标签（单级或多级索引）
+
         - Columns: (维度, 指标) 多级列，维度包含expected和各actual维度
 
     **参考样例**
@@ -1054,28 +1174,64 @@ def feature_group_analysis(
     分析生产环境中特定时间段、客群或两者交叉组合下的特征分布，
     适用于监控不同维度下的特征表现、对比分析等场景。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
-    :param features: 分析的特征列表，None则分析全部数值型特征
-    :param group: 客群分组列（单级或多级），如 'segment' 或 ['segment', 'channel']
-    :param date: 时间列，用于时间分组分析，支持日期格式
+    :type df: pd.DataFrame
+    :param features: 默认值为 ``None`` 。分析的特征列表，None则分析全部数值型特征
+    :type features: List[str]
+    :param group: 默认值为 ``None`` 。客群分组列（单级或多级），如 'segment' 或 ['segment', 'channel']
+    :type group: Union[str, List[str]]
+    :param date: 默认值为 ``None`` 。时间列，用于时间分组分析，支持日期格式
+    :type date: Optional[str]
     :param freq: 时间频率，'D'日/'W'周/'M'月/'Q'季/'Y'年，默认'M'
+    :type freq: str
     :param stats: 统计指标
+
         - 'default': 默认统计[均值、中位数、标准差、缺失率、唯一值数]
+
         - 'all': 全部基础统计指标
+
         - 列表: 指定统计指标，如['均值', '标准差', 'IV']
+
         - 函数: 自定义统计函数，接收Series返回标量
+
         - 字典: 指标名到函数的映射，如{'变异系数': lambda x: x.std()/x.mean()}
-    :param y: 目标变量，用于计算y相关统计（如逾期率、IV等）
-    :param y_stats: y相关统计指标，如['逾期率', 'IV', 'KS']，需传入y才生效
-    :param sort_by: 排序依据，可以是'特征名'、'统计项'或(特征名, 统计项)元组
-    :param sort_order: 排序方式，'desc'降序/'asc'升序/'custom'自定义
-    :param custom_sort_func: 自定义排序函数，当sort_order='custom'时使用
+
+    :type stats: Union[str, List[str], Callable, Dict[str, Callable]]
+    :param y: 默认值为 ``None`` 。目标变量，用于计算y相关统计（如逾期率、IV等）
+    :type y: Optional[Union[str, pd.Series]]
+    :param y_stats: 默认值为 ``None`` 。y相关统计指标，如['逾期率', 'IV', 'KS']，需传入y才生效
+    :type y_stats: List[str]
+    :param sort_by: 默认值为 ``None`` 。排序依据，可以是'特征名'、'统计项'或(特征名, 统计项)元组
+    :type sort_by: Optional[Union[str, Tuple[str, str]]]
+    :param sort_order: 默认值为 ``'desc'`` 。排序方式，'desc'降序/'asc'升序/'custom'自定义
+    :type sort_order: Literal['desc', 'asc', 'custom']
+    :param custom_sort_func: 默认值为 ``None`` 。自定义排序函数，当sort_order='custom'时使用
         接收DataFrame，返回排序后的DataFrame
-    :param feature_order: 特征顺序列表，用于指定特征展示顺序
-    :param include_overall: 是否包含总体统计列
-    :param pivot: 是否透视结果（True: 特征×统计项为行，分组为列；False: 长格式）
+
+    :type custom_sort_func: Optional[Callable]
+    :param feature_order: 默认值为 ``None`` 。特征顺序列表，用于指定特征展示顺序
+    :type feature_order: Optional[List[str]]
+    :param include_overall: 默认值为 ``True`` 。是否包含总体统计列
+    :type include_overall: bool
+    :param pivot: 默认值为 ``True`` 。是否透视结果（True: 特征×统计项为行，分组为列；False: 长格式）
+    :type pivot: bool
     :return: 分组分析结果DataFrame
+
         - pivot=True时：多级索引(特征名, 统计项)，列为分组
+
         - pivot=False时：长格式，包含[特征名, 统计项, 分组, 值]等列
 
     **参考样例**

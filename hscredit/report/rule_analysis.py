@@ -961,14 +961,41 @@ def ruleset_analysis(
     分析规则集在数据集上的应用效果，展示原始样本、每条规则命中效果、
     各规则剩余样本以及所有规则合计命中效果。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param datasets: 数据集
+    :type datasets: pd.DataFrame
     :param rules: 规则列表
-    :param target: 目标变量名称
-    :param overdue: 逾期天数字段名称（支持多标签，传入列表）
-    :param dpds: 逾期定义方式（支持多标签，传入列表）
-    :param filter_cols: 指定返回的字段列表
-    :param amount: 金额字段名称，用于金额口径分析
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+    :type rules: List[Rule]
+    :param target: 默认值为 ``None`` 。目标变量名称
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名称（支持多标签，传入列表）
+    :type overdue: Optional[Union[str, List[str]]]
+    :param dpds: 默认值为 ``None`` 。逾期定义方式（支持多标签，传入列表）
+    :type dpds: Optional[Union[int, List[int]]]
+    :param filter_cols: 默认值为 ``None`` 。指定返回的字段列表
+    :type filter_cols: Optional[List[str]]
+    :param amount: 默认值为 ``None`` 。金额字段名称，用于金额口径分析
+    :type amount: Optional[str]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
     :return: 规则集效果评估表。单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）
 
     **参考样例**
@@ -981,10 +1008,12 @@ def ruleset_analysis(
     >>> # 多逾期标签 + 金额口径
     >>> ruleset_analysis(df, rules, overdue=['MOB1', 'MOB3'], dpds=[7, 0], amount='放款金额')
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
@@ -1087,16 +1116,43 @@ def multi_label_rule_analysis(
     """多标签规则分析（Excel 输出）.
 
     报告包含：
+
     - 规则汇总：各规则在每个标签下的覆盖率/坏率/LIFT/有效性分类
+
     - 有效性矩阵：行=规则，列=标签，格=LIFT值
+
     - 规则分类统计：按规则类型分组的汇总统计
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param df: 输入数据 DataFrame
+    :type df: pd.DataFrame
     :param features: 参与挖掘的特征列表
+    :type features: List[str]
     :param labels: 标签映射 {中文名: 列名}
-    :param miner_params: 传递给 MultiLabelRuleMiner 的额外参数（如 min_support、min_lift）
+    :type labels: Dict[str, str]
+    :param miner_params: 默认值为 ``None`` 。传递给 MultiLabelRuleMiner 的额外参数（如 min_support、min_lift）
+    :type miner_params: Optional[dict]
     :param output_path: 输出 Excel 文件路径，默认 ``'rule_analysis.xlsx'``
-    :return: 输出文件路径（即 ``output_path``）
+    :type output_path: str
+    :return: 输出文件路径（即 ``output_path`` ）
 
     **参考样例**
 
@@ -1153,7 +1209,9 @@ def _merge_label_tables(tables: List[pd.DataFrame], label_names: List[str]) -> p
     """将多标签的 rule.report() 结果合并为多层列头DataFrame。
 
     参考 feature_analyzer.py 的多标签合并逻辑：
+
     - merge_columns（分箱详情）作为左侧固定列
+
     - 每张表的非merge列按标签名作为顶层列名合并
     """
     if len(tables) == 0:
@@ -1232,59 +1290,115 @@ def rule_swap_analysis(
 ) -> Dict[str, pd.DataFrame]:
     """规则置入置出（Swap）分析。
 
-    整合自 scorecardpipeline 的 ``swapin_report`` 和 ``ruleset_analysis``（即 swapout_report），
-    只输出 ``swap_pipeline`` 和 ``swap_result``，支持金额和订单口径。
+    整合自 scorecardpipeline 的 ``swapin_report`` 和 ``ruleset_analysis`` （即 swapout_report），
+    只输出 ``swap_pipeline`` 和 ``swap_result`` ，支持金额和订单口径。
 
     **阶段与四象限定义**
 
-    ``rules_base`` 先从输入样本剔除 OUT-OUT；``rules_out`` 再在剩余样本中剔除
-    IN-OUT，得到 ``total通过样本``；``rules_in`` 仅在 total通过样本中拆分
+    ``rules_base`` 先从输入样本剔除 OUT-OUT； ``rules_out`` 再在剩余样本中剔除
+    IN-OUT，得到 ``total通过样本`` ； ``rules_in`` 仅在 total通过样本中拆分
     IN-IN（不置入）和 OUT-IN（本次置入），置入后的 ALL-IN 等于二者之和。
 
-    ==========  ==========  ====================================
-    象限        含义        风险说明
-    ==========  ==========  ====================================
-    in_in      total通过 & 未置入     不置入时通过客群，使用实际表现
-    in_out     本次置出规则命中       置出客群，使用实际表现
-    out_in     本次置入规则命中       置入客群，使用评分预测风险
-    out_out    生产基础规则命中       基础拒绝客群，使用实际表现
-    ==========  ==========  ====================================
+    ::
+
+        ==========  ==========  ====================================
+        象限        含义        风险说明
+        ==========  ==========  ====================================
+        in_in      total通过 & 未置入     不置入时通过客群，使用实际表现
+        in_out     本次置出规则命中       置出客群，使用实际表现
+        out_in     本次置入规则命中       置入客群，使用评分预测风险
+        out_out    生产基础规则命中       基础拒绝客群，使用实际表现
+        ==========  ==========  ====================================
+
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
 
     :param data: 全量样本集（包含 score 列 + rules_in/rules_out/rules_base 用到的所有特征列）
+    :type data: pd.DataFrame
     :param score: 评分字段名（str）或多评分映射（Dict）
-    :param rules_in: 置入规则集（List[Rule]），对应 out_in 象限
-    :param rules_out: 置出规则集（可选），对应 in_out 象限
-    :param rules_base: 基准拒绝规则集（可选），对应 out_out 象限
-    :param reference_data: 历史有表现参考数据集（包含 target 或 overdue+dpds）
-    :param bin_table: 现成分箱表，支持：
+    :type score: Union[str, Dict[str, str]]
+    :param rules_in: 默认值为 ``None`` 。置入规则集（List[Rule]），对应 out_in 象限
+    :type rules_in: Optional[List[Rule]]
+    :param rules_out: 默认值为 ``None`` 。置出规则集（可选），对应 in_out 象限
+    :type rules_out: Optional[List[Rule]]
+    :param rules_base: 默认值为 ``None`` 。基准拒绝规则集（可选），对应 out_out 象限
+    :type rules_base: Optional[List[Rule]]
+    :param reference_data: 默认值为 ``None`` 。历史有表现参考数据集（包含 target 或 overdue+dpds）
+    :type reference_data: Optional[pd.DataFrame]
+    :param bin_table: 默认值为 ``None`` 。现成分箱表，支持：
+
         - pd.DataFrame：单评分分箱表
+
         - Dict[str, pd.DataFrame]：多评分分箱表 ``{评分名: 分箱表}``
+
         - None：自动从 reference_data 计算
-    :param target: 目标变量名（与 bin_table 二选一）
-    :param overdue: 逾期天数字段（多标签场景）
-    :param dpds: 逾期天数阈值
-    :param score_weights: 多模型权重（可选）
+
+    :type bin_table: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame]]]
+    :param target: 默认值为 ``None`` 。目标变量名（与 bin_table 二选一）
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段（多标签场景）
+    :type overdue: Optional[Union[str, List[str]]]
+    :param dpds: 默认值为 ``None`` 。逾期天数阈值
+    :type dpds: Optional[Union[int, List[int]]]
+    :param score_weights: 默认值为 ``None`` 。多模型权重（可选）
+    :type score_weights: Optional[Dict[str, float]]
     :param out_in_uplift: 置入风险上浮系数，默认 2.0
-    :param risk_uplifts: 四象限风险上浮映射，可选键为 out_out/in_out/in_in/out_in
-    :param amount: 金额字段（可选），传入后同时输出金额口径报告
-    :param sample_survival_rate: 分析样本进入生产时的通过比例，取值 (0, 1]，用于校准生产通过率漏斗
-    :param reverse_order: 是否逆序展示；仅改变流水线行顺序，不影响置换结论
-    :param out_in_amount_fill: out_in 置入样本额度填充定值（可选）
-    :param out_in_amount_col: out_in 置入样本额度填充字段名（可选）
+    :type out_in_uplift: float
+    :param risk_uplifts: 默认值为 ``None`` 。四象限风险上浮映射，可选键为 out_out/in_out/in_in/out_in
+    :type risk_uplifts: Optional[Dict[str, float]]
+    :param amount: 默认值为 ``None`` 。金额字段（可选），传入后同时输出金额口径报告
+    :type amount: Optional[str]
+    :param sample_survival_rate: 默认值为 ``1.0`` 。分析样本进入生产时的通过比例，取值 (0, 1]，用于校准生产通过率漏斗
+    :type sample_survival_rate: float
+    :param reverse_order: 默认值为 ``False`` 。是否逆序展示；仅改变流水线行顺序，不影响置换结论
+    :type reverse_order: bool
+    :param out_in_amount_fill: 默认值为 ``None`` 。out_in 置入样本额度填充定值（可选）
+    :type out_in_amount_fill: Optional[float]
+    :param out_in_amount_col: 默认值为 ``None`` 。out_in 置入样本额度填充字段名（可选）
+    :type out_in_amount_col: Optional[str]
     :param method: 分箱方法，默认 'quantile'（仅 reference_data 模式生效）
+    :type method: str
     :param max_n_bins: 最大分箱数，默认 10（仅 reference_data 模式生效）
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认 0.05（仅 reference_data 模式生效）
+    :type min_bin_size: float
     :param missing_separate: 是否将缺失值单独分箱，默认 True
-    :param bin_params: 额外分箱参数 dict，会透传给 ``feature_bin_stats``
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-        兼容读取 ``bin_params['del_grey']``，默认 False
+    :type missing_separate: bool
+    :param bin_params: 默认值为 ``None`` 。额外分箱参数 dict，会透传给 ``feature_bin_stats``
+    :type bin_params: Optional[dict]
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
+        兼容读取 ``bin_params['del_grey']`` ，默认 False
+
+    :type del_grey: Optional[bool]
     :param rule_analysis_mode: 规则分析模式，默认 'independent'。
+
         - 'independent'：每条规则应用到所属阶段的同一父样本，明细可重叠，合计按命中并集去重。
+
         - 'sequential'：每条规则在同阶段前一条规则处理后的剩余样本上分析。
+
+    :type rule_analysis_mode: str
     :return: 包含两张表的字典
 
-        - ``swap_pipeline``：分阶段通过率及实际/预测风险变化，支持订单/金额双口径；多目标使用多层列
-        - ``swap_result``：IN-IN 与 ALL-IN 的置换前后对比；多目标按 ``目标标签`` 输出长表
+        - ``swap_pipeline`` ：分阶段通过率及实际/预测风险变化，支持订单/金额双口径；多目标使用多层列
+
+        - ``swap_result`` ：IN-IN 与 ALL-IN 的置换前后对比；多目标按 ``目标标签`` 输出长表
 
     **参考样例**
 
@@ -1316,11 +1430,13 @@ def rule_swap_analysis(
     ...     amount='放款金额',
     ... )
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         默认 None 时沿用 ``bin_params`` 的比较符；显式参数优先。
+
+    :type overdue_operator: Optional[str]
     """
     # ── 第一步：校验轻量输入 ─────────────────────────────────────────────
     validate_target_mode(target, overdue, dpds)
@@ -1473,9 +1589,13 @@ def _store_splits_from_labels(tbl: pd.DataFrame) -> None:
     """从分箱标签解析切分点，存入 ``tbl._splits`` 属性。
 
     解析规则（基于 ``feature_bin_stats`` 的标签生成逻辑）：
+
     - ``[-inf, x)`` → 切分点 x
+
     - ``[-inf, +inf)`` → 跳过（+inf 不是有效切分）
+
     - ``缺失`` / ``特殊`` → 跳过
+
     - ``箱{i}`` → 跳过（无切分点）
 
     解析顺序：从左到右收集各分箱的右边界作为切分点。
@@ -1527,9 +1647,13 @@ def _normalize_bin_table(
     """标准化分箱表，确保列结构统一，并提取切分点存储到属性中。
 
     标准化规则：
+
     - 单层列：检查是否有 '分箱标签' 列，有则保留，无则添加
+
     - 多层列（MultiIndex）：确保顶层分组名为 '分箱详情'，子层列名统一
+
     - 统一添加 '分箱' 别名列（兼容旧代码）
+
     - 从分箱标签解析切分点，存入 ``tbl._splits`` 属性（供坏样本预测使用）
 
     :param tbl: 原始分箱表
@@ -1605,9 +1729,13 @@ def _validate_rules(
     """校验并规范化三个规则集。
 
     处理逻辑：
+
     1. 将三个规则集统一规范化为 List[Rule]
+
     2. 要求至少有一个规则集非空
+
     3. 从所有规则中提取所需特征列
+
     4. 校验 data 中是否包含全部所需特征列
 
     :param data: 样本数据集
@@ -1652,8 +1780,11 @@ def _normalize_score_weights(
     """将 score_weights 统一规范化为 {评分名: 权重} 字典，并归一化到 [0, 1] 区间。
 
     支持三种输入形式：
+
     - 单个 float：对所有评分使用相同权重
+
     - Dict[str, float]：键为评分名（与 score_map 的 key 对应），覆盖对应评分权重
+
     - List[float]：与 score_map 的 key 按顺序一一对应
 
     归一化方法：将权重之和缩放，使 max(weight) = 1.0，

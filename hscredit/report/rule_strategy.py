@@ -222,7 +222,8 @@ def _normalize_report(
     target_names: Optional[Mapping[str, str]] = None,
     target_name: str = "target",
 ) -> Tuple[pd.DataFrame, str]:
-    """将单层或多层 ``Rule.report`` 结果转换为统一长表."""
+    """将单层或多层 ``Rule.report`` 结果转换为统一长表.
+    """
     if not isinstance(report, pd.DataFrame) or report.empty:
         raise ValueError("report 必须是非空的 DataFrame")
 
@@ -286,11 +287,35 @@ def rule_report_table(
 ) -> pd.DataFrame:
     """生成按逾期指标横向展开的规则详情表.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param report: ``Rule.report`` 返回的 DataFrame
+    :type report: pd.DataFrame
     :param rule_name: 展示用规则名称，默认使用报告中的指标名称
-    :param target_names: 逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
+    :type rule_name: Optional[str]
+    :param target_names: 默认值为 ``None`` 。逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
+    :type target_names: Optional[Mapping[str, str]]
     :param metrics: 每个逾期指标需要展示的字段，默认使用内置 ``_DEFAULT_METRICS``
+    :type metrics: Optional[Sequence[str]]
     :param target_name: 单标签报告的逾期指标名称，默认 ``"target"``
+    :type target_name: str
     :return: 两层列头的规则详情表
 
     **参考样例**
@@ -333,13 +358,37 @@ def rule_target_analysis(
 
     绝对逾期改善为合计坏样本率减未命中坏样本率，绝对通过率为规则样本内的
     未命中占比；相对逾期改善以合计坏样本率为分母，相对通过率则在现有策略
-    通过率基础上计算，即 ``current_pass_rate * 绝对通过率``。
+    通过率基础上计算，即 ``current_pass_rate * 绝对通过率`` 。
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
 
     :param report: ``Rule.report`` 返回的 DataFrame
-    :param current_pass_rate: 规则执行前的当前通过率，取值范围为[0, 1]
-    :param rule_name: 展示用规则名称
-    :param target_names: 逾期指标名称映射
+    :type report: pd.DataFrame
+    :param current_pass_rate: 默认值为 ``1.0`` 。规则执行前的当前通过率，取值范围为[0, 1]
+    :type current_pass_rate: Optional[float]
+    :param rule_name: 默认值为 ``None`` 。展示用规则名称
+    :type rule_name: Optional[str]
+    :param target_names: 默认值为 ``None`` 。逾期指标名称映射
+    :type target_names: Optional[Mapping[str, str]]
     :param target_name: 单标签报告的逾期指标名称，默认 ``"target"``
+    :type target_name: str
     :return: 两层列头的目标分析表
 
     **参考样例**
@@ -416,14 +465,38 @@ def rule_target_table(
 ) -> pd.DataFrame:
     """生成规则、逾期指标和命中情况组成的纵向明细表.
 
-    与 :func:`rule_report_table` 的横向展开不同，本函数按
+    与  :func:`rule_report_table`  的横向展开不同，本函数按
     ``规则 × 逾期指标 × 命中情况`` 逐行纵向罗列各项指标，便于直接落库或透视。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param report: ``Rule.report`` 返回的 DataFrame
+    :type report: pd.DataFrame
     :param rule_name: 展示用规则名称，默认使用报告中的指标名称
-    :param target_names: 逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
+    :type rule_name: Optional[str]
+    :param target_names: 默认值为 ``None`` 。逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
+    :type target_names: Optional[Mapping[str, str]]
     :param metrics: 需要展示的字段列表，默认使用内置 ``_DEFAULT_TARGET_METRICS``
+    :type metrics: Optional[Sequence[str]]
     :param target_name: 单标签报告的逾期指标名称，默认 ``"target"``
+    :type target_name: str
     :return: 含 ``规则详情`` / ``逾期指标`` / ``命中情况`` 及各指标列的纵向明细表
 
     **参考样例**
@@ -452,11 +525,35 @@ def rule_group_hit_table(
 ) -> pd.DataFrame:
     """生成多个样本分组下的规则命中效果对比表.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param group_reports: 分组名称到 ``Rule.report`` 结果的映射
-    :param rule_name: 展示用规则名称
-    :param target_names: 逾期指标名称映射
-    :param metrics: 顶层展示名称到 ``Rule.report`` 字段名的映射
+    :type group_reports: Mapping[str, pd.DataFrame]
+    :param rule_name: 默认值为 ``None`` 。展示用规则名称
+    :type rule_name: Optional[str]
+    :param target_names: 默认值为 ``None`` 。逾期指标名称映射
+    :type target_names: Optional[Mapping[str, str]]
+    :param metrics: 默认值为 ``None`` 。顶层展示名称到 ``Rule.report`` 字段名的映射
+    :type metrics: Optional[Mapping[str, str]]
     :param target_name: 单标签报告的逾期指标名称，默认 ``"target"``
+    :type target_name: str
     :return: 两层列头的分组命中对比表，不包含合计行
 
     **参考样例**
@@ -512,7 +609,8 @@ GroupOrder = Union[None, str, Callable[[Any], Any], Sequence[Any]]
 
 
 def _order_groups(present: Sequence[Any], group_order: GroupOrder) -> list:
-    """按 ``group_order`` 规则对已出现的分组标签排序，缺省升序排列."""
+    """按 ``group_order`` 规则对已出现的分组标签排序，缺省升序排列.
+    """
     present = _ordered_unique(list(present))  # 去重并保留出现顺序
 
     if group_order is None or (isinstance(group_order, str) and group_order == "asc"):
@@ -600,34 +698,73 @@ def rule_group_compare(
 ) -> pd.DataFrame:
     """直接从原始数据生成分组下的规则命中效果对比表.
 
-    相比 :func:`rule_group_hit_table` 需要在函数外手工切分样本并逐组调用
-    ``Rule.report``，本函数接收原始明细数据，按 ``日期列 + 频率`` 或 ``分组字段``
-    自动切分样本，对每个分组调用同一规则的 ``Rule.report``（支持
+    相比  :func:`rule_group_hit_table`  需要在函数外手工切分样本并逐组调用
+    ``Rule.report`` ，本函数接收原始明细数据，按 ``日期列 + 频率`` 或 ``分组字段``
+    自动切分样本，对每个分组调用同一规则的 ``Rule.report`` （支持
     ``target`` 单标签或 ``overdue + dpds`` 多标签口径），再汇总为分组对比表。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param data: 原始明细数据 DataFrame，需包含规则所需字段、目标/逾期字段及分组依据列
-    :param rule: 规则表达式字符串或 :class:`~hscredit.core.rules.Rule` 实例
-    :param date: 日期列名，与 ``freq`` 配合按时间周期分组（与 ``group`` 二选一）
-    :param freq: 时间频率，``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
-    :param group: 分组字段列名，按其取值分组（与 ``date`` 二选一）
-    :param target: 目标变量列名，默认 ``"target"``，0=好样本，1=坏样本
-    :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
+    :type data: pd.DataFrame
+    :param rule: 规则表达式字符串或  :class:`~hscredit.core.rules.Rule`  实例
+    :type rule: Union[str, Rule]
+    :param date: 默认值为 ``None`` 。日期列名，与 ``freq`` 配合按时间周期分组（与 ``group`` 二选一）
+    :type date: Optional[str]
+    :param freq: 时间频率， ``'D'`` 日 / ``'W'`` 周 / ``'M'`` 月 / ``'Q'`` 季度，默认 ``'M'``
+    :type freq: str
+    :param group: 默认值为 ``None`` 。分组字段列名，按其取值分组（与 ``date`` 二选一）
+    :type group: Optional[str]
+    :param target: 目标变量列名，默认 ``"target"`` ，0=好样本，1=坏样本
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），可传入列表支持多DPD联合分析
+    :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param rule_name: 展示用规则名称，默认使用规则自身名称或报告中的指标名称
-    :param target_names: 逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
+    :type rule_name: Optional[str]
+    :param target_names: 默认值为 ``None`` 。逾期指标名称映射，如 ``{'MOB1 1+': 'fpd1'}``
+    :type target_names: Optional[Mapping[str, str]]
     :param metrics: 顶层展示名称到 ``Rule.report`` 字段名的映射，默认 ``_DEFAULT_GROUP_METRICS``
-    :param prior_rules: 先验规则（可选），每个分组内先排除命中先验规则的样本再评估
-    :param amount: 金额字段名（可选），传入时以金额口径而非样本数口径统计
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+    :type metrics: Optional[Mapping[str, str]]
+    :param prior_rules: 默认值为 ``None`` 。先验规则（可选），每个分组内先排除命中先验规则的样本再评估
+    :type prior_rules: Optional[Rule]
+    :param amount: 默认值为 ``None`` 。金额字段名（可选），传入时以金额口径而非样本数口径统计
+    :type amount: Optional[str]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
     :param dropna: 是否丢弃分组依据缺失的样本，默认为True；为False时缺失样本归入“缺失”分组
+    :type dropna: bool
     :param group_order: 分组排列方式，默认 ``"asc"`` 升序。支持：
 
         * ``"asc"`` / ``"desc"`` — 按分组标签升序 / 降序
+
         * ``"appearance"`` — 按分组在数据中首次出现的顺序
+
         * 可调用对象 — 作为 ``sorted`` 的 ``key`` 排序键
+
         * 分组名称序列 — 按给定顺序排列，未列出的分组按出现顺序追加在末尾
 
-    :param kwargs: 透传给 ``Rule.report`` 的其他参数（如 ``desc``、``filter_cols``、``margins`` 等）
+    :type group_order: GroupOrder
+
+    :param kwargs: 透传给 ``Rule.report`` 的其他参数（如 ``desc`` 、 ``filter_cols`` 、 ``margins`` 等）
     :return: 两层列头的分组命中对比表，不包含合计行；列头第二层为各分组名称
     :raises ValueError: ``date`` 与 ``group`` 未二选一，或所需列缺失时
 
@@ -645,10 +782,12 @@ def rule_group_compare(
     ...     amount='放款金额', group_order=['手机通讯', '电脑数码', '家用电器'],
     ... )
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
@@ -814,9 +953,9 @@ class _ExplicitTargetNames(dict):
 
 
 def _normalize_target_label(label: Any) -> str:
-    """将逾期标签的三种生成形式统一为 ``Rule.report`` 的空格形式 ``MOB1 7+``。
+    """将逾期标签的三种生成形式统一为 ``Rule.report`` 的空格形式 ``MOB1 7+`` 。
 
-    样本情况用 ``MOB1_7+``、分箱详情用 ``MOB1@7``、规则报告用 ``MOB1 7+``，三者
+    样本情况用 ``MOB1_7+`` 、分箱详情用 ``MOB1@7`` 、规则报告用 ``MOB1 7+`` ，三者
     混排会令同一报告内同一标签出现三种写法，此处统一为空格形式；非标签字符串原样返回。
     """
     text = str(label)
@@ -838,14 +977,16 @@ def _normalize_target_label(label: Any) -> str:
 
 
 def _normalize_target_names(target_names: Optional[Mapping[str, str]]) -> Optional[Dict[str, str]]:
-    """将 ``target_names`` 的键统一为空格形式，使任意写法的键都能匹配到标签。"""
+    """将 ``target_names`` 的键统一为空格形式，使任意写法的键都能匹配到标签。
+    """
     if isinstance(target_names, _ExplicitTargetNames) or not target_names:
         return target_names
     return {_normalize_target_label(key): value for key, value in target_names.items()}
 
 
 def _display_target_label(label: Any, target_names: Optional[Mapping[str, str]]) -> str:
-    """规整单个逾期标签：先统一为空格形式，再套用 ``target_names`` 映射。"""
+    """规整单个逾期标签：先统一为空格形式，再套用 ``target_names`` 映射。
+    """
     if isinstance(target_names, _ExplicitTargetNames):
         return target_names.get(label, label)
     normalized = _normalize_target_label(label)
@@ -865,7 +1006,8 @@ def _rename_target_level(
 
 
 def _as_text_list(value: Optional[Union[str, Sequence[str]]]) -> List[str]:
-    """将文本参数规整为字符串列表，``None`` 返回空列表."""
+    """将文本参数规整为字符串列表， ``None`` 返回空列表.
+    """
     if value is None:
         return []
     if isinstance(value, str):
@@ -876,7 +1018,7 @@ def _as_text_list(value: Optional[Union[str, Sequence[str]]]) -> List[str]:
 def _resolve_swap_rules(
     rules: Union[str, "Rule", Sequence[Union[str, "Rule"]]],
 ) -> Tuple["Rule", List["Rule"], bool]:
-    """解析规则集，返回 ``(整体规则, 子规则列表, 是否为多规则)``.
+    """解析规则集，返回 ``(整体规则, 子规则列表, 是否为多规则)`` .
 
     单规则时整体即该规则本身；多规则时整体为各子规则按「或」组合的并集。
     """
@@ -909,7 +1051,7 @@ def _resolve_swap_targets(
 ) -> "OrderedDict[str, Tuple[pd.DataFrame, pd.Series]]":
     """解析单标签或 ``overdue + dpds`` 多标签，返回标签到 ``(子样本, 0/1标签)`` 的映射.
 
-    标签命名与 :func:`~hscredit.report.feature_bin_stats` 保持一致（``MOB1_7+``）。
+    标签命名与  :func:`~hscredit.report.feature_bin_stats`  保持一致（ ``MOB1_7+`` ）。
     """
     frame, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator)
     return OrderedDict(
@@ -953,7 +1095,7 @@ def _rename_amount_caliber(table: pd.DataFrame) -> pd.DataFrame:
 def _write_banner(writer, worksheet, row: int, text: str, start_col: int, width: int, style: str) -> int:
     """在整行范围内套用指定样式后写入一行横幅文本，保证合并区每个单元格样式一致.
 
-    ``style`` 取 ``"header"``（模块标题）或 ``"middle"``（正文文本），内容统一左对齐。
+    ``style`` 取 ``"header"`` （模块标题）或 ``"middle"`` （正文文本），内容统一左对齐。
     先对整行套用命名样式并合并，再设置取值与左对齐（避免合并时被命名样式的居中对齐覆盖）。
     """
     end_col = start_col + max(width, 1) - 1
@@ -1045,7 +1187,8 @@ def _format_columns(table: pd.DataFrame) -> Tuple[list, list]:
 
 
 def _cf_columns(table: pd.DataFrame, names: Optional[Sequence[str]]) -> list:
-    """返回表中（任意层级）列名命中 ``names`` 的完整列标签，用于条件格式列定位."""
+    """返回表中（任意层级）列名命中 ``names`` 的完整列标签，用于条件格式列定位.
+    """
     if not names:
         return []
     name_set = set(names)
@@ -1066,7 +1209,8 @@ def _write_subtitle(writer, worksheet, row: int, text: str, start_col: int) -> N
 
 
 def _cf_condition_color(bar_names: Optional[Sequence[str]], scale_names: Optional[Sequence[str]]) -> dict:
-    """构建 ``dataframe2excel`` 的 ``condition_color`` 字典：数据条按指标取单色、色阶取三色锚点."""
+    """构建 ``dataframe2excel`` 的 ``condition_color`` 字典：数据条按指标取单色、色阶取三色锚点.
+    """
     color_map: Dict[str, Any] = {}
     for name in bar_names or []:
         color_map[name] = _CF_BAR_COLORS.get(name, _CF_BAR_DEFAULT_COLOR)
@@ -1313,42 +1457,88 @@ def swap_out_report(
     - ``策略迭代`` 主表：迭代背景、策略迭代总结、样本描述（样本情况 + 相关系数）、
       规则变量效果（分箱详情）、业务影响情况分析（订单/金额口径并排）、规则效果分析
       （命中/未命中明细，订单/金额口径并排）、规则稳定性分析（按时间或分组对比）。
+
     - ``变量分箱`` 明细表：各分箱方法的完整分箱表横向并排展示。
 
-    其中「规则变量效果」与「变量分箱」均源自 :func:`~hscredit.report.feature_binning_summary`
-    的一次计算结果（``binning_summary`` 与 ``binning_tables``）。当 ``rules`` 仅传入单条
+    其中「规则变量效果」与「变量分箱」均源自  :func:`~hscredit.report.feature_binning_summary`
+    的一次计算结果（ ``binning_summary`` 与 ``binning_tables`` ）。当 ``rules`` 仅传入单条
     规则时，仅展示整体效果，不再拆分子规则。
 
     **参数**
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param data: 原始明细数据 DataFrame，需包含规则字段、目标/逾期字段及所需分析列
-    :param rules: 拒绝规则，单条 :class:`~hscredit.core.rules.Rule`/表达式字符串，或其列表；
+    :type data: pd.DataFrame
+    :param rules: 拒绝规则，单条  :class:`~hscredit.core.rules.Rule` /表达式字符串，或其列表；
         多条规则时整体为各规则按「或」组合的并集，并逐条展示子规则效果
-    :param background: 迭代背景文本，``str`` 或 ``list[str]``（列表自动加「序号、内容」）
-    :param summary: 策略迭代总结文本，``str`` 或 ``list[str]``
-    :param describe: 样本描述文本，``str`` 或 ``list[str]``
-    :param rule_summary: 规则表里效果说明文本，``str`` 或 ``list[str]``
-    :param impact: 业务影响情况说明文本，``str`` 或 ``list[str]``
-    :param target: 目标变量列名，默认 ``"target"``，0=好样本，1=坏样本
-    :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
+
+    :type rules: Union[str, 'Rule', Sequence[Union[str, 'Rule']]]
+    :param background: 默认值为 ``None`` 。迭代背景文本， ``str`` 或 ``list[str]`` （列表自动加「序号、内容」）
+    :type background: Optional[Union[str, List[str]]]
+    :param summary: 默认值为 ``None`` 。策略迭代总结文本， ``str`` 或 ``list[str]``
+    :type summary: Optional[Union[str, List[str]]]
+    :param describe: 默认值为 ``None`` 。样本描述文本， ``str`` 或 ``list[str]``
+    :type describe: Optional[Union[str, List[str]]]
+    :param rule_summary: 默认值为 ``None`` 。规则表里效果说明文本， ``str`` 或 ``list[str]``
+    :type rule_summary: Optional[Union[str, List[str]]]
+    :param impact: 默认值为 ``None`` 。业务影响情况说明文本， ``str`` 或 ``list[str]``
+    :type impact: Optional[Union[str, List[str]]]
+    :param target: 目标变量列名，默认 ``"target"`` ，0=好样本，1=坏样本
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），可传入列表支持多DPD联合分析
-    :param save: 报告保存路径（``.xlsx``）；为 None 时不落盘，仅返回 ExcelWriter
+    :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
+    :param save: 默认值为 ``None`` 。报告保存路径（ ``.xlsx`` ）；为 None 时不落盘，仅返回 ExcelWriter
+    :type save: Optional[str]
     :param verbose: 是否打印计算进度，默认 False
-    :param methods: 分箱详情所用分箱方法，``str`` 或 ``list[str]``，默认 ``"quantile"``
-    :param bin_params: 分箱参数，``dict``（所有方法统一）或 ``dict[method: dict]``（按方法名映射）
+    :type verbose: bool
+    :param methods: 分箱详情所用分箱方法， ``str`` 或 ``list[str]`` ，默认 ``"quantile"``
+    :type methods: Union[str, List[str]]
+    :param bin_params: 默认值为 ``None`` 。分箱参数， ``dict`` （所有方法统一）或 ``dict[method: dict]`` （按方法名映射）
+    :type bin_params: Optional[Union[Dict[str, Any], Dict[str, Dict[str, Any]]]]
     :param features: 参与相关系数与分箱详情的指标列表，默认取所有规则引用到的字段
-    :param amount: 金额字段名（可选），传入时额外输出金额口径的业务影响与规则效果
-    :param date: 日期列名，与 ``freq`` 配合做规则稳定性分析（与 ``group`` 二选一）
-    :param freq: 稳定性分析的时间频率，``'D'/'W'/'M'/'Q'``，默认 ``'M'``
-    :param group: 分组字段列名，做规则稳定性分析（与 ``date`` 二选一）
+    :type features: Optional[List[str]]
+    :param amount: 默认值为 ``None`` 。金额字段名（可选），传入时额外输出金额口径的业务影响与规则效果
+    :type amount: Optional[str]
+    :param date: 默认值为 ``None`` 。日期列名，与 ``freq`` 配合做规则稳定性分析（与 ``group`` 二选一）
+    :type date: Optional[str]
+    :param freq: 稳定性分析的时间频率， ``'D'/'W'/'M'/'Q'`` ，默认 ``'M'``
+    :type freq: str
+    :param group: 默认值为 ``None`` 。分组字段列名，做规则稳定性分析（与 ``date`` 二选一）
+    :type group: Optional[str]
     :param current_pass_rate: 规则执行前的当前通过率，取值 [0, 1]，默认 1.0
-    :param prior_rules: 先验规则（可选），评估前先排除命中先验规则的样本
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param target_names: 逾期指标名称映射，如 ``{'MOB1 7+': 'fpd7'}``
+    :type current_pass_rate: float
+    :param prior_rules: 默认值为 ``None`` 。先验规则（可选），评估前先排除命中先验规则的样本
+    :type prior_rules: Optional['Rule']
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
+    :param target_names: 默认值为 ``None`` 。逾期指标名称映射，如 ``{'MOB1 7+': 'fpd7'}``
+    :type target_names: Optional[Mapping[str, str]]
     :param theme_color: Excel 主题色（不含 #），默认 ``"2639E9"``
+    :type theme_color: str
     :param sheet_name: 报告工作表名称，默认 ``"策略迭代"``
-    :param kwargs: 透传给 ``Rule.report`` 的其他参数（如 ``desc``、``margins`` 等）
-    :return: :class:`~hscredit.excel.ExcelWriter` 实例（已写入全部内容）
+    :type sheet_name: str
+    :param kwargs: 透传给 ``Rule.report`` 的其他参数（如 ``desc`` 、 ``margins`` 等）
+    :return:  :class:`~hscredit.excel.ExcelWriter`  实例（已写入全部内容）
 
     **参考样例**
 
@@ -1363,10 +1553,12 @@ def swap_out_report(
     ...     save="策略迭代报告.xlsx",
     ... )
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)

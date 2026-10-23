@@ -246,13 +246,33 @@ def population_profile(
     计算各特征的均值、分位数、缺失率，以及坏率（若提供标签），
     支持按客群维度（segment_col）或时间（date）分组对比。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 需要分析的特征列表
-    :param segment_col: 客群分组列（如渠道、产品线），为 None 时不分组
-    :param date: 时间列，为 None 时不按时间分组；与 segment_col 互斥，优先 segment_col
-    :param target: 目标变量列名（0/1），提供时输出各组坏率
-    :param freq: 时间聚合粒度，'M'=月，'Q'=季度，'Y'=年，仅 date 非 None 时有效
+    :type features: List[str]
+    :param segment_col: 默认值为 ``None`` 。客群分组列（如渠道、产品线），为 None 时不分组
+    :type segment_col: Optional[str]
+    :param date: 默认值为 ``None`` 。时间列，为 None 时不按时间分组；与 segment_col 互斥，优先 segment_col
+    :type date: Optional[str]
+    :param target: 默认值为 ``None`` 。目标变量列名（0/1），提供时输出各组坏率
+    :type target: Optional[str]
+    :param freq: 默认值为 ``'M'`` 。时间聚合粒度，'M'=月，'Q'=季度，'Y'=年，仅 date 非 None 时有效
+    :type freq: str
     :param percentiles: 分位数列表，默认 [0.25, 0.5, 0.75]
+    :type percentiles: List[float]
     :return: 客群画像 DataFrame
 
     **参考样例**
@@ -341,13 +361,33 @@ def population_shift_analysis(
     计算基准数据集与目标数据集之间各特征的 PSI、均值变化、坏率变化，
     输出偏移摘要表，标注偏移等级和建议。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df_base: 基准数据集（如训练集/历史月份）
+    :type df_base: pd.DataFrame
     :param df_target: 目标数据集（如生产数据/近期月份）
+    :type df_target: pd.DataFrame
     :param features: 需要分析的特征列表
-    :param target: 目标变量列名（0/1），提供时输出坏率变化
+    :type features: List[str]
+    :param target: 默认值为 ``None`` 。目标变量列名（0/1），提供时输出坏率变化
+    :type target: Optional[str]
     :param max_n_bins: PSI 分箱数，默认 10
+    :type max_n_bins: int
     :param psi_threshold_warn: PSI 警告阈值，默认 0.1（黄色）
+    :type psi_threshold_warn: float
     :param psi_threshold_alert: PSI 告警阈值，默认 0.25（红色）
+    :type psi_threshold_alert: float
     :return: 偏移摘要 DataFrame，含 特征名/PSI/均值变化/偏移等级/建议
 
     **参考样例**
@@ -417,18 +457,42 @@ def population_monitoring_report(
     """多期客群监控 Excel 报告.
 
     生成包含以下 Sheet 的 Excel 报告：
-    - **总览**：各期相对基准的 PSI 汇总热力表，含稳定性等级
-    - **趋势**：各期样本量和坏率趋势（若提供 target）
-    - **偏移Top{top_drift_n}**：PSI 均值最高的特征详细对比分布
+
+    - **总览** ：各期相对基准的 PSI 汇总热力表，含稳定性等级
+
+    - **趋势** ：各期样本量和坏率趋势（若提供 target）
+
+    - **偏移Top{top_drift_n}** ：PSI 均值最高的特征详细对比分布
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
 
     :param df_base: 基准数据集
+    :type df_base: pd.DataFrame
     :param df_compare_list: 各期对比数据集列表
+    :type df_compare_list: List[pd.DataFrame]
     :param compare_labels: 各期标签（与 df_compare_list 一一对应）
+    :type compare_labels: List[str]
     :param features: 监控特征列表
-    :param target: 目标变量列名
-    :param max_n_bins: PSI 计算分箱数
-    :param top_drift_n: 输出偏移最大的 N 个特征
-    :param output_path: 输出 Excel 路径
+    :type features: List[str]
+    :param target: 默认值为 ``None`` 。目标变量列名
+    :type target: Optional[str]
+    :param max_n_bins: 默认值为 ``10`` 。PSI 计算分箱数
+    :type max_n_bins: int
+    :param top_drift_n: 默认值为 ``10`` 。输出偏移最大的 N 个特征
+    :type top_drift_n: int
+    :param output_path: 默认值为 ``'population_monitor.xlsx'`` 。输出 Excel 路径
+    :type output_path: str
     :return: 输出文件路径
 
     **参考样例**
@@ -593,14 +657,35 @@ def segment_drift_analysis(
     计算每个 (客群, 时间) 组合相对于基准期（或第一期）的特征 PSI，
     输出长格式三维结果表，列为 [特征名, 客群, 时间, PSI, 偏移等级]。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据（须含 date 和 segment_col）
+    :type df: pd.DataFrame
     :param date: 日期列名
+    :type date: str
     :param segment_col: 客群分组列名
+    :type segment_col: str
     :param features: 分析特征列表
-    :param target: 目标变量（可选，用于输出各组坏率）
-    :param base_period: 基准期字符串（如 '2024-01'），None 时取最早一期
-    :param freq: 时间聚合频率，'M'=月，'Q'=季度，'Y'=年
-    :param max_n_bins: PSI 计算分箱数
+    :type features: List[str]
+    :param target: 默认值为 ``None`` 。目标变量（可选，用于输出各组坏率）
+    :type target: Optional[str]
+    :param base_period: 默认值为 ``None`` 。基准期字符串（如 '2024-01'），None 时取最早一期
+    :type base_period: Optional[str]
+    :param freq: 默认值为 ``'M'`` 。时间聚合频率，'M'=月，'Q'=季度，'Y'=年
+    :type freq: str
+    :param max_n_bins: 默认值为 ``10`` 。PSI 计算分箱数
+    :type max_n_bins: int
     :return: 长格式 DataFrame，含 特征名/客群/时间/PSI/偏移等级
 
     **参考样例**
@@ -678,13 +763,33 @@ def feature_cross_segment_effectiveness(
     输出宽格式矩阵（行=特征，列=客群，格=指标值），
     用于快速发现特征在哪些客群有效、哪些失效。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param target: 目标变量列名（0/1）
+    :type target: str
     :param segment_col: 客群分组列名
-    :param metric: 有效性指标，'iv' / 'ks' / 'auc'
-    :param max_n_bins: 分箱数（iv/ks 计算使用）
-    :param min_segment_size: 最小客群样本量，低于此值跳过
+    :type segment_col: str
+    :param metric: 默认值为 ``'iv'`` 。有效性指标，'iv' / 'ks' / 'auc'
+    :type metric: str
+    :param max_n_bins: 默认值为 ``10`` 。分箱数（iv/ks 计算使用）
+    :type max_n_bins: int
+    :param min_segment_size: 默认值为 ``50`` 。最小客群样本量，低于此值跳过
+    :type min_segment_size: int
     :return: 宽格式有效性矩阵 DataFrame
 
     **参考样例**

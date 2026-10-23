@@ -78,21 +78,39 @@ def metric_comparison_plot(
 
     适用于已经完成统计的 IV、PSI、特征重要性、模型评分等结果表。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param data: 指标结果表
+    :type data: pd.DataFrame
     :param label_col: 分类标签列名
+    :type label_col: str
     :param value_col: 指标数值列名
-    :param orientation: 是否绘制横向柱状图
-    :param sort_values: 是否按指标值排序
-    :param ascending: 排序方向
-    :param color_scheme: 语义配色，可选 ``'iv'`` 或 ``'psi'``
-    :param reference_lines: 参考线列表，每项为 ``(数值, 标签, 颜色)``
-    :param value_format: 数值标签格式
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param xlabel: 横轴标题
-    :param ylabel: 纵轴标题
-    :param save: 保存路径
+    :type value_col: str
+    :param orientation: 默认值为 ``'horizontal'`` 。是否绘制横向柱状图
+    :type orientation: str
+    :param sort_values: 默认值为 ``False`` 。是否按指标值排序
+    :type sort_values: bool
+    :param ascending: 默认值为 ``True`` 。排序方向
+    :type ascending: bool
+    :param color_scheme: 默认值为 ``None`` 。语义配色，可选 ``'iv'`` 或 ``'psi'``
+    :type color_scheme: Optional[str]
+    :param reference_lines: 默认值为 ``None`` 。参考线列表，每项为 ``(数值, 标签, 颜色)``
+    :type reference_lines: Optional[List[Tuple[float, str, str]]]
+    :param value_format: 默认值为 ``'{:.3f}'`` 。数值标签格式
+    :type value_format: str
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``None`` 。图标题
+    :type title: Optional[str]
+    :param xlabel: 默认值为 ``None`` 。横轴标题
+    :type xlabel: Optional[str]
+    :param ylabel: 默认值为 ``None`` 。纵轴标题
+    :type ylabel: Optional[str]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: matplotlib Figure
 
     **参考样例**
@@ -197,14 +215,25 @@ def variable_iv_plot(
 
     按IV降序排列，标注IV阈值参考线（0.02 / 0.10 / 0.30）。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据集
+    :type df: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param target: 目标变量列名
+    :type target: str
     :param top_n: 显示前N个特征，默认20
-    :param ax: matplotlib Axes，None时自动创建
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径，None时不保存
+    :type top_n: int
+    :param ax: 默认值为 ``None`` 。matplotlib Axes，None时自动创建
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(12, 8)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'特征IV值排名'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径，None时不保存
+    :type save: Optional[str]
     :return: matplotlib Figure
 
     **参考样例**
@@ -278,13 +307,23 @@ def variable_woe_trend_plot(
 
     用于模型报告变量分析，展示每个分箱的WOE值和坏样本率。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param bin_table: 分箱统计表，需含「分箱标签」/「WOE」/「坏样本率」列
         （兼容 OptimalBinning.get_bin_table() 输出）
-    :param feature: 特征名，用于标题
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题，None时自动生成
-    :param save: 保存路径
+
+    :type bin_table: pd.DataFrame
+    :param feature: 默认值为 ``None`` 。特征名，用于标题
+    :type feature: Optional[str]
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(10, 5)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``None`` 。图标题，None时自动生成
+    :type title: Optional[str]
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -357,11 +396,19 @@ def variable_psi_heatmap(
 
     颜色反映偏移程度：低 PSI 使用主题冷色，高 PSI 使用粉红风险色。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param psi_matrix: PSI矩阵，行=特征，列=时间周期或数据集，格=PSI值
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type psi_matrix: pd.DataFrame
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(14, 8)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'特征PSI热力图'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -425,15 +472,27 @@ def variable_importance_grouped_plot(
 ) -> Figure:
     """按特征类别分组的重要性横向柱状图.
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param importance_df: 特征重要性 DataFrame，需含 feature_col 和 value_col 列
+    :type importance_df: pd.DataFrame
     :param feature_col: 特征名列名，默认 'feature'
+    :type feature_col: str
     :param value_col: 重要性值列名，默认 'importance'
+    :type value_col: str
     :param group: 分组列名，默认 'category'；None 时不分组
+    :type group: Optional[str]
     :param top_n: 显示前N个，默认30
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type top_n: int
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(12, 8)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'特征重要性（分类）'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**
@@ -499,13 +558,23 @@ def variable_missing_badrate_plot(
     横轴=特征缺失率，纵轴=缺失样本坏账率。
     用于评估缺失值是否携带信息（坏率显著异于总体则说明缺失本身有预测价值）。
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param df: 数据集
+    :type df: pd.DataFrame
     :param features: 特征列表
+    :type features: List[str]
     :param target: 目标变量列名
-    :param ax: matplotlib Axes
-    :param figsize: 图像尺寸
-    :param title: 图标题
-    :param save: 保存路径
+    :type target: str
+    :param ax: 默认值为 ``None`` 。matplotlib Axes
+    :type ax: Optional[plt.Axes]
+    :param figsize: 默认值为 ``(10, 7)`` 。图像尺寸
+    :type figsize: Tuple[float, float]
+    :param title: 默认值为 ``'缺失率 vs 坏账率（缺失样本）'`` 。图标题
+    :type title: str
+    :param save: 默认值为 ``None`` 。保存路径
+    :type save: Optional[str]
     :return: Figure
 
     **参考样例**

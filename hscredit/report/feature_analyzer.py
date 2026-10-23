@@ -174,7 +174,8 @@ def _feature_stats_call(task):
 
 
 def _feature_summary_call(task):
-    """执行单个 ``方法 × 特征`` 汇总计算任务。"""
+    """执行单个 ``方法 × 特征`` 汇总计算任务。
+    """
     feature_name, method, call_kwargs = task
     table = feature_bin_stats(feature=feature_name, method=method, **call_kwargs)
     return feature_name, method, table
@@ -324,7 +325,8 @@ def _cleanup_auto_feature_progress(reporter, event_queue, monitor, manager, stop
 
 
 def _feature_group_summary_call(task):
-    """计算一个 ``方法 × 特征`` 下的全部有序分组。"""
+    """计算一个 ``方法 × 特征`` 下的全部有序分组。
+    """
     data, labels, ordered_groups, feature_name, method, params = task
     fitted_binner = _fit_group_summary_binner(data, feature_name, method, params)
     rows = []
@@ -344,7 +346,8 @@ def _feature_group_summary_call(task):
 
 
 def _benchmark_binning_call(task):
-    """计算一个 ``逾期字段 × DPD × 分箱方法`` 的基准结果。"""
+    """计算一个 ``逾期字段 × DPD × 分箱方法`` 的基准结果。
+    """
     x, y, feature, method, overdue_name, dpd, params = task
     row = {
         "method": f"hscredit-{method}",
@@ -547,7 +550,8 @@ _LONG_FORMAT_COLUMNS = (
 
 
 def _summary_display_name(target_name: Any) -> Any:
-    """将目标名称转换为摘要展示名称（``MOB1_3+`` → ``MOB1@3``）。"""
+    """将目标名称转换为摘要展示名称（ ``MOB1_3+`` → ``MOB1@3`` ）。
+    """
     if isinstance(target_name, str) and target_name.endswith("+") and "_" in target_name:
         overdue_name, dpd = target_name[:-1].rsplit("_", 1)
         return f"{overdue_name}@{dpd}"
@@ -555,7 +559,8 @@ def _summary_display_name(target_name: Any) -> Any:
 
 
 def _reorder_long_format_columns(table: pd.DataFrame) -> pd.DataFrame:
-    """按 :data:`_LONG_FORMAT_COLUMNS` 重排长格式分箱表列顺序，保留未列出的额外列。"""
+    """按  :data:`_LONG_FORMAT_COLUMNS`  重排长格式分箱表列顺序，保留未列出的额外列。
+    """
     ordered = [col for col in _LONG_FORMAT_COLUMNS if col in table.columns]
     extras = [col for col in table.columns if col not in _LONG_FORMAT_COLUMNS]
     return table[ordered + extras]
@@ -564,7 +569,7 @@ def _reorder_long_format_columns(table: pd.DataFrame) -> pd.DataFrame:
 def _normalize_binning_summary_methods(methods: Union[str, List[str]]) -> List[str]:
     """标准化分箱方法并保持传入顺序。
 
-    统一走 :meth:`OptimalBinning.validate_method` 校验（大小写/空白归一化），
+    统一走  :meth:`OptimalBinning.validate_method`  校验（大小写/空白归一化），
     保持原有错误消息风格。
     """
     raw = [methods] if isinstance(methods, str) else list(methods)
@@ -623,7 +628,7 @@ def _summary_target_columns(table: pd.DataFrame) -> List[Tuple[str, str]]:
 
 
 def _aggregate_summary_metrics(valid: pd.DataFrame, resolve, metrics: List[str]) -> Dict[str, float]:
-    """按 :data:`_BINNING_SUMMARY_AGG` 定义的聚合方式汇总单个目标的指标。
+    """按  :data:`_BINNING_SUMMARY_AGG`  定义的聚合方式汇总单个目标的指标。
 
     :param valid: 已剔除合计行的分箱明细
     :param resolve: 指标名 → 实际列键 的映射函数（兼容单层/多级表头）
@@ -734,29 +739,141 @@ def feature_binning_summary(
 
     ``bin_params`` 支持两种格式：单层参数应用于所有方法；以 method 为 key、
     参数字典为 value 的多层参数仅应用于对应方法。参数优先级为
-    ``bin_params > 显式公共算法参数/kwargs``；标签定义和剔灰口径由顶层统一。
+    ``bin_params > 显式公共算法参数/kwargs`` ；标签定义和剔灰口径由顶层统一。
 
     ``long_format`` 控制 ``binning_tables`` 中每张分箱表的输出格式：默认 ``False``
     沿用原多级表头样式（多目标时按列展开）；设为 ``True`` 时每张表按 ``逾期标签``
-    列将各目标纵向堆叠输出（透传给 :func:`feature_bin_stats`）。摘要 ``binning_summary``
+    列将各目标纵向堆叠输出（透传给  :func:`feature_bin_stats` ）。摘要 ``binning_summary``
     的结构不受影响。
 
     ``metrics`` 指定 ``binning_summary`` 中按目标汇总的指标及其展示顺序，默认
-    ``['分档KS值', 'LIFT值', '指标IV值', '坏样本数', '坏样本率']``。可选值为
-    :func:`feature_bin_stats` 输出的指标列，各指标的跨分箱聚合方式如下（合计行不参与）：
+    ``['分档KS值', 'LIFT值', '指标IV值', '坏样本数', '坏样本率']`` 。可选值为
+    :func:`feature_bin_stats`  输出的指标列，各指标的跨分箱聚合方式如下（合计行不参与）：
 
-    - **求和（sum）**：``样本总数`` / ``好样本数`` / ``坏样本数`` / ``分档IV值`` /
+    - **求和（sum）** ： ``样本总数`` / ``好样本数`` / ``坏样本数`` / ``分档IV值`` /
       ``样本占比`` / ``好样本占比`` / ``坏样本占比``
-    - **取最大值（max）**：``指标IV值`` / ``LIFT值`` / ``坏账改善`` / ``风险拒绝比`` /
+
+    - **取最大值（max）** ： ``指标IV值`` / ``LIFT值`` / ``坏账改善`` / ``风险拒绝比`` /
       ``累积LIFT值`` / ``累积坏账改善`` / ``累计风险拒绝比`` / ``累积好样本数`` /
       ``累积坏样本数`` / ``分档KS值``
-    - **取绝对值最大值（max_abs）**：``分档WOE值``
-    - **总体坏样本率（bad_rate）**：``坏样本率`` 按 ``sum(坏样本数) / sum(样本总数)`` 重新计算
 
-    传入不受支持的指标将抛出 ``ValueError``。
+    - **取绝对值最大值（max_abs）** ： ``分档WOE值``
 
-    :return: ``(binning_tables, binning_summary)``。分箱表结构为
-        ``{feature: {method: binning_table}}``，摘要使用两级列索引。
+    - **总体坏样本率（bad_rate）** ： ``坏样本率`` 按 ``sum(坏样本数) / sum(样本总数)`` 重新计算
+
+    传入不受支持的指标将抛出 ``ValueError`` 。
+
+    :param features: 字段集合入口，支持字符串或一维字段序列；默认 ``None`` ，不可与 ``feature`` 同时指定。
+    :param methods: 方法名或方法列表，默认 ``"mdlp"`` ；可用值见  :attr:`OptimalBinning.VALID_METHODS` 。
+    :param metrics: 摘要指标名或列表；默认包含 KS、LIFT、IV、坏样本数和坏样本率，聚合口径见上文。
+    :param bin_params: 公共或按方法配置的分箱参数字典，默认 ``None`` ；覆盖同名公共算法参数。
+    :param kwargs: 传递给分箱统计的扩展关键字参数；分箱算法参数优先放入 ``bin_params`` 。
+
+    :param data: 数据集
+    :param feature: 默认值为 ``None`` 。特征名称或特征名称列表
+    :param target: 目标变量列名，默认为'target'
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
+    :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
+
+        - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
+
+    :param desc: 默认值为 ``None`` 。特征描述，支持 str（单个特征）或 dict（多个特征）
+    :param max_n_bins: 最大分箱数，默认为5
+    :param min_n_bins: 最小分箱数，默认为2
+    :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制最小样本数
+    :param max_bin_size: 每箱最大样本数或占比，默认为None（不限制）
+    :param min_bad_rate: 每箱最小坏样本率，默认为0.0。坏样本率低于该值的分箱将与相邻
+        分箱合并；无论该参数取值，坏样本率为 0/1 的退化分箱都会被合并以避免 WOE 异常
+        （等宽 uniform / 等频 quantile 为保持切分结构精确，不参与该约束）
+
+    :param missing_separate: 是否将缺失值单独分为一箱，默认为True
+    :param prebinning: 预分箱方法，支持:
+
+        - str: 预分箱方法名（所有VALID_METHODS中的方法都可作为预分箱方法）
+
+        - BaseBinning: 预分箱器实例
+
+        - Dict: 预分箱配置，如 {'method': 'cart', 'max_n_bins': 20}
+
+        默认为None（不进行预分箱）
+
+    :param prebinning_params: 默认值为 ``None`` 。预分箱参数，当prebinning为str时使用
+    :param special_codes: 特殊值列表，默认为None
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :param random_state: 随机种子，默认为None
+    :param decimal: 数值型切分点保留的小数位数，默认为4
+    :param woe_clip: WOE值截断阈值，默认为None
+        当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
+        这会导致评分卡中对应分箱的分数异常。
+        设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
+
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+
+        - True: 剔除灰样本，不同目标下样本数不同，样本数相关列按目标单独显示
+
+        - False: 保留灰样本，不同目标下样本数相同，样本数相关列作为公共列
+
+    :param margins: 是否在分箱表最后添加合计行，默认 False
+
+        - True: 在最后一行显示合计，缺失值和特殊值放在正常分箱之后、合计之前
+
+    :param amount: 默认值为 ``None`` 。金额字段名称，用于金额口径分析。传入后会增加金额总数、金额占比等指标
+    :param verbose: 是否输出详细信息，默认为False
+    :param monotonic: 坏样本率单调性约束，默认为False
+
+        - False: 不要求单调性
+
+        - True 或 'auto': 自动检测最佳趋势（允许单增、单减、正U、倒U）
+
+        - 'auto_asc_desc': 自动检测，但只允许单增或单减（不允许U型）
+
+        - 'auto_heuristic': 使用启发式方法自动检测
+
+        - 'ascending': 强制坏样本率递增
+
+        - 'descending': 强制坏样本率递减
+
+        - 'peak': 允许单峰形态(先升后降，倒U型)
+
+        - 'valley': 允许单谷形态(先降后升，正U型)
+
+        - 'peak_heuristic': 使用启发式方法检测峰值
+
+        - 'valley_heuristic': 使用启发式方法检测谷值
+
+    :param long_format: 分箱表输出格式，默认 False
+
+        - False: 沿用原样式。多目标时使用多级表头（ ``分箱详情`` + 各逾期标签）按列展开
+
+        - True: 长格式输出。各逾期标签纵向堆叠，新增 ``逾期标签`` 列标识目标，
+          列顺序为 指标名称/指标含义/逾期标签/分箱标签/样本总数/样本占比/好样本数/坏样本数/...
+          单目标时同样会输出 ``逾期标签`` 列。 ``margins=True`` 时按各逾期标签分组分别追加合计行
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
+    :return: ``(binning_tables, binning_summary)`` 。分箱表结构为
+        ``{feature: {method: binning_table}}`` ，摘要使用两级列索引。
 
     **参考样例**
 
@@ -766,10 +883,12 @@ def feature_binning_summary(
     ...     bin_params={'mdlp': {'min_bin_size': 0.1}},
     ... )
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
@@ -999,19 +1118,138 @@ def feature_group_binning_summary(
     分箱器在全量数据上拟合一次，各分组复用同一套分箱规则，因此不同日期周期或
     类别分组下的坏样本率、LIFT、KS、IV 等指标可以直接横向比较。
 
+    :param features: 字段集合入口，支持字符串或一维字段序列；默认 ``None`` ，不可与 ``feature`` 同时指定。
+    :param kwargs: 传递给分箱统计的扩展关键字参数；分箱算法参数优先放入 ``bin_params`` 。
+
+    :param target: 目标变量列名，默认为'target'
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
+    :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
+
+        - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
+
+    :param desc: 默认值为 ``None`` 。特征描述，支持 str（单个特征）或 dict（多个特征）
+    :param max_n_bins: 最大分箱数，默认为5
+    :param min_n_bins: 最小分箱数，默认为2
+    :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制最小样本数
+    :param max_bin_size: 每箱最大样本数或占比，默认为None（不限制）
+    :param min_bad_rate: 每箱最小坏样本率，默认为0.0。坏样本率低于该值的分箱将与相邻
+        分箱合并；无论该参数取值，坏样本率为 0/1 的退化分箱都会被合并以避免 WOE 异常
+        （等宽 uniform / 等频 quantile 为保持切分结构精确，不参与该约束）
+
+    :param missing_separate: 是否将缺失值单独分为一箱，默认为True
+    :param prebinning: 预分箱方法，支持:
+
+        - str: 预分箱方法名（所有VALID_METHODS中的方法都可作为预分箱方法）
+
+        - BaseBinning: 预分箱器实例
+
+        - Dict: 预分箱配置，如 {'method': 'cart', 'max_n_bins': 20}
+
+        默认为None（不进行预分箱）
+
+    :param prebinning_params: 默认值为 ``None`` 。预分箱参数，当prebinning为str时使用
+    :param special_codes: 特殊值列表，默认为None
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :param random_state: 随机种子，默认为None
+    :param decimal: 数值型切分点保留的小数位数，默认为4
+    :param woe_clip: WOE值截断阈值，默认为None
+        当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
+        这会导致评分卡中对应分箱的分数异常。
+        设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
+
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+
+        - True: 剔除灰样本，不同目标下样本数不同，样本数相关列按目标单独显示
+
+        - False: 保留灰样本，不同目标下样本数相同，样本数相关列作为公共列
+
+    :param margins: 是否在分箱表最后添加合计行，默认 False
+
+        - True: 在最后一行显示合计，缺失值和特殊值放在正常分箱之后、合计之前
+
+    :param amount: 默认值为 ``None`` 。金额字段名称，用于金额口径分析。传入后会增加金额总数、金额占比等指标
+    :param verbose: 是否输出详细信息，默认为False
+    :param monotonic: 坏样本率单调性约束，默认为False
+
+        - False: 不要求单调性
+
+        - True 或 'auto': 自动检测最佳趋势（允许单增、单减、正U、倒U）
+
+        - 'auto_asc_desc': 自动检测，但只允许单增或单减（不允许U型）
+
+        - 'auto_heuristic': 使用启发式方法自动检测
+
+        - 'ascending': 强制坏样本率递增
+
+        - 'descending': 强制坏样本率递减
+
+        - 'peak': 允许单峰形态(先升后降，倒U型)
+
+        - 'valley': 允许单谷形态(先降后升，正U型)
+
+        - 'peak_heuristic': 使用启发式方法检测峰值
+
+        - 'valley_heuristic': 使用启发式方法检测谷值
+
+    :param long_format: 分箱表输出格式，默认 False
+
+        - False: 沿用原样式。多目标时使用多级表头（ ``分箱详情`` + 各逾期标签）按列展开
+
+        - True: 长格式输出。各逾期标签纵向堆叠，新增 ``逾期标签`` 列标识目标，
+          列顺序为 指标名称/指标含义/逾期标签/分箱标签/样本总数/样本占比/好样本数/坏样本数/...
+          单目标时同样会输出 ``逾期标签`` 列。 ``margins=True`` 时按各逾期标签分组分别追加合计行
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param data: 原始明细数据
-    :param feature: 待分析特征名或特征名列表
-    :param methods: 分箱方法或方法列表
-    :param date: 日期字段，与 ``freq`` 配合生成时间分组；与 ``group`` 二选一
-    :param freq: 日期频率，支持 ``D`` / ``W`` / ``M`` / ``Q``，默认按月
-    :param group: 类别分组字段；与 ``date`` 二选一
-    :param group_order: 分组顺序，支持升序、降序、出现顺序、排序函数或显式列表
-    :param dropna: 是否删除分组字段缺失样本；为 False 时归入“缺失”组
-    :param bin_params: 全局或按分箱方法配置的参数，规则与
-        :func:`feature_binning_summary` 一致
-    :param metrics: summary 汇总指标，规则与 :func:`feature_binning_summary` 一致
-    :return: ``(binning_tables, binning_summary)``。分箱表结构为
-        ``{feature: {method: {group: binning_table}}}``；summary 使用两级列索引。
+    :type data: pd.DataFrame
+    :param feature: 默认值为 ``None`` 。待分析特征名或特征名列表
+    :type feature: Union[str, List[str]]
+    :param methods: 默认值为 ``'mdlp'`` 。分箱方法或方法列表
+    :type methods: Union[str, List[str]]
+    :param date: 默认值为 ``None`` 。日期字段，与 ``freq`` 配合生成时间分组；与 ``group`` 二选一
+    :type date: Optional[str]
+    :param freq: 日期分组频率，默认 ``"M"`` （月末），接受 pandas 日期偏移频率，
+        如 ``"D"`` 、 ``"W-MON"`` 、 ``"MS"`` 、 ``"ME"`` 、 ``"QE"`` ；兼容旧别名 ``M/Q/Y`` 。
+
+    :type freq: str
+    :param group: 默认值为 ``None`` 。类别分组字段；与 ``date`` 二选一
+    :type group: Optional[str]
+    :param group_order: 分组顺序： ``"asc"`` （默认）升序， ``"desc"`` 降序，
+        ``"appearance"`` 按出现顺序；也支持排序函数或显式组名列表。
+
+    :type group_order: GroupOrder
+    :param dropna: 默认值为 ``True`` 。是否删除分组字段缺失样本；为 False 时归入“缺失”组
+    :type dropna: bool
+    :param bin_params: 默认值为 ``None`` 。全局或按分箱方法配置的参数，规则与
+        :func:`feature_binning_summary`  一致
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param metrics: summary 汇总指标，规则与  :func:`feature_binning_summary`  一致
+    :type metrics: Union[str, List[str]]
+    :return: ``(binning_tables, binning_summary)`` 。分箱表结构为
+        ``{feature: {method: {group: binning_table}}}`` ；summary 使用两级列索引。
 
     **参考样例**
 
@@ -1023,10 +1261,12 @@ def feature_group_binning_summary(
     ...     data, feature='score', group='商品类别', target='FPD',
     ... )
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
@@ -1198,7 +1438,8 @@ def _get_binner_bin_labels(
     bins: np.ndarray,
     fallback_splits: Optional[np.ndarray] = None,
 ) -> List[str]:
-    """按 ``bins`` 的唯一值顺序生成分箱标签，优先复用分箱器内部标签。"""
+    """按 ``bins`` 的唯一值顺序生成分箱标签，优先复用分箱器内部标签。
+    """
     unique_bins = np.unique(bins)
     label_map: Dict[int, str] = {}
 
@@ -1376,70 +1617,137 @@ def feature_bin_stats(
     支持单特征或多特征，支持单目标或多逾期标签+逾期天数组合分析。
     当传入 overdue 和 dpds 时，会生成多级表头展示不同标签组合下的分箱统计。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param data: 数据集
-    :param feature: 特征名称或特征名称列表
+    :type data: pd.DataFrame
+    :param feature: 默认值为 ``None`` 。特征名称或特征名称列表
+    :type feature: Union[str, List[str]]
     :param target: 目标变量名称，默认 None
-    :param overdue: 逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
+
         - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
-    :param rules: 自定义分箱规则，支持 list（所有特征统一规则）或 dict（按特征名映射规则）。
+
+    :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
+    :param rules: 默认值为 ``None`` 。自定义分箱规则，支持 list（所有特征统一规则）或 dict（按特征名映射规则）
         对 rules 中未包含的特征，按 method 参数重新训练分箱器。
         优先级: binner > rules > method
+
+    :type rules: Optional[Union[List, Dict[str, List]]]
     :param method: 分箱方法，可选（与 OptimalBinning.VALID_METHODS 一致，共17种）：
+
         - 无监督方法: 'uniform'(等宽), 'quantile'(等频), 'kmeans'(K-Means聚类),
                     'kernel_density'(核密度)
+
         - 有监督方法: 'tree'(决策树), 'cart'(CART), 'chi'(卡方), 'mdlp'(信息论),
                     'best_ks'(最优KS), 'best_iv'(最优IV), 'best_lift'(Best Lift),
                     'target_bad_rate'(目标坏样本率), 'monotonic'(单调性),
                     'genetic'(遗传算法), 'smooth'(平滑)
+
         - 运筹规划方法: 'or_tools'(OR-Tools整数规划，需安装 ortools),
                     'cp_sat'(CP-SAT约束规划，需安装 ortools)
+
         默认: 'mdlp'
-    :param desc: 特征描述，支持 str（单个特征）或 dict（多个特征）
-    :param binner: 分箱器，支持以下三种传入方式：
+
+    :type method: str
+    :param desc: 默认值为 ``None`` 。特征描述，支持 str（单个特征）或 dict（多个特征）
+    :type desc: Optional[Union[str, Dict[str, str]]]
+    :param binner: 默认值为 ``None`` 。分箱器，支持以下三种传入方式：
+
         - BaseBinning（已训练）: 对其中已包含的特征直接使用，未包含的特征按 method 参数重新训练
+
         - BaseBinning（未训练）: 作为模板，对每个特征 deepcopy 后 fit
+
         - Dict[str, BaseBinning]: 按特征名映射的已训练分箱器字典，未包含的特征按 method 参数重新训练
+
         优先级: binner > rules > method
+
+    :type binner: Optional[Union[BaseBinning, Dict[str, BaseBinning]]]
     :param max_n_bins: 最大分箱数，默认 5
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认 0.01；None 表示不限制
+    :type min_bin_size: Optional[Union[float, int]]
     :param missing_separate: 是否将缺失值单独分箱，默认 True
+    :type missing_separate: bool
     :param prebinning: 预分箱配置，参数格式与 OptimalBinning 保持一致，默认 'quantile'。
+
         - None: 不使用预分箱
+
         - str: 预分箱方法名（如 'quantile' / 'tree'）
+
         - BaseBinning: 预分箱器实例
+
         - Dict: 预分箱配置字典
+
+    :type prebinning: Optional[Union[str, BaseBinning, Dict]]
     :param prebinning_params: 预分箱参数（传给 OptimalBinning.prebinning_params）。
         默认 None，此时会使用 {'max_n_bins': 100}，即先等频100箱再合并。
+
+    :type prebinning_params: Optional[Dict[str, Any]]
     :param return_cols: 指定返回的列名列表，默认返回所有列
+    :type return_cols: Optional[List[str]]
     :param return_rules: 是否返回分箱规则，默认 False
-    :param return_binner: 返回 (统计表, {特征: 已拟合分箱器})，并保留统计表中的稳定“分箱”编号；
+    :type return_rules: bool
+    :param return_binner: 默认值为 ``False`` 。返回 (统计表, {特征: 已拟合分箱器})，并保留统计表中的稳定“分箱”编号
         与return_rules同时启用时返回 (统计表, 规则字典, 分箱器字典)
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+
+    :type return_binner: bool
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+
         - True: 剔除灰样本，不同目标下样本数不同，样本数相关列按目标单独显示
+
         - False: 保留灰样本，不同目标下样本数相同，样本数相关列作为公共列
+
+    :type del_grey: bool
     :param margins: 是否在分箱表最后添加合计行，默认 False
+
         - True: 在最后一行显示合计，缺失值和特殊值放在正常分箱之后、合计之前
-    :param amount: 金额字段名称，用于金额口径分析。传入后会增加金额总数、金额占比等指标
+
+    :type margins: bool
+    :param amount: 默认值为 ``None`` 。金额字段名称，用于金额口径分析。传入后会增加金额总数、金额占比等指标
+    :type amount: Optional[str]
     :param verbose: 是否输出详细信息，默认 0
-    :param monotonic: 单调性约束，控制分箱后坏样本率的单调方向，透传给 OptimalBinning。可选值：
-        - None: 不强制单调性约束
-        - 'auto_asc': 自动判断并强制单调递增
-        - 'auto_desc': 自动判断并强制单调递减
-        - 'auto_asc_desc': 自动选择最优方向（递增/递减），默认选项
-        - 'peak': 先升后降，适用于评分类特征
-        - 'valley': 先降后升
-        - bool: True=强制升序，False=强制降序
-        注意：需配合 method 参数使用，部分 method 默认已包含单调约束（如 'monotonic' 方法）
+    :type verbose: int
+    :param monotonic: 单调约束，默认 ``None`` 不附加约束； ``False`` 不要求单调，
+        ``True`` / ``"auto"`` 自动选择趋势。其他可选值与 :class:`OptimalBinning` 一致，
+        包括 ``"ascending"`` 、 ``"descending"`` 、 ``"peak"`` 、 ``"valley"`` 及对应启发式选项。
+
+    :type monotonic: Optional[Union[str, bool]]
     :param long_format: 分箱表输出格式，默认 False
-        - False: 沿用原样式。多目标时使用多级表头（``分箱详情`` + 各逾期标签）按列展开
+
+        - False: 沿用原样式。多目标时使用多级表头（ ``分箱详情`` + 各逾期标签）按列展开
+
         - True: 长格式输出。各逾期标签纵向堆叠，新增 ``逾期标签`` 列标识目标，
           列顺序为 指标名称/指标含义/逾期标签/分箱标签/样本总数/样本占比/好样本数/坏样本数/...
-          单目标时同样会输出 ``逾期标签`` 列。``margins=True`` 时按各逾期标签分组分别追加合计行
+          单目标时同样会输出 ``逾期标签`` 列。 ``margins=True`` 时按各逾期标签分组分别追加合计行
+
+    :type long_format: bool
     :param kwargs: 其他分箱器参数（如 lift_refine、prebinning 等）
 
     :return:
+
         - pd.DataFrame: 特征分箱统计表
+
         - Tuple[pd.DataFrame, Dict]: 当 return_rules=True 时返回 (统计表, 分箱规则)
 
     **参考样例**
@@ -1471,10 +1779,12 @@ def feature_bin_stats(
     >>> # 长格式输出：多逾期标签纵向堆叠，新增"逾期标签"列
     >>> table = feature_bin_stats(data, 'score', overdue='MOB1', dpds=[15, 0], long_format=True)
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
@@ -1854,23 +2164,58 @@ def feature_bin_stats_2d(
     ``overdue × dpd`` 口径重新计算样本数、坏样本率、WOE、IV、KS 等指标。
     ``del_grey=True`` 时每个目标按 overdue_operator 对应区间独立剔除灰样本。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param data: 原始明细数据
-    :param features: 恰好两个特征名，顺序对应二维分箱的两个轴
-    :param target: 二分类目标列名，与 ``overdue`` 二选一
-    :param overdue: 逾期天数字段名或列表
+    :type data: pd.DataFrame
+    :param features: 默认值为 ``None`` 。恰好两个特征名，顺序对应二维分箱的两个轴
+    :type features: List[str]
+    :param target: 默认值为 ``None`` 。二分类目标列名，与 ``overdue`` 二选一
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或列表
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: DPD 阈值或列表，默认逾期天数大于阈值记为坏样本，可通过 overdue_operator 调整
-    :param binner: 可选的已拟合或未拟合 :class:`OptimalBinning2D`
+    :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
+    :param binner: 默认值为 ``None`` 。可选的已拟合或未拟合  :class:`OptimalBinning2D`
+    :type binner: Optional[OptimalBinning2D]
     :param method: 两个轴的一维分箱方法，默认 ``quantile``
+    :type method: str
     :param desc: 指标含义，默认使用 ``特征1X特征2``
-    :param max_n_bins: 每个轴最大分箱数
-    :param min_bin_size: 二维普通分箱最小样本数或占比
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param margins: 是否为每个目标追加合计行
-    :param amount: 金额字段；传入后按金额口径计算统计
-    :param return_cols: 指定保留的统计列
-    :param return_binner: 是否同时返回已拟合二维分箱器
-    :param long_format: 是否按逾期标签纵向堆叠输出
-    :return: 二维分箱统计表；``return_binner=True`` 时返回 ``(table, binner)``
+    :type desc: Optional[str]
+    :param max_n_bins: 默认值为 ``5`` 。每个轴最大分箱数
+    :type max_n_bins: int
+    :param min_bin_size: 默认值为 ``0.02`` 。二维普通分箱最小样本数或占比
+    :type min_bin_size: Union[float, int]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
+    :param margins: 默认值为 ``False`` 。是否为每个目标追加合计行
+    :type margins: bool
+    :param amount: 默认值为 ``None`` 。金额字段；传入后按金额口径计算统计
+    :type amount: Optional[str]
+    :param return_cols: 默认值为 ``None`` 。指定保留的统计列
+    :type return_cols: Optional[List[str]]
+    :param return_binner: 默认值为 ``False`` 。是否同时返回已拟合二维分箱器
+    :type return_binner: bool
+    :param long_format: 默认值为 ``False`` 。是否按逾期标签纵向堆叠输出
+    :type long_format: bool
+    :return: 二维分箱统计表； ``return_binner=True`` 时返回 ``(table, binner)``
 
     **参考样例**
 
@@ -1879,10 +2224,12 @@ def feature_bin_stats_2d(
     ...     del_grey=True, margins=True, return_binner=True,
     ... )
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
@@ -2015,39 +2362,82 @@ def benchmark_binning_methods(
 
     仅使用 hscredit 内置分箱器，不依赖额外第三方分箱库。传入多个
     ``overdue`` 和多个 ``dpds`` 时，按全部组合分别执行基准测试。
-    ``methods=None`` 时遍历 :attr:`OptimalBinning.VALID_METHODS`
+    ``methods=None`` 时遍历  :attr:`OptimalBinning.VALID_METHODS`
     登记的所有方法。方法专属参数可通过 ``kwargs`` 透传给
-    :class:`OptimalBinning`。
+    :class:`OptimalBinning` 。
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
 
     :param data: 包含特征和逾期字段的数据集
+    :type data: pd.DataFrame
     :param feature: 待比较的特征字段名
-    :param overdue: 逾期天数字段名或字段名列表
+    :type feature: str
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名列表
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: 逾期阈值或阈值列表，默认 ``[3, 0]``
+    :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param max_n_bins: 最大分箱数，默认 5
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比或样本数，默认 0.01
+    :type min_bin_size: Union[float, int]
     :param monotonic: 单调性约束，默认 ``auto_asc_desc``
+    :type monotonic: Union[bool, str]
     :param methods: 待比较方法；默认遍历全部已登记方法
+    :type methods: Optional[List[str]]
     :param min_n_bins: 最小分箱数，默认 2
-    :param max_bin_size: 每箱最大样本占比或样本数
-    :param min_bad_rate: 每箱最小坏样本率
-    :param missing_separate: 是否将缺失值单独分箱
+    :type min_n_bins: int
+    :param max_bin_size: 默认值为 ``None`` 。每箱最大样本占比或样本数
+    :type max_bin_size: Optional[Union[float, int]]
+    :param min_bad_rate: 默认值为 ``0.0`` 。每箱最小坏样本率
+    :type min_bad_rate: float
+    :param missing_separate: 默认值为 ``True`` 。是否将缺失值单独分箱
+    :type missing_separate: bool
     :param prebinning: 预分箱方法或配置，默认 ``quantile``
+    :type prebinning: Optional[Union[str, BaseBinning, Dict]]
     :param prebinning_params: 预分箱参数；默认使用 ``{'max_n_bins': 100}``
-    :param special_codes: 特殊值列表
-    :param cat_cutoff: 类别合并阈值
-    :param random_state: 随机种子
-    :param verbose: 是否输出详细信息
-    :param decimal: 切分点保留小数位数
-    :param woe_clip: WOE 截断阈值
+    :type prebinning_params: Optional[Dict[str, Any]]
+    :param special_codes: 默认值为 ``None`` 。特殊值列表
+    :type special_codes: Optional[List]
+    :param cat_cutoff: 默认值为 ``None`` 。类别合并阈值
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param random_state: 默认值为 ``None`` 。随机种子
+    :type random_state: Optional[int]
+    :param verbose: 默认值为 ``False`` 。是否输出详细信息
+    :type verbose: Union[bool, int]
+    :param decimal: 默认值为 ``4`` 。切分点保留小数位数
+    :type decimal: int
+    :param woe_clip: 默认值为 ``None`` 。WOE 截断阈值
+    :type woe_clip: Optional[float]
     :param lift_refine: 是否启用 Lift 优化，默认 True
+    :type lift_refine: bool
     :param long_format: 是否返回平铺长表，默认 False，返回按逾期标签展开的两层列宽表
+    :type long_format: bool
     :param kwargs: 透传给 ``OptimalBinning`` 的方法专属参数
     :return: 使用中文指标列名的分箱方法对比表
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     reject_legacy_target_keywords(kwargs)
     if target is None and overdue is None and dpds is None:
@@ -2373,40 +2763,91 @@ def feature_efficiency_analysis(
     """特征效率分析：对比手工分箱与自动分箱效果，并输出趋势图。
 
     适用于单个数值型指标或评分变量的快速效果评估。函数会：
+
     1. 自动生成分位数分箱规则（默认使用 [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99]）
+
     2. 生成手工分箱与自动分箱两张分箱表
+
     3. 输出 2×2 组合图：上排为手工/自动分箱图，下排为 KS/ROC 曲线
+
     4. 当传入日期字段或分组字段时，额外输出手工分箱与自动分箱两张 bin_trend_plot 趋势图
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param data: 输入数据集
+    :type data: pd.DataFrame
     :param feature: 需要分析的特征名，建议为数值型指标/评分
+    :type feature: str
     :param rules: 手工分箱边界，支持 list 或 {feature: list}。默认 None，表示自动使用 quantiles 生成分箱边界
+    :type rules: Optional[Union[List, Tuple, np.ndarray, Dict[str, List]]]
     :param target: 目标变量列名，默认 target
-    :param overdue: 逾期列名。传入后会基于 overdue_operator 与 dpds 自动构造二分类目标
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期列名。传入后会基于 overdue_operator 与 dpds 自动构造二分类目标
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: 逾期阈值，支持整数或小数，仅在 overdue 模式下使用，默认 0
     :param method: 自动分箱方法，默认 mdlp
+    :type method: str
     :param desc: 特征中文描述，默认使用 feature
-    :param date: 日期列，传入后生成按时间分组的趋势图
-    :param group: 分组字段，支持单列或多列，传入后生成分组趋势图
+    :type desc: Optional[str]
+    :param date: 默认值为 ``None`` 。日期列，传入后生成按时间分组的趋势图
+    :type date: Optional[str]
+    :param group: 默认值为 ``None`` 。分组字段，支持单列或多列，传入后生成分组趋势图
+    :type group: Optional[Union[str, List[str]]]
     :param freq: 日期聚合频率，默认 M
+    :type freq: str
     :param max_n_bins: 自动分箱最大箱数，默认 5
+    :type max_n_bins: int
     :param min_bin_size: 自动分箱最小箱占比，默认 0.05
+    :type min_bin_size: float
     :param missing_separate: 缺失值是否单独分箱，默认 True
+    :type missing_separate: bool
     :param prebinning: 预分箱配置，默认 quantile
+    :type prebinning: Optional[Union[str, BaseBinning, Dict]]
     :param prebinning_params: 预分箱参数，默认 None
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+    :type prebinning_params: Optional[Dict[str, Any]]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
     :param margins: 是否追加合计行，默认 False
-    :param amount: 金额字段，传入后输出金额口径分箱表
+    :type margins: bool
+    :param amount: 默认值为 ``None`` 。金额字段，传入后输出金额口径分箱表
+    :type amount: Optional[str]
     :param figsize: 2×2 组合图尺寸，默认 (15, 10)
+    :type figsize: Tuple[float, float]
     :param trend_figsize: 趋势图尺寸，默认 None（由 bin_trend_plot 自动计算）
+    :type trend_figsize: Optional[Tuple[float, float]]
     :param comparison_orientation: 两张分箱图的方向，默认 horizontal
-    :param bin_params: 额外传给自动分箱 feature_bin_stats 的参数
-    :param trend_kwargs: 额外传给 bin_trend_plot 的参数
+    :type comparison_orientation: str
+    :param bin_params: 默认值为 ``None`` 。额外传给自动分箱 feature_bin_stats 的参数
+    :type bin_params: Optional[Dict[str, Any]]
+    :param trend_kwargs: 默认值为 ``None`` 。额外传给 bin_trend_plot 的参数
+    :type trend_kwargs: Optional[Dict[str, Any]]
     :param output_dir: 图片保存目录，默认 None（不落盘）
+    :type output_dir: Optional[str]
     :param suffix: 保存文件名后缀，默认空字符串
+    :type suffix: str
     :param quantiles: 分位数列表，用于自动生成分箱边界。默认 [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99]
+    :type quantiles: Optional[List[float]]
     :param rule_decimals: 分箱边界保留的小数位数，默认 4
+    :type rule_decimals: int
     :param save: 比较图片保存路径，如果提供则将生成的比较图保存至指定路径，默认为 None
+    :type save: Optional[str]
     :return: dict，包含分箱表、分箱规则、组合图与趋势图
 
     Example::
@@ -2431,10 +2872,12 @@ def feature_efficiency_analysis(
         ...     method='mdlp'
         ... )
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpds]``，``>=`` 剔除 ``(0, dpds)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpds]`` ， ``>=`` 剔除 ``(0, dpds)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     call_parameters = dict(locals())
@@ -2729,11 +3172,95 @@ def auto_feature_analysis(
     mode: Optional[str] = None,
     return_result: bool = False,
 ):
-    """自动特征分析，默认返回原有 (end_row, end_col)。
+    """自动特征分析.
 
-    mode='strict' 或 'best_effort' 启用章节状态；return_result=True 返回
-    ReportResult。严格模式在必需章节失败时拒绝发布工作簿；不可继续的计算
-    错误在尽力模式下也不会发布空报告，只在结构化返回中保留失败原因。
+    用于三方数据评估或自有评分效果评估。生成包含数据集概况、特征分箱统计、
+    KS 曲线、分布图等内容的 Excel 分析结果。
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :param mode: 执行模式，默认 ``None`` 保留传统异常行为； ``"strict"`` 在必需章节失败时
+        抛出携带报告结果的 ``ReportGenerationError`` ； ``"best_effort"`` 记录章节状态。
+        ``return_result=True`` 且未指定模式时使用 ``"best_effort"`` 。
+
+    :type mode: Optional[str]
+    :param return_result: 默认 ``False`` 返回 ``(end_row, end_col)`` ； ``True`` 返回
+        :class:`hscredit.report.result.ReportResult` ，包含表格、状态与结束位置。
+        尽力模式下仍须检查章节状态，不可把有失败章节的结果视为完整报告。
+
+    :type return_result: bool
+
+    :param data: 需要评估的数据集，需要包含目标变量
+    :type data: pd.DataFrame
+    :param features: 默认值为 ``None`` 。需要进行分析的特征名称，支持单个字符串或列表
+    :param target: 默认值为 ``None`` 。目标变量名称
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名称，与 target 参数互斥
+    :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整）
+    :param date: 默认值为 ``None`` 。日期列，用于时间维度分布分析
+    :param freq: 日期统计粒度，默认按月 "M"
+    :param data_summary_comment: 默认值为 ``''`` 。数据备注信息
+    :param excel_writer: 默认值为 ``None`` 。Excel 文件路径或 ExcelWriter 对象
+    :param sheet: 默认值为 ``'分析报告'`` 。工作表名称
+    :param start_col: 默认值为 ``2`` 。起始列
+    :param start_row: 默认值为 ``2`` 。起始行
+    :param dropna: 默认值为 ``False`` 。是否剔除缺失值
+    :param writer_params: 默认值为 ``None`` 。Excel 写入器初始化参数
+    :param bin_params: 默认值为 ``None`` 。分箱统计参数，支持 feature_bin_stats 的参数
+    :param feature_map: 默认值为 ``None`` 。特征名称映射字典
+    :param corr: 默认值为 ``False`` 。是否计算特征相关性
+    :param pictures: 默认值为 ``None`` 。需要生成的图片列表，支持 ["ks", "hist", "bin"]
+    :param suffix: 默认值为 ``''`` 。文件名后缀，避免同名文件被覆盖
+    :param output_dir: 默认值为 ``'model_report'`` 。图片输出目录
+    :param margins: 是否在每个特征分箱表末尾添加合计行，默认 False
+    :param amount: 默认值为 ``None`` 。放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
+    :param image_table_gap_rows: 默认值为 ``None`` 。图片区与分箱表之间的额外空行数
+    :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"`` ；支持颜色字符串、色阶列表或按列配置的字典
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
+        显式传入时优先于 ``bin_params['del_grey']`` ；默认 None 表示沿用 ``bin_params`` 配置。
+        启用后，样本总体分布、样本时间分布及时间分布图也会按各逾期口径剔除灰样本
+        变量综合统计和单标签图形使用首个标签剔灰后的样本，包含样本数及 IV/KS。
+
+    :type del_grey: Optional[bool]
+    :param show_progress: 是否实时显示特征处理进度和当前字段，默认 True
+    :type show_progress: bool
+    :return: (end_row, end_col) 分析结束位置
+
+    **参考样例**
+
+    >>> from hscredit.report.feature_analyzer import auto_feature_analysis
+    >>> auto_feature_analysis(data, features=['feature1'], target='target', excel_writer='分析结果.xlsx')
+
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
+        满足比较条件记为坏样本(1)，否则为好样本(0)。
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
+        ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+        默认 None 时沿用 ``bin_params`` 的比较符；显式参数优先。
+
+    :type overdue_operator: Optional[str]
+
+    **参考样例**
+
+    >>> import pandas as pd
+    >>> from hscredit.report import auto_feature_analysis
+    >>> data = pd.read_excel("examples/hscredit_yyp.xlsx")
+    >>> result = auto_feature_analysis(
+    ...     data, features=["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"],
+    ...     target="FPD", date="放款时间", amount="放款金额",
+    ...     excel_writer="特征分析.xlsx", pictures=["bin"], n_jobs=1,
+    ...     mode="strict", return_result=True,
+    ... )
     """
     parameters = dict(locals())
     parameters.pop("mode")
@@ -2825,11 +3352,12 @@ def _auto_feature_analysis_impl(
     :param margins: 是否在每个特征分箱表末尾添加合计行，默认 False
     :param amount: 放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
     :param image_table_gap_rows: 图片区与分箱表之间的额外空行数
-    :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"``；支持颜色字符串、色阶列表或按列配置的字典
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-        显式传入时优先于 ``bin_params['del_grey']``；默认 None 表示沿用 ``bin_params`` 配置。
+    :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"`` ；支持颜色字符串、色阶列表或按列配置的字典
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
+        显式传入时优先于 ``bin_params['del_grey']`` ；默认 None 表示沿用 ``bin_params`` 配置。
         启用后，样本总体分布、样本时间分布及时间分布图也会按各逾期口径剔除灰样本
         变量综合统计和单标签图形使用首个标签剔灰后的样本，包含样本数及 IV/KS。
+
     :param show_progress: 是否实时显示特征处理进度和当前字段，默认 True
     :return: (end_row, end_col) 分析结束位置
 
@@ -2838,9 +3366,9 @@ def _auto_feature_analysis_impl(
     >>> from hscredit.report.feature_analyzer import auto_feature_analysis
     >>> auto_feature_analysis(data, features=['feature1'], target='target', excel_writer='分析结果.xlsx')
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         默认 None 时沿用 ``bin_params`` 的比较符；显式参数优先。
     """

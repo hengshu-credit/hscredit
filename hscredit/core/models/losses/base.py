@@ -86,12 +86,13 @@ class BaseLoss(ABC):
 
     **参数**
 
-    :param name: 损失的标识名称。
+    :param name: 默认值为 ``'custom_loss'`` 。损失的标识名称
+    :type name: str
 
     **属性**
 
-    ``gradient`` / ``hessian`` 对概率求导，标度为 ``样本数 × 平均损失``；
-    树框架适配器统一转换到原始分数。``is_additive`` 表示可安全分批计算。
+    ``gradient`` / ``hessian`` 对概率求导，标度为 ``样本数 × 平均损失`` ；
+    树框架适配器统一转换到原始分数。 ``is_additive`` 表示可安全分批计算。
 
     **参考样例**
 
@@ -115,7 +116,7 @@ class BaseLoss(ABC):
         :param y_pred: 一维坏样本概率，取值在 [0, 1]；不接收原始分数。
         :return: float，损失越小越好；不对结果取负。
 
-        原始分数、两列概率或额外样本权重请用 ``evaluate``。
+        原始分数、两列概率或额外样本权重请用 ``evaluate`` 。
         子类必须实现本方法，并让 ``gradient`` / ``hessian`` 与其数学定义一致。
 
         >>> from hscredit.core.models.losses import FocalLoss
@@ -127,8 +128,10 @@ class BaseLoss(ABC):
         """返回对坏样本概率的一阶导数，用于实现训练目标。
 
         :param y_true: 形状 (n_samples,) 的 0/1 标签。
+        :type y_true: np.ndarray
         :param y_pred: 同形状的坏样本概率，通常在数值计算前裁剪至 (0, 1)。
-        :return: 同形状有限数组，定义为 ``d(n_samples * loss) / dp``；
+        :type y_pred: np.ndarray
+        :return: 同形状有限数组，定义为 ``d(n_samples * loss) / dp`` ；
             逐样本可加损失等于各行损失的导数，不再除以样本数。
 
         此处对概率 p 求导。框架适配器负责 sigmoid 链式求导与样本权重，
@@ -142,7 +145,9 @@ class BaseLoss(ABC):
         """返回对概率的二阶导数，或 None 以请求训练曲率近似。
 
         :param y_true: 一维 0/1 标签。
+        :type y_true: np.ndarray
         :param y_pred: 同形状坏样本概率。
+        :type y_pred: np.ndarray
         :return: ``d²(n_samples * loss) / dp²`` 的对角项数组，或 None。
             原始数学曲率可为负；树框架适配器转换后会采用正对角近似。
 
@@ -156,10 +161,10 @@ class BaseLoss(ABC):
 
         :param y_true: 一维 0/1 标签。
         :param y_pred: 同形状坏样本概率。
-        :return: 一维数组，其普通均值应等于 ``self(y_true, y_pred)``。
+        :return: 一维数组，其普通均值应等于 ``self(y_true, y_pred)`` 。
         :raises NotImplementedError: 损失依赖完整排序或整体样本分布，无法逐行分解。
 
-        自定义损失只有在每行计算不依赖其他行时才应设置 ``is_additive=True``。
+        自定义损失只有在每行计算不依赖其他行时才应设置 ``is_additive=True`` 。
 
         >>> from hscredit.core.models.losses import FocalLoss
         >>> values = FocalLoss().loss_values([0, 1], [0.2, 0.8])
@@ -173,12 +178,14 @@ class BaseLoss(ABC):
     def metric(self, name=None, *, kind="loss", **sample_params):
         """统一生成损失值或实际业务效果指标。
 
-        :param name: 可选的中文指标名称，省略时使用内置名称。
+        :param name: 默认值为 ``None`` 。可选的中文指标名称，省略时使用内置名称
         :param kind: loss（默认）评估损失公式，越小越好；business 评估配套业务效果，
             方向由返回指标的 direction 声明。无专用业务指标时回退为损失指标。
+
         :param sample_params: 替换指标副本中的逐行参数，例如
-            ``AmountWeightedLoss.metric(amounts=valid_amounts)``。
+            ``AmountWeightedLoss.metric(amounts=valid_amounts)`` 。
             仅支持提供 ``set_sample_params`` 的损失，行顺序须与评估数据一致。
+
         :return: 独立的 ``BaseMetric`` 参数快照，可离线调用、传入 ModelTuner，
             或转换为 sklearn 评分器、框架监控回调。
 
@@ -204,7 +211,7 @@ class BaseLoss(ABC):
     def to_metric(self, name=None, **sample_params):
         """``metric`` 的同义方法，参数、快照与返回语义完全相同。
 
-        :param name: 可选的中文指标名称。
+        :param name: 默认值为 ``None`` 。可选的中文指标名称
         :param sample_params: 评估数据对应的样本金额或金融参数。
         :return: ``LossMetric`` 实例。
 
@@ -214,12 +221,12 @@ class BaseLoss(ABC):
         return self.metric(name=name, **sample_params)
 
     def business_metric(self):
-        """兼容旧调用；新代码统一使用 ``metric(kind='business')``。
+        """兼容旧调用；新代码统一使用 ``metric(kind='business')`` 。
 
         :return: ``BaseMetric`` 实例，继承本损失的头部比例、成本等业务参数。
             排序目标对应 AUC，分离目标对应 KS，审批目标对应坏账率、通过率
-            或利润等。没有专用映射时返回本损失的 ``LossMetric``，
-            例如 FocalLoss 与 AmountWeightedLoss。详见 ``business_metric_for_loss``。
+            或利润等。没有专用映射时返回本损失的 ``LossMetric`` ，
+            例如 FocalLoss 与 AmountWeightedLoss。详见 ``business_metric_for_loss`` 。
 
         损失值用于衡量代理优化目标，业务指标用于衡量实际模型表现，
         两者可能有不同的最优模型及优化方向，应通过 ``metric.direction`` 判断。
@@ -240,10 +247,12 @@ class BaseLoss(ABC):
         :param y_true: 一维 0/1 标签，1 为坏样本。
         :param y_pred: 一维坏样本概率，或类别顺序 [0, 1] 的两列概率。
             ``raw_score=True`` 时改为一维原始分数（logit）。
-        :param sample_weight: 可选的一维非负样本权重，须有限、等长且总和大于 0。
+
+        :param sample_weight: 默认值为 ``None`` 。可选的一维非负样本权重，须有限、等长且总和大于 0
             只有可逐行分解的损失支持额外权重；不得用金额数组替代样本行对齐。
+
         :param raw_score: 是否先将一维原始分数转换为坏样本概率，默认 False。
-        :param sample_params: 当前评估数据的金额或金融参数，语义同 ``metric``。
+        :param sample_params: 当前评估数据的金额或金融参数，语义同 ``metric`` 。
         :return: float，原始损失值，越小越好。
 
         >>> from hscredit.core.models.losses import FocalLoss
@@ -257,7 +266,8 @@ class BaseLoss(ABC):
         """生成 sklearn 评分器，自动对损失取负以符合越大越好的约定。
 
         :return: ``scorer(estimator, X, y_true, sample_weight=None)`` 可调用对象。
-            模型须有 ``predict_proba``，类别为 0 和 1。
+            模型须有 ``predict_proba`` ，类别为 0 和 1。
+
         :raises ValueError: 已绑定逐行金额等数组，无法在 sklearn CV 中自动切分。
 
         >>> from hscredit.core.models.losses import FocalLoss
@@ -270,11 +280,13 @@ class BaseLoss(ABC):
     def to_xgboost(self, api="native"):
         """生成 XGBoost 自定义目标，自动处理原始分数、链接函数和权重。
 
-        :param api: ``'native'`` 返回 ``objective(preds, DMatrix)``，用于
-            ``xgboost.train(obj=...)``；``'sklearn'`` 返回
-            ``objective(y_true, y_pred, sample_weight=None)``，用于 XGBClassifier。
+        :param api: 默认值为 ``'native'`` 。 ``'native'`` 返回 ``objective(preds, DMatrix)`` ，用于
+            ``xgboost.train(obj=...)`` ； ``'sklearn'`` 返回
+            ``objective(y_true, y_pred, sample_weight=None)`` ，用于 XGBClassifier。
+
         :return: 返回 ``(grad, hess)`` 两个等长数组的目标回调。
             输入预测始终为原始分数；非凸目标采用正对角 Hessian 近似。
+
         :raises ValueError: api 无效，或跨样本损失被传入额外权重。
 
         >>> from hscredit.core.models.losses import FocalLoss
@@ -299,9 +311,10 @@ class BaseLoss(ABC):
     def to_lightgbm(self, api="sklearn"):
         """生成 LightGBM 自定义目标。
 
-        :param api: 默认 ``'sklearn'``，用于 ``LGBMClassifier(objective=...)``；
+        :param api: 默认 ``'sklearn'`` ，用于 ``LGBMClassifier(objective=...)`` ；
             ``'native'`` 用于 ``lightgbm.train`` 的 params['objective']。
-        :return: 返回 (grad, hess) 的回调；原始分数、权重与曲率语义同 ``to_xgboost``。
+
+        :return: 返回 (grad, hess) 的回调；原始分数、权重与曲率语义同 ``to_xgboost`` 。
 
         >>> from hscredit.core.models.losses import FocalLoss
         >>> from lightgbm import LGBMClassifier
@@ -314,6 +327,7 @@ class BaseLoss(ABC):
 
         :return: 带 ``calc_ders_range(approxes, targets, weights)`` 的目标对象。
             接收原始分数，返回逐行 (-grad, -hess)。
+
         :raises ValueError: 损失不能安全分批计算，例如全量排序或绑定金额数组。
 
         >>> from hscredit.core.models.losses import FocalLoss
@@ -327,8 +341,9 @@ class BaseLoss(ABC):
     def to_ngboost(self):
         """生成 NGBoost Score；必须同时使用返回类的 distribution。
 
-        :return: NGBoost Score 子类，``score_class.distribution`` 是配套的
+        :return: NGBoost Score 子类， ``score_class.distribution`` 是配套的
             Bernoulli 分布子类；训练接收标签，内部自行读取坏样本概率。
+
         :raises ImportError: NGBoost 未安装。
         :raises ValueError: 损失不能安全地逐行、分批计算。
 
@@ -394,8 +409,8 @@ class BaseMetric(ABC):
 
     **参数**
 
-    :param name: 指标名称。
-    :param greater_is_better: True 表示越大越好。
+    :param name: 默认值为 ``'自定义指标'`` 。指标名称
+    :param greater_is_better: 默认值为 ``True`` 。True 表示越大越好
 
     **属性**
 
@@ -419,7 +434,7 @@ class BaseMetric(ABC):
 
     @property
     def direction(self):
-        """返回 ``'maximize'`` 或 ``'minimize'``，可直接传给 Optuna。
+        """返回 ``'maximize'`` 或 ``'minimize'`` ，可直接传给 Optuna。
 
         >>> from hscredit.core.models.losses import FocalLoss
         >>> FocalLoss().metric().direction
@@ -436,7 +451,7 @@ class BaseMetric(ABC):
         :return: 有限 float；优劣方向由 ``greater_is_better`` 指定。
 
         若子类支持权重，应增加 ``sample_weight=None`` 参数；输入原始分数
-        或两列概率时统一使用 ``evaluate``，避免回调协议与离线协议混淆。
+        或两列概率时统一使用 ``evaluate`` ，避免回调协议与离线协议混淆。
         """
 
     def evaluate(self, y_true, y_pred, sample_weight=None, *, raw_score=False):
@@ -445,8 +460,10 @@ class BaseMetric(ABC):
         :param y_true: 一维、非空 0/1 标签。
         :param y_pred: 一维坏样本概率，或列顺序 [0, 1] 的两列概率。
             ``raw_score=True`` 时接收一维 logit，并先做 sigmoid。
-        :param sample_weight: 可选一维非负有限数组，等长且总和大于 0；
+
+        :param sample_weight: 默认值为 ``None`` 。可选一维非负有限数组，等长且总和大于 0
             指标子类必须声明支持此参数。
+
         :param raw_score: 是否将一维原始分数转为坏样本概率，默认 False。
         :return: float，原始指标值，不根据优化方向改变符号。
         :raises ValueError: 输入无效、权重不支持，或指标返回非有限值。
@@ -472,7 +489,7 @@ class BaseMetric(ABC):
         """生成 sklearn CV 或 GridSearchCV 使用的评分器。
 
         :return: 独立参数快照，签名为
-            ``scorer(estimator, X, y_true, sample_weight=None)``。
+            ``scorer(estimator, X, y_true, sample_weight=None)`` 。
             根据 ``estimator.classes_`` 选择类别 1 的预测概率；仅在此处
             对越小越好的指标取负，保持 sklearn 越大越好的约定。
 
@@ -485,12 +502,14 @@ class BaseMetric(ABC):
     def to_xgboost(self, api="native", *, raw_score=False):
         """生成 XGBoost 指标回调。
 
-        :param api: ``'native'`` 用于 ``xgboost.train(custom_metric=...)``；
-            ``'sklearn'`` 用于 ``XGBClassifier(eval_metric=...)``。
-        :param raw_score: 使用自定义训练目标时设为 True；内置 logistic 目标
+        :param api: 默认值为 ``'native'`` 。 ``'native'`` 用于 ``xgboost.train(custom_metric=...)``
+            ``'sklearn'`` 用于 ``XGBClassifier(eval_metric=...)`` 。
+
+        :param raw_score: 默认值为 ``False`` 。使用自定义训练目标时设为 True；内置 logistic 目标
             通常传来概率，保持 False。转换只做一次，不能同时外部 sigmoid。
-        :return: native 回调 ``metric(preds, DMatrix) -> (name, value)``；
-            sklearn 回调 ``metric(y_true, y_pred, sample_weight=None) -> value``。
+
+        :return: native 回调 ``metric(preds, DMatrix) -> (name, value)`` ；
+            sklearn 回调 ``metric(y_true, y_pred, sample_weight=None) -> value`` 。
 
         原生 train 还需 maximize=metric.greater_is_better；sklearn 早停需配置
         相同方向的 EarlyStopping 回调。HSCredit 模型可自动完成这些配置。
@@ -517,9 +536,10 @@ class BaseMetric(ABC):
     def to_lightgbm(self, api="sklearn", *, raw_score=False):
         """生成 LightGBM 指标回调，返回值自动携带优化方向。
 
-        :param api: ``'sklearn'`` 用于 ``LGBMClassifier.fit(eval_metric=...)``；
-            ``'native'`` 用于 ``lightgbm.train(feval=...)``。
-        :param raw_score: 与自定义目标一起使用时设 True，内置概率目标用 False。
+        :param api: 默认值为 ``'sklearn'`` 。 ``'sklearn'`` 用于 ``LGBMClassifier.fit(eval_metric=...)``
+            ``'native'`` 用于 ``lightgbm.train(feval=...)`` 。
+
+        :param raw_score: 默认值为 ``False`` 。与自定义目标一起使用时设 True，内置概率目标用 False
         :return: 返回 ``(name, value, greater_is_better)`` 的回调。
             native 参数为 (preds, Dataset)，sklearn 为 (y_true, y_pred, weight=None)。
 
@@ -606,7 +626,7 @@ class LossMetric(BaseMetric):
 
     :param loss: 损失实例；创建时复制其参数，评估不会改变训练对象。
     :param name: 自定义指标名，默认采用中文名称。
-    :param sample_params: 替换副本的样本参数，例如 ``amounts=valid_amounts``；
+    :param sample_params: 替换副本的样本参数，例如 ``amounts=valid_amounts`` ；
         须与验证集逐行对应，支持范围由损失的 ``set_sample_params`` 决定。
 
     **属性**
@@ -658,7 +678,7 @@ class LossMetric(BaseMetric):
     def to_scorer(self):
         """生成 sklearn 评分器，并检查样本参数能否安全用于交叉验证。
 
-        :return: ``scorer(estimator, X, y_true, sample_weight=None)``，输出负损失。
+        :return: ``scorer(estimator, X, y_true, sample_weight=None)`` ，输出负损失。
         :raises ValueError: 指标绑定 amounts、lgd、ead、rate 或 cost 的逐行数组；
             应在每折内切分对应数组并重新构造指标，或用 ModelTuner 的折内适配。
 

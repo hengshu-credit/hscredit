@@ -96,6 +96,8 @@ class SwapType(Enum):
 class SwapRiskConfig:
     """Swap风险分析配置.
 
+    **参数**
+
     :param score_col: 评分字段名，用于风险预估
     :param swap_type_col: swap类型字段名
     :param amount: 金额字段名（可选）
@@ -124,6 +126,8 @@ class SwapRiskConfig:
 class PassRateAnalysis:
     """通过率分析结果.
 
+    **参数**
+
     :param original_pass_rate: 原策略通过率
     :param new_pass_rate: 新策略通过率
     :param absolute_change: 通过率绝对变化（百分点）
@@ -149,6 +153,8 @@ class PassRateAnalysis:
 class RiskMetrics:
     """风险指标.
 
+    **参数**
+
     :param bad_rate: 坏账率
     :param lift: LIFT值
     :param bad_improvement: 风险改善
@@ -164,6 +170,8 @@ class RiskMetrics:
 @dataclass
 class RiskRejectionMetrics:
     """风险拒绝率指标.
+
+    **参数**
 
     :param rejection_rate: 拒绝率
     :param risk_rejection_rate: 风险拒绝率
@@ -200,12 +208,39 @@ class ReferenceDataProvider(BaseEstimator):
 
     从有标签的参考数据计算评分区间逾期率，用于swap分析中的风险预估。
 
-    :param score_col: 评分字段名
-    :param target_cols: 目标变量字段名或列表
-    :param amount: 金额字段名（可选）
+    **参数**
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
+    :param score_col: 默认值为 ``'score'`` 。评分字段名
+    :type score_col: str
+    :param target_cols: 默认值为 ``'target'`` 。目标变量字段名或列表
+    :type target_cols: Union[str, List[str]]
+    :param amount: 默认值为 ``None`` 。金额字段名（可选）
+    :type amount: Optional[str]
     :param method: 分箱方法，默认'quantile'
+    :type method: str
     :param max_n_bins: 最大分箱数，默认10
-    :param rules: 自定义分箱边界（可选）
+    :type max_n_bins: int
+    :param rules: 默认值为 ``None`` 。自定义分箱边界（可选）
+    :type rules: Optional[List[float]]
     """
 
     def __init__(
@@ -237,6 +272,7 @@ class ReferenceDataProvider(BaseEstimator):
         """从参考数据计算评分区间逾期率.
 
         :param df: 参考数据集，包含score_col和target_cols
+        :type df: pd.DataFrame
         :return: self
         """
         df = df.copy()
@@ -294,7 +330,9 @@ class ReferenceDataProvider(BaseEstimator):
         """根据评分预估坏样本率.
 
         :param scores: 单个评分或评分序列
+        :type scores: Union[float, pd.Series]
         :param target: 目标变量名（可选，默认使用第一个）
+        :type target: str
         :return: 预估坏样本率
         """
         if not self._is_fitted:
@@ -336,8 +374,31 @@ class SwapAnalyzer(BaseEstimator):
 
     对swap数据进行风险预估和指标计算。
 
-    :param config: Swap风险分析配置
-    :param ref_provider: 参考数据提供者（可选）
+    **参数**
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
+    :param config: 默认值为 ``None`` 。Swap风险分析配置
+    :type config: Optional[SwapRiskConfig]
+    :param ref_provider: 默认值为 ``None`` 。参考数据提供者（可选）
+    :type ref_provider: Optional[ReferenceDataProvider]
     """
 
     def __init__(
@@ -361,7 +422,9 @@ class SwapAnalyzer(BaseEstimator):
         """执行swap分析.
 
         :param swap_df: swap数据集
-        :param ref_provider: 参考数据提供者（可选）
+        :type swap_df: pd.DataFrame
+        :param ref_provider: 默认值为 ``None`` 。参考数据提供者（可选）
+        :type ref_provider: Optional[ReferenceDataProvider]
         :return: SwapAnalysisResult分析结果
         """
         candidate_provider = ref_provider if ref_provider is not None else self.ref_provider
@@ -699,16 +762,28 @@ class SwapAnalyzer(BaseEstimator):
 class SwapAnalysisResult:
     """Swap分析结果.
 
+    **参数**
+
     :param count_stats: 订单口径统计
+    :type count_stats: Dict[SwapType, Dict]
     :param amount_stats: 金额口径统计（可选）
+    :type amount_stats: Optional[Dict[SwapType, Dict]]
     :param count_combined: 订单口径组合统计
+    :type count_combined: Dict[str, Dict]
     :param amount_combined: 金额口径组合统计（可选）
+    :type amount_combined: Optional[Dict[str, Dict]]
     :param config: Swap风险分析配置
+    :type config: SwapRiskConfig
     :param targets: 目标变量列表
+    :type targets: List[str]
     :param pass_rate_analysis: 通过率分析结果
+    :type pass_rate_analysis: PassRateAnalysis
     :param risk_rejection_metrics: 风险拒绝率指标
+    :type risk_rejection_metrics: RiskRejectionMetrics
     :param risk_rejection_metrics_dict: 各标签的风险拒绝率指标
+    :type risk_rejection_metrics_dict: Dict[str, RiskRejectionMetrics]
     :param total_samples: 总样本数
+    :type total_samples: int
     """
 
     def __init__(
@@ -738,8 +813,10 @@ class SwapAnalysisResult:
     def get_summary_report(self, metric: str = "count", target: str = None) -> pd.DataFrame:
         """生成汇总报告.
 
-        :param metric: 'count'订单口径或'amount'金额口径
+        :param metric: 默认值为 ``'count'`` 。'count'订单口径或'amount'金额口径
+        :type metric: str
         :param target: 指定标签，默认使用第一个
+        :type target: str
         :return: 汇总报告DataFrame
         """
         target = target or self.targets[0]
@@ -917,8 +994,10 @@ class SwapAnalysisResult:
     def get_detail_report(self, metric: str = "count", target: str = None) -> pd.DataFrame:
         """生成详细报告（四象限）.
 
-        :param metric: 'count'订单口径或'amount'金额口径
+        :param metric: 默认值为 ``'count'`` 。'count'订单口径或'amount'金额口径
+        :type metric: str
         :param target: 指定标签，默认使用第一个
+        :type target: str
         :return: 详细报告DataFrame
         """
         target = target or self.targets[0]
@@ -970,6 +1049,7 @@ class SwapAnalysisResult:
         """获取指定标签的风险拒绝率报告.
 
         :param target: 目标变量名，默认使用第一个
+        :type target: str
         :return: 风险拒绝率报告DataFrame
         """
         target = target or self.targets[0]
@@ -993,14 +1073,41 @@ def create_swap_dataset(
 ) -> pd.DataFrame:
     """创建swap数据集.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param original_rule_col: 原策略规则字段
+    :type original_rule_col: str
     :param new_rule_col: 新策略规则字段
+    :type new_rule_col: str
     :param score_col: 评分字段
-    :param swap_type_col: swap类型输出字段名
-    :param amount: 金额字段（可选）
-    :param rule_type: 规则类型，"reject"表示拒绝规则（1=拒绝,0=通过），
+    :type score_col: str
+    :param swap_type_col: 默认值为 ``'swap_type'`` 。swap类型输出字段名
+    :type swap_type_col: str
+    :param amount: 默认值为 ``None`` 。金额字段（可选）
+    :type amount: Optional[str]
+    :param rule_type: 默认值为 ``'reject'`` 。规则类型，"reject"表示拒绝规则（1=拒绝,0=通过）
                       "pass"表示通过规则（1=通过,0=拒绝）
+
+    :type rule_type: str
     :return: 包含swap_type的数据集
     """
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
@@ -1050,15 +1157,41 @@ def create_swap_dataset_from_rules(
 ) -> pd.DataFrame:
     """从Rule对象创建swap数据集.
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param original_rule: 原策略Rule对象
     :param new_rule: 新策略Rule对象
     :param score_col: 评分字段
-    :param swap_type_col: swap类型输出字段名
-    :param amount: 金额字段（可选）
-    :param rule_type: 规则类型，"reject"表示拒绝规则，"pass"表示通过规则
-    :param original_rule_name: 原策略规则结果临时字段名
-    :param new_rule_name: 新策略规则结果临时字段名
+    :type score_col: str
+    :param swap_type_col: 默认值为 ``'swap_type'`` 。swap类型输出字段名
+    :type swap_type_col: str
+    :param amount: 默认值为 ``None`` 。金额字段（可选）
+    :type amount: Optional[str]
+    :param rule_type: 默认值为 ``'reject'`` 。规则类型，"reject"表示拒绝规则，"pass"表示通过规则
+    :type rule_type: str
+    :param original_rule_name: 默认值为 ``'original_reject'`` 。原策略规则结果临时字段名
+    :type original_rule_name: str
+    :param new_rule_name: 默认值为 ``'new_reject'`` 。新策略规则结果临时字段名
+    :type new_rule_name: str
     :return: 包含swap_type的数据集
     """
     df = df.copy()
@@ -1231,23 +1364,60 @@ def swap_analysis(
 
     传入数据集和参数配置，直接得到完整的swap分析结果。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param swap_df: swap数据集（含swap_type和score）
+    :type swap_df: pd.DataFrame
     :param reference_df: 参考数据集（含score和target/overdue）
-    :param score_col: 评分字段名，用于风险预估
-    :param target: 目标变量字段名（可选），与overdue+dpds二选一
-    :param overdue: 逾期天数字段名或列表（可选），如'MOB1'或['MOB1','MOB3']
+    :type reference_df: pd.DataFrame
+    :param score_col: 默认值为 ``'score'`` 。评分字段名，用于风险预估
+    :type score_col: str
+    :param target: 默认值为 ``None`` 。目标变量字段名（可选），与overdue+dpds二选一
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或列表（可选），如'MOB1'或['MOB1','MOB3']
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: 逾期定义天数或列表（可选），如15或[15,30]
+
         - 默认逾期天数>dpds为坏样本(1)，可通过 overdue_operator 调整
-    :param swap_type_col: swap类型字段名
-    :param amount: 金额字段名（可选），用于金额口径分析
+
+    :type dpds: Optional[Union[int, List[int]]]
+    :param swap_type_col: 默认值为 ``'swap_type'`` 。swap类型字段名
+    :type swap_type_col: str
+    :param amount: 默认值为 ``None`` 。金额字段名（可选），用于金额口径分析
+    :type amount: Optional[str]
     :param out_in_uplift: out-in风险上浮因子，默认2.0
-    :param original_pass_rate: 原策略通过率（可选），用于无out-out数据场景
-    :param target_aliases: 目标变量别名（可选），如{'target_dpd15': 'DPD15+'}
-    :param rules_out_out: out-out象限规则集，支持Rule或List[Rule]（可选）
-    :param rules_in_out: in-out象限规则集，支持Rule或List[Rule]（可选）
-    :param rules_in_in: in-in象限规则集，支持Rule或List[Rule]（可选）
-    :param rules_out_in: out-in象限规则集，支持Rule或List[Rule]（可选）
-    :param rule_execution_mode: 模块内规则执行方式，'parallel'表示命中任意规则，'serial'表示按规则顺序命中第一个
+    :type out_in_uplift: float
+    :param original_pass_rate: 默认值为 ``None`` 。原策略通过率（可选），用于无out-out数据场景
+    :type original_pass_rate: Optional[float]
+    :param target_aliases: 默认值为 ``None`` 。目标变量别名（可选），如{'target_dpd15': 'DPD15+'}
+    :type target_aliases: Optional[Dict[str, str]]
+    :param rules_out_out: 默认值为 ``None`` 。out-out象限规则集，支持Rule或List[Rule]（可选）
+    :type rules_out_out: Optional[Union[Rule, List[Rule]]]
+    :param rules_in_out: 默认值为 ``None`` 。in-out象限规则集，支持Rule或List[Rule]（可选）
+    :type rules_in_out: Optional[Union[Rule, List[Rule]]]
+    :param rules_in_in: 默认值为 ``None`` 。in-in象限规则集，支持Rule或List[Rule]（可选）
+    :type rules_in_in: Optional[Union[Rule, List[Rule]]]
+    :param rules_out_in: 默认值为 ``None`` 。out-in象限规则集，支持Rule或List[Rule]（可选）
+    :type rules_out_in: Optional[Union[Rule, List[Rule]]]
+    :param rule_execution_mode: 默认值为 ``'parallel'`` 。模块内规则执行方式，'parallel'表示命中任意规则，'serial'表示按规则顺序命中第一个
+    :type rule_execution_mode: str
     :param kwargs: 其他配置参数，如bin_method, max_n_bins, custom_bins等
     :return: SwapAnalysisResult分析结果对象
 
@@ -1282,10 +1452,12 @@ def swap_analysis(
     >>> result.pass_rate_report
     >>> result.risk_rejection_report
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: str
     """
     validate_overdue_operator(overdue_operator)
     swap_df = _apply_swap_type_rule_sets(

@@ -13,8 +13,9 @@ class CallableMetric(BaseMetric):
 
     **参数**
 
-    :param function: ``function(y_true, probability, **kwargs) -> float``。
+    :param function: ``function(y_true, probability, **kwargs) -> float`` 。
         第一项为0/1标签，第二项为坏样本概率；不接受 sklearn scorer 或框架回调协议。
+
     :param name: 中文显示名称，默认“自定义指标”。多指标时请使用不同名称。
     :param greater_is_better: 必须明确指定 True（最大化）或 False（最小化）。
     :param kwargs: 固定业务参数，例如阈值或收益参数；创建时复制。
@@ -22,7 +23,7 @@ class CallableMetric(BaseMetric):
 
     **属性**
 
-    ``direction``、``evaluate``、``to_scorer`` 和框架适配方法继承自 BaseMetric。
+    ``direction`` 、 ``evaluate`` 、 ``to_scorer`` 和框架适配方法继承自 BaseMetric。
 
     **参考样例**
 
@@ -62,7 +63,7 @@ class CallableMetric(BaseMetric):
         """校验并计算原始指标值，不按方向改变正负号。
 
         :param y_true: 0/1真实标签，长度为样本数。
-        :param y_pred: 坏样本概率；可为一维或两列 ``predict_proba``。
+        :param y_pred: 坏样本概率；可为一维或两列 ``predict_proba`` 。
         :param sample_weight: 可选非负有限权重，函数须支持该参数。
         :return: 单个有限浮点数；列表、框架三元组、缺失值会报中文错误。
 
@@ -93,11 +94,12 @@ def make_metric(function, *, name="自定义指标", greater_is_better, **kwargs
 
     :param function: ``(y_true, probability, **kwargs) -> float`` 的函数。
         输入是坏样本概率，不能传 sklearn scorer 或 XGBoost/LightGBM 回调。
+
     :param name: 显示名称，默认“自定义指标”。
     :param greater_is_better: True 表示越大越好，False 表示越小越好；必须显式提供。
     :param kwargs: 转交函数的固定业务参数，不能包含样本数组权重。
     :return: CallableMetric，可直接传 ``ModelTuner(metric=...)`` 或
-        ``LightGBM(eval_metric=...)``；CV 使用返回对象的 ``to_scorer()``。
+        ``LightGBM(eval_metric=...)`` ；CV 使用返回对象的 ``to_scorer()`` 。
 
     **参考样例**
 

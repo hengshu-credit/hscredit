@@ -57,7 +57,8 @@ class QualifiedTarget:
     def parse(cls, value: str) -> "QualifiedTarget":
         """解析以点分隔的数据库、模式和表目标。
 
-        :param value: ``数据库``、``数据库.表`` 或多级限定名。
+        :param value: ``数据库`` 、 ``数据库.表`` 或多级限定名。
+        :type value: str
         :return: 保持原始大小写的限定目标。
         :raises ValidationError: 目标为空或包含空片段。
         """
@@ -92,8 +93,9 @@ def parse_targets(
 ) -> Optional[Tuple[QualifiedTarget, ...]]:
     """将目标参数规范化为限定名元组。
 
-    :param targets: 单个目标字符串、目标字符串序列或 ``None``。
-    :return: 限定目标元组；``None`` 表示由适配器扫描默认可见范围。
+    :param targets: 单个目标字符串、目标字符串序列或 ``None`` 。
+    :type targets: Optional[Sequence[str]]
+    :return: 限定目标元组； ``None`` 表示由适配器扫描默认可见范围。
     :raises ValidationError: 输入不是字符串序列、序列为空或目标格式无效。
     """
 
@@ -113,7 +115,8 @@ def metadata_frame(inspection: MetadataInspection) -> pd.DataFrame:
     """将内部元数据映射为中文列名宽表。
 
     :param inspection: 适配器返回的元数据记录和错误。
-    :return: 固定中文列名的 DataFrame；原始字段值不翻译，错误保存在 ``attrs["错误"]``。
+    :type inspection: MetadataInspection
+    :return: 固定中文列名的 DataFrame；原始字段值不翻译，错误保存在 ``attrs["错误"]`` 。
     :rtype: pandas.DataFrame
     """
 

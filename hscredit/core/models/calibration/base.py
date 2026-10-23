@@ -19,8 +19,10 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
 
     **参数**
 
-    :param n_bins: 校准指标与可靠性曲线分箱数，必须为正整数。
-    :param strategy: ``"uniform"`` 等宽分箱或 ``"quantile"`` 等频分箱。
+    :param n_bins: 默认值为 ``10`` 。校准指标与可靠性曲线分箱数，必须为正整数
+    :type n_bins: int
+    :param strategy: 默认值为 ``'uniform'`` 。 ``"uniform"`` 等宽分箱或 ``"quantile"`` 等频分箱
+    :type strategy: str
     """
 
     artifact_kind = "概率校准器"
@@ -31,7 +33,8 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
         self._validate_configuration()
 
     def _validate_configuration(self) -> None:
-        """校验可被 ``set_params`` 修改的分箱配置。"""
+        """校验可被 ``set_params`` 修改的分箱配置。
+        """
         if not isinstance(self.n_bins, int) or isinstance(self.n_bins, bool) or self.n_bins < 1:
             raise ValueError("n_bins必须是大于等于1的整数")
         if self.strategy not in {"uniform", "quantile"}:
@@ -58,7 +61,8 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
 
     @staticmethod
     def _validate_probabilities(y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
-        """返回一维、非空、有限且位于 ``[0, 1]`` 的概率数组。"""
+        """返回一维、非空、有限且位于 ``[0, 1]`` 的概率数组。
+        """
         values = np.asarray(y_prob, dtype=float)
         if values.ndim != 1 or values.size == 0:
             raise ValueError("概率必须是一维非空数组")
@@ -108,8 +112,8 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
 
         :param y_prob: 一维原始坏样本概率，取值在[0,1]；不是信用分或 raw margin。
         :param y_true: 与概率等长的0/1真实标签，1表示坏样本。
-        :param metrics: 统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置。
-        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+        :param metrics: 默认值为 ``None`` 。统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置
+        :param sample_weight: 默认值为 ``None`` 。样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重
 
         **参考样例**
 
@@ -136,7 +140,8 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
         return self.calibrate(y_prob)
 
     def predict_proba(self, y_prob):
-        """返回 ``[P(0), P(1)]`` 两列校准概率。"""
+        """返回 ``[P(0), P(1)]`` 两列校准概率。
+        """
         positive = np.clip(self.calibrate(y_prob), 0.0, 1.0)
         return np.column_stack([1.0 - positive, positive])
 

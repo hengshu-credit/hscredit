@@ -141,7 +141,7 @@ class HSCreditApplyProxy:
         n_jobs: 总并行预算，默认 ``-1`` 表示自动使用约 80% 的物理核心。
         bar: 是否显示按真实完成项累计的进度条。
         parallel_backend: 可选的 joblib 后端；未指定时按 callable 能力静态选择。
-        parallel_config: ``batch_size``、``timeout`` 等统一并行运行参数。
+        parallel_config: ``batch_size`` 、 ``timeout`` 等统一并行运行参数。
 
     **属性**
         所有配置均只属于当前代理；创建代理不会修改原 pandas 对象。
@@ -164,7 +164,8 @@ class HSCreditApplyProxy:
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Mapping[str, Any]] = None,
     ) -> "HSCreditApplyProxy":
-        """返回保存显式配置的新代理，兼容 ``obj.hscredit(...).apply``。"""
+        """返回保存显式配置的新代理，兼容 ``obj.hscredit(...).apply`` 。
+        """
         return create_hscredit_apply_proxy(
             self._obj,
             n_jobs=n_jobs,
@@ -179,7 +180,8 @@ class HSCreditApplyProxy:
 
 
 class HSCreditApplyAccessor:
-    """把 ``hscredit`` 暴露为同时可调用且可直接 ``apply`` 的访问器。"""
+    """把 ``hscredit`` 暴露为同时可调用且可直接 ``apply`` 的访问器。
+    """
 
     def __get__(self, instance, owner=None):
         if instance is None:
@@ -198,6 +200,25 @@ def create_hscredit_apply_proxy(
 
     此函数由 pandas 对象的 ``hscredit`` 访问器调用。它只保存配置，不读取样本、
     不调用用户函数，也不会改变原对象。
+
+    **参数**
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Mapping[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
     """
     return HSCreditApplyProxy(
         self,

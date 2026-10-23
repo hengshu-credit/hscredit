@@ -35,8 +35,11 @@ class TopKBadCaptureLoss(BaseLoss):
     核心机制:
 
     1. 计算预测分布的 top-k 分位阈值
+
     2. 通过 sigmoid 软门控判断每个样本是否 "进入" 头部
+
     3. 对未进入头部的坏样本（漏捕）施加重惩罚
+
     4. 对进入头部的好样本（误报）施加轻惩罚
 
     数学形式::
@@ -47,14 +50,26 @@ class TopKBadCaptureLoss(BaseLoss):
         fa_cost   = gate_i × (1-y_i) × fa_penalty
         Loss      = mean(miss_cost + fa_cost) + bce_weight × BCE
 
+    **参数**
+
     :param top_ratio: 头部样本占比，默认 0.05（top 5%）
+
         - 内部经验: 策略名单通常 3%~10%；催收通常 5%~20%
+
+    :type top_ratio: float
     :param miss_penalty: 漏捕坏样本惩罚倍数，默认 5.0
+    :type miss_penalty: float
     :param fa_penalty: 误报好样本惩罚倍数，默认 1.0
+    :type fa_penalty: float
     :param temperature: sigmoid 平滑温度，默认 0.05
+
         - 内部经验: 0.02~0.1 之间；太小梯度消失，太大 gate 退化
+
+    :type temperature: float
     :param bce_weight: 基础交叉熵正则权重，默认 0.1
+    :type bce_weight: float
     :param name: 损失函数名称，默认 "topk_bad_capture_loss"
+    :type name: str
 
     **参考样例**
 

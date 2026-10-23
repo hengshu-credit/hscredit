@@ -43,7 +43,8 @@ class MaxComputeAdapter(DBAPIAdapter):
     )
 
     def json_extract_expression(self, column_sql: str, path: str) -> str:
-        """使用 MaxCompute ``JSON_EXTRACT`` 提取 JSON 路径。"""
+        """使用 MaxCompute ``JSON_EXTRACT`` 提取 JSON 路径。
+        """
 
         extracted = f"JSON_EXTRACT({column_sql}, '{path}')"
         return f"CASE WHEN JSON_TYPE({extracted}) = 'null' THEN NULL ELSE {extracted} END"

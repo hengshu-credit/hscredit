@@ -49,17 +49,55 @@ class FTestSelector(BaseFeatureSelector):
     适用于分类问题。
 
     F值解释:
+
     - 值越大: 特征与目标变量越相关
 
     **参数**
 
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param threshold: F值阈值，默认为0.0
+    :type threshold: float
     :param k: 保留的特征数，默认为'all'
+    :type k: Union[int, str]
     :param percentile: 保留的特征百分比，默认为None
+    :type percentile: Optional[int]
     :param target: 目标变量列名，默认为'target'
+    :type target: str
     :param categorical_strategy: 默认 'error' 拒绝无序类别，需先做有业务含义的数值编码。
         'legacy_ordinal' 显式恢复旧版首次出现序号编码（结果可能依赖样本排列）；
         有序 category 使用声明的类别顺序，不受出现顺序影响。
+
+    :type categorical_strategy: str
 
     **参考样例**
 
@@ -77,12 +115,12 @@ class FTestSelector(BaseFeatureSelector):
 
     **注意**
 
-    F 检验只能捕捉特征与目标的**线性**相关，非线性关系可能漏检（此时改用
-    :class:`MutualInfoSelector`）。``k``/``percentile``/``threshold`` 可组合限制选中数量。
+    F 检验只能捕捉特征与目标的 **线性** 相关，非线性关系可能漏检（此时改用
+    :class:`MutualInfoSelector` ）。 ``k`` / ``percentile`` / ``threshold`` 可组合限制选中数量。
 
     **引用**
 
-    基于 sklearn ``f_classif``（ANOVA F 值）：
+    基于 sklearn ``f_classif`` （ANOVA F 值）：
     https://scikit-learn.org/stable/modules/generated/sklearn.feature_selection.f_classif.html
     """
 

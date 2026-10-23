@@ -55,13 +55,21 @@ class LogisticRegression(
 
     继承 sklearn.linear_model.LogisticRegression，增加统计信息计算功能。
     在训练时自动计算以下统计信息（当 calculate_stats=True 时）：
+
     - cov_matrix_: 参数的协方差矩阵
+
     - std_err_intercept_: 截距的标准误差
+
     - std_err_coef_: 系数的标准误差
+
     - z_intercept_: 截距的z统计量
+
     - z_coef_: 系数的z统计量
+
     - p_val_intercept_: 截距的p值
+
     - p_val_coef_: 系数的p值
+
     - vif_: 方差膨胀因子（VIF）
 
     可通过 summary() 方法获取格式化的回归结果表。
@@ -69,71 +77,136 @@ class LogisticRegression(
     **参数**
 
     :param penalty: 正则化类型，可选 'l1', 'l2', 'elasticnet', 'none'，默认 'l2'
+
         - 'newton-cg', 'lbfgs', 'sag': 仅支持 'l2'
+
         - 'liblinear', 'saga': 支持 'l1', 'l2'
+
         - 'saga': 支持 'elasticnet'
+
+    :type penalty: str
     :param calculate_stats: 是否在训练时计算统计信息，默认 True
         设置为 False 可提高训练速度，但无法使用 summary() 方法
-    :param statistics_level: none/coef/full，分别不计算统计、系数推断、不省略VIF；
+
+    :type calculate_stats: bool
+    :param statistics_level: 默认值为 ``None`` 。none/coef/full，分别不计算统计、系数推断、不省略VIF
         None 时沿用 calculate_stats。coef 的 VIF 列为 NaN
+
+    :type statistics_level: Optional[str]
     :param max_dense_bytes: 统计设计矩阵与协方差的预计字节上限，默认256MiB；
         超限跳过诊断并记录 statistics_status_，不会中止有效模型预测
-    :param weight_type: frequency 为频数权重，标准误使用加权信息矩阵；cost 为成本权重，
+
+    :type max_dense_bytes: Optional[int]
+    :param weight_type: 默认值为 ``'frequency'`` 。frequency 为频数权重，标准误使用加权信息矩阵；cost 为成本权重
         暂不提供显著性推断。正则化模型统计标记为近似，VIF仍为未加权设计矩阵诊断
+
+    :type weight_type: str
     :param history_policy: summary/diagnostics/full；默认摘要不复制逐行训练参数
+    :type history_policy: str
     :param max_history: 有界训练历史条数，默认20
+    :type max_history: int
     :param dual: 是否使用对偶形式，默认 False
         仅当 solver='liblinear' 时有效
+
+    :type dual: bool
     :param tol: 优化算法的收敛容差，默认 1e-4
+    :type tol: float
     :param C: 正则化强度的倒数，默认 1.0
         必须是正浮点数，值越小正则化越强
+
+    :type C: float
     :param fit_intercept: 是否拟合截距项，默认 True
+    :type fit_intercept: bool
     :param intercept_scaling: 截距缩放系数，默认 1.0
         仅当 solver='liblinear' 且 fit_intercept=True 时有效
+
+    :type intercept_scaling: float
     :param class_weight: 类别权重，默认 None
         可选 'balanced' 或自定义字典
         'balanced' 使用 n_samples / (n_classes * np.bincount(y))
+
+    :type class_weight: Optional[Union[dict, str]]
     :param random_state: 随机数种子，默认 None
         仅在 solver 为 'sag', 'saga', 'liblinear' 时有效
+
+    :type random_state: Optional[int]
     :param solver: 优化算法，默认 'lbfgs'
+
         - 'newton-cg': 牛顿共轭梯度法
+
         - 'lbfgs': 拟牛顿法
+
         - 'liblinear': 坐标下降法
+
         - 'sag': 随机平均梯度下降
+
         - 'saga': SAGA 随机优化算法
+
+    :type solver: str
     :param max_iter: 最大迭代次数，默认 100
+    :type max_iter: int
     :param multi_class: 多分类策略，默认 'auto'
         可选 'auto', 'ovr', 'multinomial'
+
+    :type multi_class: str
     :param verbose: 日志详细程度，默认 0
+    :type verbose: int
     :param warm_start: 是否使用上次结果初始化，默认 False
+    :type warm_start: bool
     :param n_jobs: 并行计算的CPU核心数，默认 None
         -1 表示使用所有可用核心
+
+    :type n_jobs: Optional[int]
     :param l1_ratio: 弹性网络混合参数，默认 None
         0 <= l1_ratio <= 1，仅当 penalty='elasticnet' 时有效
+
+    :type l1_ratio: Optional[float]
     :param positive_woe_coef: WOE 模型系数正向化策略，默认 'auto'
+
         - 'auto': 仅当输入 DataFrame 被标记为 hscredit 的 WOE 编码结果时启用
+
         - True: 始终启用。会将负系数对应列乘以 -1，并把系数改为正值
+
         - False: 禁用，保持 sklearn 原始系数符号
+
+    :type positive_woe_coef: Union[bool, str]
     :param target: scorecardpipeline 风格的目标列名，默认 None
+    :type target: Optional[str]
     :param scorecard_params: 概率评分卡部分覆盖参数，默认 PDO=50、基准分=600、范围0-1000
         可用 base_bad_rate 显式指定 (0,1) 内的业务先验；优先于训练样本坏率。
+
+    :type scorecard_params: Optional[Dict[str, Any]]
 
     **属性**
 
     - coef_: 模型系数，形状 (n_classes, n_features) 或 (n_features,)
+
     - intercept_: 截距项，形状 (n_classes,) 或 (1,)
+
     - classes_: 类别标签数组
+
     - n_features_in_: 训练时的特征数量
+
     - feature_names_in_: 训练时的特征名称（当输入为DataFrame时）
+
     - cov_matrix_: 参数的协方差矩阵
+
     - std_err_coef_: 系数的标准误差
+
     - std_err_intercept_: 截距的标准误差
+
     - z_coef_: 系数的z统计量
+
     - z_intercept_: 截距的z统计量
+
     - p_val_coef_: 系数的p值
+
     - p_val_intercept_: 截距的p值
+
     - vif_: 方差膨胀因子数组
+
     - woe_coef_signs_: WOE 列方向调整向量，1 表示不变，-1 表示该列已翻转
+
     - raw_coef_: 原始拟合系数（正向化前，仅在启用 positive_woe_coef 后提供）
 
     **参考样例**
@@ -173,8 +246,11 @@ class LogisticRegression(
     **注意事项**
 
     - 当 calculate_stats=True 时，会计算标准误差、z值、p值和VIF
+
     - 统计计算基于高斯假设，使用协方差矩阵估计
+
     - VIF 计算需要拟合截距项（fit_intercept=True）
+
     - VIF > 10 通常表示存在严重的多重共线性
     """
 
@@ -260,7 +336,9 @@ class LogisticRegression(
         """训练逻辑回归模型.
 
         支持两种调用方式:
+
         1. 常规方式: fit(X, y)
+
         2. scorecardpipeline风格: 在__init__中指定target，然后fit(X)
 
         在 sklearn LogisticRegression.fit() 的基础上，
@@ -271,14 +349,20 @@ class LogisticRegression(
         :param X: 训练数据，形状 (n_samples, n_features)
             支持 numpy array 或 pandas DataFrame
             如果是DataFrame且y为None，会尝试从X中提取target列
-        :param y: 目标变量，形状 (n_samples,)，可选
+
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量，形状 (n_samples,)，可选
             二分类时为 0/1 或 -1/1
             如果为None且init中指定了target，则从X中提取
+
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :param sample_weight: 样本权重，形状 (n_samples,)
             默认 None，所有样本权重为1
-        :param eval_set: 与 ModelReport.datasets 一致的具名字典、列表或单个数据集，仅训练后评估
-        :param eval_metric: 评估指标名称、BaseMetric 或列表，支持 loss.metric()
-        :param eval_sample_weight: 验证权重；多个评估集使用 {数据集名称: 权重} 字典
+
+        :type sample_weight: Optional[np.ndarray]
+        :param eval_set: 默认值为 ``None`` 。与 ModelReport.datasets 一致的具名字典、列表或单个数据集，仅训练后评估
+        :param eval_metric: 默认值为 ``None`` 。评估指标名称、BaseMetric 或列表，支持 loss.metric()
+        :param eval_sample_weight: 默认值为 ``None`` 。验证权重；多个评估集使用 {数据集名称: 权重} 字典
         :param kwargs: 其他传递给父类 fit 方法的参数
 
         **返回**
@@ -535,15 +619,17 @@ class LogisticRegression(
         保证概率与评分卡分数方向一致。
 
         :param X: 特征矩阵（一般为 WOE 编码后数据），DataFrame 或 ndarray
-        :return: 概率数组，shape ``(n_samples, 2)``，第 1 列为正类（坏样本）概率
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :return: 概率数组，shape ``(n_samples, 2)`` ，第 1 列为正类（坏样本）概率
         """
         X_model = self._prepare_input_for_model(X)
         return self._predict_proba_from_prepared_input(X_model)
 
     def predict_log_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """预测各类别的对数概率（``ln(predict_proba)``，数值已做下限裁剪）。
+        """预测各类别的对数概率（ ``ln(predict_proba)`` ，数值已做下限裁剪）。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
+        :type X: Union[pd.DataFrame, np.ndarray]
         :return: 对数概率数组，shape ``(n_samples, 2)``
         """
         probabilities = self.predict_proba(X)
@@ -553,7 +639,8 @@ class LogisticRegression(
         """计算线性决策值（log-odds），必要时自动应用 WOE 列方向调整。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
-        :return: 决策函数值数组（``> 0`` 判为正类）
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :return: 决策函数值数组（ ``> 0`` 判为正类）
         """
         X_model = self._prepare_input_for_model(X)
         return super().decision_function(X_model)
@@ -562,6 +649,7 @@ class LogisticRegression(
         """预测类别标签（阈值为决策值 0），必要时自动应用 WOE 列方向调整。
 
         :param X: 特征矩阵，DataFrame 或 ndarray
+        :type X: Union[pd.DataFrame, np.ndarray]
         :return: 预测类别数组
         """
         X_model = self._prepare_input_for_model(X)
@@ -719,9 +807,14 @@ class LogisticRegression(
         对于逻辑回归模型，使用系数绝对值作为特征重要性。
 
         :param importance_type: 重要性类型，默认'coef'
+
             - 'coef': 系数绝对值
+
             - 'p_value': 基于p值的重要性 (1 - p_value)
+
             - 'z_score': z统计量绝对值
+
+        :type importance_type: str
         :return: 特征重要性Series
         """
         check_is_fitted(self, "coef_")
@@ -770,12 +863,19 @@ class LogisticRegression(
         **返回**
 
         :return: summary_df，统计摘要表，包含以下列：
+
             - Coef.: 回归系数
+
             - Std.Err: 标准误差
+
             - z: z统计量（系数/标准误差）
+
             - P>|z|: p值
+
             - [0.025: 95%置信区间下限
+
             - 0.975]: 95%置信区间上限
+
             - VIF: 方差膨胀因子
 
         **异常**
@@ -849,6 +949,7 @@ class LogisticRegression(
         **参数**
 
         :param feature_map: 特征描述字典，格式为 {特征名: 描述}，默认 None
+        :type feature_map: Optional[dict]
 
         **返回**
 
@@ -881,7 +982,10 @@ class LogisticRegression(
 
         :param alpha: 显著性水平，默认 0.05
             p < alpha 的特征被认为是显著的
+
+        :type alpha: float
         :param include_intercept: 是否包含截距项，默认 False
+        :type include_intercept: bool
 
         **返回**
 
@@ -916,6 +1020,8 @@ class LogisticRegression(
         :param threshold: VIF阈值，默认 10.0
             VIF > threshold 被认为存在多重共线性
 
+        :type threshold: float
+
         **返回**
 
         :return: high_vif_df，VIF值超过阈值的特征信息
@@ -948,10 +1054,15 @@ class LogisticRegression(
         """评估模型性能（与 BaseRiskModel.evaluate 接口一致）.
 
         :param X: 特征矩阵或包含 target 列的 DataFrame。
-        :param y: 真实标签；None 时按模型 target 提取，显式 y 优先。
-        :param sample_weight: 样本权重
-        :param metrics: 评估指标列表
-        :param score_direction: AUC/Gini分数方向，同 ``metrics.auc``
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。真实标签；None 时按模型 target 提取，显式 y 优先
+        :type y: Optional[Union[pd.Series, np.ndarray]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重
+        :type sample_weight: Optional[np.ndarray]
+        :param metrics: 默认值为 ``None`` 。评估指标列表
+        :type metrics: Optional[List[str]]
+        :param score_direction: 默认值为 ``'higher_risk'`` 。AUC/Gini分数方向，同 ``metrics.auc``
+        :type score_direction: str
         :return: 评估结果字典
 
         **参考样例**
@@ -976,6 +1087,7 @@ class LogisticRegression(
         """使用训练坏好比对应的标准概率评分卡预测风险评分.
 
         :param X: 特征矩阵
+        :type X: Union[pd.DataFrame, np.ndarray]
         :return: 风险评分 (0-1000)
         """
         return self._predict_probability_score(X)
@@ -1000,31 +1112,36 @@ class LogisticRegression(
         score_direction=None,
         **kwargs,
     ):
-        """生成风控建模报告（与 :meth:`BaseRiskModel.report` 接口一致）。
+        """生成风控建模报告（与  :meth:`BaseRiskModel.report`  接口一致）。
 
         在训练/测试集上汇总模型表现（KS、AUC、分数分布、逾期率等），可选导出 Excel。
 
-        :param datasets: 数据集字典（如 ``{'train': (X, y), 'test': (X, y)}``），与
-            ``X_train``/``y_train``/``X_test``/``y_test`` 二选一
-        :param X_train: 训练特征，与 ``datasets`` 二选一
-        :param y_train: 训练标签
-        :param X_test: 测试特征，可选
-        :param y_test: 测试标签，可选
-        :param overdue: 逾期天数字段名（多标签分析时使用），可选
-        :param dpds: 逾期定义 DPD（如 ``[7, 3]``），可选
-        :param excel_path: 报告导出的 Excel 路径，提供则落盘，可选
+        :param datasets: 默认值为 ``None`` 。数据集字典（如 ``{'train': (X, y), 'test': (X, y)}`` ），与
+            ``X_train`` / ``y_train`` / ``X_test`` / ``y_test`` 二选一
+
+        :param X_train: 默认值为 ``None`` 。训练特征，与 ``datasets`` 二选一
+        :param y_train: 默认值为 ``None`` 。训练标签
+        :param X_test: 默认值为 ``None`` 。测试特征，可选
+        :param y_test: 默认值为 ``None`` 。测试标签，可选
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名（多标签分析时使用），可选
+        :param dpds: 默认值为 ``None`` 。逾期定义 DPD（如 ``[7, 3]`` ），可选
+        :param excel_path: 默认值为 ``None`` 。报告导出的 Excel 路径，提供则落盘，可选
         :param verbose: 是否打印进度，默认 ``True``
         :param kwargs: 透传给报告生成器的其他参数
-        :param target: 目标列名或报告多标签配置；None 使用模型配置。显式标签优先；与 overdue/dpds 互斥。
+        :param target: 默认值为 ``None`` 。目标列名或报告多标签配置；None 使用模型配置。显式标签优先；与 overdue/dpds 互斥
+        :type target: Optional[TargetInput]
         :param del_grey: 是否按逾期标签口径剔除灰样本，默认 False；仅作用于报告标签分析，不重新训练模型。
-        :param metrics: 统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置。
-        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+        :type del_grey: bool
+        :param metrics: 默认值为 ``None`` 。统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置
+        :param sample_weight: 默认值为 ``None`` 。样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重
         :param score_direction: higher_risk 表示值越大风险越高（概率默认）；higher_safe 表示值越大越安全；auto 仅显式指定时自动判断。
         :return: ``ModelReport`` 实例
         :raises NotFittedError: 模型尚未训练时
 
-        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
             满足比较条件记为坏样本(1)，否则为好样本(0)。
+
+        :type overdue_operator: Optional[str]
 
         **参考样例**
 
@@ -1083,22 +1200,35 @@ class LogisticRegression(
         （C / penalty / class_weight / max_iter / solver）。
 
         :param X: 特征矩阵或包含 target 的 DataFrame
-        :param y: 目标变量，可选
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :param search_space: 参数搜索空间，默认使用自适应空间
-        :param fixed_params: 固定参数
+        :type search_space: Optional[dict]
+        :param fixed_params: 默认值为 ``None`` 。固定参数
+        :type fixed_params: Optional[dict]
         :param metric: 优化指标，默认 'ks'
         :param direction: 默认 None，根据指标方向自动确定；自定义裸函数须显式指定。
         :param n_trials: 搜索次数，默认 100
+        :type n_trials: int
         :param cv: 默认 None 使用单次验证；显式整数>=2或分割器启用多折。
             独立验证集通过 eval_set=[(X_valid, y_valid)] 提供，不并入最终训练数据。
-        :param timeout: 超时时间(秒)
-        :param verbose: 是否输出详细信息
-        :param sample_weight: 样本权重，可选
+
+        :type cv: Optional[Any]
+        :param timeout: 默认值为 ``None`` 。超时时间(秒)
+        :type timeout: Optional[int]
+        :param verbose: 默认值为 ``False`` 。是否输出详细信息
+        :type verbose: bool
+        :param sample_weight: 默认值为 ``None`` 。样本权重，可选
+        :type sample_weight: Optional[np.ndarray]
         :param show_progress_bar: 是否显示进度条；默认跟随 verbose，可显式覆盖
-        :param eval_set: 评估集列表 [(X_valid, y_valid)]，最后一个数据集用于搜索评分；
+        :type show_progress_bar: Optional[bool]
+        :param eval_set: 默认值为 ``None`` 。评估集列表 [(X_valid, y_valid)]，最后一个数据集用于搜索评分
             同报告 datasets 支持具名字典、DataFrame列表、混合形式和单个数据集，显式y优先。
-        :param validation_weight: 独立验证集的指标权重。
+
+        :param validation_weight: 默认值为 ``None`` 。独立验证集的指标权重
         :param validation_fraction: 未提供独立验证集时的一次留出比例，默认0.2。
+        :type validation_fraction: float
         :param kwargs: 其他传递给 ModelTuner 的参数（如 sampler/storage）
         :return: 使用最佳参数训练好的模型实例
 
@@ -1165,7 +1295,9 @@ class LogisticRegression(
         """保存模型到文件（与 BaseRiskModel.save 接口一致）.
 
         :param path: 保存路径
-        :param engine: 序列化引擎
+        :type path: str
+        :param engine: 默认值为 ``'auto'`` 。序列化引擎
+        :type engine: str
         :return: 保存路径
         """
         check_is_fitted(self)
@@ -1189,7 +1321,9 @@ class LogisticRegression(
         """从文件加载模型（与 BaseRiskModel.load 接口一致）.
 
         :param path: 模型文件路径
-        :param engine: 序列化引擎
+        :type path: str
+        :param engine: 默认值为 ``'auto'`` 。序列化引擎
+        :type engine: str
         :return: 加载的模型实例
         """
         from ....utils import load_pickle
@@ -1200,10 +1334,11 @@ class LogisticRegression(
         return model
 
     def get_model_info(self) -> dict:
-        """获取模型摘要信息（与 :meth:`BaseRiskModel.get_model_info` 接口一致）。
+        """获取模型摘要信息（与  :meth:`BaseRiskModel.get_model_info`  接口一致）。
 
         :return: 含 ``model_type`` / ``objective`` / ``n_features`` / ``n_classes`` /
-            ``params`` 等键的字典（LR 无 boosting 迭代，故 ``best_iteration``/``best_score`` 为 None）
+            ``params`` 等键的字典（LR 无 boosting 迭代，故 ``best_iteration`` / ``best_score`` 为 None）
+
         :raises NotFittedError: 模型尚未训练时
         """
         check_is_fitted(self)
@@ -1220,7 +1355,7 @@ class LogisticRegression(
         return info
 
     def get_native_model(self):
-        """获取底层原生模型（与 :meth:`BaseRiskModel.get_native_model` 接口一致）。
+        """获取底层原生模型（与  :meth:`BaseRiskModel.get_native_model`  接口一致）。
 
         本类直接继承 sklearn ``LogisticRegression`` 并未包装额外底层模型，故返回自身，
         便于与 boosting 模型（返回各自原生 booster）的统一调用。

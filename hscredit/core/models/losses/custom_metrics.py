@@ -16,7 +16,10 @@ class KSMetric(BaseMetric):
 
     ``KS = max(|累积好客户比例 - 累积坏客户比例|)``
 
+    **参数**
+
     :param name: 指标名称，默认为"ks"
+    :type name: str
 
     **参考样例**
 
@@ -86,8 +89,12 @@ class GiniMetric(BaseMetric):
 
     衡量模型区分能力，Gini越大越好。
 
+    **参数**
+
     :param name: 指标名称，默认为"gini"
+    :type name: str
     :param score_direction: 默认higher_risk保留原始概率方向；显式auto兼容未知方向的评分
+    :type score_direction: str
 
     **参考样例**
 
@@ -147,10 +154,16 @@ class PSIMetric(BaseMetric):
 
     PSI = sum((实际占比 - 期望占比) * ln(实际占比/期望占比))
 
+    **参数**
+
     :param expected: 基准预测分数的一维非空有限数组，默认 None，
         为 None 时需要在 __call__ 中提供；不要求与当前样本等长。
+
+    :type expected: Optional[np.ndarray]
     :param n_bins: 基准分位分箱的最大数量，整数且至少为 2，默认 10。
+    :type n_bins: int
     :param name: 指标名称，默认为"psi"
+    :type name: str
 
     **参考样例**
 
@@ -170,8 +183,11 @@ class PSIMetric(BaseMetric):
     本指标不支持样本权重；它衡量分布漂移，不能单独代替 AUC 等区分度指标。
 
     PSI解释:
+
     - PSI < 0.1: 分布稳定
+
     - 0.1 <= PSI < 0.25: 分布有轻微变化
+
     - PSI >= 0.25: 分布变化显著，需要关注
     """
 

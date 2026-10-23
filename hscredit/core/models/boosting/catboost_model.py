@@ -86,32 +86,64 @@ class CatBoost(BaseRiskModel):
     **参数**
 
     :param depth: 树深度，默认6
+    :type depth: int
     :param learning_rate: 学习率，默认0.1
+    :type learning_rate: float
     :param iterations: 迭代次数，默认100
+    :type iterations: int
     :param l2_leaf_reg: L2正则化系数，默认3.0
+    :type l2_leaf_reg: float
     :param border_count: 边界分割数，默认254
+    :type border_count: int
     :param random_strength: 随机强度，默认1
+    :type random_strength: float
     :param bagging_temperature: 采样温度，默认1
+    :type bagging_temperature: float
     :param scale_pos_weight: 正负样本权重比，默认1
+    :type scale_pos_weight: float
     :param min_data_in_leaf: 叶子节点最小样本数，默认1
+    :type min_data_in_leaf: int
     :param grow_policy: 生长策略，默认'SymmetricTree'
+
         - 'SymmetricTree': 对称树
+
         - 'Depthwise': 逐层生长
+
         - 'Lossguide': 按损失导向生长
+
+    :type grow_policy: str
     :param objective: 目标函数，默认'Logloss'
+    :type objective: str
     :param eval_metric: 评估指标，支持 BaseMetric 对象，默认'AUC'；设为 None 时使用自定义损失的配套指标
+
         - 支持字符串或列表（多个评估指标）
+
+    :type eval_metric: Union[str, List[str], BaseMetric, None]
     :param early_stopping_rounds: 早停轮数，默认None
+
         - 当验证集指标连续N轮没有提升时停止训练
+
         - CatBoost仍支持此参数（与XGBoost/LightGBM新版不同）
+
+    :type early_stopping_rounds: Optional[int]
     :param early_stopping_metric: 用于早停的评估指标名称，默认None（使用eval_metric）
+
         - 当eval_metric有多个时，指定用哪个指标进行早停判断
+
+    :type early_stopping_metric: Optional[str]
     :param validation_fraction: 验证集比例，默认0.2
+    :type validation_fraction: float
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: bool
     :param params: CatBoost原生参数字典，默认None
+
         - 如果传入，将覆盖其他参数设置
+
         - 可直接使用CatBoost原生参数名
+
+    :type params: Optional[Dict[str, Any]]
     :param kwargs: 其他CatBoost参数
 
     **属性**
@@ -140,8 +172,10 @@ class CatBoost(BaseRiskModel):
 
     **参数补充**
 
-    :param n_jobs: 统一并行预算；-1 自动使用可用资源，1为串行，不传给原生不支持该参数的算法。
-    :param scorecard_params: 概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba。
+    :param n_jobs: 默认值为 ``-1`` 。统一并行预算；-1 自动使用可用资源，1为串行，不传给原生不支持该参数的算法
+    :type n_jobs: int
+    :param scorecard_params: 默认值为 ``None`` 。概率评分刻度的覆盖参数，如 pdo、base_score、lower、upper、base_bad_rate；只影响 predict_score，不修改 predict_proba
+    :type scorecard_params: Optional[Dict[str, Any]]
     """
 
     _preserve_dataframe = True
@@ -254,15 +288,23 @@ class CatBoost(BaseRiskModel):
         """训练CatBoost模型.
 
         支持两种调用方式:
+
         1. 常规方式: fit(X, y)
+
         2. scorecardpipeline风格: fit(X) 在init中指定target
 
         :param X: 特征矩阵
-        :param y: 目标变量，可选
-        :param sample_weight: 样本权重
-        :param eval_set: [(X_valid, y_valid)]、具名字典、DataFrame列表或单个数据集；
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重
+        :type sample_weight: Optional[np.ndarray]
+        :param eval_set: 默认值为 ``None`` 。[(X_valid, y_valid)]、具名字典、DataFrame列表或单个数据集
             含标签的 DataFrame 通过 target 提取标签，也保留 CatBoost 原生 Pool 支持。
-        :param cat_features: 类别特征索引列表
+
+        :type eval_set: Optional[List[Tuple]]
+        :param cat_features: 默认值为 ``None`` 。类别特征索引列表
+        :type cat_features: Optional[List[int]]
         :param fit_params: 其他fit参数
         :return: self
 
@@ -468,8 +510,8 @@ class CatBoost(BaseRiskModel):
     def _resolve_catboost_loss(loss_function):
         """将自定义损失对象解析为 CatBoost 可用的损失对象.
 
-        当传入 :class:`~hscredit.core.models.losses.BaseLoss` 实例时，通过
-        :class:`~hscredit.core.models.losses.CatBoostLossAdapter` 转换为带有
+        当传入  :class:`~hscredit.core.models.losses.BaseLoss`  实例时，通过
+        :class:`~hscredit.core.models.losses.CatBoostLossAdapter`  转换为带有
         ``calc_ders_range`` 接口的 CatBoost 自定义损失对象；其他对象原样返回。
         """
         try:
@@ -516,9 +558,14 @@ class CatBoost(BaseRiskModel):
         """获取特征重要性.
 
         :param importance_type: 重要性类型，可选:
+
             - 'PredictionValuesChange': 预测值变化 (默认)
+
             - 'LossFunctionChange': 损失函数变化
+
             - 'FeatureImportance': 分裂次数
+
+        :type importance_type: str
         :return: 特征重要性Series
         """
         self._require_fitted()
@@ -548,7 +595,8 @@ class CatBoost(BaseRiskModel):
     def plot_tree(self, tree_index: int = 0, **kwargs):
         """绘制树结构.
 
-        :param tree_index: 树的索引
+        :param tree_index: 默认值为 ``0`` 。树的索引
+        :type tree_index: int
         :param kwargs: 其他绘图参数
         """
         self._require_fitted()
@@ -560,6 +608,7 @@ class CatBoost(BaseRiskModel):
         返回每棵树上的叶子节点索引，用于GBDT+LR等场景。
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 叶子节点索引，形状 (n_samples, n_trees)
 
         **参考样例**
@@ -577,6 +626,7 @@ class CatBoost(BaseRiskModel):
         """保存底层CatBoost模型（原生格式）.
 
         :param path: 保存路径（.cbm/.json 格式）
+        :type path: str
         """
         self._require_fitted()
         self._model.save_model(path)
@@ -586,6 +636,7 @@ class CatBoost(BaseRiskModel):
         """加载底层CatBoost模型（原生格式）.
 
         :param path: 模型路径
+        :type path: str
         :return: self
         """
         self._model = cb.CatBoostClassifier()

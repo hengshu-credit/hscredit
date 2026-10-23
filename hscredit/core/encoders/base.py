@@ -67,28 +67,59 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     **参数**
 
-    :param features: 需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :param features: 默认值为 ``None`` 。需要编码的列名列表。如果为None，则自动识别所有类别型列
+    :type features: Optional[List[str]]
     :param drop_invariant: 是否删除方差为0的列，默认为False
+    :type drop_invariant: bool
     :param return_df: 是否返回DataFrame，默认为True
+    :type return_df: bool
     :param handle_unknown: 处理未知类别的方式，默认为'value'
+
         - 'value': 使用默认值（通常是0或全局均值）
+
         - 'error': 抛出错误
+
         - 'return_nan': 返回NaN
+
+    :type handle_unknown: str
     :param handle_missing: 处理缺失值的方式，默认为'value'
+
         - 'value': 使用默认值（通常是0或全局均值）
+
         - 'error': 抛出错误
+
         - 'return_nan': 返回NaN
-    :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
-    :param passthrough_target: 默认False，转换仅输出特征，可安全连接原生sklearn模型；
-        True显式恢复旧表格流程的目标列透传，不能用于无需标签预测的Pipeline
-    :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
-    :param parallel_backend: joblib并行后端，默认为None
-    :param parallel_config: joblib扩展配置，默认为None
+
+    :type handle_missing: str
+    :param target: 默认值为 ``None`` 。scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
+    :type target: Optional[str]
+    :param passthrough_target: 是否在转换结果中保留目标列，默认 ``False`` 。
+        ``True`` 仅用于需要目标列的表格分析；连接预测 Pipeline 时应保持 ``False`` ，避免标签进入模型。
+
+    :type passthrough_target: bool
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
 
     **属性**
 
     - mapping\\_: 编码映射字典，格式为 {col: {category: encoded_value}}
+
     - cols_: 实际进行编码的列名列表（经过自动识别或过滤后）
+
     - _dropped_cols: 被删除的方差为0的列
 
     **参考样例**
@@ -108,9 +139,8 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     **引用**
 
-    接口约定（``features`` / ``drop_invariant`` / ``handle_unknown`` / ``handle_missing`` /
-    ``return_df``）对齐 category_encoders 库：
-    https://contrib.scikit-learn.org/category_encoders/
+    类别编码器的接口设计参考 `Category Encoders 官方文档 <https://contrib.scikit-learn.org/category_encoders/>`_。
+    HSCredit 使用 ``features`` 选择字段；不要照搬第三方的 ``cols`` 参数。具体缺失值、未知类别及训练期编码行为见各子类。
     """
 
     artifact_kind = "编码器"
@@ -229,22 +259,31 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """拟合编码器。
 
         支持两种API风格:
+
         1. sklearn风格: fit(X, y) - X是特征矩阵，y是目标变量
+
         2. scorecardpipeline风格: fit(df) - df是完整数据框，目标列名在初始化时通过target参数传入
 
         优先级: fit时传入的y > 从X中提取target列
 
         :param X: 训练数据，shape (n_samples, n_features) 或包含目标列的完整数据框
-        :param y: 目标变量，对于有监督编码器（如WOE、Target）必须提供。
+        :type X: pd.DataFrame
+        :param y: 默认值为 ``None`` 。目标变量，对于有监督编码器（如WOE、Target）必须提供
                   如果为None且初始化时提供了target参数，则从X中提取target列
+
+        :type y: Optional[pd.Series]
         :return: 拟合后的编码器自身
 
         **注意**
 
         fit方法会进行以下操作:
+
         1. 数据验证和预处理
+
         2. 自动识别类别型列（如果cols为None）
+
         3. 删除方差为0的列（如果drop_invariant=True）
+
         4. 计算编码映射
         """
         if not getattr(self, "_fit_transaction_active", False):
@@ -417,16 +456,23 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         这是编码器的核心方法，用于将新数据应用到已训练的编码规则。
 
         :param X: 需要转换的数据，shape (n_samples, n_features)
+
             - 支持DataFrame
+
             - 列名必须与fit时的特征名一致
+
+        :type X: pd.DataFrame
         :param y: 目标变量，某些编码器需要，默认为None
+        :type y: Optional[pd.Series]
         :return: 编码后的数据，类型由return_df参数决定
         :raises ValueError: 当编码器尚未拟合时抛出
 
         **注意**
 
         transform方法会自动处理:
+
         1. 缺失值: 根据handle_missing参数处理
+
         2. 未知类别: 根据handle_unknown参数处理
         """
         X = self._check_input(X)
@@ -489,7 +535,12 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         return X_transformed
 
     def get_feature_names_out(self, input_features=None):
-        """返回固定学习schema；兼容透传模式仅在拟合表含目标时附加其列名。"""
+        """返回固定学习schema；兼容透传模式仅在拟合表含目标时附加其列名。
+
+        **参数**
+
+        :param input_features: 可选输入特征名，默认 ``None`` 使用拟合时记录的名称；传入时须与拟合特征一致。
+        """
         if not getattr(self, "_is_fitted", False):
             raise NotFittedError("编码器尚未拟合，请先调用fit()")
         columns = list(getattr(self, "feature_names_in_", self.cols_ or []))
@@ -504,12 +555,20 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """拟合并转换数据。
 
         支持两种API风格:
+
         1. sklearn风格: fit_transform(X, y) - X是特征矩阵，y是目标变量
+
         2. scorecardpipeline风格: fit_transform(df) - df是完整数据框，目标列名在初始化时通过target参数传入
 
+        :param groups: 训练样本分组，默认 ``None``。使用 ``training_mode="oof"`` 时传给
+            交叉验证拆分器；分组交叉验证需传与 X 行顺序一致的组标签。
+
         :param X: 训练数据，shape (n_samples, n_features) 或包含目标列的完整数据框
-        :param y: 目标变量，对于某些编码器是必需的。
+        :type X: pd.DataFrame
+        :param y: 默认值为 ``None`` 。目标变量，对于某些编码器是必需的
                   如果为None且初始化时提供了target参数，则从X中提取target列
+
+        :type y: Optional[pd.Series]
         :return: 编码后的数据
         """
         original = self._check_input(X)
@@ -680,8 +739,10 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def get_mapping(self, col: Optional[str] = None) -> Dict[str, Any]:
         """获取编码映射。
 
-        :param col: 列名。如果提供，返回该列的映射 {category: encoded_value}；
+        :param col: 默认值为 ``None`` 。列名。如果提供，返回该列的映射 {category: encoded_value}
             如果为None，返回所有列的映射 {col: {category: encoded_value}}
+
+        :type col: Optional[str]
         :return: 编码映射字典
         :raises NotFittedError: 当编码器尚未拟合时抛出
         :raises FeatureNotFoundError: 当指定的 col 不在编码器中时抛出
@@ -699,10 +760,11 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """逆编码（将编码值还原为原始类别）。
 
         编码器基类的默认实现：多数有监督/有损编码器（WOE/Target/Count/Quantile/CatBoost/GBM）
-        无法唯一还原原始类别，调用时抛出 :class:`NotImplementedError`。
+        无法唯一还原原始类别，调用时抛出  :class:`NotImplementedError` 。
         支持逆编码的子类（OneHot/Ordinal/Cardinality）会覆盖本方法。
 
         :param X: 编码后的数据
+        :type X: pd.DataFrame
         :return: 逆编码后的数据
         :raises NotImplementedError: 当该编码器不支持逆编码时抛出
         """
@@ -730,6 +792,8 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         :param legacy: True返回旧Python字典结构（可能含NaN/非字符串键，不承诺JSON
             保真）；遇业务类别与旧保留键冲突时拒绝。默认v2保留类别类型、schema及
             推理参数。自定义cv对象只记录省略说明，完整重训状态应使用save_artifact。
+
+        :type legacy: bool
 
         :return: 可序列化的编码映射字典
 
@@ -790,6 +854,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """导入编码映射。
 
         :param mapping: 编码映射字典
+        :type mapping: Dict[str, Any]
 
         **参考样例**
 
@@ -861,7 +926,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def _export_extra_state(self) -> Dict[str, Any]:
         """导出子类声明的额外拟合状态。
 
-        遍历 :attr:`_EXTRA_STATE_ATTRS`，将 ``pd.Series`` 转为 ``dict``（便于序列化），
+        遍历  :attr:`_EXTRA_STATE_ATTRS` ，将 ``pd.Series`` 转为 ``dict`` （便于序列化），
         其余按原样导出。
 
         :return: 额外状态字典 {属性名: 值}
@@ -875,7 +940,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def _import_extra_state(self, state: Dict[str, Any]) -> None:
         """还原子类声明的额外拟合状态。
 
-        :param state: 由 :meth:`_export_extra_state` 导出的状态字典
+        :param state: 由  :meth:`_export_extra_state`  导出的状态字典
         """
         for attr in self._EXTRA_STATE_ATTRS:
             if attr in state:
@@ -957,7 +1022,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def _deserialize_mapping(self, mapping: Dict) -> Dict:
         """反序列化映射。
 
-        ``mapping_`` 的内层值约定为 ``dict`` （``{类别: 编码值}``），所有编码器子类均如此存储。
+        ``mapping_`` 的内层值约定为 ``dict`` （ ``{类别: 编码值}`` ），所有编码器子类均如此存储。
         因此反序列化时保持内层 ``dict`` 不变，避免被误转为 ``pd.Series`` 而破坏
         ``get_mapping`` / ``__getitem__`` 的 dict 返回契约。
 

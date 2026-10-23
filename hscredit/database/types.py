@@ -18,7 +18,8 @@ def validate_result_type(value: Any) -> str:
     """校验并返回 Database 模块统一的查询结果类型。
 
     :param value: 期望的结果类型。
-    :return: ``dataframe``、``records`` 或 ``rows``。
+    :type value: Any
+    :return: ``dataframe`` 、 ``records`` 或 ``rows`` 。
     :raises ValidationError: 输入不是受支持的字符串。
     """
 
@@ -30,8 +31,8 @@ def validate_result_type(value: Any) -> str:
 class StreamState(str, Enum):
     """流式查询生命周期状态。
 
-    ``running`` 表示仍可读取；``completed`` 表示自然耗尽；``interrupted`` 表示主动停止
-    或键盘中断；``failed`` 表示读取失败；``closed`` 表示在耗尽前关闭。
+    ``running`` 表示仍可读取； ``completed`` 表示自然耗尽； ``interrupted`` 表示主动停止
+    或键盘中断； ``failed`` 表示读取失败； ``closed`` 表示在耗尽前关闭。
     """
 
     RUNNING = "running"
@@ -64,7 +65,8 @@ class PoolOptions:
     def from_mapping(cls, value: Optional[Mapping[str, Any]] = None) -> "PoolOptions":
         """从映射创建并校验连接池配置。
 
-        :param value: ``PoolOptions``、参数映射或 ``None``。
+        :param value: 默认值为 ``None`` 。 ``PoolOptions`` 、参数映射或 ``None``
+        :type value: Optional[Mapping[str, Any]]
         :return: 已校验的不可变连接池配置。
         :raises ValidationError: 包含未知参数或参数范围无效。
         """
@@ -190,7 +192,8 @@ class RedisPoolOptions:
 
 @dataclass(frozen=True)
 class MongoPoolOptions:
-    """PyMongo ``MongoClient`` 原生连接池配置。"""
+    """PyMongo ``MongoClient`` 原生连接池配置。
+    """
 
     min_pool_size: int = 0
     max_pool_size: int = 100
@@ -230,7 +233,8 @@ class MongoPoolOptions:
                 raise ValidationError(f"MongoDB 连接池参数 {name} 必须是非负整数或 None")
 
     def to_mongo_kwargs(self) -> Dict[str, Any]:
-        """转换为 ``MongoClient`` 驼峰连接池参数。"""
+        """转换为 ``MongoClient`` 驼峰连接池参数。
+        """
 
         self._validate()
         result: Dict[str, Any] = {

@@ -19,13 +19,15 @@ from ._loss_math import binary_inputs, bce_terms, nonnegative, positive, unit_in
 class RankingAUCProxyLoss(BaseLoss):
     """排序 AUC 代理损失，使用平方铰链代理优化 AUC / 排序质量。
 
-    作为 :class:`OrdinalRankLoss` 的增强版本，核心改进:
+    作为  :class:`OrdinalRankLoss`  的增强版本，核心改进:
 
-    1. **平方铰链代理**: ``max(0, margin - Δ)²`` 比 logistic 代理
+    1. **平方铰链代理** : ``max(0, margin - Δ)²`` 比 logistic 代理
        ``log(1+exp(-Δ))`` 使用不同的间隔惩罚；效果需在验证集比较。
-    2. **硬负例挖掘**: 优先选择违反 margin 的样本对（``p_pos - p_neg < margin``），
+
+    2. **硬负例挖掘** : 优先选择违反 margin 的样本对（ ``p_pos - p_neg < margin`` ），
        避免在已充分排序的 pair 上浪费梯度。
-    3. **固定 margin**: 通过参数控制目标间距；未实现训练进度调度。
+
+    3. **固定 margin** : 通过参数控制目标间距；未实现训练进度调度。
 
     硬挖掘选中样本对改变、同分或 hinge 边界处不可微；其余区间按 n × 平均损失
     计算概率导数和 Hessian 对角项，不返回跨样本二阶项。
@@ -36,15 +38,28 @@ class RankingAUCProxyLoss(BaseLoss):
         L_pair = mean(max(0, margin - Δ_ij)²)
         Loss   = bce_weight × BCE  +  rank_weight × L_pair
 
+    **参数**
+
     :param rank_weight: 排序损失权重，默认 1.0
+    :type rank_weight: float
     :param bce_weight: 交叉熵权重，默认 1.0
+    :type bce_weight: float
     :param margin: 正负样本预测间距目标，默认 0.2
+
         - 内部经验: 0.1~0.3 之间；margin 过大可能导致梯度爆炸
+
+    :type margin: float
     :param max_pairs: 最多采样的正负样本对数，默认 20000
+    :type max_pairs: int
     :param hard_mining_ratio: 硬负例挖掘比例，默认 1.0（全部使用）
+
         - 设为 0.5 则只保留 50% 违反 margin 最严重的 pair
+
+    :type hard_mining_ratio: float
     :param random_state: 随机种子，保证采样可复现，默认 42
+    :type random_state: int
     :param name: 损失函数名称，默认 "ranking_auc_proxy_loss"
+    :type name: str
 
     **参考样例**
 
@@ -187,7 +202,9 @@ class RankingAUCProxyLoss(BaseLoss):
             dL/dp_j =  2 × max(0, m - Δ_ij)   (对 neg 样本 j)
 
         :param y_true: 真实标签
+        :type y_true: np.ndarray
         :param y_pred: 预测概率
+        :type y_pred: np.ndarray
         :return: 梯度数组, shape (n_samples,)
         """
         y_true, y_pred = binary_inputs(y_true, y_pred)
@@ -219,7 +236,9 @@ class RankingAUCProxyLoss(BaseLoss):
         """计算二阶导数。
 
         :param y_true: 真实标签
+        :type y_true: np.ndarray
         :param y_pred: 预测概率
+        :type y_pred: np.ndarray
         :return: 二阶导数数组, shape (n_samples,)
         """
         y_true, y_pred = binary_inputs(y_true, y_pred)

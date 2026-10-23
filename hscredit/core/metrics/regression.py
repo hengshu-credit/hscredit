@@ -31,7 +31,9 @@ def mse(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Serie
     **参数**
 
     :param y_true: 真实值（目标变量）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测值
+    :type y_pred: Union[np.ndarray, pd.Series]
     :return: MSE值，非负浮点数
 
     **参考样例**
@@ -53,7 +55,9 @@ def mae(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Serie
     **参数**
 
     :param y_true: 真实值（目标变量）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测值
+    :type y_pred: Union[np.ndarray, pd.Series]
     :return: MAE值，非负浮点数
 
     **参考样例**
@@ -75,7 +79,9 @@ def rmse(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Seri
     **参数**
 
     :param y_true: 真实值（目标变量）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测值
+    :type y_pred: Union[np.ndarray, pd.Series]
     :return: RMSE值，非负浮点数
 
     **参考样例**
@@ -98,7 +104,9 @@ def r2(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series
     **参数**
 
     :param y_true: 真实值（目标变量）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测值
+    :type y_pred: Union[np.ndarray, pd.Series]
     :return: R²值，通常在[0, 1]范围内（可为负如果模型比均值预测更差）
 
     **参考样例**

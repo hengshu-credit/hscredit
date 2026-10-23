@@ -53,51 +53,108 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
     **两种拟合模式**
 
     模式一：从原始数据拟合
+
     - 传入含target或逾期天数的DataFrame，自动分箱并计算各箱逾期率
+
     - 支持overdue+dpds多标签场景
 
     模式二：从分箱表拟合
+
     - 传入已有的分箱统计表（feature_bin_stats输出或人工构建的DataFrame）
+
     - 直接从分箱表中提取各箱逾期率
 
     **参数**
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param feature: 特征名称，用于分箱和预估
+    :type feature: str
     :param target: 目标变量名称，默认为'target'
-    :param overdue: 逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
+
         - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
+
+    :type dpds: Optional[Union[int, List[int]]]
     :param method: 分箱方法，默认'mdlp'
+    :type method: str
     :param max_n_bins: 最大分箱数，默认5
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认0.05
+    :type min_bin_size: float
     :param missing_separate: 是否将缺失值单独分箱，默认True
+    :type missing_separate: bool
     :param coefficients: 逾期率调整系数，支持以下格式：
+
         - None: 不调整（默认）
+
         - float: 对所有分箱统一乘以该系数
+
         - dict: 按分箱标签指定系数，如 {'(-inf, 300]': 1.2, '(300, 500]': 0.9}
+
         - 'auto': 自动基于整体逾期率偏差校正
+
+    :type coefficients: Optional[Union[float, Dict[str, float], str]]
     :param bad_rate_col: 分箱表中逾期率列名，默认为'坏样本率'
+
         - 单标签时直接使用该列名
+
         - 多标签时需包含目标名称，函数会自动匹配
+
+    :type bad_rate_col: str
     :param bin_label_col: 分箱表中分箱标签列名，默认为'分箱标签'
-    :param rules: 自定义分箱切分点列表，如 [300, 500, 700]
-    :param desc: 特征描述，用于报告展示
-    :param bin_params: 传递给feature_bin_stats的额外参数
+    :type bin_label_col: str
+    :param rules: 默认值为 ``None`` 。自定义分箱切分点列表，如 [300, 500, 700]
+    :type rules: Optional[List]
+    :param desc: 默认值为 ``None`` 。特征描述，用于报告展示
+    :type desc: Optional[str]
+    :param bin_params: 默认值为 ``None`` 。传递给feature_bin_stats的额外参数
+    :type bin_params: Optional[Dict]
     :param overdue_operator: 比较符（>、>=、<、<=）；None 时沿用 bin_params 配置，否则默认 >。
         显式参数优先；> 的灰样本为 (0, dpd]，>= 为 (0, dpd)，< 和 <= 不剔灰。
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-        兼容读取 ``bin_params['del_grey']``，默认 False
-    :param binner: 已拟合分箱器或原始数据拟合模板；结构化预测复用真实切点及类别归属
-    :param bin_specs: 分箱表输入时使用的 {稳定分箱编号或标签: BinSpec}；编号映射要求表有“分箱”列
-    :param table_mode: legacy 允许只含展示标签的旧表并明确警告；strict要求binner或bin_specs
+
+    :type overdue_operator: Optional[str]
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
+        兼容读取 ``bin_params['del_grey']`` ，默认 False
+
+    :type del_grey: Optional[bool]
+    :param binner: 默认值为 ``None`` 。已拟合分箱器或原始数据拟合模板；结构化预测复用真实切点及类别归属
+    :param bin_specs: 默认值为 ``None`` 。分箱表输入时使用的 {稳定分箱编号或标签: BinSpec}；编号映射要求表有“分箱”列
+    :param table_mode: 默认值为 ``'legacy'`` 。legacy 允许只含展示标签的旧表并明确警告；strict要求binner或bin_specs
+    :type table_mode: str
 
     **属性**
 
     - bin_table_: 拟合后的分箱统计表
+
     - bin_rates_: 各分箱的逾期率字典 {分箱标签: 逾期率}
+
     - splits_: 分箱切分点
+
     - feature_names_in_: 输入特征名称
+
     - target_names_: 目标标签名称列表
+
     - coefficients_: 实际使用的调整系数
 
     **参考样例**
@@ -192,11 +249,14 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         """拟合预估器.
 
         支持两种输入模式:
+
         1. 传入DataFrame（含target或逾期天数列）: 自动分箱并计算逾期率
+
         2. 传入分箱表DataFrame（含分箱标签和逾期率列）: 直接提取逾期率
 
         :param X: 训练数据DataFrame或分箱表DataFrame
-        :param y: sklearn兼容参数，此处不使用（目标列从X中提取）
+        :type X: Union[pd.DataFrame, pd.Series]
+        :param y: 默认值为 ``None`` 。sklearn兼容参数，此处不使用（目标列从X中提取）
         :return: self
         """
         if not isinstance(X, pd.DataFrame):
@@ -246,7 +306,9 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         """判断输入是否为分箱表.
 
         分箱表的特征：
+
         - 包含 bin_label_col 指定的分箱标签列
+
         - 包含逾期率相关的列（坏样本率 或 多级表头下包含坏样本率）
 
         :param df: 输入DataFrame
@@ -640,7 +702,9 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         """从分箱标签解析分箱切分点.
 
         支持的标签格式:
+
         - '(-inf, 300]', '(300, 500]', '(500, +inf)'
+
         - 'missing', 'special'
 
         :param labels: 分箱标签列表
@@ -678,10 +742,15 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         并应用调整系数，最终输出加权逾期率。
 
         :param X: 待预测数据，必须包含feature指定的列
+        :type X: pd.DataFrame
         :return: 包含逾期率预测结果的DataFrame，新增列：
+
             - '{feature}_分箱': 样本所在分箱标签
+
             - '{feature}_基础逾期率': 分箱原始逾期率
+
             - '{feature}_预测逾期率': 调整后的逾期率
+
             - 多标签时每个目标分别输出上述三列
         """
         if not hasattr(self, "bin_rates_"):
@@ -969,10 +1038,16 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         """设置或更新逾期率调整系数.
 
         :param coefficients: 调整系数，支持：
+
             - float: 统一系数
+
             - dict: 按分箱标签指定系数
+
             - 'auto': 自动校正
+
             - None: 取消调整
+
+        :type coefficients: Union[float, Dict[str, float], str]
         :return: self
         """
         self.coefficients = coefficients
@@ -984,7 +1059,8 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
 
         输出各分箱的逾期率、样本分布及预估信息。
 
-        :param metric: 统计口径，'count'（订单口径）或 'amount'（金额口径）
+        :param metric: 默认值为 ``'count'`` 。统计口径，'count'（订单口径）或 'amount'（金额口径）
+        :type metric: str
         :return: 报告DataFrame
 
         **参考样例**
@@ -1054,6 +1130,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         直接返回逾期率预测结果，不含分箱和基础逾期率列。
 
         :param X: 待预测数据
+        :type X: pd.DataFrame
         :return: 逾期率Series（单标签）或 {目标名: 逾期率Series}（多标签）
 
         **参考样例**
@@ -1107,24 +1184,60 @@ def overdue_prediction_report(
     统一的入口函数，支持从原始数据或分箱表进行逾期率预估，
     并可输出包含预估结果的报告。
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+
     :param data: 有标签数据集（含target或逾期天数），或分箱表
+    :type data: pd.DataFrame
     :param feature: 特征名称
-    :param target: 目标变量名称
-    :param overdue: 逾期天数字段名称或列表
-    :param dpds: 逾期定义天数或列表
-    :param predict_data: 待预估的无标签数据（可选），
+    :type feature: str
+    :param target: 默认值为 ``None`` 。目标变量名称
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名称或列表
+    :type overdue: Optional[Union[str, List[str]]]
+    :param dpds: 默认值为 ``None`` 。逾期定义天数或列表
+    :type dpds: Optional[Union[int, List[int]]]
+    :param predict_data: 默认值为 ``None`` 。待预估的无标签数据（可选）
         传入后会计算各样本的预估逾期率
-    :param coefficients: 逾期率调整系数
+
+    :type predict_data: Optional[pd.DataFrame]
+    :param coefficients: 默认值为 ``None`` 。逾期率调整系数
+    :type coefficients: Optional[Union[float, Dict[str, float], str]]
     :param method: 分箱方法，默认'mdlp'
+    :type method: str
     :param max_n_bins: 最大分箱数，默认5
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认0.05
+    :type min_bin_size: float
     :param missing_separate: 是否将缺失值单独分箱，默认True
-    :param bin_table: 现成分箱表（可选），传入后直接使用而不从data计算
-    :param rules: 自定义分箱切分点列表
-    :param desc: 特征描述
-    :param excel_writer: Excel文件路径或ExcelWriter对象（可选），用于输出报告
-    :param sheet: Excel工作表名称
+    :type missing_separate: bool
+    :param bin_table: 默认值为 ``None`` 。现成分箱表（可选），传入后直接使用而不从data计算
+    :type bin_table: Optional[pd.DataFrame]
+    :param rules: 默认值为 ``None`` 。自定义分箱切分点列表
+    :type rules: Optional[List]
+    :param desc: 默认值为 ``None`` 。特征描述
+    :type desc: Optional[str]
+    :param excel_writer: 默认值为 ``None`` 。Excel文件路径或ExcelWriter对象（可选），用于输出报告
+    :param sheet: 默认值为 ``'逾期率预估报告'`` 。Excel工作表名称
+    :type sheet: str
     :param bin_params: 扩展分箱配置；显式参数优先于配置，配置优先于默认值
+    :type bin_params: Optional[Dict]
     :return: 包含预估结果的DataFrame
 
     **参考样例**
@@ -1151,8 +1264,10 @@ def overdue_prediction_report(
     ...     excel_writer='overdue_report.xlsx'
     ... )
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
+
+    :type overdue_operator: Optional[str]
     """
     # 确定拟合数据来源
     fit_data = bin_table if bin_table is not None else data

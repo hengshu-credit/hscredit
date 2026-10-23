@@ -29,6 +29,15 @@ class CounterfactualExplainer:
     """在模型与显式约束下搜索最小特征变更方案。
 
     输出仅表示模型条件下的非因果建议，不代表真实因果效果或授信承诺。
+
+    **参数**
+
+    :param model: 已拟合模型；概率模式要求 ``predict_proba`` ，评分模式要求 ``predict_score`` 。
+    :param reference_data: 用于候选值和数值尺度的非空 DataFrame。
+    :param constraints: 默认值为 ``None`` 。各特征的 mutable、weight、direction、min、max 和 allowed 约束
+    :param output_type: 默认值为 ``'auto'`` 。 ``auto`` 、 ``probability`` 或 ``score`` 。auto 优先使用概率接口
+    :param positive_class: 默认值为 ``1`` 。概率模式下的风险正类标签
+    :param max_candidates: 默认值为 ``100`` 。每个类别特征最多保留的确定性候选数
     """
 
     def __init__(
@@ -42,10 +51,10 @@ class CounterfactualExplainer:
     ):
         """创建受约束反事实搜索器。
 
-        :param model: 已拟合模型；概率模式要求 ``predict_proba``，评分模式要求 ``predict_score``。
+        :param model: 已拟合模型；概率模式要求 ``predict_proba`` ，评分模式要求 ``predict_score`` 。
         :param reference_data: 用于候选值和数值尺度的非空 DataFrame。
         :param constraints: 各特征的 mutable、weight、direction、min、max 和 allowed 约束。
-        :param output_type: ``auto``、``probability`` 或 ``score``。auto 优先使用概率接口。
+        :param output_type: ``auto`` 、 ``probability`` 或 ``score`` 。auto 优先使用概率接口。
         :param positive_class: 概率模式下的风险正类标签。
         :param max_candidates: 每个类别特征最多保留的确定性候选数。
         """

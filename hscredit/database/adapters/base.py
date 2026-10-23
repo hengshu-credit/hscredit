@@ -30,7 +30,7 @@ class BaseDatabaseAdapter:
     **参考样例**
 
     自定义后端至少实现查询、流资源和所需写入方法；支持 JSON 字段投影时覆盖
-    :meth:`json_extract_expression`，公共 SQL 包装由 :meth:`build_json_projection_sql` 完成。
+    :meth:`json_extract_expression` ，公共 SQL 包装由  :meth:`build_json_projection_sql`  完成。
     """
 
     database_type = "base"
@@ -114,10 +114,12 @@ class BaseDatabaseAdapter:
     def json_extract_expression(self, column_sql: str, path: str) -> str:
         """生成从单个 JSON 字段提取路径值的 SQL 表达式。
 
-        适配器只负责返回表达式，不添加输出别名。``path`` 已经由公共层完成安全校验。
+        适配器只负责返回表达式，不添加输出别名。 ``path`` 已经由公共层完成安全校验。
 
         :param column_sql: 已按当前方言引用的 JSON 源字段表达式。
+        :type column_sql: str
         :param path: 以 ``$`` 开头的 JSONPath。
+        :type path: str
         :return: 返回标量或嵌套 JSON 原始值的 SQL 表达式。
         :raises DatabaseCapabilityError: 适配器未实现 JSON 字段投影。
         """
@@ -135,9 +137,13 @@ class BaseDatabaseAdapter:
         """把原查询包装为仅返回普通字段和指定 JSON 子字段的 SQL。
 
         :param sql: 输出中必须包含 ``columns`` 和所有 JSON 源字段的原始查询。
-        :param columns: 原样保留的普通字段名序列；不能包含 ``json_fields`` 的源字段。
+        :type sql: str
+        :param columns: 默认值为 ``None`` 。原样保留的普通字段名序列；不能包含 ``json_fields`` 的源字段
+        :type columns: Optional[Sequence[str]]
         :param json_fields: ``{源字段: {输出字段: 路径或(路径, 默认值)}}`` 映射。
             默认值由 QueryStream 在分块返回前处理，不写入 SQL。
+
+        :type json_fields: Optional[Mapping[str, Mapping[str, Any]]]
         :return: 仅选择目标字段的后端方言 SQL；没有投影时返回原 SQL。
         :raises ValidationError: 字段名、JSONPath、默认值简写或输出名重复无效。
         :raises DatabaseCapabilityError: 当前适配器没有 JSON 路径提取实现。
@@ -204,7 +210,8 @@ class BaseDatabaseAdapter:
         return False
 
     def table_exists(self, table_name: str) -> Optional[bool]:
-        """只读判断目标表是否存在；无法通用判断时返回 ``None``。"""
+        """只读判断目标表是否存在；无法通用判断时返回 ``None`` 。
+        """
 
         del table_name
         return None

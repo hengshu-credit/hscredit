@@ -67,30 +67,50 @@ logger = logging.getLogger(__name__)
 class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSerializableMixin, BaseEstimator):
     """通用模型评分卡（概率 → 评分）.
 
-    将任意含 ``predict_proba`` 的模型输出的概率，通过 :class:`ScoreTransformer`
+    将任意含 ``predict_proba`` 的模型输出的概率，通过  :class:`ScoreTransformer`
     转换为评分。兼容 sklearn 与 scorecardpipeline 双 API 风格。
 
     **参数**
 
-    :param model: 含 ``predict_proba`` 的模型实例，可选。
-        - 若为已训练模型，``fit`` 时不会重复训练（除非 ``prefit=False``）
-        - 若为未训练模型，``fit`` 时会先用 ``(X, y)`` 训练底层模型
-        - 若为 None，``fit`` 时必须通过 ``proba`` 直接传入概率（纯概率转评分）
+    :param model: 默认值为 ``None`` 。含 ``predict_proba`` 的模型实例，可选
+
+        - 若为已训练模型， ``fit`` 时不会重复训练（除非 ``prefit=False`` ）
+
+        - 若为未训练模型， ``fit`` 时会先用 ``(X, y)`` 训练底层模型
+
+        - 若为 None， ``fit`` 时必须通过 ``proba`` 直接传入概率（纯概率转评分）
+
+    :type model: Optional[Any]
     :param method: 概率转评分方法，默认 'standard'，可选 'standard'/'linear'/'quantile'/'boxcox'
+    :type method: str
     :param lower: 评分下界，默认 None
+    :type lower: Optional[float]
     :param upper: 评分上界，默认 None
+    :type upper: Optional[float]
     :param direction: 评分方向，默认 'descending'（信用分：概率越高分越低）
+    :type direction: str
     :param base_odds: 基准坏好比 p/(1-p)（standard 方法），默认0.05，不是坏样本率；
         5%坏样本率应传 0.05/0.95。
+
+    :type base_odds: float
     :param base_score: 基准分数（standard 方法），默认 600
+    :type base_score: float
     :param pdo: Point of Double Odds（standard 方法），默认 20
+    :type pdo: float
     :param rate: 倍率（standard 方法），默认 2
+    :type rate: float
     :param decimal: 评分精度（小数位数），默认 0
+    :type decimal: int
     :param clip: 是否截断到 [lower, upper]，默认 True
+    :type clip: bool
     :param prefit: 是否将 model 视为已训练（跳过训练），默认 None（直接 fit 自动检测；ModelTuner 搜索时重训底层模型，只有显式 True 冻结）
+    :type prefit: Optional[bool]
     :param target: 目标列名，默认 'target'（用于从 DataFrame 提取 y）
+    :type target: str
     :param verbose: 是否输出详细信息，默认 False
+    :type verbose: bool
     :param positive_class: 坏样本类别，默认 1；None 时沿用基础模型第 2 列的类别。
+    :type positive_class: Optional[Any]
     :param kwargs: 透传给 ScoreTransformer 的其他参数（如 n_quantiles、lmbda）
 
     **属性**
@@ -103,7 +123,9 @@ class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSeriali
     **参数补充**
 
     :param history_policy: summary/diagnostics/full，默认 summary；控制原始参数保留范围，数值学习曲线均完整保留。
+    :type history_policy: str
     :param max_history: 最多保留的拟合历史条数，默认20；被移除的训练修订不能再查询。
+    :type max_history: int
     """
 
     artifact_kind = "评分卡"
@@ -239,13 +261,17 @@ class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSeriali
             card = ProbabilityScoreCard(model=None)
             card.fit(proba=train_proba)
 
-        :param X: 特征矩阵；若 y 为 None 且 init 指定了 target，则从 X 提取 y
-        :param y: 目标变量，可选
-        :param sample_weight: 样本权重，可选（训练底层模型时使用）
-        :param proba: 直接传入训练集正类概率（无模型时使用），可选
-        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
-        :param eval_metric: 最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标。
-        :param eval_sample_weight: 评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权。
+        :param X: 默认值为 ``None`` 。特征矩阵；若 y 为 None 且 init 指定了 target，则从 X 提取 y
+        :type X: Optional[Union[pd.DataFrame, np.ndarray]]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[pd.Series, np.ndarray]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重，可选（训练底层模型时使用）
+        :type sample_weight: Optional[np.ndarray]
+        :param proba: 默认值为 ``None`` 。直接传入训练集正类概率（无模型时使用），可选
+        :type proba: Optional[Union[np.ndarray, pd.Series]]
+        :param eval_set: 默认值为 ``None`` 。评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留
+        :param eval_metric: 默认值为 ``None`` 。最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标
+        :param eval_sample_weight: 默认值为 ``None`` 。评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权
         :return: self
 
         **参考样例**
@@ -323,8 +349,10 @@ class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSeriali
     ) -> np.ndarray:
         """预测评分.
 
-        :param X: 特征矩阵（通过底层模型计算概率）
-        :param proba: 直接传入正类概率
+        :param X: 默认值为 ``None`` 。特征矩阵（通过底层模型计算概率）
+        :type X: Optional[Union[pd.DataFrame, np.ndarray]]
+        :param proba: 默认值为 ``None`` 。直接传入正类概率
+        :type proba: Optional[Union[np.ndarray, pd.Series]]
         :return: 评分数组（已截断、四舍五入）
         """
         self._check_fitted()
@@ -389,11 +417,16 @@ class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSeriali
     ) -> pd.DataFrame:
         """生成评分区间与坏样本率/odds/KS 的对照表.
 
-        :param scores: 评分数组；为 None 时通过 X 计算
-        :param y: 真实标签（坏=1）
-        :param X: 特征矩阵（scores 为 None 时用于计算评分）
+        :param scores: 默认值为 ``None`` 。评分数组；为 None 时通过 X 计算
+        :type scores: Optional[np.ndarray]
+        :param y: 默认值为 ``None`` 。真实标签（坏=1）
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param X: 默认值为 ``None`` 。特征矩阵（scores 为 None 时用于计算评分）
+        :type X: Optional[Union[pd.DataFrame, np.ndarray]]
         :param max_n_bins: 分箱数，默认 10
-        :param method: 分箱方式，'quantile'（等频）或 'uniform'（等宽）
+        :type max_n_bins: int
+        :param method: 默认值为 ``'quantile'`` 。分箱方式，'quantile'（等频）或 'uniform'（等宽）
+        :type method: str
         :return: 中文列名的评分-坏率对照表
         """
         self._check_fitted()
@@ -457,13 +490,18 @@ class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSeriali
         """生成评分维度报告（评分-坏率对照表）.
 
         统一返回评分区间与坏样本率/odds/KS 的对照表。如需底层模型的多 Sheet
-        风控报告，请使用 :meth:`model_report`。
+        风控报告，请使用  :meth:`model_report` 。
 
-        :param X: 特征矩阵（scores 为 None 时用于计算评分）
-        :param y: 真实标签（坏=1）
-        :param scores: 评分数组，可选
+        :param X: 默认值为 ``None`` 。特征矩阵（scores 为 None 时用于计算评分）
+        :type X: Optional[Union[pd.DataFrame, np.ndarray]]
+        :param y: 默认值为 ``None`` 。真实标签（坏=1）
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param scores: 默认值为 ``None`` 。评分数组，可选
+        :type scores: Optional[np.ndarray]
         :param max_n_bins: 分箱数，默认 10
-        :param method: 分箱方式，'quantile' 或 'uniform'
+        :type max_n_bins: int
+        :param method: 默认值为 ``'quantile'`` 。分箱方式，'quantile' 或 'uniform'
+        :type method: str
         :return: 评分-坏率对照表 DataFrame
 
         **参考样例**
@@ -493,10 +531,12 @@ class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSeriali
     # ==================== 持久化（复用 utils.io） ====================
 
     def save(self, file: str, engine: str = "joblib", **kwargs) -> str:
-        """保存评分卡到文件（复用 ``hscredit.utils.io.save_pickle``）.
+        """保存评分卡到文件（复用 ``hscredit.utils.io.save_pickle`` ）.
 
         :param file: 文件路径
+        :type file: str
         :param engine: 序列化引擎，默认 'joblib'
+        :type engine: str
         :param kwargs: 透传给 save_pickle 的参数（如 compression）
         :return: 保存的文件路径
         """
@@ -514,10 +554,12 @@ class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSeriali
 
     @classmethod
     def load(cls, file: str, engine: str = "auto", **kwargs) -> "ProbabilityScoreCard":
-        """从文件加载评分卡（离线模型加载，复用 ``hscredit.utils.io.load_pickle``）.
+        """从文件加载评分卡（离线模型加载，复用 ``hscredit.utils.io.load_pickle`` ）.
 
         :param file: 文件路径
+        :type file: str
         :param engine: 序列化引擎，默认 'auto'
+        :type engine: str
         :param kwargs: 透传给 load_pickle 的参数
         :return: 加载的 ProbabilityScoreCard 实例
         """

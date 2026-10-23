@@ -112,7 +112,7 @@ def get_metric(spec, *, kind="loss", **params):
     """按名称、损失、指标对象或概率函数创建统一指标。
 
     :param spec: list_metrics 中的标识/类名、BaseLoss、BaseMetric 或概率评估函数。
-    :param kind: 仅损失对象支持 loss/business，等价于 loss.metric(kind=...)。
+    :param kind: 默认值为 ``'loss'`` 。仅损失对象支持 loss/business，等价于 loss.metric(kind=...)
     :param params: 指标构造参数；自定义函数必须指定 greater_is_better。
     :return: BaseMetric，可共用于离线 evaluate、模型 eval_metric、调参 metric。
 

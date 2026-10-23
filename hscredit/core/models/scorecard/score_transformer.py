@@ -105,24 +105,37 @@ class BaseScoreTransformer(TrainingProcessMixin, ArtifactSerializableMixin, Base
     **参数**
 
     :param lower: 评分下界，默认None(不限制)
+    :type lower: Optional[float]
     :param upper: 评分上界，默认None(不限制)
+    :type upper: Optional[float]
     :param direction: 评分方向，默认'auto'
+
         - 'descending': 概率越高分数越低(信用分)
+
         - 'ascending': 概率越高分数越高(欺诈分)
+
         - 'auto': 根据lower/upper自动判断
+
+    :type direction: Literal['descending', 'ascending', 'auto']
     :param decimal: 评分精度(小数位数)，默认0(整数)
+    :type decimal: int
     :param clip: 是否对超出范围的评分进行截断，默认True
+    :type clip: bool
 
     **子类**
 
-    - :class:`StandardScoreTransformer`：标准 log-odds 评分卡（``Score = A - B·ln(odds)``）
-    - :class:`LinearScoreTransformer`：概率线性映射到分数区间
-    - :class:`QuantileScoreTransformer`：按概率分位数映射，保持排序
-    - :class:`BoxCoxScoreTransformer`：odds 经 Box-Cox 幂变换后线性映射
-    - :class:`ScoreTransformer`：统一入口，按 ``method`` 选择上述实现
+    - :class:`StandardScoreTransformer` ：标准 log-odds 评分卡（ ``Score = A - B·ln(odds)`` ）
 
-    所有子类仅以"概率"为输入（不依赖原始模型），共享 :meth:`predict`（含截断与取整）、
-    :meth:`save` / :meth:`load` 持久化能力。
+    - :class:`LinearScoreTransformer` ：概率线性映射到分数区间
+
+    - :class:`QuantileScoreTransformer` ：按概率分位数映射，保持排序
+
+    - :class:`BoxCoxScoreTransformer` ：odds 经 Box-Cox 幂变换后线性映射
+
+    - :class:`ScoreTransformer` ：统一入口，按 ``method`` 选择上述实现
+
+    所有子类仅以"概率"为输入（不依赖原始模型），共享  :meth:`predict` （含截断与取整）、
+    :meth:`save`  /  :meth:`load`  持久化能力。
 
     **参考样例**
 
@@ -222,6 +235,7 @@ class BaseScoreTransformer(TrainingProcessMixin, ArtifactSerializableMixin, Base
         """拟合评分转换器.
 
         :param proba: 训练数据的预测概率(正类概率)
+        :type proba: Union[np.ndarray, pd.Series]
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -239,6 +253,7 @@ class BaseScoreTransformer(TrainingProcessMixin, ArtifactSerializableMixin, Base
         """将概率转换为评分.
 
         :param proba: 预测概率(正类概率)
+        :type proba: Union[np.ndarray, pd.Series]
         :return: 评分
         """
         pass
@@ -247,6 +262,7 @@ class BaseScoreTransformer(TrainingProcessMixin, ArtifactSerializableMixin, Base
         """预测评分.
 
         :param proba: 预测概率(正类概率)
+        :type proba: Union[np.ndarray, pd.Series]
         :return: 评分数组
 
         **参考样例**
@@ -275,6 +291,7 @@ class BaseScoreTransformer(TrainingProcessMixin, ArtifactSerializableMixin, Base
         注意: 这是一个近似转换，可能不完全准确。
 
         :param scores: 评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 概率
         """
         check_is_fitted(self)
@@ -289,7 +306,9 @@ class BaseScoreTransformer(TrainingProcessMixin, ArtifactSerializableMixin, Base
         （joblib/pickle/dill/cloudpickle）和压缩格式（gzip/bz2/xz/lz4/zstd）。
 
         :param file: 文件路径
+        :type file: str
         :param engine: 序列化引擎，默认 'joblib'
+        :type engine: str
         :param kwargs: 透传给 save_pickle 的参数（如 compression, compression_level）
         :return: 保存的文件路径
 
@@ -315,7 +334,9 @@ class BaseScoreTransformer(TrainingProcessMixin, ArtifactSerializableMixin, Base
         复用 ``hscredit.utils.io.load_pickle`` 进行读取。
 
         :param file: 文件路径
+        :type file: str
         :param engine: 序列化引擎，默认 'auto'（按扩展名自动推断）
+        :type engine: str
         :param kwargs: 透传给 load_pickle 的参数（如 compression）
         :return: 加载的评分转换器实例
 
@@ -342,9 +363,10 @@ class StandardScoreTransformer(BaseScoreTransformer):
 
     direction 通过改变 B 参数的符号来控制分数方向，而非 post-hoc 翻转:
 
-    - **descending**（信用分，B 为正）:
+    - **descending** （信用分，B 为正）:
       odds↑ → ln(odds)↑ → Score↓ → 低逾期率得高分 ← 经典评分卡
-    - **ascending**（欺诈分，B 为负）:
+
+    - **ascending** （欺诈分，B 为负）:
       odds↑ → ln(odds)↑ → Score↑ → 高逾期率得高分
 
     因此设置 lower/upper 边界时，分数范围始终是有意义的（无需额外翻转）。
@@ -352,23 +374,45 @@ class StandardScoreTransformer(BaseScoreTransformer):
     **参数**
 
     :param lower: 评分下界，默认None(不限制)
+    :type lower: Optional[float]
     :param upper: 评分上界，默认None(不限制)
+    :type upper: Optional[float]
     :param direction: 评分方向，默认'descending'(信用分模式)
+
         - 'descending': 概率越高分数越低（信用评分，如300-1000）
+
         - 'ascending': 概率越高分数越高（欺诈评分，如0-100）
+
         - 'auto': 根据lower/upper自动判断
+
+    :type direction: Literal['descending', 'ascending', 'auto']
     :param base_odds: 基准坏好比 p/(1-p)，默认0.05，对应坏样本率0.05/1.05；
         若需5%坏样本率对应基准分，应传 0.05/0.95。该值不是坏样本率，也不是好坏比。
+
         - 表示在base_score对应的坏样本率
+
+    :type base_odds: float
     :param base_score: 基准分数，默认600
+
         - 对应base_odds的分数
+
+    :type base_score: float
     :param pdo: Point of Double Odds，默认20
+
         - 当odds增加rate倍时，分数的变化量
+
+    :type pdo: float
     :param rate: 倍率，默认2
+
         - odds增加的倍数
+
+    :type rate: float
     :param step: score_odds_reference的步长，默认None(自动计算为pdo/10)
+    :type step: Optional[int]
     :param decimal: 评分精度，默认0
+    :type decimal: int
     :param clip: 是否截断，默认True
+    :type clip: bool
 
     **参考样例**
 
@@ -393,7 +437,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
 
     **引用**
 
-    标准评分卡刻度公式 ``Score = A - B·ln(odds)``、``B = pdo/ln(rate)`` 出自
+    标准评分卡刻度公式 ``Score = A - B·ln(odds)`` 、 ``B = pdo/ln(rate)`` 出自
     Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
 
@@ -429,15 +473,19 @@ class StandardScoreTransformer(BaseScoreTransformer):
         """计算评分公式中的参数A和B.
 
         direction 通过改变 B 的符号来控制分数方向：
+
         - descending（信用分，B 为正）:
           Score = A - B*ln(odds), B = pdo/ln(rate) > 0
           odds↑ → ln(odds)↑ → Score↓ → 低逾期率得高分
+
         - ascending（欺诈分，B 为负）:
           Score = A + |B|*ln(odds), B = -pdo/ln(rate) < 0
           odds↑ → ln(odds)↑ → Score↑ → 高逾期率得高分
 
         根据以下两个方程求解:
+
         1. base_score = A - B × ln(base_odds)
+
         2. descending 时，base_score - pdo = A - B × ln(rate × base_odds)
 
         解得（其中 B_abs = pdo / ln(rate) 为非负基数，sign 决定方向）:
@@ -464,6 +512,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         标准评分卡方法的参数在初始化时已确定，fit主要用于验证参数合理性。
 
         :param proba: 训练数据的预测概率(用于验证参数合理性)
+        :type proba: Union[np.ndarray, pd.Series]
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -537,6 +586,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         """将概率转换为评分.
 
         :param proba: 预测概率
+        :type proba: Union[np.ndarray, pd.Series]
         :return: 评分数组
         """
         check_is_fitted(self)
@@ -563,6 +613,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         direction 已通过 sign 体现在 A/B 计算中，此处直接逆算，无需额外翻转。
 
         :param scores: 评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 概率
         """
         check_is_fitted(self)
@@ -631,7 +682,9 @@ class StandardScoreTransformer(BaseScoreTransformer):
         """根据逾期率范围获取对应的评分参照表.
 
         :param prob_range: 概率范围，默认(0.001, 0.5)
+        :type prob_range: tuple
         :param n_points: 采样点数，默认50
+        :type n_points: int
         :return: DataFrame包含概率、odds、评分等列
         """
         min_prob, max_prob = prob_range
@@ -659,6 +712,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         """输出标准评分卡的概率→评分转换公式.
 
         :param decimal: 公式数值保留小数位数，默认 4
+        :type decimal: int
         :return: 含公式字符串与 A/B 参数的字典
         """
         check_is_fitted(self)
@@ -685,14 +739,20 @@ class LinearScoreTransformer(BaseScoreTransformer):
     **参数**
 
     :param lower: 评分下界，默认0
+    :type lower: Optional[float]
     :param upper: 评分上界，默认100
+    :type upper: Optional[float]
     :param direction: 评分方向，默认'ascending'(欺诈分模式)
+    :type direction: Literal['descending', 'ascending', 'auto']
     :param decimal: 评分精度，默认0
+    :type decimal: int
     :param clip: 是否截断，默认True
+    :type clip: bool
 
     **转换公式**
 
     - descending(信用分): Score = upper - (upper - lower) × P
+
     - ascending(欺诈分): Score = lower + (upper - lower) × P
 
     **参考样例**
@@ -727,6 +787,7 @@ class LinearScoreTransformer(BaseScoreTransformer):
         线性方法的参数在初始化时已确定，fit主要用于保存训练概率分布。
 
         :param proba: 训练数据的预测概率
+        :type proba: Union[np.ndarray, pd.Series]
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -751,6 +812,7 @@ class LinearScoreTransformer(BaseScoreTransformer):
         """将概率转换为评分.
 
         :param proba: 预测概率
+        :type proba: Union[np.ndarray, pd.Series]
         :return: 评分数组
         """
         check_is_fitted(self)
@@ -772,6 +834,7 @@ class LinearScoreTransformer(BaseScoreTransformer):
         """将评分反向转换为概率.
 
         :param scores: 评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 概率
         """
         check_is_fitted(self)
@@ -799,16 +862,24 @@ class QuantileScoreTransformer(BaseScoreTransformer):
     **参数**
 
     :param lower: 评分下界，默认0
+    :type lower: Optional[float]
     :param upper: 评分上界，默认100
+    :type upper: Optional[float]
     :param direction: 评分方向，默认'ascending'(欺诈分模式)
+    :type direction: Literal['descending', 'ascending', 'auto']
     :param n_quantiles: 分位数数量，默认100
+    :type n_quantiles: int
     :param decimal: 评分精度，默认0
+    :type decimal: int
     :param clip: 是否截断，默认True
+    :type clip: bool
 
     **转换原理**
 
     1. 在训练数据上计算概率分布
+
     2. 将概率映射到对应的分位数
+
     3. 将分位数线性映射到评分区间
 
     **参考样例**
@@ -847,6 +918,7 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         学习训练数据的概率分布，用于后续分位数映射。
 
         :param proba: 训练数据的预测概率
+        :type proba: Union[np.ndarray, pd.Series]
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -875,6 +947,7 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         """将概率转换为评分.
 
         :param proba: 预测概率
+        :type proba: Union[np.ndarray, pd.Series]
         :return: 评分数组
         """
         check_is_fitted(self)
@@ -902,6 +975,7 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         """将评分反向转换为概率(近似值).
 
         :param scores: 评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 概率
         """
         check_is_fitted(self)
@@ -955,17 +1029,30 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
     **参数**
 
     :param lower: 评分下界，默认300
+    :type lower: Optional[float]
     :param upper: 评分上界，默认1000
+    :type upper: Optional[float]
     :param direction: 评分方向，默认'descending'(信用分模式)
+    :type direction: Literal['descending', 'ascending', 'auto']
     :param lmbda: Box-Cox λ 参数，默认None(从数据自动估计)
+
         - None: 使用 MLE 从训练 odds 分布中估计最优 λ
+
         - 0: 退化为 ln(odds)，等价于标准评分卡
+
         - 0.5: 平方根变换
+
         - 1.0: 线性变换（不推荐）
+
         - 内部经验: 信贷场景通常 λ ∈ [-0.5, 0.5]
+
+    :type lmbda: Optional[float]
     :param shift: odds 偏移量，防止 odds=0 时 Box-Cox 失败，默认1e-6
+    :type shift: float
     :param decimal: 评分精度(小数位数)，默认0(整数)
+    :type decimal: int
     :param clip: 是否对超出范围的评分进行截断，默认True
+    :type clip: bool
 
     **参考样例**
 
@@ -994,7 +1081,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
 
     Box, G. E. P., & Cox, D. R. (1964). *An Analysis of Transformations.* Journal of
     the Royal Statistical Society, Series B, 26(2). λ 的 MLE 估计基于
-    ``scipy.stats.boxcox``：https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.boxcox.html
+    ``scipy.stats.boxcox`` ：https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.boxcox.html
     """
 
     def __init__(
@@ -1081,10 +1168,13 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         """拟合 Box-Cox 评分转换器。
 
         1. 计算训练数据的 odds
+
         2. 估计最优 λ（或使用用户指定值）
+
         3. 记录变换后的值域 [z_min, z_max] 用于线性映射
 
         :param proba: 训练数据的预测概率（正类概率）
+        :type proba: Union[np.ndarray, pd.Series]
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -1128,6 +1218,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         """将概率转换为评分。
 
         :param proba: 预测概率
+        :type proba: Union[np.ndarray, pd.Series]
         :return: 评分数组
         """
         check_is_fitted(self)
@@ -1155,6 +1246,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
         """将评分反向转换为概率。
 
         :param scores: 评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 概率
         """
         check_is_fitted(self)
@@ -1187,19 +1279,35 @@ class ScoreTransformer(ExtraParamsMixin, BaseScoreTransformer):
     **参数**
 
     :param method: 转换方法，默认'standard'
+
         - 'standard': 标准评分卡方法(StandardScoreTransformer)
+
         - 'linear': 线性映射(LinearScoreTransformer)
+
         - 'quantile': 分位数映射(QuantileScoreTransformer)
+
         - 'boxcox': Box-Cox幂变换映射(BoxCoxScoreTransformer)
+
+    :type method: Literal['standard', 'linear', 'quantile', 'boxcox']
     :param lower: 评分下界，默认None
+    :type lower: Optional[float]
     :param upper: 评分上界，默认None
+    :type upper: Optional[float]
     :param direction: 评分方向，默认'auto'
+    :type direction: Literal['descending', 'ascending', 'auto']
     :param decimal: 评分精度，默认0
+    :type decimal: int
     :param clip: 是否截断，默认True
+    :type clip: bool
     :param target: 目标列名，默认'target'
+
         - 用于从DataFrame中提取目标变量
+
+    :type target: str
     :param kwargs: 传递给具体转换器的参数
+
         - standard方法: base_odds, base_score, pdo
+
         - quantile方法: n_quantiles
 
     **常用配置**
@@ -1265,6 +1373,7 @@ class ScoreTransformer(ExtraParamsMixin, BaseScoreTransformer):
         """拟合评分转换器.
 
         :param proba: 训练数据的预测概率(正类概率)
+        :type proba: Union[np.ndarray, pd.Series]
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -1326,6 +1435,7 @@ class ScoreTransformer(ExtraParamsMixin, BaseScoreTransformer):
         """将概率转换为评分.
 
         :param proba: 预测概率
+        :type proba: Union[np.ndarray, pd.Series]
         :return: 评分数组
         """
         check_is_fitted(self)
@@ -1335,6 +1445,7 @@ class ScoreTransformer(ExtraParamsMixin, BaseScoreTransformer):
         """将评分反向转换为概率.
 
         :param scores: 评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 概率
         """
         check_is_fitted(self)
@@ -1344,6 +1455,7 @@ class ScoreTransformer(ExtraParamsMixin, BaseScoreTransformer):
         """输出当前方法的概率→评分转换公式（仅 standard 方法给出解析式）.
 
         :param decimal: 公式数值保留小数位数，默认 4
+        :type decimal: int
         :return: 公式字典；非解析方法（linear/quantile/boxcox）返回方法说明
         """
         check_is_fitted(self)
@@ -1371,11 +1483,17 @@ def transform_probability_to_score(
     注意: 此函数不进行拟合，直接使用预设参数。
 
     :param proba: 预测概率
+    :type proba: Union[np.ndarray, pd.Series]
     :param method: 转换方法，默认'standard'
+    :type method: str
     :param lower: 评分下界，默认None
+    :type lower: Optional[float]
     :param upper: 评分上界，默认None
+    :type upper: Optional[float]
     :param direction: 评分方向，默认'descending'
+    :type direction: str
     :param decimal: 评分精度，默认0
+    :type decimal: int
     :param kwargs: 其他参数
     :return: 评分数组
 
@@ -1453,11 +1571,17 @@ def plot_score_transformation_curve(
     """绘制概率-评分转换曲线.
 
     :param transformer: 已拟合的评分转换器
+    :type transformer: BaseScoreTransformer
     :param proba_range: 概率范围，默认0-1的100个点
+    :type proba_range: Optional[np.ndarray]
     :param figsize: 图表大小，默认(10, 6)
-    :param title: 图表标题，可选
+    :type figsize: Tuple[int, int]
+    :param title: 默认值为 ``None`` 。图表标题，可选
+    :type title: Optional[str]
     :param show: 是否显示图表，默认True
+    :type show: bool
     :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
+    :type colors: Optional[List[str]]
     :return: matplotlib Figure对象
 
     **参考样例**
@@ -1536,13 +1660,21 @@ def compare_score_transformers(
     """对比多种评分转换方法.
 
     :param proba: 预测概率值(用于fit和对比)
+    :type proba: Union[np.ndarray, pd.Series]
     :param methods: 要对比的方法列表，默认['standard', 'linear', 'quantile']
+    :type methods: List[str]
     :param lower: 评分下界，默认None
+    :type lower: Optional[float]
     :param upper: 评分上界，默认None
+    :type upper: Optional[float]
     :param direction: 评分方向，默认'descending'
+    :type direction: str
     :param figsize: 图表大小，默认(12, 5)
+    :type figsize: Tuple[int, int]
     :param show: 是否显示图表，默认True
+    :type show: bool
     :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
+    :type colors: Optional[List[str]]
     :return: matplotlib Figure对象
 
     **参考样例**

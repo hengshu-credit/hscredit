@@ -14,7 +14,15 @@ from .._lifecycle import record_training
 
 
 class PlattCalibrator(BaseCalibrator):
-    """在原始概率的 log-odds 上拟合逻辑回归校准映射。"""
+    """在原始概率的 log-odds 上拟合逻辑回归校准映射。
+
+    **参数**
+
+    :param n_bins: 默认值为 ``10`` 。校准指标与可靠性曲线分箱数，必须为正整数
+    :type n_bins: int
+    :param strategy: 默认值为 ``'uniform'`` 。 ``"uniform"`` 等宽分箱或 ``"quantile"`` 等频分箱
+    :type strategy: str
+    """
 
     def __init__(self, n_bins: int = 10, strategy: str = "uniform", C: float = 1.0):
         super().__init__(n_bins=n_bins, strategy=strategy)
@@ -33,7 +41,9 @@ class PlattCalibrator(BaseCalibrator):
         **参数补充**
 
         :param y_prob: 一维原始坏样本概率，取值在[0,1]；不是信用分或 raw margin。
+        :type y_prob: Union[np.ndarray, pd.Series]
         :param y_true: 与概率等长的0/1真实标签，1表示坏样本。
+        :type y_true: Union[np.ndarray, pd.Series]
 
         **参考样例**
 
@@ -56,7 +66,15 @@ class PlattCalibrator(BaseCalibrator):
 
 
 class IsotonicCalibrator(BaseCalibrator):
-    """使用保序回归拟合非参数概率校准映射。"""
+    """使用保序回归拟合非参数概率校准映射。
+
+    **参数**
+
+    :param n_bins: 默认值为 ``10`` 。校准指标与可靠性曲线分箱数，必须为正整数
+    :type n_bins: int
+    :param strategy: 默认值为 ``'uniform'`` 。 ``"uniform"`` 等宽分箱或 ``"quantile"`` 等频分箱
+    :type strategy: str
+    """
 
     def __init__(self, n_bins: int = 10, strategy: str = "uniform", out_of_bounds: str = "clip"):
         super().__init__(n_bins=n_bins, strategy=strategy)
@@ -96,7 +114,8 @@ class IsotonicCalibrator(BaseCalibrator):
 
 
 class BetaCalibrator(BaseCalibrator):
-    """使用 ``log(p)`` 与 ``-log(1-p)`` 特征拟合 Beta 校准。"""
+    """使用 ``log(p)`` 与 ``-log(1-p)`` 特征拟合 Beta 校准。
+    """
 
     @record_training
     def fit(self, y_prob, y_true):
@@ -130,7 +149,15 @@ class BetaCalibrator(BaseCalibrator):
 
 
 class HistogramCalibrator(BaseCalibrator):
-    """使用箱内真实正类频率进行直方图概率校准。"""
+    """使用箱内真实正类频率进行直方图概率校准。
+
+    **参数**
+
+    :param n_bins: 默认值为 ``10`` 。校准指标与可靠性曲线分箱数，必须为正整数
+    :type n_bins: int
+    :param strategy: 默认值为 ``'quantile'`` 。 ``"uniform"`` 等宽分箱或 ``"quantile"`` 等频分箱
+    :type strategy: str
+    """
 
     def __init__(self, n_bins: int = 10, strategy: str = "quantile"):
         super().__init__(n_bins=n_bins, strategy=strategy)

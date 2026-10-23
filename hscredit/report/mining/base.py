@@ -119,13 +119,32 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
     所有规则挖掘器的基类，遵循sklearn API规范，
     fit方法兼容scorecardpipeline风格。
 
+    **参数**
+
     :param target: 目标变量列名，默认为'target'
-    :param exclude_cols: 需要排除的列名列表
+    :type target: str
+    :param exclude_cols: 默认值为 ``None`` 。需要排除的列名列表
+    :type exclude_cols: Optional[List[str]]
     :param features: 参与规则挖掘的字段名或字段名列表，默认None（使用全部候选字段）
-    :param feature_map: 字段名到字段含义的映射，用于报告展示
-    :param n_jobs: 并行工作数，默认为-1；None沿用旧串行行为
-    :param parallel_backend: joblib并行后端，默认为None
-    :param parallel_config: joblib扩展配置，默认为None
+    :type features: FeatureNames
+    :param feature_map: 默认值为 ``None`` 。字段名到字段含义的映射，用于报告展示
+    :type feature_map: Optional[Dict[str, str]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
     """
 
     def __init__(
@@ -164,8 +183,11 @@ class BaseRuleMiner(ParallelizableMixin, BaseEstimator, ABC):
         """检查并处理输入数据.
 
         支持三种模式:
+
         1. sklearn风格: fit(X, y)
+
         2. scorecardpipeline风格: fit(df) - df包含特征和目标列
+
         3. 仅特征: fit(X) - 用于无监督规则挖掘
 
         :param X: 输入数据
@@ -217,7 +239,9 @@ def check_features_valid(X: pd.DataFrame, required_features: List[str]) -> None:
     """检查必需的特征是否都存在.
 
     :param X: 输入数据
+    :type X: pd.DataFrame
     :param required_features: 必需的特征列表
+    :type required_features: List[str]
     :raises ValueError: 当必需特征不存在时
     """
     missing = set(required_features) - set(X.columns)
@@ -229,9 +253,13 @@ def format_rule_expression(feature: str, threshold: float, operator: str = ">=",
     """格式化规则表达式.
 
     :param feature: 特征名
+    :type feature: str
     :param threshold: 阈值
-    :param operator: 操作符
-    :param precision: 数值精度
+    :type threshold: float
+    :param operator: 默认值为 ``'>='`` 。操作符
+    :type operator: str
+    :param precision: 默认值为 ``4`` 。数值精度
+    :type precision: int
     :return: 规则表达式字符串
     """
     return f"{feature} {operator} {threshold:.{precision}f}"
@@ -241,7 +269,9 @@ def calculate_lift(subset_badrate: float, overall_badrate: float) -> float:
     """计算lift值.
 
     :param subset_badrate: 子集坏账率
+    :type subset_badrate: float
     :param overall_badrate: 整体坏账率
+    :type overall_badrate: float
     :return: lift值
     """
     if overall_badrate <= 0:
@@ -253,7 +283,9 @@ def calculate_ks_score(y_true: np.ndarray, y_score: np.ndarray) -> float:
     """计算KS统计量.
 
     :param y_true: 真实标签
+    :type y_true: np.ndarray
     :param y_score: 预测分数
+    :type y_score: np.ndarray
     :return: KS值
     """
     from sklearn.metrics import roc_curve
@@ -266,6 +298,7 @@ def merge_intervals(intervals: List[Tuple[float, float]]) -> List[Tuple[float, f
     """合并重叠的区间.
 
     :param intervals: 区间列表，每个元素为(start, end)
+    :type intervals: List[Tuple[float, float]]
     :return: 合并后的区间列表
     """
     if not intervals:
@@ -290,9 +323,14 @@ class RuleCondition:
 
     表示单个规则条件，如 "age >= 18"
 
+    **参数**
+
     :param feature: 特征名
+    :type feature: str
     :param threshold: 阈值
-    :param operator: 操作符，支持 '>=', '<=', '>', '<', '==', '!='
+    :type threshold: Union[float, str]
+    :param operator: 默认值为 ``'>='`` 。操作符，支持 '>=', '<=', '>', '<', '==', '!='
+    :type operator: str
     """
 
     VALID_OPERATORS = {">=", "<=", ">", "<", "==", "!="}
@@ -309,6 +347,7 @@ class RuleCondition:
         """评估条件在数据上的匹配情况.
 
         :param X: 输入数据
+        :type X: pd.DataFrame
         :return: 匹配结果Series
         """
         if self.feature not in X.columns:
@@ -351,10 +390,16 @@ class MinedRule:
 
     封装一条完整的规则，包括条件、指标和元信息。
 
+    **参数**
+
     :param conditions: 规则条件列表
-    :param metric_score: 规则评估分数
-    :param description: 规则描述
-    :param metadata: 额外的元数据
+    :type conditions: List[RuleCondition]
+    :param metric_score: 默认值为 ``0.0`` 。规则评估分数
+    :type metric_score: float
+    :param description: 默认值为 ``''`` 。规则描述
+    :type description: str
+    :param metadata: 默认值为 ``None`` 。额外的元数据
+    :type metadata: Optional[Dict[str, Any]]
     """
 
     def __init__(
@@ -373,6 +418,7 @@ class MinedRule:
         """评估规则在数据上的匹配情况.
 
         :param X: 输入数据
+        :type X: pd.DataFrame
         :return: 匹配结果Series
         """
         if not self.conditions:

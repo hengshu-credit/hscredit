@@ -19,9 +19,9 @@ ArrayLike = Union[np.ndarray, pd.DataFrame, pd.Series, List]
 def normalize_dpd_values(dpds, *, deduplicate: bool = True) -> List[Union[int, float]]:
     """规范化 DPD 阈值，保留非整数小数并按首次出现顺序去重。
 
-    标量会转换为单元素列表，``None`` 按既有报告口径转换为 ``[0]``；
+    标量会转换为单元素列表， ``None`` 按既有报告口径转换为 ``[0]`` ；
     numpy/pandas 标量与常用序列输入均受支持。整数值统一输出为 Python
-    ``int``，非整数值输出为 Python ``float``。``deduplicate=False`` 保留重复
+    ``int`` ，非整数值输出为 Python ``float`` 。 ``deduplicate=False`` 保留重复
     阈值，供逾期字段与阈值一一对应的绘图入口使用。
     """
     if isinstance(dpds, (list, tuple, np.ndarray, pd.Index, pd.Series)):
@@ -58,17 +58,24 @@ def check_xy_inputs(
 
     支持两种 API 风格，并按 ``传入的 y > 从 X 提取 target 列`` 的优先级确定目标变量：
 
-    - sklearn 风格：``fit(X, y)``，X、y 分别传入
-    - scorecardpipeline 风格：``fit(df)``，目标列包含在 df 中、由 ``target`` 指定
+    - sklearn 风格： ``fit(X, y)`` ，X、y 分别传入
 
-    :param X: 输入数据，``DataFrame`` 或 numpy 数组（自动转为 DataFrame）
-    :param y: 目标变量（可选），提供时优先于从 X 提取 target 列
+    - scorecardpipeline 风格： ``fit(df)`` ，目标列包含在 df 中、由 ``target`` 指定
+
+    :param X: 输入数据， ``DataFrame`` 或 numpy 数组（自动转为 DataFrame）
+    :type X: ArrayLike
+    :param y: 默认值为 ``None`` 。目标变量（可选），提供时优先于从 X 提取 target 列
+    :type y: Optional[Union[np.ndarray, pd.Series, List]]
     :param target: 目标列名，当 ``y`` 为 None 时从 X 中提取，默认 ``'target'``
+    :type target: str
     :param accept_numpy: 是否接受 numpy 数组输入，默认 True
-    :return: 三元组 ``(X_df, y_series, feature_names)``：
+    :type accept_numpy: bool
+    :return: 三元组 ``(X_df, y_series, feature_names)`` ：
 
         - ``X_df`` (DataFrame)：处理后的特征数据
+
         - ``y_series`` (Series)：目标变量
+
         - ``feature_names`` (list)：特征名称列表
 
     :raises InputValidationError: X 与 y 长度不匹配，或数据为空时
@@ -112,12 +119,15 @@ def check_xy_inputs(
 def convert_to_dataframe(X: ArrayLike, columns: Optional[List[str]] = None) -> pd.DataFrame:
     """将输入转换为 DataFrame。
 
-    支持 ``DataFrame`` / numpy 数组（1 维或 2 维）/ ``Series`` / ``list`` / ``tuple``。
+    支持 ``DataFrame`` / numpy 数组（1 维或 2 维）/ ``Series`` / ``list`` / ``tuple`` 。
     1 维输入转为单列 DataFrame；DataFrame 与 Series 会复制后返回。
 
     :param X: 输入数据，不能为 None
-    :param columns: 列名列表，仅当 X 不是 DataFrame 时使用；为 None 时自动生成
-        ``feature_0``、``feature_1`` …
+    :type X: ArrayLike
+    :param columns: 默认值为 ``None`` 。列名列表，仅当 X 不是 DataFrame 时使用；为 None 时自动生成
+        ``feature_0`` 、 ``feature_1`` …
+
+    :type columns: Optional[List[str]]
     :return: 转换后的 ``DataFrame``
     :raises InputValidationError: X 为 None、维度 >2，或列名数量与列数不匹配时
     :raises InputTypeError: 输入类型不受支持时
@@ -168,9 +178,12 @@ def extract_target_from_df(
     """从 DataFrame 中提取目标变量。
 
     :param df: 输入 ``DataFrame``
+    :type df: pd.DataFrame
     :param target: 目标列名，默认 ``'target'``
+    :type target: str
     :param drop: 是否从返回的特征表中删除 ``target`` 列，默认 True
-    :return: 二元组 ``(X, y)``，``X`` 为特征 DataFrame，``y`` 为目标 Series
+    :type drop: bool
+    :return: 二元组 ``(X, y)`` ， ``X`` 为特征 DataFrame， ``y`` 为目标 Series
     :raises InputTypeError: 输入不是 DataFrame 时
     :raises FeatureNotFoundError: ``target`` 列不存在时
 
@@ -262,11 +275,14 @@ def _validate_data(X: pd.DataFrame, y: pd.Series) -> None:
 
 
 def check_array_1d(arr: ArrayLike, name: str = "array") -> pd.Series:
-    """检查并转换为一维 ``Series``。
+    """检查并转换为一维 ``Series`` 。
 
-    :param arr: 输入数组，``ndarray`` / ``Series`` / ``list`` / ``tuple``；
+    :param arr: 输入数组， ``ndarray`` / ``Series`` / ``list`` / ``tuple`` ；
         二维数组会被展平为一维
+
+    :type arr: ArrayLike
     :param name: 数组名称，用于生成错误信息与 Series 名称，默认 ``'array'``
+    :type name: str
     :return: 一维 ``Series``
     :raises InputValidationError: 数组为空时
     :raises InputTypeError: 类型不受支持时
@@ -287,11 +303,14 @@ def get_feature_dtypes(X: pd.DataFrame) -> dict:
     """获取特征的数据类型分类（数值型 / 类别型）。
 
     :param X: 特征 ``DataFrame``
+    :type X: pd.DataFrame
     :return: 字典，含三个键：
 
-        - ``'numeric'``：数值型特征名列表（int/uint/float 各精度）
-        - ``'categorical'``：非数值型特征名列表（object、category、bool 等）
-        - ``'all'``：全部特征名列表
+        - ``'numeric'`` ：数值型特征名列表（int/uint/float 各精度）
+
+        - ``'categorical'`` ：非数值型特征名列表（object、category、bool 等）
+
+        - ``'all'`` ：全部特征名列表
 
     **参考样例**
 
@@ -329,11 +348,15 @@ def check_missing_values(X: pd.DataFrame, y: Optional[pd.Series] = None, raise_e
     """检查缺失值情况。
 
     :param X: 特征 ``DataFrame``
-    :param y: 目标 ``Series``（可选），提供时一并统计其缺失情况
+    :type X: pd.DataFrame
+    :param y: 默认值为 ``None`` 。目标 ``Series`` （可选），提供时一并统计其缺失情况
+    :type y: Optional[pd.Series]
     :param raise_error: 存在缺失值时是否抛出异常，默认 False（仅统计不报错）
-    :return: 缺失值统计字典，含键 ``X_missing``（总缺失数）、
-        ``X_missing_by_col``（各列缺失数）、``X_missing_ratio``（整体缺失率）；
-        当 ``y`` 非 None 时另含 ``y_missing``、``y_missing_ratio``
+    :type raise_error: bool
+    :return: 缺失值统计字典，含键 ``X_missing`` （总缺失数）、
+        ``X_missing_by_col`` （各列缺失数）、 ``X_missing_ratio`` （整体缺失率）；
+        当 ``y`` 非 None 时另含 ``y_missing`` 、 ``y_missing_ratio``
+
     :raises InputValidationError: ``raise_error=True`` 且 X 或 y 存在缺失值时
 
     **参考样例**

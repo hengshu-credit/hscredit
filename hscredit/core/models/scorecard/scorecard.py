@@ -68,32 +68,66 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
     **参数**
 
     :param pdo: Point of Double Odds，odds增加rate倍时分数变化量，默认 60
+    :type pdo: float
     :param rate: 倍率，默认 2
+
         - odds增加的倍数
+
+    :type rate: float
     :param base_odds: 好坏比（好客户:坏客户），默认 35
+
         - 当 base_odds >= 1 时，解释为好坏比。例如 35 表示 35:1，坏样本率 ≈ 2.8%
+
         - 当 base_odds < 1 时，直接作为坏好比 P(bad)/P(good)，不是坏样本率；5%坏率应传0.05/0.95
+
+    :type base_odds: float
     :param base_score: 基础 odds 对应的分数，默认 750
+    :type base_score: float
     :param step: score_odds_reference的步长，默认None(自动计算为pdo/10)
+    :type step: Optional[int]
     :param direction: 评分方向，默认 'descending'（信用分模式）
+
         - 'descending': 概率越高分越低（信用分，分越高越好）
+
         - 'ascending': 概率越高分越高（欺诈分，分越高越差）
-    :param lr_model: 预训练的逻辑回归模型，可选
+
+    :type direction: str
+    :param lr_model: 默认值为 ``None`` 。预训练的逻辑回归模型，可选
+
         - 如果传入，predict前不需要调用fit
+
         - 如果未传入，predict前必须先调用fit训练
-    :param lr_kwargs: 未传入 lr_model 时，通过 kwargs 传入 LR 参数进行训练，可选
-    :param binner: 特征分箱器，可选。支持以下类型：
+
+    :type lr_model: Optional[Any]
+    :param lr_kwargs: 默认值为 ``None`` 。未传入 lr_model 时，通过 kwargs 传入 LR 参数进行训练，可选
+    :type lr_kwargs: Optional[Dict[str, Any]]
+    :param binner: 默认值为 ``None`` 。特征分箱器，可选。支持以下类型：
+
         - hscredit 分箱器：支持 transform(X, metric='woe')
+
         - toad/scorecardpipeline 分箱器：输出分箱索引
-    :param encoder: WOE 转换器，可选。支持以下类型：
+
+    :type binner: Optional[Any]
+    :param encoder: 默认值为 ``None`` 。WOE 转换器，可选。支持以下类型：
+
         - hscredit WOEEncoder：支持 transform(X)
+
         - toad WOETransformer
-    :param pipeline: 已训练的 pipeline，支持以下类型：
+
+    :type encoder: Optional[Any]
+    :param pipeline: 默认值为 ``None`` 。已训练的 pipeline，支持以下类型：
+
         - 末端为 LR：从 pipeline 中提取 LR 模型
+
         - 包含分箱器+WOE转换器+LR：提取所有组件
+
+    :type pipeline: Optional[Any]
     :param calculate_stats: 是否计算统计信息，默认 True
+    :type calculate_stats: bool
     :param verbose: 是否输出详细信息，默认 False
+    :type verbose: bool
     :param target: 目标列名，默认'target'
+    :type target: str
 
     **属性**
 
@@ -107,9 +141,13 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
     从 StandardScoreTransformer 继承的方法：
 
         - transform(proba): 将概率转换为评分
+
         - inverse_transform(scores): 将评分反向转换为概率
+
         - predict_score(X, proba): 通过概率预测评分
+
         - score_odds_reference: 评分与odds对应关系表
+
         - get_score_reference_by_prob(): 根据概率获取评分参考
 
     **评分公式**
@@ -167,10 +205,15 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
     **参数补充**
 
     :param lower: 评分下界，None 使用该转换器的默认边界；不影响底层概率。
+    :type lower: Optional[float]
     :param upper: 评分上界，None 使用该转换器的默认边界；不影响底层概率。
-    :param decimal: 评分保留的小数位数；RoundScoreCard 对各分箱分数取整后再合计。
+    :type upper: Optional[float]
+    :param decimal: 默认值为 ``2`` 。评分保留的小数位数；RoundScoreCard 对各分箱分数取整后再合计
+    :type decimal: int
     :param history_policy: summary/diagnostics/full，默认 summary；控制原始参数保留范围，数值学习曲线均完整保留。
+    :type history_policy: str
     :param max_history: 最多保留的拟合历史条数，默认20；被移除的训练修订不能再查询。
+    :type max_history: int
     :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
@@ -290,8 +333,10 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """计算评分公式中的参数A和B.
 
         ScoreCard 重写父类方法，正确处理 base_odds 的含义：
+
         - base_odds >= 1: 解释为好坏比（好客户:坏客户），例如 35 表示 35:1，
           对应坏样本率 1/36 ≈ 2.8%。内部转换为实际 odds = 1/base_odds。
+
         - base_odds < 1: 直接作为坏好比（P(bad)/P(good)），不是坏样本率。
 
         标准评分卡公式:
@@ -334,8 +379,11 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """从预训练模型初始化规则和特征名.
 
         特征名解析优先级：
+
         1. lr_model.feature_names_in_（最可靠，与系数顺序一致）
+
         2. binner 的 bin_tables_ / splits_ / toad combiner（特征数匹配时）
+
         3. feature_0, feature_1, ... 兜底
 
         规则生成：优先从 binner 还原真实分箱（区间 + WOE + 分数）；
@@ -533,8 +581,12 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         基于底层逻辑回归模型的系数计算特征重要性。
 
         :param importance_type: 重要性类型，默认'coef'
+
             - 'coef': 系数绝对值
+
             - 'score_range': 评分范围（最大-最小分）
+
+        :type importance_type: str
         :return: 特征重要性Series
         """
         self._check_fitted()
@@ -855,9 +907,13 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """将原始数据转换为 WOE 数据.
 
         转换优先级：
+
         1. 如果配置了 binner + encoder，先分箱再转 WOE，保持训练/预测编码口径一致
+
         2. 如果 binner 支持直接 WOE 转换（hscredit 风格），使用 binner.transform(X, metric='woe')
+
         3. 如果只有 encoder，直接使用 encoder
+
         4. 如果没有转换器，假设输入已是 WOE 数据
 
         :param X: 原始数据
@@ -1222,22 +1278,26 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """训练评分卡模型.
 
         支持两种调用方式:
+
         1. 常规方式: fit(X, y)
+
         2. scorecardpipeline风格: 在__init__中指定target，然后fit(X)
 
         **输入数据类型**
 
         fit 方法支持两种输入数据类型，通过 `input_type` 参数控制：
+
         - 'woe': WOE 转换后的数据（默认）
+
         - 'raw': 原始数据（需要配置 binner 进行 WOE 转换）
 
-        **使用 WOE 数据（推荐）**:
+        **使用 WOE 数据（推荐）** :
             >>> binner = OptimalBinning()
             >>> binner.fit(X_train, y_train)
             >>> X_train_woe = binner.transform(X_train, metric='woe')
             >>> scorecard.fit(X_train_woe, y_train)  # 默认 input_type='woe'
 
-        **使用原始数据**:
+        **使用原始数据** :
             >>> scorecard = ScoreCard(binner=binner)  # 需要配置binner
             >>> scorecard.fit(X_train, y_train, input_type='raw')
 
@@ -1245,15 +1305,24 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
             支持 numpy array 或 pandas DataFrame
             如果是DataFrame且y为None，会尝试从X中提取target列作为y
             数据类型由 input_type 参数决定（woe或raw）
-        :param y: 目标变量，可选
+
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量，可选
             如果为None且init中指定了target，则从X中提取
-        :param sample_weight: 样本权重，可选
+
+        :type y: Optional[Union[pd.Series, np.ndarray]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重，可选
+        :type sample_weight: Optional[np.ndarray]
         :param input_type: 输入数据类型，默认为'woe'
+
             - 'woe': WOE 转换后的数据（默认，推荐）
+
             - 'raw': 原始数据（需要配置 binner 进行 WOE 转换）
-        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
-        :param eval_metric: 最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标。
-        :param eval_sample_weight: 评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权。
+
+        :type input_type: str
+        :param eval_set: 默认值为 ``None`` 。评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留
+        :param eval_metric: 默认值为 ``None`` 。最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标
+        :param eval_sample_weight: 默认值为 ``None`` 。评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权
         :return: self
         """
         if self.verbose:
@@ -1384,8 +1453,11 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """生成评分卡规则.
 
         支持从分箱器获取完整的分箱信息，包括:
+
         - 数值特征的正常分箱区间
+
         - 缺失值分箱（标记为 'missing' 或 np.nan）
+
         - 特殊值分箱（标记为 'special'）
         """
         self.rules_ = {}
@@ -1472,8 +1544,11 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """解析分箱标签为切分点或类别组.
 
         保留完整的分箱标签列表，包括:
+
         - 数值区间分箱
+
         - 缺失值分箱（标记为 'missing'）
+
         - 特殊值分箱（标记为 'special'）
         """
         parsed_labels = []
@@ -1577,8 +1652,8 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
     def _parse_interval_label(label: Any) -> Optional[Tuple[str, float, float, str]]:
         """解析常见评分卡区间标签.
 
-        支持 hscredit ``[a, b)``、toad ``[a ~ b)``、scorecardpipeline
-        ``[负无穷 , b)`` 等格式；非区间标签返回 ``None``。
+        支持 hscredit ``[a, b)`` 、toad ``[a ~ b)`` 、scorecardpipeline
+        ``[负无穷 , b)`` 等格式；非区间标签返回 ``None`` 。
         """
         label_str = str(label).strip()
         match = re.match(r"^([\[(])\s*(.*?)\s*(?:,|~)\s*(.*?)\s*([\])])$", label_str)
@@ -1678,9 +1753,12 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
 
         可通过传入X或proba之一来获取评分。
 
-        :param X: 特征矩阵，用于预测概率
-        :param proba: 直接传入预测概率（正类概率）
-        :param input_type: X 的输入类型，可选 ``'auto'`` / ``'raw'`` / ``'woe'``，默认 ``'auto'``
+        :param X: 默认值为 ``None`` 。特征矩阵，用于预测概率
+        :type X: Optional[Union[pd.DataFrame, np.ndarray]]
+        :param proba: 默认值为 ``None`` 。直接传入预测概率（正类概率）
+        :type proba: Optional[Union[np.ndarray, pd.Series]]
+        :param input_type: X 的输入类型，可选 ``'auto'`` / ``'raw'`` / ``'woe'`` ，默认 ``'auto'``
+        :type input_type: str
         :return: 评分数组
 
         **参考样例**
@@ -1709,16 +1787,25 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         Score = A_ - B_ * (intercept + sum(coef_i * WOE_i))
 
         :param X: 输入数据
+        :type X: Union[pd.DataFrame, np.ndarray]
         :param input_type: 输入数据类型，可选：
+
             - 'raw': 原始数据，会进行 WOE 转换（默认）
+
             - 'woe': WOE 数据，直接使用
+
             - 'auto': 自动检测，通过数据特征推断输入类型
 
+        :type input_type: str
+
         input_type='auto' 时的判断逻辑：
+
             1. 数值范围检测：WOE数据通常取值范围在[-5, 5]之间，若所有数值列的min/max
                都在[-10, 10]范围内且主要分布集中在[-5, 5]，则判定为WOE数据
+
             2. 整数列检测：若存在int64/int32类型的列且唯一值数量>10，判定为原始数据
                （原始数据常包含年龄、收入等整数特征）
+
             3. 默认策略：当无法明确判断时，为安全起见默认按原始数据处理
 
             注意：auto检测基于启发式规则，对于边界情况（如原始数据本身就是小数值范围）
@@ -1850,10 +1937,12 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """预测样本属于各类别的概率（使用底层 LR 模型）。
 
         支持显式指定输入类型。若为原始数据则先经 binner/encoder 转为 WOE，
-        再交由逻辑回归模型输出概率。:meth:`predict` 输出分数，本方法输出概率。
+        再交由逻辑回归模型输出概率。 :meth:`predict`  输出分数，本方法输出概率。
 
         :param X: 输入数据，原始特征或 WOE 数据，DataFrame 或 ndarray
-        :param input_type: 输入类型 ``'auto'`` / ``'raw'`` / ``'woe'``，默认 ``'auto'``
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param input_type: 输入类型 ``'auto'`` / ``'raw'`` / ``'woe'`` ，默认 ``'auto'``
+        :type input_type: str
         :return: 形状 ``(n_samples, 2)`` 的概率数组，第 1 列为坏样本（正类）概率
         :raises NotFittedError: 评分卡尚未拟合且未传入预训练 LR 模型时
 
@@ -1907,9 +1996,10 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         WOE 线性表达式，便于复核、文档化与离线部署。
 
         :param decimal: 公式中数值保留的小数位数，默认 4
+        :type decimal: int
         :return: 包含公式字符串与参数的字典，键包括
-            ``公式``/``A``/``B``/``截距分数``/``base_odds``/``base_score``/
-            ``pdo``/``rate``/``direction``/``WOE线性公式``
+            ``公式`` / ``A`` / ``B`` / ``截距分数`` / ``base_odds`` / ``base_score`` /
+            ``pdo`` / ``rate`` / ``direction`` / ``WOE线性公式``
         """
         self._check_fitted()
 
@@ -1937,16 +2027,23 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """输出评分卡分箱信息及其对应的分数.
 
         支持从分箱器获取完整的分箱信息，包括:
+
         - 基础分（截距项对应的分数）
+
         - 数值特征分箱（区间格式）
+
         - 类别特征分箱
+
         - 缺失值分箱（标记为 'missing'）
+
         - 特殊值分箱（标记为 'special'）
 
         参考 scorecardpipeline 的实现方式，确保与分箱器格式兼容。
 
-        :param feature_map: 特征名到中文含义的映射字典
+        :param feature_map: 默认值为 ``None`` 。特征名到中文含义的映射字典
+        :type feature_map: Optional[Dict[str, str]]
         :param decimal: 分数保留小数位数，默认 2
+        :type decimal: int
         """
         self._check_fitted()
 
@@ -2083,15 +2180,22 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         将分数切成 ``max_n_bins`` 档，逐档统计样本数、坏样本率、Odds，并累计计算 KS，
         用于检查"分数越高坏率越低"的单调性与整体区分度。
 
-        :param scores: 模型输出的分数数组（如 :meth:`predict` 的结果）
+        :param scores: 模型输出的分数数组（如  :meth:`predict`  的结果）
+        :type scores: np.ndarray
         :param y: 对应的真实标签数组（0=好/1=坏），与 ``scores`` 等长
+        :type y: np.ndarray
         :param max_n_bins: 分数分档数量，默认为 ``10``
-        :param method: 分档方式，默认为 ``'quantile'``。可取以下枚举值：
+        :type max_n_bins: int
+        :param method: 分档方式，默认为 ``'quantile'`` 。可取以下枚举值：
 
-            - ``'quantile'``：等频分档（每档样本量大致相等），用 ``pd.qcut``
-            - 其他值（如 ``'uniform'``）：等距分档（按分数范围等宽），用 ``pd.cut``
+            - ``'quantile'`` ：等频分档（每档样本量大致相等），用 ``pd.qcut``
 
-        :param score_decimal: 评分区间边界保留小数位数，默认 ``4``，用于消除浮点显示尾差
+            - 其他值（如 ``'uniform'`` ）：等距分档（按分数范围等宽），用 ``pd.cut``
+
+        :type method: str
+
+        :param score_decimal: 评分区间边界保留小数位数，默认 ``4`` ，用于消除浮点显示尾差
+        :type score_decimal: int
         :return: DataFrame，列含 ``评分区间`` / ``样本数`` / ``坏样本数`` / ``坏样本率`` /
             ``好样本数`` / ``Odds`` / ``累计好样本占比`` / ``累计坏样本占比`` / ``KS``
 
@@ -2155,9 +2259,13 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         使用 utils.io.save_pickle 进行持久化存储，支持多种序列化引擎和压缩格式。
 
         :param file: 文件路径
+        :type file: str
         :param engine: 序列化引擎，可选 'joblib'/'pickle'/'dill'/'cloudpickle'，默认 'joblib'
+        :type engine: str
         :param compression: 压缩格式，可选 'gzip'/'bz2'/'xz'/'lz4'/'zstd'，默认 None
+        :type compression: Optional[str]
         :param compression_level: 压缩级别（1-9），默认 None
+        :type compression_level: Optional[int]
         :return: 保存的文件路径
         """
         from ....utils.io import save_pickle as _save_pickle
@@ -2178,8 +2286,11 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         使用 utils.io.load_pickle 进行持久化读取，支持多种序列化引擎和压缩格式。
 
         :param file: 文件路径
+        :type file: str
         :param engine: 序列化引擎，可选 'auto'/'joblib'/'pickle'/'dill'/'cloudpickle'，默认 'auto'
+        :type engine: str
         :param compression: 压缩格式，可选 'gzip'/'bz2'/'xz'/'lz4'/'zstd'，默认 None（自动检测）
+        :type compression: Optional[str]
         :return: 加载的 ScoreCard 模型实例
         """
         from ....utils.io import load_pickle as _load_pickle
@@ -2488,8 +2599,11 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """导出 PMML 文件.
 
         :param pmml_file: PMML 文件保存路径，默认 'scorecard.pmml'
+        :type pmml_file: str
         :param decimal: 特征子分保留小数位数，默认 12，确保 PMML 与 predict 精度一致
+        :type decimal: int
         :param debug: 是否返回中间对象进行调试，默认 False
+        :type debug: bool
         :return: debug=True 时返回 PMMLPipeline，否则返回 None
         """
         self._check_fitted()
@@ -2656,7 +2770,8 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
             return pipeline
 
     def _apply_pmml_score_clipping(self, pmml_file: str) -> None:
-        """在 PMML 输出层应用与 :meth:`predict` 一致的分数边界."""
+        """在 PMML 输出层应用与  :meth:`predict`  一致的分数边界.
+        """
         import xml.etree.ElementTree as ET
 
         tree = ET.parse(pmml_file)
@@ -2736,9 +2851,13 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         支持生成 SQL、Python、Java 格式的评分卡计算代码，可直接用于生产部署。
 
         :param language: 目标语言，可选 'sql'/'python'/'java'，默认 'python'
-        :param output_file: 输出文件路径，为 None 时仅返回字符串
+        :type language: str
+        :param output_file: 默认值为 ``None`` 。输出文件路径，为 None 时仅返回字符串
+        :type output_file: Optional[str]
         :param function_name: 函数/存储过程名称，默认 'calculate_score'
+        :type function_name: str
         :param decimal: 分数保留小数位数，默认 4
+        :type decimal: int
         :return: 生成的部署代码字符串
 
         **参考样例**
@@ -3515,11 +3634,12 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
     def get_feature_importance(self) -> pd.DataFrame:
         """获取评分卡的特征重要性表（基于 LR 系数）。
 
-        以逻辑回归系数绝对值衡量重要性。与 :meth:`get_feature_importances`（返回 Series，
+        以逻辑回归系数绝对值衡量重要性。与  :meth:`get_feature_importances` （返回 Series，
         支持 ``coef`` / ``score_range`` 两种口径）不同，本方法返回明细 DataFrame。
 
         :return: DataFrame，含 ``feature`` / ``coef`` / ``importance`` 三列，按
             ``importance`` 降序
+
         :raises NotFittedError: 评分卡尚未拟合时
 
         **参考样例**
@@ -3579,8 +3699,10 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         前 ``keep`` 个特征作为不利原因，可用于授信拒绝理由说明（adverse action）与可解释性。
 
         :param X: 输入数据，原始或 WOE 数据（自动识别），DataFrame 或 ndarray
+        :type X: Union[pd.DataFrame, np.ndarray]
         :param keep: 每个样本保留的主要原因（特征）个数，默认为 ``3``
-        :return: DataFrame，每行对应一个样本，列为排序后的 Top-``keep`` 不利特征及其影响
+        :type keep: int
+        :return: DataFrame，每行对应一个样本，列为排序后的 Top- ``keep`` 不利特征及其影响
         :raises NotFittedError: 评分卡尚未拟合时
 
         **参考样例**
@@ -3608,20 +3730,29 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         """生成评分区间与理论逾期率（坏样本概率）对照表。
 
         将分数分档后，依据评分卡刻度公式由各档分数中位数反推理论 odds 与坏样本概率
-        （``prob = odds/(1+odds)``，``odds = exp((A - score)/B)``），可叠加真实标签 ``y``
+        （ ``prob = odds/(1+odds)`` ， ``odds = exp((A - score)/B)`` ），可叠加真实标签 ``y``
         对比理论与实际逾期率，用于评分卡校准核验与划档定价。
 
-        :param scores: 分数数组；若为 ``None`` 则用 ``X`` 经 :meth:`predict` 计算
-        :param X: 输入数据，当 ``scores`` 未提供时用于预测分数
-        :param y: 可选真实标签，提供后表中追加各档实际坏样本率以对比理论值
+        :param scores: 默认值为 ``None`` 。分数数组；若为 ``None`` 则用 ``X`` 经  :meth:`predict`  计算
+        :type scores: Optional[np.ndarray]
+        :param X: 默认值为 ``None`` 。输入数据，当 ``scores`` 未提供时用于预测分数
+        :type X: Optional[Union[pd.DataFrame, np.ndarray]]
+        :param y: 默认值为 ``None`` 。可选真实标签，提供后表中追加各档实际坏样本率以对比理论值
+        :type y: Optional[np.ndarray]
         :param max_n_bins: 分数分档数量，默认为 ``10``
-        :param method: 分档方式，默认为 ``'quantile'``。可取以下枚举值：
+        :type max_n_bins: int
+        :param method: 分档方式，默认为 ``'quantile'`` 。可取以下枚举值：
 
-            - ``'quantile'``：等频分档（``pd.qcut``）
-            - ``'uniform'``：等距分档（``pd.cut``）
-            - ``'custom'``：使用 ``score_bins`` 指定的自定义分档边界
+            - ``'quantile'`` ：等频分档（ ``pd.qcut`` ）
 
-        :param score_bins: 自定义分档边界列表，仅当 ``method='custom'`` 时生效
+            - ``'uniform'`` ：等距分档（ ``pd.cut`` ）
+
+            - ``'custom'`` ：使用 ``score_bins`` 指定的自定义分档边界
+
+        :type method: str
+
+        :param score_bins: 默认值为 ``None`` 。自定义分档边界列表，仅当 ``method='custom'`` 时生效
+        :type score_bins: Optional[list]
         :return: DataFrame，含评分区间及对应理论 odds / 理论坏样本概率（提供 ``y`` 时含实际值）
         :raises ValueError: ``scores`` 与 ``X`` 均未提供时
 
@@ -3712,8 +3843,11 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         将总分拆解为截距基础分与每个特征的贡献分，便于逐样本审视分数构成、做可解释性展示。
 
         :param X: 输入数据，原始或 WOE 数据（自动识别），DataFrame 或 ndarray
-        :param sample_idx: 仅输出指定样本的明细，可为单个下标或下标列表；``None`` 表示全部
-        :param include_reason: 是否附带主要驱动原因列（同 :meth:`get_reason`），默认为 ``True``
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param sample_idx: 默认值为 ``None`` 。仅输出指定样本的明细，可为单个下标或下标列表； ``None`` 表示全部
+        :type sample_idx: Optional[Union[int, list]]
+        :param include_reason: 是否附带主要驱动原因列（同  :meth:`get_reason` ），默认为 ``True``
+        :type include_reason: bool
         :return: DataFrame，每行一个样本，列含各特征贡献分、基础分与总分
         :raises NotFittedError: 评分卡尚未拟合时
 
@@ -3865,13 +3999,20 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
 
         导出格式与 toad.ScoreCard.export() 和 scorecardpipeline.ScoreCard.export() 保持一致。
 
-        :param to_json: 可选，JSON 文件保存路径。如果提供，将规则保存到该文件
+        :param to_json: 默认值为 ``None`` 。可选，JSON 文件保存路径。如果提供，将规则保存到该文件
+        :type to_json: Optional[str]
         :param to_frame: 是否返回 DataFrame 格式，默认为 False
+        :type to_frame: bool
         :param decimal: 分数保留小数位数，默认为 12，确保规则往返与原模型一致
+        :type decimal: int
         :param include_meta: 是否额外导出重建评分所需元数据，默认为 True
-        :param compatibility: 外部兼容格式；设为 ``'toad'`` 时等价于 ``include_meta=False``
+        :type include_meta: bool
+        :param compatibility: 默认值为 ``None`` 。外部兼容格式；设为 ``'toad'`` 时等价于 ``include_meta=False``
+        :type compatibility: Optional[str]
         :return: 评分卡规则字典或 DataFrame
+
             - 字典格式: {'feature': {'bin_label': score, ...}, ...}
+
             - DataFrame格式: columns=['name', 'value', 'score']
 
         **参考样例**
@@ -4210,12 +4351,21 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         从字典或 JSON 文件加载评分卡规则，支持 toad 和 scorecardpipeline 导出的格式。
 
         :param from_json: 评分卡规则字典或 JSON 文件路径
+
             - 字典: {'feature': {'bin_label': score, ...}, ...}
+
             - 文件路径: 'scorecard_rules.json'
+
+        :type from_json: Union[str, os.PathLike, Dict]
         :param update: 是否更新现有规则（而非替换），默认为 False
-        :param binner: 可选的分箱器，用于对原始数据进行分箱后评分。
+        :type update: bool
+        :param binner: 默认值为 ``None`` 。可选的分箱器，用于对原始数据进行分箱后评分
+
             - 如果提供，将用于 predict(input_type='raw') 时的数据转换
+
             - 如果不提供，将基于规则中的分箱信息进行转换
+
+        :type binner: Optional[Any]
         :return: self，支持链式调用
 
         **参考样例**
@@ -4411,20 +4561,22 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
 class RoundScoreCard(ScoreCard):
     """按分箱分数精度进行一致性计分的评分卡模型.
 
-    与 :class:`ScoreCard` 不同，``RoundScoreCard`` 会先将基础分和各特征分箱分数
+    与  :class:`ScoreCard`  不同， ``RoundScoreCard`` 会先将基础分和各特征分箱分数
     按初始化指定的 ``decimal`` 精度进行取整，再基于这份取整后的评分卡完成
-    预测、原因分析与部署导出，确保对外结果与 :meth:`scorecard_points` 完全一致
+    预测、原因分析与部署导出，确保对外结果与  :meth:`scorecard_points`  完全一致
     （避免"展示分"与"实际计分"因四舍五入产生偏差，便于落地核对）。
 
-    构造参数与 :class:`ScoreCard` 完全一致，仅评分计分口径不同；下列方法
-    （:meth:`fit` / :meth:`scorecard_points` / :meth:`predict` / :meth:`predict_score` /
-    :meth:`get_reason` / :meth:`get_detailed_score` / :meth:`export`）语义同父类，
+    构造参数与  :class:`ScoreCard`  完全一致，仅评分计分口径不同；下列方法
+    （ :meth:`fit`  /  :meth:`scorecard_points`  /  :meth:`predict`  /  :meth:`predict_score`  /
+    :meth:`get_reason`  /  :meth:`get_detailed_score`  /  :meth:`export` ）语义同父类，
     区别仅在于使用"取整后分数"参与计算与导出。
 
     **参数**
 
     :param decimal: 评分卡分数保留小数位数，默认 2
-    :param scorecard: 可选，已训练的 :class:`ScoreCard` 实例，传入后直接复用其规则转为整数计分卡
+    :type decimal: int
+    :param scorecard: 默认值为 ``None`` 。可选，已训练的  :class:`ScoreCard`  实例，传入后直接复用其规则转为整数计分卡
+    :type scorecard: Optional['ScoreCard']
 
     **参考样例**
 
@@ -4436,42 +4588,80 @@ class RoundScoreCard(ScoreCard):
 
     **引用**
 
-    取整一致性计分对应评分卡工程落地实践，刻度公式同 :class:`ScoreCard`
+    取整一致性计分对应评分卡工程落地实践，刻度公式同  :class:`ScoreCard`
     （Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley）。
 
     **参数补充**
 
     :param pdo: Point of Double Odds，odds增加rate倍时分数变化量，默认 60
+    :type pdo: float
     :param rate: 倍率，默认 2
+
         - odds增加的倍数
+
+    :type rate: float
     :param base_odds: 好坏比（好客户:坏客户），默认 35
+
         - 当 base_odds >= 1 时，解释为好坏比。例如 35 表示 35:1，坏样本率 ≈ 2.8%
+
         - 当 base_odds < 1 时，直接作为坏好比 P(bad)/P(good)，不是坏样本率；5%坏率应传0.05/0.95
+
+    :type base_odds: float
     :param base_score: 基础 odds 对应的分数，默认 750
+    :type base_score: float
     :param step: score_odds_reference的步长，默认None(自动计算为pdo/10)
+    :type step: Optional[int]
     :param lower: 评分下界，None 使用该转换器的默认边界；不影响底层概率。
+    :type lower: Optional[float]
     :param upper: 评分上界，None 使用该转换器的默认边界；不影响底层概率。
+    :type upper: Optional[float]
     :param direction: 评分方向，默认 'descending'（信用分模式）
+
         - 'descending': 概率越高分越低（信用分，分越高越好）
+
         - 'ascending': 概率越高分越高（欺诈分，分越高越差）
-    :param lr_model: 预训练的逻辑回归模型，可选
+
+    :type direction: str
+    :param lr_model: 默认值为 ``None`` 。预训练的逻辑回归模型，可选
+
         - 如果传入，predict前不需要调用fit
+
         - 如果未传入，predict前必须先调用fit训练
-    :param lr_kwargs: 未传入 lr_model 时，通过 kwargs 传入 LR 参数进行训练，可选
-    :param binner: 特征分箱器，可选。支持以下类型：
+
+    :type lr_model: Optional[Any]
+    :param lr_kwargs: 默认值为 ``None`` 。未传入 lr_model 时，通过 kwargs 传入 LR 参数进行训练，可选
+    :type lr_kwargs: Optional[Dict[str, Any]]
+    :param binner: 默认值为 ``None`` 。特征分箱器，可选。支持以下类型：
+
         - hscredit 分箱器：支持 transform(X, metric='woe')
+
         - toad/scorecardpipeline 分箱器：输出分箱索引
-    :param encoder: WOE 转换器，可选。支持以下类型：
+
+    :type binner: Optional[Any]
+    :param encoder: 默认值为 ``None`` 。WOE 转换器，可选。支持以下类型：
+
         - hscredit WOEEncoder：支持 transform(X)
+
         - toad WOETransformer
-    :param pipeline: 已训练的 pipeline，支持以下类型：
+
+    :type encoder: Optional[Any]
+    :param pipeline: 默认值为 ``None`` 。已训练的 pipeline，支持以下类型：
+
         - 末端为 LR：从 pipeline 中提取 LR 模型
+
         - 包含分箱器+WOE转换器+LR：提取所有组件
+
+    :type pipeline: Optional[Any]
     :param calculate_stats: 是否计算统计信息，默认 True
+    :type calculate_stats: bool
     :param verbose: 是否输出详细信息，默认 False
+    :type verbose: bool
     :param target: 目标列名，默认'target'
+    :type target: str
     :param history_policy: summary/diagnostics/full，默认 summary；控制原始参数保留范围，数值学习曲线均完整保留。
+    :type history_policy: str
     :param max_history: 最多保留的拟合历史条数，默认20；被移除的训练修订不能再查询。
+    :type max_history: int
     :param kwargs: 扩展关键字参数，具体含义见本方法说明及对应底层接口；不参与超参数搜索。
     """
 
@@ -4532,21 +4722,35 @@ class RoundScoreCard(ScoreCard):
         """从传入的 ScoreCard 对象复制必要属性，实现即插即用.
 
         复制以下属性：
+
         - rules_: 特征与分箱规则
+
         - feature_names_: 特征名称列表
+
         - intercept_: 截距项
+
         - coef_: 系数向量
+
         - A_, B_: 缩放参数
+
         - direction_: 评分方向
+
         - base_effect_: 基础效应（用于 get_detailed_score）
+
         - binner: 分箱器（如果有）
+
         - _is_fitted: 拟合标志
+
         - _binner_is_woe_transformer: 分箱器类型标志
+
         - lr_model_: 逻辑回归模型（如果有）
 
         设置以下标志：
+
         - _skip_fit_check: 跳过拟合检查
+
         - _uses_woe_input: 使用 WOE 输入
+
         - _binner_is_woe_transformer: 基于 binner 类型
         """
         scorecard._check_fitted()
@@ -4829,17 +5033,21 @@ class RoundScoreCard(ScoreCard):
     ) -> "RoundScoreCard":
         """训练评分卡（计分口径取整一致）。
 
-        流程同 :meth:`ScoreCard.fit`（参数 ``X`` / ``y`` / ``sample_weight`` / ``input_type``
+        流程同  :meth:`ScoreCard.fit` （参数 ``X`` / ``y`` / ``sample_weight`` / ``input_type``
         含义一致），但额外按 ``decimal`` 精度对各特征分箱分数取整，并据此重算基础效应，
-        确保后续计分与 :meth:`scorecard_points` 完全一致。
+        确保后续计分与  :meth:`scorecard_points`  完全一致。
 
         :param X: 二维特征或包含目标列的 DataFrame；与训练阶段使用相同字段和输入表示。
-        :param y: 一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征。
-        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
-        :param input_type: 训练与 eval_set 的输入表示：woe 为已转换数据，raw 通过配置的 binner/encoder 转换；本次评估集须使用相同表示。
-        :param eval_set: 评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留。
-        :param eval_metric: 最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标。
-        :param eval_sample_weight: 评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权。
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。一维真实标签；None 时按模型 target 从 X 提取；显式 y 优先，目标列不进入特征
+        :type y: Optional[Union[pd.Series, np.ndarray]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重
+        :type sample_weight: Optional[np.ndarray]
+        :param input_type: 默认值为 ``'woe'`` 。训练与 eval_set 的输入表示：woe 为已转换数据，raw 通过配置的 binner/encoder 转换；本次评估集须使用相同表示
+        :type input_type: str
+        :param eval_set: 默认值为 ``None`` 。评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留
+        :param eval_metric: 默认值为 ``None`` 。最终验证指标，支持名称、get_metric(...) / loss.metric(...) 对象或列表；不会替换模型训练目标
+        :param eval_sample_weight: 默认值为 ``None`` 。评估权重；单集可传一维数组，多集使用 {数据集名称: 权重} 字典。None 为等权
         :return: self
 
         **参考样例**
@@ -4889,11 +5097,13 @@ class RoundScoreCard(ScoreCard):
     ) -> pd.DataFrame:
         """输出取整后的评分卡明细表（变量/分箱/分数/WOE）。
 
-        同 :meth:`ScoreCard.scorecard_points`，但各分箱分数按 ``decimal``（默认取实例的
-        ``self.decimal``）四舍五入，与本类实际计分完全一致，可直接交付落地。
+        同  :meth:`ScoreCard.scorecard_points` ，但各分箱分数按 ``decimal`` （默认取实例的
+        ``self.decimal`` ）四舍五入，与本类实际计分完全一致，可直接交付落地。
 
-        :param feature_map: 变量名到业务含义的映射，用于填充"变量含义"列，可选
-        :param decimal: 覆盖分数保留小数位数，默认为 ``None``（用实例的 ``self.decimal``）
+        :param feature_map: 默认值为 ``None`` 。变量名到业务含义的映射，用于填充"变量含义"列，可选
+        :type feature_map: Optional[Dict[str, str]]
+        :param decimal: 覆盖分数保留小数位数，默认为 ``None`` （用实例的 ``self.decimal`` ）
+        :type decimal: Optional[int]
         :return: 含 ``变量名称`` / ``变量含义`` / ``变量分箱`` / ``对应分数`` / ``WOE值`` 的 DataFrame，
             首行为基础分
         """
@@ -4957,12 +5167,15 @@ class RoundScoreCard(ScoreCard):
     ) -> np.ndarray:
         """预测评分（取整一致）。
 
-        同 :meth:`ScoreCard.predict_score`，但分数按 ``decimal`` 精度取整；传入 ``X`` 时走
-        评分卡规则计分（与 :meth:`predict` 一致），传入 ``proba`` 时由概率经刻度公式换算后取整。
+        同  :meth:`ScoreCard.predict_score` ，但分数按 ``decimal`` 精度取整；传入 ``X`` 时走
+        评分卡规则计分（与  :meth:`predict`  一致），传入 ``proba`` 时由概率经刻度公式换算后取整。
 
-        :param X: 特征数据（原始或 WOE，由 ``input_type`` 控制），与 ``proba`` 二选一
-        :param proba: 坏样本概率数组，与 ``X`` 二选一
-        :param input_type: 输入类型 ``'auto'`` / ``'raw'`` / ``'woe'``，默认为 ``'auto'``
+        :param X: 默认值为 ``None`` 。特征数据（原始或 WOE，由 ``input_type`` 控制），与 ``proba`` 二选一
+        :type X: Optional[Union[pd.DataFrame, np.ndarray]]
+        :param proba: 默认值为 ``None`` 。坏样本概率数组，与 ``X`` 二选一
+        :type proba: Optional[Union[np.ndarray, pd.Series]]
+        :param input_type: 输入类型 ``'auto'`` / ``'raw'`` / ``'woe'`` ，默认为 ``'auto'``
+        :type input_type: str
         :return: 取整后的评分数组
         :raises ValidationError: ``X`` 与 ``proba`` 均未提供时
         """
@@ -4979,11 +5192,13 @@ class RoundScoreCard(ScoreCard):
     def predict(self, X: Union[pd.DataFrame, np.ndarray], input_type: str = "raw") -> np.ndarray:
         """预测评分（基于取整后的评分卡规则计分）。
 
-        同 :meth:`ScoreCard.predict`，但以"基础分 + 各特征取整后分箱分"求和得到总分，
-        结果与 :meth:`scorecard_points` 展示的分值逐项一致。
+        同  :meth:`ScoreCard.predict` ，但以"基础分 + 各特征取整后分箱分"求和得到总分，
+        结果与  :meth:`scorecard_points`  展示的分值逐项一致。
 
         :param X: 输入数据（原始或 WOE）
-        :param input_type: 输入类型 ``'raw'`` / ``'woe'`` / ``'auto'``，默认为 ``'raw'``
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param input_type: 输入类型 ``'raw'`` / ``'woe'`` / ``'auto'`` ，默认为 ``'raw'``
+        :type input_type: str
         :return: 取整后的评分数组
         """
         if not self._skip_fit_check:
@@ -5039,10 +5254,12 @@ class RoundScoreCard(ScoreCard):
     def get_reason(self, X: Union[pd.DataFrame, np.ndarray], keep: int = 3) -> pd.DataFrame:
         """输出主要评分原因（基于取整后评分卡）。
 
-        同 :meth:`ScoreCard.get_reason`，但用取整后的各特征分数计算偏离，原因与实际计分一致。
+        同  :meth:`ScoreCard.get_reason` ，但用取整后的各特征分数计算偏离，原因与实际计分一致。
 
         :param X: 输入数据（原始或 WOE，自动识别）
+        :type X: Union[pd.DataFrame, np.ndarray]
         :param keep: 每个样本保留的主要原因个数，默认为 ``3``
+        :type keep: int
         :return: 每行一个样本、含 ``reason`` 列的 DataFrame
         """
         raw = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=self.feature_names_)
@@ -5066,12 +5283,15 @@ class RoundScoreCard(ScoreCard):
     ) -> pd.DataFrame:
         """输出样本级评分明细（基于取整后评分卡）。
 
-        同 :meth:`ScoreCard.get_detailed_score`，但各特征贡献分与总分均为取整后值，
-        与 :meth:`scorecard_points` 及 :meth:`predict` 完全一致。
+        同  :meth:`ScoreCard.get_detailed_score` ，但各特征贡献分与总分均为取整后值，
+        与  :meth:`scorecard_points`  及  :meth:`predict`  完全一致。
 
         :param X: 输入数据（原始或 WOE，自动识别）
-        :param sample_idx: 仅输出指定样本（单下标或下标列表）；``None`` 表示全部
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param sample_idx: 默认值为 ``None`` 。仅输出指定样本（单下标或下标列表）； ``None`` 表示全部
+        :type sample_idx: Optional[Union[int, list]]
         :param include_reason: 是否附带主要原因列，默认为 ``True``
+        :type include_reason: bool
         :return: 多层列结构 DataFrame，含各特征原始值/分箱/WOE/分数与样本总分
         """
         self._check_fitted()
@@ -5234,15 +5454,20 @@ class RoundScoreCard(ScoreCard):
     ) -> Union[Dict, pd.DataFrame]:
         """导出取整后评分卡规则（用于落地部署/留档）。
 
-        同 :meth:`ScoreCard.export`，但导出的分值为按 ``decimal`` 取整后的分数，与
-        :meth:`scorecard_points` / :meth:`predict` 完全一致。
+        同  :meth:`ScoreCard.export` ，但导出的分值为按 ``decimal`` 取整后的分数，与
+        :meth:`scorecard_points`  /  :meth:`predict`  完全一致。
 
         :param to_json: JSON 文件保存路径，提供则同时落盘，默认为 ``None``
+        :type to_json: Optional[str]
         :param to_frame: 为 ``True`` 时返回扁平 DataFrame，否则返回规则字典，默认为 ``False``
-        :param decimal: 覆盖分数保留小数位，默认为 ``None``（用实例的 ``self.decimal``）
+        :type to_frame: bool
+        :param decimal: 覆盖分数保留小数位，默认为 ``None`` （用实例的 ``self.decimal`` ）
+        :type decimal: Optional[int]
         :param include_meta: 是否在结果中包含刻度参数等元信息，默认为 ``True``
-        :param compatibility: 显式导出 ``'toad'`` 或 ``'scorecardpipeline'`` 兼容格式
-        :return: 规则字典或 DataFrame（取决于 ``to_frame``）
+        :type include_meta: bool
+        :param compatibility: 默认值为 ``None`` 。显式导出 ``'toad'`` 或 ``'scorecardpipeline'`` 兼容格式
+        :type compatibility: Optional[str]
+        :return: 规则字典或 DataFrame（取决于 ``to_frame`` ）
         """
         digits = self.decimal if decimal is None else decimal
         exported = super().export(

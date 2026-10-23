@@ -208,10 +208,10 @@ def _evaluate_binary_predictions(
 def resolve_custom_objective(objective, sample_weight=None):
     """将自定义损失对象解析为各 boosting 框架 sklearn 包装器可用的目标函数.
 
-    统一自定义 LOSS 入口：当用户直接传入 :class:`~hscredit.core.models.losses.BaseLoss`
-    实例作为 ``objective``（或 CatBoost 的 ``loss_function``）时，自动转换为
+    统一自定义 LOSS 入口：当用户直接传入  :class:`~hscredit.core.models.losses.BaseLoss`
+    实例作为 ``objective`` （或 CatBoost 的 ``loss_function`` ）时，自动转换为
     XGBoost/LightGBM sklearn 包装器所需的 ``(y_true, y_pred) -> (grad, hess)``
-    可调用对象，并在内部完成 sigmoid 链接函数转换（``BaseLoss.gradient`` 的梯度
+    可调用对象，并在内部完成 sigmoid 链接函数转换（ ``BaseLoss.gradient`` 的梯度
     定义在概率 p 上，而 boosting 框架回调传入的是原始分数 raw margin）。
 
     非 ``BaseLoss`` 对象（如内置字符串 'binary'、用户自行编写的可调用对象）原样返回。
@@ -249,32 +249,62 @@ class BaseRiskModel(
     **参数**
 
     :param objective: 目标函数，可选:
+
         - 'binary': 二分类(默认)
+
         - 'binary:logistic': 二分类逻辑回归
+
         - 'regression': 回归
+
         - 自定义可调用对象
-    :param eval_metric: 评估指标，可选列表或单个指标:
+
+    :type objective: Union[str, Callable]
+    :param eval_metric: 默认值为 ``None`` 。评估指标，可选列表或单个指标:
+
         - 'auc': AUC
+
         - 'ks': KS统计量
+
         - 'gini': Gini系数
+
         - 'lift': Lift值
+
         - 'logloss': 对数损失
+
         - 自定义可调用对象
+
+    :type eval_metric: Union[str, List[str], Callable, None]
     :param target: 目标列名，默认None
+
         - 如果指定，fit时只需传入X，会自动从X中提取target列作为y
+
         - 支持scorecardpipeline风格的有监督fit
+
+    :type target: Optional[str]
     :param early_stopping_rounds: 早停轮数，默认None
+    :type early_stopping_rounds: Optional[int]
     :param validation_fraction: 验证集比例，默认0.2
+    :type validation_fraction: float
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param n_jobs: 并行任务数，默认-1
+    :type n_jobs: int
     :param verbose: 是否输出详细信息，默认False
+    :type verbose: bool
     :param scorecard_params: 概率评分卡参数，可传部分配置覆盖默认值；默认使用
         PDO=50、基准分=600、坏好比由训练标签计算、分数范围0-1000且分越高风险越低
+
+    :type scorecard_params: Optional[Dict[str, Any]]
     :param history_policy: 训练记录保留策略，summary 默认仅保留有界摘要；
         diagnostics 保留更长诊断摘要；full 显式允许复制逐行训练参数
+
+    :type history_policy: str
     :param max_history: 最多保留训练修订数，默认20，必须为正整数
+    :type max_history: int
     :param weight_type: cost（默认）只将 sample_weight 用于训练，评分先验仍按原始样本；
         frequency 按频数加权先验定评分刻度。scorecard_params.base_bad_rate 可显式指定业务先验。
+
+    :type weight_type: str
     :param kwargs: 模型特定参数
 
     **属性**
@@ -286,7 +316,7 @@ class BaseRiskModel(
     :ivar evals_result_: 训练过程评估结果
     :ivar best_iteration_: 最佳迭代次数
     :ivar best_score_: 最佳得分
-    :ivar tuner: 最近一次通过 :meth:`tune` 创建的 ModelTuner，未调参时为 None
+    :ivar tuner: 最近一次通过  :meth:`tune`  创建的 ModelTuner，未调参时为 None
     :ivar bad_rate_: 训练集坏样本率
     :ivar base_odds_: 训练集坏好比
     :ivar scorecard_: 已拟合的概率评分卡
@@ -435,13 +465,19 @@ class BaseRiskModel(
         """训练模型.
 
         支持两种调用方式:
+
         1. 常规方式: fit(X, y)
+
         2. scorecardpipeline风格: 在__init__中指定target，然后fit(X)
 
         :param X: 特征矩阵，支持numpy数组或pandas DataFrame
-        :param y: 目标变量，可选。如果未提供且init中指定了target，则从X中提取
-        :param sample_weight: 样本权重，可选
-        :param eval_set: 验证集列表 [(X_val1, y_val1), ...]，可选
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选。如果未提供且init中指定了target，则从X中提取
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重，可选
+        :type sample_weight: Optional[np.ndarray]
+        :param eval_set: 默认值为 ``None`` 。验证集列表 [(X_val1, y_val1), ...]，可选
+        :type eval_set: Optional[List[Tuple]]
         :param fit_params: 其他fit参数
         :return: self
 
@@ -459,6 +495,7 @@ class BaseRiskModel(
         """预测类别标签.
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 预测类别
         """
         pass
@@ -468,6 +505,7 @@ class BaseRiskModel(
         """预测概率.
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 预测概率，形状 (n_samples, n_classes)
         """
         pass
@@ -476,6 +514,7 @@ class BaseRiskModel(
         """使用训练坏好比对应的标准概率评分卡预测风险评分.
 
         :param X: 特征矩阵
+        :type X: Union[np.ndarray, pd.DataFrame]
         :return: 风险评分 (0-1000)
         """
         return self._predict_probability_score(X)
@@ -503,10 +542,16 @@ class BaseRiskModel(
         """获取特征重要性.
 
         :param importance_type: 重要性类型，可选:
+
             - 'gain': 增益 (默认)
+
             - 'split': 分裂次数
+
             - 'weight': 权重
+
             - 'cover': 覆盖度
+
+        :type importance_type: str
         :return: 特征重要性Series
         """
         pass
@@ -553,12 +598,19 @@ class BaseRiskModel(
         """评估模型性能.
 
         :param X: 特征矩阵或包含 target 列的 DataFrame。
-        :param y: 真实标签；None 时按模型 target 提取，显式 y 优先且目标列仍从特征剔除。
-        :param sample_weight: 样本权重
-        :param metrics: 指标名称、BaseMetric 对象或其列表；可传 loss.metric()。
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。真实标签；None 时按模型 target 提取，显式 y 优先且目标列仍从特征剔除
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param sample_weight: 默认值为 ``None`` 。样本权重
+        :type sample_weight: Optional[np.ndarray]
+        :param metrics: 默认值为 ``None`` 。指标名称、BaseMetric 对象或其列表；可传 loss.metric()
             None 使用 AUC、KS、Gini 和 1%/3%/5%/10% 的 TOP LIFT，不自动继承搜索目标。
-        :param positive_class: 显式正类标签；None 时使用 ``classes_[1]``
-        :param score_direction: AUC/Gini分数方向，同 ``metrics.auc``；higher_risk保留原始AUC
+
+        :type metrics: Optional[List[Any]]
+        :param positive_class: 默认值为 ``None`` 。显式正类标签；None 时使用 ``classes_[1]``
+        :type positive_class: Optional[Any]
+        :param score_direction: 默认值为 ``'higher_risk'`` 。AUC/Gini分数方向，同 ``metrics.auc`` ；higher_risk保留原始AUC
+        :type score_direction: str
         :return: 评估结果字典
 
         **参考样例**
@@ -614,15 +666,20 @@ class BaseRiskModel(
     ) -> "ModelReport":
         """生成模型评估报告.
 
-        模型报告已统一由 :class:`hscredit.report.ModelReport` 生成，本方法为其
-        兼容入口，等价于直接构造 ``ModelReport``；如需多 Sheet Excel / 多标签等
-        完整能力，推荐使用 :meth:`report`。
+        模型报告已统一由  :class:`hscredit.report.ModelReport`  生成，本方法为其
+        兼容入口，等价于直接构造 ``ModelReport`` ；如需多 Sheet Excel / 多标签等
+        完整能力，推荐使用  :meth:`report` 。
 
         :param X_train: 训练集特征
+        :type X_train: Union[np.ndarray, pd.DataFrame]
         :param y_train: 训练集标签
-        :param X_test: 测试集特征，可选
-        :param y_test: 测试集标签，可选
-        :param features: 特征名称列表，可选
+        :type y_train: Union[np.ndarray, pd.Series]
+        :param X_test: 默认值为 ``None`` 。测试集特征，可选
+        :type X_test: Optional[Union[np.ndarray, pd.DataFrame]]
+        :param y_test: 默认值为 ``None`` 。测试集标签，可选
+        :type y_test: Optional[Union[np.ndarray, pd.Series]]
+        :param features: 默认值为 ``None`` 。特征名称列表，可选
+        :type features: Optional[List[str]]
         :return: ModelReport 对象
         """
         from ...report import ModelReport
@@ -675,30 +732,44 @@ class BaseRiskModel(
 
             model.report(datasets={'训练集': df}, overdue='dpds', dpds=[15, 7, 0])
 
-        :param datasets: 数据集字典/列表
-        :param X_train: 训练集特征（兼容旧API）
-        :param y_train: 训练集标签（兼容旧API）
-        :param X_test: 测试集特征（兼容旧API）
-        :param y_test: 测试集标签（兼容旧API）
-        :param features: 特征名称列表
-        :param target: 目标列配置
-        :param overdue: 逾期列名
-        :param dpds: 逾期天数阈值
-        :param excel_path: Excel 报告输出路径
-        :param verbose: 是否打印控制台报告
-        :param max_n_bins: 分箱数
-        :param amount: 金额字段
-        :param date: 日期字段
-        :param group: 分组字段
+        :param datasets: 默认值为 ``None`` 。数据集字典/列表
+        :type datasets: Optional[Union[List, Dict]]
+        :param X_train: 默认值为 ``None`` 。训练集特征（兼容旧API）
+        :param y_train: 默认值为 ``None`` 。训练集标签（兼容旧API）
+        :param X_test: 默认值为 ``None`` 。测试集特征（兼容旧API）
+        :param y_test: 默认值为 ``None`` 。测试集标签（兼容旧API）
+        :param features: 默认值为 ``None`` 。特征名称列表
+        :type features: Optional[List[str]]
+        :param target: 默认值为 ``None`` 。目标列配置
+        :type target: Optional[TargetInput]
+        :param overdue: 默认值为 ``None`` 。逾期列名
+        :type overdue: Optional[Union[str, List[str]]]
+        :param dpds: 默认值为 ``None`` 。逾期天数阈值
+        :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
+        :param excel_path: 默认值为 ``None`` 。Excel 报告输出路径
+        :type excel_path: Optional[str]
+        :param verbose: 默认值为 ``True`` 。是否打印控制台报告
+        :type verbose: bool
+        :param max_n_bins: 默认值为 ``10`` 。分箱数
+        :type max_n_bins: int
+        :param amount: 默认值为 ``None`` 。金额字段
+        :type amount: Optional[str]
+        :param date: 默认值为 ``None`` 。日期字段
+        :type date: Optional[str]
+        :param group: 默认值为 ``None`` 。分组字段
+        :type group: Optional[str]
         :param kwargs: 传递给 auto_model_report 的其他参数
         :param del_grey: 是否按逾期标签口径剔除灰样本，默认 False；仅作用于报告标签分析，不重新训练模型。
-        :param metrics: 统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置。
-        :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+        :type del_grey: bool
+        :param metrics: 默认值为 ``None`` 。统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置
+        :param sample_weight: 默认值为 ``None`` 。样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重
         :param score_direction: higher_risk 表示值越大风险越高（概率默认）；higher_safe 表示值越大越安全；auto 仅显式指定时自动判断。
         :return: ModelReport 实例
 
-        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
             满足比较条件记为坏样本(1)，否则为好样本(0)。
+
+        :type overdue_operator: Optional[str]
 
         **参考样例**
 
@@ -742,11 +813,15 @@ class BaseRiskModel(
         """保存模型到文件.
 
         支持多种格式:
+
         - pickle/joblib: 保存完整模型对象（默认）
+
         - json: 保存模型参数和元数据（仅限支持的框架）
 
         :param path: 保存路径，支持 .pkl, .joblib, .pkl.gz, .json 等后缀
-        :param engine: 序列化引擎，可选 'auto', 'joblib', 'pickle', 'dill', 'cloudpickle'
+        :type path: str
+        :param engine: 默认值为 ``'auto'`` 。序列化引擎，可选 'auto', 'joblib', 'pickle', 'dill', 'cloudpickle'
+        :type engine: str
         :param kwargs: 传递给 save_pickle 的其他参数（如 compression, compression_level）
         :return: 保存路径
 
@@ -782,7 +857,9 @@ class BaseRiskModel(
         """从文件加载模型.
 
         :param path: 模型文件路径
-        :param engine: 序列化引擎，可选 'auto', 'joblib', 'pickle', 'dill', 'cloudpickle'
+        :type path: str
+        :param engine: 默认值为 ``'auto'`` 。序列化引擎，可选 'auto', 'joblib', 'pickle', 'dill', 'cloudpickle'
+        :type engine: str
         :param kwargs: 传递给 load_pickle 的其他参数
         :return: 加载的模型实例
 
@@ -929,24 +1006,39 @@ class BaseRiskModel(
         集成 ModelTuner，一键完成超参数搜索、最佳模型训练。
 
         :param X: 特征矩阵或包含target的DataFrame
-        :param y: 目标变量，可选
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
         :param search_space: 参数搜索空间，默认使用自适应空间
-        :param fixed_params: 固定参数
-        :param metric: 搜索比较指标，可为名称、BaseMetric或概率函数；设为None时使用loss配套指标。
-        :param direction: 优化方向；None按内置/指标对象推断。裸函数必须指定方向。
-        :param n_trials: 搜索次数
+        :type search_space: Optional[Dict[str, Dict[str, Any]]]
+        :param fixed_params: 默认值为 ``None`` 。固定参数
+        :type fixed_params: Optional[Dict[str, Any]]
+        :param metric: 默认值为 ``'ks'`` 。搜索比较指标，可为名称、BaseMetric或概率函数；设为None时使用loss配套指标
+        :type metric: Union[str, Callable, List]
+        :param direction: 默认值为 ``None`` 。优化方向；None按内置/指标对象推断。裸函数必须指定方向
+        :type direction: Optional[Union[str, List[str]]]
+        :param n_trials: 默认值为 ``100`` 。搜索次数
+        :type n_trials: int
         :param cv: 默认 None 使用单次留出验证；显式整数>=2、分割器或索引序列启用多折。
             已有验证集可通过 eval_set=[(X_valid, y_valid)] 传入，不并入最终训练数据。
-        :param timeout: 超时时间(秒)
-        :param verbose: 是否输出详细信息
-        :param sample_weight: 训练权重，可选；需要加权评分时另传evaluation_weight。
+
+        :type cv: Optional[Any]
+        :param timeout: 默认值为 ``None`` 。超时时间(秒)
+        :type timeout: Optional[int]
+        :param verbose: 默认值为 ``None`` 。是否输出详细信息
+        :type verbose: Optional[bool]
+        :param sample_weight: 默认值为 ``None`` 。训练权重，可选；需要加权评分时另传evaluation_weight
+        :type sample_weight: Optional[np.ndarray]
         :param show_progress_bar: 是否显示进度条；默认跟随 verbose，可显式覆盖
-        :param loss: 可选BaseLoss训练损失，便利入口支持HSCredit XGBoost/LightGBM/CatBoost/NGBoost。
-        :param eval_set: 评估集列表 [(X_valid, y_valid)]；最后一个数据集用于搜索评分。
+        :type show_progress_bar: Optional[bool]
+        :param loss: 默认值为 ``None`` 。可选BaseLoss训练损失，便利入口支持HSCredit XGBoost/LightGBM/CatBoost/NGBoost
+        :param eval_set: 默认值为 ``None`` 。评估集列表 [(X_valid, y_valid)]；最后一个数据集用于搜索评分
             同 ModelReport.datasets 支持具名字典、DataFrame列表及混合形式；显式y优先。
             支持多评估集的提升器同时记录各集曲线；也支持单个 (X_valid, y_valid) 或含 target 的 DataFrame。
-        :param validation_weight: 独立验证集评分权重，不自动变为训练或早停权重。
+
+        :param validation_weight: 默认值为 ``None`` 。独立验证集评分权重，不自动变为训练或早停权重
         :param validation_fraction: cv=None 且未提供验证集时的一次留出比例，默认0.2。
+        :type validation_fraction: float
         :param kwargs: 其他传递给 ModelTuner 的参数
         :return: 使用最佳参数训练好的模型实例
 
@@ -1169,8 +1261,11 @@ class BaseRiskModel(
         """获取底层原生模型对象.
 
         用于需要访问底层模型特定功能的场景，如:
+
         - 获取叶子节点索引
+
         - 绘制树结构
+
         - 访问底层模型特有的方法
 
         :return: 底层模型对象（如xgboost.Booster、lgb.Booster等）
@@ -1223,17 +1318,29 @@ class BaseRiskModel(
 
         支持传统特征重要性和SHAP值两种方法。
 
-        :param X: 特征矩阵，SHAP方法必需
-        :param y: 目标变量，可选
+        :param X: 默认值为 ``None`` 。特征矩阵，SHAP方法必需
+        :type X: Optional[Union[np.ndarray, pd.DataFrame]]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
         :param top_n: 显示前N个特征，默认20
+        :type top_n: int
         :param importance_type: 重要性类型（传统方法），默认'gain'
+        :type importance_type: str
         :param method: 计算方法，默认'traditional'
+
             - 'traditional': 传统特征重要性
+
             - 'shap': SHAP值重要性
+
             - 'combined': 两者对比
+
+        :type method: str
         :param figsize: 图表大小，默认(10, 8)
-        :param title: 图表标题，可选
+        :type figsize: Tuple[int, int]
+        :param title: 默认值为 ``None`` 。图表标题，可选
+        :type title: Optional[str]
         :param show: 是否显示图表，默认True
+        :type show: bool
         :param kwargs: 其他绘图参数
         :return: matplotlib Figure对象
 

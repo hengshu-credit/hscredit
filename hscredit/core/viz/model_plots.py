@@ -267,28 +267,48 @@ def plot_model_feature_importance(
     使用系数绝对值。SHAP 模式默认按标签同时展示各组平均绝对 SHAP 柱条，设置
     ``shap_by_label=False`` 可只展示全样本平均柱条。没有 ``y`` 时仅支持绘制
     模型原生特征重要性。
-    ``prediction_method`` 决定 SHAP 解释的模型输出，可传 ``'predict'``、
-    ``'predict_score'``、``'predict_proba'`` 或接收 ``X`` 的 callable。
+    ``prediction_method`` 决定 SHAP 解释的模型输出，可传 ``'predict'`` 、
+    ``'predict_score'`` 、 ``'predict_proba'`` 或接收 ``X`` 的 callable。
 
     **参数**
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param model: 已拟合模型
+    :type model: Any
     :param X: 用于解释的特征矩阵
-    :param y: 真实标签；为 None 时仅绘制原生特征重要性
+    :type X: Union[np.ndarray, pd.DataFrame]
+    :param y: 默认值为 ``None`` 。真实标签；为 None 时仅绘制原生特征重要性
+    :type y: Optional[Union[np.ndarray, pd.Series]]
     :param prediction_method: SHAP 使用的预测方法或 callable，默认 ``'predict_proba'``
+    :type prediction_method: PredictionMethod
     :param class_index: 二维预测结果中要解释的列索引，默认 1（正类）
+    :type class_index: int
     :param left_top_n: 左侧显示特征数，默认 None，表示全部特征
+    :type left_top_n: Optional[int]
     :param right_top_n: 右侧依赖图显示特征数，默认 6
+    :type right_top_n: int
     :param show_dependence: 是否显示右侧依赖图，默认 True
+    :type show_dependence: bool
     :param background_size: SHAP 背景样本数，None 表示使用全部 X，默认 100
+    :type background_size: Optional[int]
     :param figsize: 画布大小；默认根据左右 Top N 自动计算
+    :type figsize: Optional[Tuple[float, float]]
     :param title: 总标题，默认包含模型名和预测方法
+    :type title: Optional[str]
     :param save: 图片保存路径，默认 None
+    :type save: Optional[str]
     :param random_state: 背景抽样和蜂群抖动随机种子，默认 42
-    :param show: 是否调用 ``plt.show()``，默认 True
-    :param importance_source: 重要性与 Top N 排序来源，可选 ``'raw'``（默认）或 ``'shap'``
+    :type random_state: Optional[int]
+    :param show: 是否调用 ``plt.show()`` ，默认 True
+    :type show: bool
+    :param importance_source: 重要性与 Top N 排序来源，可选 ``'raw'`` （默认）或 ``'shap'``
+    :type importance_source: str
     :param shap_by_label: SHAP 模式是否按标签分别显示平均绝对 SHAP 柱条，默认 True
+    :type shap_by_label: bool
     :param hatch: 是否显示重要性柱斜线纹理，默认 True；标签 0/1 分别使用 ``/`` 和 ``\\``
+    :type hatch: bool
     :return: matplotlib Figure
 
     **参考样例**
@@ -602,24 +622,40 @@ def plot_model_sample_shap(
 
     上方直接复用 SHAP 原生 Matplotlib 力图展示全部字段如何把基准值推向当前
     预测值，不经过整图栅格化或图片缩放；下方使用 SHAP 瀑布图按贡献绝对值
-    拆解同一结果。``sample`` 与 ``background_data`` 独立传入，避免把待解释
+    拆解同一结果。 ``sample`` 与 ``background_data`` 独立传入，避免把待解释
     样本误当作背景分布。
 
     **参数**
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param model: 已拟合模型
+    :type model: Any
     :param sample: 单个待解释样本，可传 Series、单行 DataFrame、1D 或单行 ndarray
+    :type sample: Union[np.ndarray, pd.Series, pd.DataFrame]
     :param background_data: SHAP 背景数据，必须是非空二维 DataFrame 或 ndarray
+    :type background_data: Union[np.ndarray, pd.DataFrame]
     :param prediction_method: SHAP 使用的预测方法或 callable，默认 ``'predict_proba'``
+    :type prediction_method: PredictionMethod
     :param class_index: 二维模型或 SHAP 输出中要解释的列索引，默认 1（正类）
+    :type class_index: int
     :param background_size: 背景抽样数，None 表示使用全部背景数据，默认 100
+    :type background_size: Optional[int]
     :param max_display: 瀑布图最大展示特征数，None 表示全部特征，默认 None
+    :type max_display: Optional[int]
     :param value_precision: 特征值、SHAP 贡献与输出刻度显示小数位数，默认 4
+    :type value_precision: int
     :param figsize: 组合图大小，默认 ``(14, 10)``
+    :type figsize: Tuple[float, float]
     :param title: 总标题，默认包含模型名和预测方法
+    :type title: Optional[str]
     :param save: 图片保存路径，默认 None
+    :type save: Optional[str]
     :param random_state: 背景抽样随机种子，默认 42
-    :param show: 是否调用 ``plt.show()``，默认 True
+    :type random_state: Optional[int]
+    :param show: 是否调用 ``plt.show()`` ，默认 True
+    :type show: bool
     :return: matplotlib Figure
 
     **参考样例**
@@ -983,22 +1019,27 @@ def plot_weights(
     *,
     dpi: int = 240,
 ):
-    """
-    逻辑回归模型系数误差图.
+    """逻辑回归模型系数误差图.
 
     展示逻辑回归模型各特征的系数估计值及其95%置信区间，
     用于评估特征的显著性及系数的稳定性。
 
     **参数**
 
+    :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
+    :type dpi: int
+
     :param summary: 逻辑回归模型的统计摘要，可以是以下两种形式之一：
+
         - pd.DataFrame: LogisticRegression.summary() 的返回结果
+
         - LogisticRegression: hscredit 的 LogisticRegression 模型对象
+
     :param save: 图片保存路径，如果传入路径中有文件夹不存在，会自动创建，默认 None
     :param figsize: 图片大小（创建新图时使用），默认 (15, 8)
     :param fontsize: 字体大小，默认 14
     :param colors: 图片主题颜色列表，长度为3，默认为 ["#2639E9", "#F76E6C", "#FE7715"]
-    :param ax: 可选的 matplotlib Axes 对象，用于在已有画布上绘图
+    :param ax: 默认值为 ``None`` 。可选的 matplotlib Axes 对象，用于在已有画布上绘图
 
     **返回**
 
@@ -1044,15 +1085,23 @@ def plot_weights(
     **说明**
 
     图表展示内容：
+
         - 横轴：系数估计值 (Weight Estimates)
+
         - 纵轴：特征变量名称 (Variable)
+
         - 误差线：95% 置信区间
+
         - 垂直虚线：x=0 参考线
 
     解释指南：
+
         - 误差线不跨越0：特征显著 (p<0.05)
+
         - 误差线跨越0：特征不显著 (p≥0.05)
+
         - 系数为正：特征与目标正相关
+
         - 系数为负：特征与目标负相关
     """
     # 处理输入参数

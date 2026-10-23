@@ -100,81 +100,187 @@ class OptimalBinning(BaseBinning):
 
     **架构设计原则**
 
-    1. **OptimalBinning 作为统一入口**：集成所有分箱方法，支持预分箱功能
-    2. **独立分箱模块保持简单**：各个具体分箱类（如BestIVBinning、MDLPBinning等）
+    1. **OptimalBinning 作为统一入口** ：集成所有分箱方法，支持预分箱功能
+
+    2. **独立分箱模块保持简单** ：各个具体分箱类（如BestIVBinning、MDLPBinning等）
        只执行一次分箱，不包含预分箱逻辑
-    3. **预分箱在 OptimalBinning 层面实现**：通过 prebinning 参数在统一接口层实现
+
+    3. **预分箱在 OptimalBinning 层面实现** ：通过 prebinning 参数在统一接口层实现
        预分箱+二次分箱的两阶段分箱流程
 
+    **参数**
+
+    :param missing_separate: 是否将缺失值单独分为一箱，默认为True
+    :type missing_separate: bool
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :type category_order: CategoryOrder
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: HandleUnknown
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
     :param target: 目标变量列名，默认为'target'
-    :param method: 分箱方法，默认为 ``'mdlp'``。可取以下枚举值（按类别）：
+    :type target: str
+    :param method: 分箱方法，默认为 ``'mdlp'`` 。可取以下枚举值（按类别）：
 
         *无监督（不使用标签决定切分）*
 
-        - ``'uniform'``：等距分箱，按数值范围等宽切分，快但对偏态敏感
-        - ``'quantile'``：等频分箱，各箱样本量均衡，对异常值稳健，常作预分箱
-        - ``'kmeans'``：K-Means 聚类分箱，按数值聚类结构切分，适合自然分组
-        - ``'kernel_density'``：核密度分箱，以分布谷值为边界，适合多峰分布
+        - ``'uniform'`` ：等距分箱，按数值范围等宽切分，快但对偏态敏感
+
+        - ``'quantile'`` ：等频分箱，各箱样本量均衡，对异常值稳健，常作预分箱
+
+        - ``'kmeans'`` ：K-Means 聚类分箱，按数值聚类结构切分，适合自然分组
+
+        - ``'kernel_density'`` ：核密度分箱，以分布谷值为边界，适合多峰分布
 
         *有监督（结合标签寻优）*
 
-        - ``'tree'``：决策树分箱，取决策树分裂点，贴合目标
-        - ``'cart'``：CART 分箱（对齐 optbinning 预分箱），支持 p-value 检验/回归目标
-        - ``'chi'``：卡方分箱（ChiMerge），合并分布无显著差异的相邻箱
-        - ``'mdlp'``：MDLP 信息论分箱，自动确定分箱数（默认）
-        - ``'best_ks'``：最大化 KS 统计量
-        - ``'best_iv'``：最大化 IV（信息价值），评分卡常用
-        - ``'best_lift'``：最大化头部箱提升度 Lift，偏策略拒绝场景
-        - ``'target_bad_rate'``：按目标坏样本率梯度切分
-        - ``'monotonic'``：单调最优分箱，强约束坏样本率/WOE 单调（含 U/倒U）
-        - ``'genetic'``：遗传算法全局寻优，约束复杂时使用
-        - ``'smooth'``：平滑分箱，对箱内坏样本率做平滑收缩，适合小样本
+        - ``'tree'`` ：决策树分箱，取决策树分裂点，贴合目标
 
-        *运筹规划（数学规划全局最优）*
+        - ``'cart'`` ：CART 分箱（对齐 optbinning 预分箱），支持 p-value 检验/回归目标
 
-        - ``'or_tools'``：基于 Google OR-Tools 的整数规划分箱
-        - ``'cp_sat'``：基于 CP-SAT 求解器的约束规划分箱
+        - ``'chi'`` ：卡方分箱（ChiMerge），合并分布无显著差异的相邻箱
+
+        - ``'mdlp'`` ：MDLP 信息论分箱，自动确定分箱数（默认）
+
+        - ``'best_ks'`` ：最大化 KS 统计量
+
+        - ``'best_iv'`` ：最大化 IV（信息价值），评分卡常用
+
+        - ``'best_lift'`` ：最大化头部箱提升度 Lift，偏策略拒绝场景
+
+        - ``'target_bad_rate'`` ：按目标坏样本率梯度切分
+
+        - ``'monotonic'`` ：单调最优分箱，强约束坏样本率/WOE 单调（含 U/倒U）
+
+        - ``'genetic'`` ：遗传算法全局寻优，约束复杂时使用
+
+        - ``'smooth'`` ：平滑分箱，对箱内坏样本率做平滑收缩，适合小样本
+
+        *运筹规划（在候选切点及约束下求解，结果受求解器状态和时限影响）*
+
+        - ``'or_tools'`` ：基于 Google OR-Tools 的整数规划分箱
+
+        - ``'cp_sat'`` ：基于 CP-SAT 求解器的约束规划分箱
+
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为5
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认为2
+    :type min_n_bins: int
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制最小样本数
+    :type min_bin_size: Optional[Union[float, int]]
     :param max_bin_size: 每箱最大样本数或占比，默认为None（不限制）
+    :type max_bin_size: Optional[Union[float, int]]
     :param min_bad_rate: 每箱最小坏样本率，默认为0.0。坏样本率低于该值的分箱将与相邻
         分箱合并；无论该参数取值，坏样本率为 0/1 的退化分箱都会被合并以避免 WOE 异常
         （等宽 uniform / 等频 quantile 为保持切分结构精确，不参与该约束）
+
+    :type min_bad_rate: float
     :param monotonic: 坏样本率单调性约束，默认为False
+
         - False: 不要求单调性
+
         - True 或 'auto': 自动检测最佳趋势（允许单增、单减、正U、倒U）
+
         - 'auto_asc_desc': 自动检测，但只允许单增或单减（不允许U型）
+
         - 'auto_heuristic': 使用启发式方法自动检测
+
         - 'ascending': 强制坏样本率递增
+
         - 'descending': 强制坏样本率递减
+
         - 'peak': 允许单峰形态(先升后降，倒U型)
+
         - 'valley': 允许单谷形态(先降后升，正U型)
+
         - 'peak_heuristic': 使用启发式方法检测峰值
+
         - 'valley_heuristic': 使用启发式方法检测谷值
-    :param user_splits: 用户指定的切分点，支持:
-        - Dict[str, List]: 每个特征的切分点，如 {'age': [25, 35, 45]}
-        - Callable: 函数返回切分点
-    :param user_splits_fixed: 用户切分点固定配置。支持全局布尔值，或按字段配置布尔值/布尔列表
+
+    :type monotonic: Union[bool, str]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Union[Dict[str, List], Callable]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: UserSplitsFixed
     :param prebinning: 预分箱方法，支持:
+
         - str: 预分箱方法名（所有VALID_METHODS中的方法都可作为预分箱方法）
+
         - BaseBinning: 预分箱器实例
+
         - Dict: 预分箱配置，如 {'method': 'cart', 'max_n_bins': 20}
+
         默认为None（不进行预分箱）
-    :param prebinning_params: 预分箱参数，当prebinning为str时使用
+
+    :type prebinning: Optional[Union[str, 'BaseBinning', Dict]]
+    :param prebinning_params: 默认值为 ``None`` 。预分箱参数，当prebinning为str时使用
+    :type prebinning_params: Optional[Dict]
     :param special_codes: 特殊值列表，默认为None
-    :param cat_cutoff: 类别型变量处理阈值，默认为None
+    :type special_codes: Optional[List]
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
     :param random_state: 随机种子，默认为None
+    :type random_state: Optional[int]
     :param verbose: 是否输出详细信息，默认为False
+    :type verbose: Union[bool, int]
     :param decimal: 数值型切分点保留的小数位数，默认为4
+    :type decimal: int
     :param woe_clip: WOE值截断阈值，默认为None
         当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
         这会导致评分卡中对应分箱的分数异常。
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
+
+    :type woe_clip: Optional[float]
     :param kwargs: 其他分箱方法特定参数
+
+    **属性**
+
+    - ``splits_`` ：各特征的内部数值切点或类别分组。
+
+    - ``bin_tables_`` ：各特征的中文分箱统计表，通过 ``get_bin_table`` 读取。
+
+    - ``n_bins_`` ：各特征实际箱数，可能因重复值、约束或用户规则而不同。
+
+    - ``feature_types_`` ：字段类型， ``"numerical"`` 或 ``"categorical"`` 。
 
     **参考样例**
 
+    >>> import pandas as pd
+    >>> df = pd.DataFrame({"age": [20, 21, 25, 28, 31, 35, 40, 45] * 10,
+    ...                    "target": [0, 0, 0, 1, 0, 1, 1, 1] * 10})
+    >>> X, y = df[["age"]], df["target"]
     >>> from hscredit.core.binning import OptimalBinning
     >>> # 使用MDLP分箱（默认，直接分箱）
     >>> binner = OptimalBinning(method='mdlp', max_n_bins=5)
@@ -205,6 +311,14 @@ class OptimalBinning(BaseBinning):
     optbinning：Navas-Palencia, G. (2020). *Optimal binning: mathematical programming
     formulation.* arXiv:2001.08025. https://arxiv.org/abs/2001.08025 ；
     各子方法的具体出处见对应分箱类文档。
+
+    **注意**
+
+    方法名以 ``VALID_METHODS`` 为准， ``"optimal"`` 是类名含义而非可用的 ``method`` 值。
+    数值区间按左闭右开处理；等于内部切点的样本归入右侧箱。
+    训练、验证和预测应复用同一个已拟合分箱器；不要在验证集重新寻优。
+    算法背景见 `OptBinning 官方文档 <https://gnpalencia.org/optbinning/>`_；
+    HSCredit 的枚举、默认值和类别处理以本页为准，不代表与第三方实现完全相同。
     """
 
     # 所有支持的分箱方法
@@ -233,9 +347,10 @@ class OptimalBinning(BaseBinning):
         """校验并归一化分箱方法名.
 
         统一所有入口的 method 校验逻辑：类型检查、大小写与首尾空白归一化、
-        枚举值校验。不支持别名（如 ``'iv'``、``'chi2'`` 会被拒绝）。
+        枚举值校验。不支持别名（如 ``'iv'`` 、 ``'chi2'`` 会被拒绝）。
 
         :param method: 分箱方法名
+        :type method: str
         :return: 归一化后的方法名（小写、去除首尾空白）
         :raises ValueError: method 不是字符串或不在 ``VALID_METHODS`` 中时抛出
         """
@@ -385,13 +500,15 @@ class OptimalBinning(BaseBinning):
         }
 
     def get_params(self, deep: bool = True) -> Dict[str, Any]:
-        """在不改变 ``**kwargs`` 入口的前提下暴露方法专属参数。"""
+        """在不改变 ``**kwargs`` 入口的前提下暴露方法专属参数。
+        """
         params = super().get_params(deep=deep)
         params.update(self.kwargs)
         return params
 
     def set_params(self, **params) -> "OptimalBinning":
-        """支持 sklearn 为显式参数和方法专属 ``**kwargs`` 参数赋值。"""
+        """支持 sklearn 为显式参数和方法专属 ``**kwargs`` 参数赋值。
+        """
         if not params:
             return self
         explicit = set(inspect.signature(self.__init__).parameters) - {"self", "kwargs"}
@@ -429,7 +546,9 @@ class OptimalBinning(BaseBinning):
         """拟合分箱.
 
         :param X: 训练数据
-        :param y: 目标变量
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :param kwargs: 其他参数
         :return: 拟合后的分箱器
         """
@@ -1680,7 +1799,7 @@ class OptimalBinning(BaseBinning):
 
         各底层分箱方法对类别型特征的处理并不一致（如 best_iv/best_ks 退化为数值编码标签、
         mdlp 不合并类别），此处在 OptimalBinning 层统一重算，保证：
-        每个类别归入某一组、组数不超过 ``max_n_bins``、小样本/退化类别并入相邻组、
+        每个类别归入某一组、组数不超过 ``max_n_bins`` 、小样本/退化类别并入相邻组、
         缺失值按 ``missing_separate`` 单独成箱。
         """
         for feature in list(self.feature_types_.keys()):
@@ -1701,8 +1820,11 @@ class OptimalBinning(BaseBinning):
         """将类别按坏样本率排序后合并为不超过 max_n_bins 组（List[List]）。
 
         - 按各类别坏样本率升序排列，相邻（坏样本率最接近）类别优先合并；
+
         - 样本量低于 min_bin_size 的类别、以及退化组（坏样本率 0/1）并入相邻组；
+
         - 在不低于 min_n_bins 的前提下迭代合并，直至满足 max_n_bins 与样本量约束；
+
         - 缺失值/特殊值不参与分组（由 missing_separate / special_codes 单独成箱）。
 
         :return: List[List]，每个子列表为一组类别名（字符串），按组坏样本率升序排列
@@ -1796,7 +1918,7 @@ class OptimalBinning(BaseBinning):
     ) -> np.ndarray:
         """应用分箱.
 
-        类别规则只支持严格 ``List[List]``，并优先使用已规范化的 ``_cat_bins_``。
+        类别规则只支持严格 ``List[List]`` ，并优先使用已规范化的 ``_cat_bins_`` 。
         """
         if feature_type == "categorical" and feature in self._cat_bins_:
             return self._assign_categorical_bins(feature, x)
@@ -1894,14 +2016,21 @@ class OptimalBinning(BaseBinning):
         将原始特征值转换为分箱索引、分箱标签或WOE值。
 
         :param X: 待转换数据, DataFrame或数组格式
-        :param metric: 转换类型, 可选值:
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param metric: 默认值为 ``'indices'`` 。转换类型, 可选值:
+
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
+
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
+
             - 'woe': 返回WOE值, 用于逻辑回归建模
+
+        :type metric: str
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
 
-        :example:
+        **参考样例**
+
         >>> binner = OptimalBinning()
         >>> binner.fit(X_train, y_train)
         >>>
@@ -1968,9 +2097,13 @@ class OptimalBinning(BaseBinning):
         返回各特征的IV值、KS值、分箱表等统计指标。
 
         :param feature: 特征名，如果为None则返回所有特征的统计，默认为None
+        :type feature: Optional[str]
         :return: 统计信息字典
+
             - 如果指定了feature，返回 {'n_bins_': int, 'bin_table': DataFrame, 'ks': float, 'iv': float, 'monotonic_trend': str}
+
             - 如果未指定feature，返回 {feature_name: stats, ...} 格式的字典
+
         :raises ValueError: 如果分箱器尚未拟合
         :raises KeyError: 如果指定特征不存在
 
@@ -2030,14 +2163,42 @@ class OptimalBinning(BaseBinning):
         对指定特征遍历多种分箱方法，选择最优的一个。
         适用于在不了解特征分布时自动选择最佳分箱策略。
 
+        :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+            ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+            ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+            ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+        :type parallel_config: Optional[Dict[str, Any]]
+
+        :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+            ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+            显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+        :type parallel_backend: Optional[str]
+
+        :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+            正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+            不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+        :type n_jobs: Union[int, float]
+
         :param X: 特征数据 DataFrame
+        :type X: pd.DataFrame
         :param y: 目标变量 Series，二分类 (0/1)
+        :type y: pd.Series
         :param feature: 待评估的特征名（必须是X中的列）
+        :type feature: str
         :param methods: 待评估的方法列表，默认为 ['uniform', 'quantile', 'tree', 'chi',
             'best_ks', 'best_iv', 'mdlp', 'cart', 'kmeans']
+
+        :type methods: Optional[List[str]]
         :param criterion: 选择标准，默认为 'iv'
+
             - 'iv': 选择IV值最大的方法
+
             - 'ks': 选择KS值最大的方法
+
+        :type criterion: str
         :return: 最优方法名（字符串）
         :raises Warning: 某个方法执行失败时输出警告但继续评估其他方法
 

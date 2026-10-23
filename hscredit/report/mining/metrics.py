@@ -46,6 +46,30 @@ class RuleMetrics(ParallelizableMixin):
     提供全面的规则评估指标，支持训练集和测试集的对比分析。
     所有指标计算统一收口到hscredit.core.metrics。
 
+    **参数**
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+
+    :param target_positive: 正类标签，默认1
+    :type target_positive: int
+
     **参考样例**
 
     >>> from hscredit.core.rules.mining import RuleMetrics
@@ -61,8 +85,7 @@ class RuleMetrics(ParallelizableMixin):
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
     ):
-        """
-        :param target_positive: 正类标签，默认1
+        """:param target_positive: 正类标签，默认1
         """
         self.target_positive = target_positive
         self.n_jobs = n_jobs
@@ -83,11 +106,17 @@ class RuleMetrics(ParallelizableMixin):
 
         :param rule: 规则对象（Rule或MinedRule）
         :param X_train: 训练集特征
+        :type X_train: pd.DataFrame
         :param y_train: 训练集标签
-        :param X_test: 测试集特征（可选）
-        :param y_test: 测试集标签（可选）
-        :param amount_train: 训练集金额（可选）
-        :param amount_test: 测试集金额（可选）
+        :type y_train: pd.Series
+        :param X_test: 默认值为 ``None`` 。测试集特征（可选）
+        :type X_test: Optional[pd.DataFrame]
+        :param y_test: 默认值为 ``None`` 。测试集标签（可选）
+        :type y_test: Optional[pd.Series]
+        :param amount_train: 默认值为 ``None`` 。训练集金额（可选）
+        :type amount_train: Optional[pd.Series]
+        :param amount_test: 默认值为 ``None`` 。测试集金额（可选）
+        :type amount_test: Optional[pd.Series]
         :return: 评估指标字典
         """
         result = {}
@@ -212,10 +241,15 @@ class RuleMetrics(ParallelizableMixin):
         """批量评估规则.
 
         :param rules: 规则列表
+        :type rules: List
         :param X_train: 训练集特征
+        :type X_train: pd.DataFrame
         :param y_train: 训练集标签
-        :param X_test: 测试集特征
-        :param y_test: 测试集标签
+        :type y_train: pd.Series
+        :param X_test: 默认值为 ``None`` 。测试集特征
+        :type X_test: Optional[pd.DataFrame]
+        :param y_test: 默认值为 ``None`` 。测试集标签
+        :type y_test: Optional[pd.Series]
         :return: 评估结果DataFrame
         """
         tasks = [
@@ -252,7 +286,9 @@ class RuleMetrics(ParallelizableMixin):
         使用统一的KS计算。
 
         :param y_true: 真实标签
+        :type y_true: np.ndarray
         :param y_score: 预测分数
+        :type y_score: np.ndarray
         :return: KS值
         """
         return ks(y_true, y_score)
@@ -263,8 +299,11 @@ class RuleMetrics(ParallelizableMixin):
         使用统一的IV计算。
 
         :param feature: 特征值
+        :type feature: pd.Series
         :param target: 目标变量
-        :param max_n_bins: 分箱数
+        :type target: pd.Series
+        :param max_n_bins: 默认值为 ``10`` 。分箱数
+        :type max_n_bins: int
         :return: IV值
         """
         return iv(target, feature, max_n_bins=max_n_bins)
@@ -275,7 +314,9 @@ class RuleMetrics(ParallelizableMixin):
         使用统一的Gini计算。
 
         :param y_true: 真实标签
+        :type y_true: np.ndarray
         :param y_score: 预测分数
+        :type y_score: np.ndarray
         :return: Gini系数
         """
         return gini(y_true, y_score)
@@ -288,9 +329,13 @@ def calculate_rule_metrics(
 
     :param rule: 规则对象
     :param X: 训练集特征
+    :type X: pd.DataFrame
     :param y: 训练集标签
-    :param X_test: 测试集特征
-    :param y_test: 测试集标签
+    :type y: pd.Series
+    :param X_test: 默认值为 ``None`` 。测试集特征
+    :type X_test: Optional[pd.DataFrame]
+    :param y_test: 默认值为 ``None`` 。测试集标签
+    :type y_test: Optional[pd.Series]
     :return: 评估指标字典
     """
     metrics = RuleMetrics()
@@ -303,8 +348,11 @@ def calculate_lift_chart(y_true: pd.Series, y_score: pd.Series, n_buckets: int =
     使用统一的lift_table计算。
 
     :param y_true: 真实标签
+    :type y_true: pd.Series
     :param y_score: 预测分数
-    :param n_buckets: 分桶数
+    :type y_score: pd.Series
+    :param n_buckets: 默认值为 ``10`` 。分桶数
+    :type n_buckets: int
     :return: Lift数据DataFrame
     """
     return metrics_lift_table(y_true, y_score, n_bins=n_buckets)

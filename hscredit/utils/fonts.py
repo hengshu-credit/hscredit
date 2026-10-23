@@ -152,8 +152,10 @@ def _install_linux_font(source: Path, force: bool) -> Tuple[Path, bool]:
 def install_bundled_font(force: bool = False, system: Optional[str] = None) -> Tuple[Path, bool]:
     """安装 hscredit 内置字体到当前用户字体库.
 
-    :param force: 是否强制覆盖已有字体文件
-    :param system: 操作系统名称，仅用于测试或显式覆盖自动识别结果
+    :param force: 默认值为 ``False`` 。是否强制覆盖已有字体文件
+    :type force: bool
+    :param system: 默认值为 ``None`` 。操作系统名称，仅用于测试或显式覆盖自动识别结果
+    :type system: Optional[str]
     :return: ``(安装路径, 是否实际更新字体文件)``
     """
     source = get_bundled_font_path()

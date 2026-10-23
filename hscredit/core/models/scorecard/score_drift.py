@@ -88,9 +88,12 @@ class BaseDriftCalibrator(TrainingProcessMixin, BaseEstimator, ABC):
 
     **参数**
 
-    :param reference_scores: 参考评分(训练时的评分分布)，可选
-    :param method: 校准方法
+    :param reference_scores: 默认值为 ``None`` 。参考评分(训练时的评分分布)，可选
+    :type reference_scores: Optional[Union[np.ndarray, pd.Series]]
+    :param method: 默认值为 ``'linear'`` 。校准方法
+    :type method: str
     :param clip_bounds: 是否限制评分在参考分布的边界内，默认True
+    :type clip_bounds: bool
     """
 
     def __init__(
@@ -149,9 +152,13 @@ class BaseDriftCalibrator(TrainingProcessMixin, BaseEstimator, ABC):
         """拟合漂移校准器.
 
         :param model: 已训练的模型
+        :type model: Any
         :param X: 当前生产环境数据
-        :param y: 目标变量，可选
-        :param X_reference: 参考数据(训练数据)，可选
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param X_reference: 默认值为 ``None`` 。参考数据(训练数据)，可选
+        :type X_reference: Optional[Union[np.ndarray, pd.DataFrame]]
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -168,6 +175,7 @@ class BaseDriftCalibrator(TrainingProcessMixin, BaseEstimator, ABC):
         """校准评分.
 
         :param scores: 原始评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 校准后的评分
         """
         pass
@@ -182,9 +190,12 @@ class BaseDriftCalibrator(TrainingProcessMixin, BaseEstimator, ABC):
 
         可通过传入X、scores或proba之一来获取评分。
 
-        :param X: 特征矩阵
-        :param scores: 直接传入评分
-        :param proba: 直接传入概率
+        :param X: 默认值为 ``None`` 。特征矩阵
+        :type X: Optional[Union[np.ndarray, pd.DataFrame]]
+        :param scores: 默认值为 ``None`` 。直接传入评分
+        :type scores: Optional[Union[np.ndarray, pd.Series]]
+        :param proba: 默认值为 ``None`` 。直接传入概率
+        :type proba: Optional[Union[np.ndarray, pd.Series]]
         :return: 校准后的评分数组
 
         **参考样例**
@@ -224,12 +235,20 @@ class BaseDriftCalibrator(TrainingProcessMixin, BaseEstimator, ABC):
         """检测评分漂移.
 
         :param X_reference: 参考数据
+        :type X_reference: Union[np.ndarray, pd.DataFrame]
         :param X_current: 当前数据
+        :type X_current: Union[np.ndarray, pd.DataFrame]
         :param metric: 漂移检测指标，默认'psi'
+
             - 'psi': Population Stability Index
+
             - 'ks': Kolmogorov-Smirnov统计量
+
             - 'wasserstein': Wasserstein距离
+
+        :type metric: str
         :param threshold: 漂移阈值，默认None(使用推荐值)
+        :type threshold: Optional[float]
         :return: 漂移检测报告
         """
         if not hasattr(self, "model_"):
@@ -301,7 +320,9 @@ class BaseDriftCalibrator(TrainingProcessMixin, BaseEstimator, ABC):
         复用 ``hscredit.utils.io.save_pickle`` 进行持久化。
 
         :param file: 文件路径
+        :type file: str
         :param engine: 序列化引擎，默认 'joblib'
+        :type engine: str
         :param kwargs: 透传给 save_pickle 的参数（如 compression）
         :return: 保存的文件路径
         """
@@ -322,7 +343,9 @@ class BaseDriftCalibrator(TrainingProcessMixin, BaseEstimator, ABC):
         复用 ``hscredit.utils.io.load_pickle`` 进行读取。
 
         :param file: 文件路径
+        :type file: str
         :param engine: 序列化引擎，默认 'auto'
+        :type engine: str
         :param kwargs: 透传给 load_pickle 的参数
         :return: 加载的漂移校准器实例
         """
@@ -344,10 +367,14 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
 
     **参数**
 
-    :param reference_scores: 参考评分，可选
+    :param reference_scores: 默认值为 ``None`` 。参考评分，可选
+    :type reference_scores: Optional[Union[np.ndarray, pd.Series]]
     :param target_mean: 目标均值，默认None(使用参考分布均值)
+    :type target_mean: Optional[float]
     :param target_std: 目标标准差，默认None(使用参考分布标准差)
+    :type target_std: Optional[float]
     :param clip_bounds: 是否限制边界，默认True
+    :type clip_bounds: bool
 
     **参考样例**
 
@@ -380,10 +407,15 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
         """拟合线性漂移校准器.
 
         :param model: 已训练的模型
+        :type model: Any
         :param X: 当前生产环境数据
-        :param y: 目标变量，可选
-        :param X_reference: 参考数据，可选
-        :param target: 目标列名
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param X_reference: 默认值为 ``None`` 。参考数据，可选
+        :type X_reference: Optional[Union[np.ndarray, pd.DataFrame]]
+        :param target: 默认值为 ``'target'`` 。目标列名
+        :type target: str
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -449,6 +481,7 @@ class LinearDriftCalibrator(BaseDriftCalibrator):
         """校准评分.
 
         :param scores: 原始评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 校准后的评分
         """
         check_is_fitted(self)
@@ -474,10 +507,14 @@ class QuantileAligner(BaseDriftCalibrator):
 
     **参数**
 
-    :param reference_scores: 参考评分，可选
+    :param reference_scores: 默认值为 ``None`` 。参考评分，可选
+    :type reference_scores: Optional[Union[np.ndarray, pd.Series]]
     :param n_quantiles: 分位数数量，默认100
+    :type n_quantiles: int
     :param interpolation: 插值方法，默认'linear'
+    :type interpolation: str
     :param clip_bounds: 是否限制边界，默认True
+    :type clip_bounds: bool
 
     **参考样例**
 
@@ -510,10 +547,15 @@ class QuantileAligner(BaseDriftCalibrator):
         """拟合分位数对齐器.
 
         :param model: 已训练的模型
+        :type model: Any
         :param X: 当前生产环境数据
-        :param y: 目标变量，可选
-        :param X_reference: 参考数据，可选
-        :param target: 目标列名
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param X_reference: 默认值为 ``None`` 。参考数据，可选
+        :type X_reference: Optional[Union[np.ndarray, pd.DataFrame]]
+        :param target: 默认值为 ``'target'`` 。目标列名
+        :type target: str
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -577,6 +619,7 @@ class QuantileAligner(BaseDriftCalibrator):
         """校准评分.
 
         :param scores: 原始评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 校准后的评分
         """
         check_is_fitted(self)
@@ -605,13 +648,21 @@ class BinningRecalibrator(BaseDriftCalibrator):
 
     **参数**
 
-    :param reference_scores: 参考评分，可选
-    :param reference_y: 参考标签，可选
+    :param reference_scores: 默认值为 ``None`` 。参考评分，可选
+    :type reference_scores: Optional[Union[np.ndarray, pd.Series]]
+    :param reference_y: 默认值为 ``None`` 。参考标签，可选
+    :type reference_y: Optional[Union[np.ndarray, pd.Series]]
     :param n_bins: 分箱数，默认10
+    :type n_bins: int
     :param binning_strategy: 分箱策略，默认'quantile'
+
         - 'quantile': 等频分箱
+
         - 'uniform': 等宽分箱
+
+    :type binning_strategy: str
     :param clip_bounds: 是否限制边界，默认True
+    :type clip_bounds: bool
 
     **参考样例**
 
@@ -651,11 +702,17 @@ class BinningRecalibrator(BaseDriftCalibrator):
         """拟合分箱重校准器.
 
         :param model: 已训练的模型
+        :type model: Any
         :param X: 当前生产环境数据
-        :param y: 当前标签
-        :param X_reference: 参考数据
-        :param y_reference: 参考标签
-        :param target: 目标列名
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。当前标签
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param X_reference: 默认值为 ``None`` 。参考数据
+        :type X_reference: Optional[Union[np.ndarray, pd.DataFrame]]
+        :param y_reference: 默认值为 ``None`` 。参考标签
+        :type y_reference: Optional[Union[np.ndarray, pd.Series]]
+        :param target: 默认值为 ``'target'`` 。目标列名
+        :type target: str
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -753,6 +810,7 @@ class BinningRecalibrator(BaseDriftCalibrator):
         """校准评分.
 
         :param scores: 原始评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 校准后的评分
         """
         check_is_fitted(self)
@@ -788,13 +846,23 @@ class ScoreDriftCalibrator(ExtraParamsMixin, BaseDriftCalibrator):
     **参数**
 
     :param method: 校准方法，默认'linear'
+
         - 'linear': 线性漂移校准
+
         - 'quantile': 分位数对齐
+
         - 'binning': 分箱重校准
-    :param reference_scores: 参考评分，可选
+
+    :type method: Literal['linear', 'quantile', 'binning']
+    :param reference_scores: 默认值为 ``None`` 。参考评分，可选
+    :type reference_scores: Optional[Union[np.ndarray, pd.Series]]
     :param clip_bounds: 是否限制边界，默认True
+    :type clip_bounds: bool
     :param target: 目标列名，默认'target'
+
         - 用于从DataFrame中提取目标变量
+
+    :type target: str
     :param kwargs: 传递给具体校准器的参数
 
     **常用配置**
@@ -854,18 +922,24 @@ class ScoreDriftCalibrator(ExtraParamsMixin, BaseDriftCalibrator):
 
         支持两种传参风格:
 
-        **sklearn风格**::
+        **sklearn风格** ::
             calibrator.fit(model, X_prod, y_prod, X_reference=X_train)
 
-        **scorecardpipeline风格**::
+        **scorecardpipeline风格** ::
             calibrator.fit(model, df_prod, X_reference=X_train)  # df_prod包含target列
 
         :param model: 已训练的模型
+        :type model: Any
         :param X: 当前生产环境数据
-        :param y: 当前标签，可选
-        :param X_reference: 参考数据
-        :param y_reference: 参考标签，可选
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。当前标签，可选
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param X_reference: 默认值为 ``None`` 。参考数据
+        :type X_reference: Optional[Union[np.ndarray, pd.DataFrame]]
+        :param y_reference: 默认值为 ``None`` 。参考标签，可选
+        :type y_reference: Optional[Union[np.ndarray, pd.Series]]
         :param target: 目标列名，默认使用初始化时设置的target
+        :type target: Optional[str]
         :param kwargs: 保留的扩展参数；转换方法和刻度在构造器中配置，不作为模型超参数搜索空间。
         :return: self
 
@@ -912,6 +986,7 @@ class ScoreDriftCalibrator(ExtraParamsMixin, BaseDriftCalibrator):
         """校准评分.
 
         :param scores: 原始评分
+        :type scores: Union[np.ndarray, pd.Series]
         :return: 校准后的评分
         """
         check_is_fitted(self)
@@ -938,11 +1013,17 @@ def plot_drift_comparison(
     """绘制漂移对比图.
 
     :param calibrator: 已拟合的漂移校准器
+    :type calibrator: BaseDriftCalibrator
     :param X_reference: 参考数据
+    :type X_reference: Union[np.ndarray, pd.DataFrame]
     :param X_current: 当前数据
+    :type X_current: Union[np.ndarray, pd.DataFrame]
     :param figsize: 图表大小，默认(15, 5)
+    :type figsize: Tuple[int, int]
     :param show: 是否显示图表，默认True
+    :type show: bool
     :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
+    :type colors: Optional[List[str]]
     :return: matplotlib Figure对象
 
     **参考样例**
@@ -1045,13 +1126,21 @@ def compare_drift_methods(
     """对比多种漂移校准方法.
 
     :param model: 已训练的模型
+    :type model: Any
     :param X_reference: 参考数据
+    :type X_reference: Union[np.ndarray, pd.DataFrame]
     :param X_current: 当前数据
-    :param y_current: 当前标签，可选(用于binning方法)
+    :type X_current: Union[np.ndarray, pd.DataFrame]
+    :param y_current: 默认值为 ``None`` 。当前标签，可选(用于binning方法)
+    :type y_current: Optional[Union[np.ndarray, pd.Series]]
     :param methods: 要对比的方法列表，默认['linear', 'quantile']
+    :type methods: List[str]
     :param figsize: 图表大小，默认(12, 4)
+    :type figsize: Tuple[int, int]
     :param show: 是否显示图表，默认True
+    :type show: bool
     :param colors: 颜色列表，默认使用hscredit配色 ["#2639E9", "#F76E6C", "#FE7715"]
+    :type colors: Optional[List[str]]
     :return: matplotlib Figure对象
 
     **参考样例**

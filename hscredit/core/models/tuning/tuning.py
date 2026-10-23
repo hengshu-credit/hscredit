@@ -150,23 +150,34 @@ class TuningSampler:
     通过字符串名称即可在 ``ModelTuner(sampler=...)`` 中选用不同搜索器，
     无需直接 import 对应的采样器类。
 
-    **optuna 内置采样器** (``BUILTIN_SAMPLERS``)：
+    **optuna 内置采样器**  ( ``BUILTIN_SAMPLERS`` )：
 
-    - ``'tpe'``        : TPESampler，树结构 Parzen 估计（默认）
-    - ``'random'``     : RandomSampler，随机搜索
-    - ``'cmaes'``      : CmaEsSampler，CMA-ES 进化策略（依赖 cmaes）
-    - ``'grid'``       : GridSampler，网格搜索（需 sampler_kwargs 传入 search_space）
-    - ``'nsgaii'``     : NSGAIISampler，多目标遗传算法
-    - ``'nsgaiii'``    : NSGAIIISampler，多目标遗传算法（多目标场景）
-    - ``'qmc'``        : QMCSampler，准蒙特卡洛
-    - ``'gp'``         : GPSampler，高斯过程贝叶斯优化
+    - ``'tpe'`` : TPESampler，树结构 Parzen 估计（默认）
+
+    - ``'random'`` : RandomSampler，随机搜索
+
+    - ``'cmaes'`` : CmaEsSampler，CMA-ES 进化策略（依赖 cmaes）
+
+    - ``'grid'`` : GridSampler，网格搜索（需 sampler_kwargs 传入 search_space）
+
+    - ``'nsgaii'`` : NSGAIISampler，多目标遗传算法
+
+    - ``'nsgaiii'`` : NSGAIIISampler，多目标遗传算法（多目标场景）
+
+    - ``'qmc'`` : QMCSampler，准蒙特卡洛
+
+    - ``'gp'`` : GPSampler，高斯过程贝叶斯优化
+
     - ``'bruteforce'`` : BruteForceSampler，穷举搜索
 
-    **optunahub 采样器** (``OPTUNAHUB_SAMPLERS``，依赖 optunahub，按需联网下载)：
+    **optunahub 采样器**  ( ``OPTUNAHUB_SAMPLERS`` ，依赖 optunahub，按需联网下载)：
 
-    - ``'auto'``       : AutoSampler，自动选择最优采样器
-    - ``'hebo'``       : HEBOSampler，异方差贝叶斯优化
-    - ``'smac'``       : SMACSampler，基于 SMAC3 的贝叶斯优化
+    - ``'auto'`` : AutoSampler，自动选择最优采样器
+
+    - ``'hebo'`` : HEBOSampler，异方差贝叶斯优化
+
+    - ``'smac'`` : SMACSampler，基于 SMAC3 的贝叶斯优化
+
     - ``'neldermead'`` : NelderMeadSampler，单纯形法
 
     **参考样例**
@@ -239,9 +250,13 @@ class TuningSampler:
 
         :param sampler: 采样器名称（见 BUILTIN_SAMPLERS / OPTUNAHUB_SAMPLERS），
             或已实例化的采样器对象（直接返回），或 None（默认 TPE）
-        :param seed: 随机种子，若采样器支持则注入
+
+        :type sampler: Union[str, Any, None]
+        :param seed: 默认值为 ``None`` 。随机种子，若采样器支持则注入
+        :type seed: Optional[int]
         :param kwargs: 透传给采样器构造函数的额外参数；拼错或不支持的参数立即报错。
             传入已创建的采样器实例时不能再传 kwargs，实例自身管理随机种子。
+
         :return: optuna 采样器实例
 
         **参考样例**
@@ -314,38 +329,131 @@ class ModelTuner(ArtifactSerializableMixin):
 
     **参数**
 
+    :param objective: 默认值为 ``None`` 。调参优化目标，支持字符串名称（见 TuningObjective.BUILTIN_OBJECTIVES）
+        或自定义函数 (y_true, y_prob) -> float。
+        若指定此参数，则覆盖 metric 参数。
+        支持：'ks' / 'auc' / 'lift_head' / 'lift_tail' /
+        'lift_head_monotonic' / 'ks_with_lift_constraint' / 'head_ks'。
+
+    :type objective: Union[str, Callable, None]
+    :param objective_kwargs: 默认值为 ``None`` 。透传给 TuningObjective 目标函数的额外参数
+        如 {'ratio': 0.05, 'penalty': 0.3}
+
+    :type objective_kwargs: Optional[Dict[str, Any]]
+    :param eval_ratios: 默认值为 ``None`` 。调参过程中额外追踪的 LIFT 覆盖率列表
+        如 [0.01, 0.03, 0.05, 0.10]，结果记录在 optimization_history_ 中
+
+    :type eval_ratios: List[float]
+    :param trial_points: 默认值为 ``None`` 。预指定的超参数搜索点， ``dict`` 或 ``list[dict]``
+        在 fit 创建 study 后通过 ``study.enqueue_trial`` 优先评估这些点
+        （例如已知的经验最优配置或上一轮调优结果），随后再进行常规采样。
+        每个 dict 的键应为搜索空间中的参数名，可只指定部分参数（其余由采样器补全）。
+        也可在实例化后通过  :meth:`enqueue_trials`  追加。
+
+    :type trial_points: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+    :param sampler: 默认值为 ``'tpe'`` 。搜索器，支持 TuningSampler 中的字符串名称（如 'tpe'、'random'、'gp'、'nsgaii'）
+        或已实例化的 optuna 采样器对象；None 等价于 'tpe'。
+        'auto'/'hebo'/'smac' 等 optunahub 采样器需要相应可选依赖。
+
+    :type sampler: Union[str, Any, None]
+    :param sampler_kwargs: 默认值为 ``None`` 。透传给采样器构造函数的额外参数，如 {'n_startup_trials': 10}
+    :type sampler_kwargs: Optional[Dict[str, Any]]
+    :param storage: 默认值为 ``None`` 。optuna 存储 URL，如 ``'sqlite:///hscredit_tuning.db'``
+        指定后可配合 ``optuna-dashboard sqlite:///hscredit_tuning.db`` 实时查看
+        调优进度；不指定则使用内存存储（进程结束即丢失）。
+
+    :type storage: Optional[str]
+    :param study_name: 默认值为 ``None`` 。study 名称，配合 storage 持久化时用于标识/复用同一 study
+    :type study_name: Optional[str]
+    :param load_if_exists: storage 中已存在同名 study 时是否加载续跑，默认False。
+    :type load_if_exists: bool
+    :param target: 默认值为 ``None`` 。fit(df) 时的标签列名。None 优先继承模型实例（包括 Pipeline 末端）的 target
+        再回退为 'target'；显式值优先，并传给最终 HSCredit 模型，评估与报告不必重复配置。
+
+    :type target: Optional[str]
+    :param points_to_evaluate: 默认值为 ``None`` 。Hyperopt 风格的初始搜索点，格式与 ``fmin`` 的
+        ``points_to_evaluate`` 一致；内部与 ``trial_points`` 一并转换并入队。
+
+    :type points_to_evaluate: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+    :param study: 默认值为 ``None`` 。已有 Optuna Study；使用该 Study 自身的存储、采样器和剪枝器
+    :type study: Optional[Any]
+    :param pruner: 默认值为 ``None`` 。创建 Study 时传递的原生 Optuna 剪枝器
+    :type pruner: Optional[Any]
+    :param callbacks: 默认值为 ``None`` 。原生 Study.optimize 的试验完成回调
+    :type callbacks: Optional[List[Callable]]
+    :param fit_params: 默认值为 ``None`` 。每次模型训练的原生参数，样本级权重等会随交叉验证切分
+    :type fit_params: Optional[Dict[str, Any]]
+    :param fit_params_factory: 默认值为 ``None`` 。函数 (trial, fold_index) -> dict；最终重训传入 (None, None)
+    :type fit_params_factory: Optional[Callable]
+    :param trial_objective: 默认值为 ``None`` 。原生函数 (trial) -> 数值或多目标序列，完全接管试验内容
+    :type trial_objective: Optional[Callable]
+    :param artifact_dir: 默认值为 ``None`` 。逐折保存试验制品的目录；None 时只保留内存记录
+    :type artifact_dir: Optional[str]
+    :param store_models: 是否保留各折模型，默认 True；False 仍保留预测和指标。
+    :type store_models: bool
+    :param retention: 默认值为 ``None`` 。结果保留策略：full、predictions、summary、best、disk
+        None 按 store_models 保持旧行为；disk 必须指定 artifact_dir，按需读取且不常驻折模型。
+
+    :type retention: Optional[str]
+    :param validation_fraction: 未提供独立验证集时的单次留出比例，默认0.2；不影响显式cv。
+    :type validation_fraction: float
+
     :param model_class: 模型类（如 XGBoost）或未拟合的模型/Pipeline 实例。
+    :type model_class: Type
     :param search_space: 参数搜索空间，默认None则使用预定义空间
-    :param fixed_params: 固定参数，不参与搜索
-    :param model_params: 来源模型实例的构造参数；搜索空间同名参数会覆盖它，
+    :type search_space: Optional[Any]
+    :param fixed_params: 默认值为 ``None`` 。固定参数，不参与搜索
+    :type fixed_params: Optional[Dict[str, Any]]
+    :param model_params: 默认值为 ``None`` 。来源模型实例的构造参数；搜索空间同名参数会覆盖它
         ``fixed_params`` 的显式值具有最高优先级
-    :param metric: 优化指标（决定评估计算逻辑），可选:
+
+    :type model_params: Optional[Dict[str, Any]]
+    :param metric: 默认值为 ``'ks'`` 。优化指标（决定评估计算逻辑），可选:
+
         - 字符串: 'auc', 'ks', 'ks_diff', 'accuracy', 'precision', 'recall', 'f1', 'logloss'
+
         - 列表: 多个指标，用于多目标优化，如 ['ks', 'ks_diff']
+
         - 函数: 自定义评估函数，接收(y_true, y_pred)返回float
+
         - 列表的函数: 多个自定义函数
+
+    :type metric: Union[str, Callable, List[Union[str, Callable]]]
     :param direction: 默认 None，按内置指标或 BaseMetric 自动确定方向。
         裸函数必须显式提供 'maximize'/'minimize'；多目标可逐项提供方向列表。
+
+    :type direction: Optional[Union[str, List[Optional[str]]]]
     :param metric_names: 指标显示名称列表（仅用于日志/报告/可视化的展示标签，
         不参与任何计算逻辑），默认 None 时从 metric 自动推断
-        （内置字符串取其大写形式，自定义函数取其 ``__name__``）。
+        （内置字符串取其大写形式，自定义函数取其 ``__name__`` ）。
         与 metric 不重复：metric 决定"算什么"，metric_names 只决定"叫什么"
+
+    :type metric_names: Optional[List[str]]
     :param cv: 默认 None 使用单次验证；显式整数>=2、分割器或索引对序列启用多折。
+    :type cv: Optional[Any]
     :param n_jobs: 当前 trial 中模型可使用的并行任务数，默认-1；
         trial 本身顺序执行，确保主动中断及时生效并让自适应采样器利用全部历史结果
+
+    :type n_jobs: int
     :param random_state: 随机种子，默认None
+    :type random_state: Optional[int]
     :param verbose: 是否逐 Trial 输出得分、参数、当前最佳结果及最终摘要，默认False
+    :type verbose: bool
     :param early_stopping_rounds: 早停轮数，默认20
-    :param loss: HSCredit 提升树训练所用 BaseLoss；metric 控制折外评分，彼此独立。
+    :type early_stopping_rounds: int
+    :param loss: 默认值为 ``None`` 。HSCredit 提升树训练所用 BaseLoss；metric 控制折外评分，彼此独立
+    :type loss: Optional[Any]
     :param record_terminator_scores: 旧版 Optuna 终止分析兼容选项，默认None。
         Optuna 4.9及以后默认不调用弃用接口；True显式启用，False关闭专用CV记录。
         各折指标和常规搜索曲线不受影响。
 
+    :type record_terminator_scores: Optional[bool]
+
     **属性**
 
     ``best_params_`` / ``best_score_`` 是最佳参数与主指标均值，
-    ``best_scores_`` 保存所有目标，``best_trial_`` 保存选中的 Optuna Trial。
-    ``study_`` 与 ``optimization_history_`` 可查看全过程；``best_model_`` 在第一次
+    ``best_scores_`` 保存所有目标， ``best_trial_`` 保存选中的 Optuna Trial。
+    ``study_`` 与 ``optimization_history_`` 可查看全过程； ``best_model_`` 在第一次
     调用 ``get_best_model()`` 后生成。多目标默认按指标顺序优先选择帕累托解。
 
     **搜索空间定义**
@@ -354,16 +462,22 @@ class ModelTuner(ArtifactSerializableMixin):
     内部统一转换并由 Optuna Study 执行：
 
     - 整数参数: {'type': 'int', 'low': 1, 'high': 10, 'step': 1}
+
     - 浮点参数: {'type': 'float', 'low': 0.01, 'high': 1.0, 'log': True}
+
     - 类别参数: {'type': 'categorical', 'choices': ['a', 'b', 'c']}
 
     同时兼容多种超参数框架的入参格式（无需安装对应库），传入后自动归一化:
 
     - bayesian-optimization 风格: {'max_depth': (2, 4, int), 'booster': ('gbtree', 'dart')}
+
     - scikit-optimize 风格: [Real(1e-3, 0.1, prior='log-uniform', name='learning_rate')]
+
     - sklearn 风格: {'C': [0.1, 1, 10]} 或 scipy 分布 {'C': scipy.stats.loguniform(1e-3, 1e1)}
+
     - hyperopt 风格: {'learning_rate': loguniform('learning_rate', log(1e-3), log(0.1)),
       'penalty': choice('penalty', ['l1', 'l2'])}
+
     - optuna 分布对象: {'max_depth': optuna.distributions.IntDistribution(2, 4)}
 
     **内部建模经验**
@@ -371,7 +485,7 @@ class ModelTuner(ArtifactSerializableMixin):
     预定义空间只是搜索起点，不保证适合每个数据集。实际空间在首次 fit 后保存在
     ``search_space`` 中；用户提供明确空间时优先使用该空间。部分范围会按样本数、
     特征数、坏样本比例调整；LightGBM 的叶子数受到 ``2**max_depth`` 上限约束。
-    自定义训练损失不使用原生 ``scale_pos_weight``，自动空间会去掉该无效维度；
+    自定义训练损失不使用原生 ``scale_pos_weight`` ，自动空间会去掉该无效维度；
     类别权重应在损失参数或 ``sample_weight`` 中设置。
     常用评估组合为最大化 KS/AUC，同时最小化训练/验证 KS 差异。
 
@@ -452,10 +566,12 @@ class ModelTuner(ArtifactSerializableMixin):
         :param model_params: 模型默认构造参数；搜索结果会覆盖同名默认值。
         :param metric: 字符串、BaseMetric、BaseLoss、带方向的 Metric 或函数；列表表示多目标。
             None 时使用 loss.metric()，无 loss 时使用 KS。
+
         :param direction: None 按指标对象/内置名称推断；裸函数须声明优化方向。
         :param metric_names: 指标显示名称列表，需与指标数一致且名称不重复。
         :param target: fit(df) 时的标签列名。None 优先继承模型实例（包括 Pipeline 末端）的 target，
             再回退为 'target'；显式值优先，并传给最终 HSCredit 模型，评估与报告不必重复配置。
+
         :param cv: 默认 None 使用单次留出验证；显式整数>=2、分割器或索引对序列启用多折。
         :param validation_fraction: 未提供独立验证集时的单次留出比例，默认0.2；不影响显式cv。
         :param n_jobs: 每个模型的并行上限，默认 -1；Trial 按顺序运行。
@@ -467,24 +583,31 @@ class ModelTuner(ArtifactSerializableMixin):
             若指定此参数，则覆盖 metric 参数。
             支持：'ks' / 'auc' / 'lift_head' / 'lift_tail' /
             'lift_head_monotonic' / 'ks_with_lift_constraint' / 'head_ks'。
+
         :param objective_kwargs: 透传给 TuningObjective 目标函数的额外参数，
             如 {'ratio': 0.05, 'penalty': 0.3}
+
         :param eval_ratios: 调参过程中额外追踪的 LIFT 覆盖率列表，
             如 [0.01, 0.03, 0.05, 0.10]，结果记录在 optimization_history_ 中
-        :param trial_points: 预指定的超参数搜索点，``dict`` 或 ``list[dict]``。
+
+        :param trial_points: 预指定的超参数搜索点， ``dict`` 或 ``list[dict]`` 。
             在 fit 创建 study 后通过 ``study.enqueue_trial`` 优先评估这些点
             （例如已知的经验最优配置或上一轮调优结果），随后再进行常规采样。
             每个 dict 的键应为搜索空间中的参数名，可只指定部分参数（其余由采样器补全）。
-            也可在实例化后通过 :meth:`enqueue_trials` 追加。
+            也可在实例化后通过  :meth:`enqueue_trials`  追加。
+
         :param points_to_evaluate: Hyperopt 风格的初始搜索点，格式与 ``fmin`` 的
             ``points_to_evaluate`` 一致；内部与 ``trial_points`` 一并转换并入队。
+
         :param sampler: 搜索器，支持 TuningSampler 中的字符串名称（如 'tpe'、'random'、'gp'、'nsgaii'），
             或已实例化的 optuna 采样器对象；None 等价于 'tpe'。
             'auto'/'hebo'/'smac' 等 optunahub 采样器需要相应可选依赖。
+
         :param sampler_kwargs: 透传给采样器构造函数的额外参数，如 {'n_startup_trials': 10}
-        :param storage: optuna 存储 URL，如 ``'sqlite:///hscredit_tuning.db'``。
+        :param storage: optuna 存储 URL，如 ``'sqlite:///hscredit_tuning.db'`` 。
             指定后可配合 ``optuna-dashboard sqlite:///hscredit_tuning.db`` 实时查看
             调优进度；不指定则使用内存存储（进程结束即丢失）。
+
         :param study_name: study 名称，配合 storage 持久化时用于标识/复用同一 study。
         :param load_if_exists: storage 中已存在同名 study 时是否加载续跑，默认False。
         :param study: 已有 Optuna Study；使用该 Study 自身的存储、采样器和剪枝器。
@@ -497,10 +620,12 @@ class ModelTuner(ArtifactSerializableMixin):
         :param store_models: 是否保留各折模型，默认 True；False 仍保留预测和指标。
         :param retention: 结果保留策略：full、predictions、summary、best、disk。
             None 按 store_models 保持旧行为；disk 必须指定 artifact_dir，按需读取且不常驻折模型。
+
         :param loss: 用于模型训练的 BaseLoss 实例，与决定搜索优劣的 metric 分开。
             支持 HSCredit XGBoost、LightGBM、CatBoost、NGBoost；例如
-            ``ModelTuner(XGBoost, loss=FocalLoss(), metric='auc')``。
+            ``ModelTuner(XGBoost, loss=FocalLoss(), metric='auc')`` 。
             ``metric=None`` 时使用该损失的配套指标（越小越好）。
+
         :param record_terminator_scores: 是否额外记录旧 Optuna terminator 的专用CV数据。
             None（默认）仅在Optuna低于4.9且接口可用时记录；False关闭，True显式保留弃用兼容功能。
             常规各折指标、中间值、搜索历史始终保留。Optuna 4.9起该模块弃用，显式开启仍会收到其提示。
@@ -860,7 +985,9 @@ class ModelTuner(ArtifactSerializableMixin):
         """检查并处理输入数据.
 
         支持两种风格:
+
         1. fit(X, y): sklearn风格，直接使用传入的y
+
         2. fit(df): scorecardpipeline风格，从df中提取target列
 
         :param X: 特征矩阵或包含target的DataFrame
@@ -893,33 +1020,46 @@ class ModelTuner(ArtifactSerializableMixin):
 
         支持两种调用风格:
 
-        **sklearn风格**::
+        **sklearn风格** ::
 
             tuner.fit(X_train, y_train, n_trials=100)
 
-        **scorecardpipeline风格** (在__init__中指定target)::
+        **scorecardpipeline风格**  (在__init__中指定target)::
 
             tuner = ModelTuner(..., target='label')
             tuner.fit(df)  # df包含'label'列
 
         :param X: 特征矩阵，或包含目标列的DataFrame（scorecardpipeline风格）
-        :param y: 目标变量，可选。如果为None，则从X中提取target列
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选。如果为None，则从X中提取target列
+        :type y: Optional[Union[np.ndarray, pd.Series]]
         :param n_trials: 搜索次数，默认100
+        :type n_trials: int
         :param timeout: 超时时间(秒)，默认None
+        :type timeout: Optional[int]
         :param show_progress_bar: 是否显示进度条，默认True
-        :param sample_weight: 仅用于训练的样本权重，不自动改变验证目标。
+        :type show_progress_bar: bool
+        :param sample_weight: 默认值为 ``None`` 。仅用于训练的样本权重，不自动改变验证目标
+        :type sample_weight: Optional[np.ndarray]
         :param evaluation_weight: 显式评估权重，按每折训练/验证位置切分；默认None保持未加权指标。
-        :param eval_set: 评估集列表 [(X_valid, y_valid)]；最后一个数据集用于搜索评分。
+        :type evaluation_weight: Optional[np.ndarray]
+        :param eval_set: 默认值为 ``None`` 。评估集列表 [(X_valid, y_valid)]；最后一个数据集用于搜索评分
             同 ModelReport.datasets 支持具名字典、DataFrame列表及混合形式；显式y优先，名称和顺序保留。
             支持多评估集的模型收到完整列表；NGBoost 仅以最后一集早停，仍保留其他集评估。
             也接受单个二元组或含目标列的 DataFrame。
             只能与 cv=None 配合；不会并入最终重训数据。此集用于选参，不应充当最终测试集。
-        :param validation_weight: 最后一个评估集的指标权重；不自动用作训练权重或早停权重。
-        :param groups: 传给自定义交叉验证分割器的分组标签。
-        :param callbacks: 本次运行额外追加的 Study.optimize 回调。
+
+        :param validation_weight: 默认值为 ``None`` 。最后一个评估集的指标权重；不自动用作训练权重或早停权重
+        :param groups: 默认值为 ``None`` 。传给自定义交叉验证分割器的分组标签
+        :type groups: Optional[Any]
+        :param callbacks: 默认值为 ``None`` 。本次运行额外追加的 Study.optimize 回调
+        :type callbacks: Optional[List[Callable]]
         :param catch: 允许 Optuna 标记失败后继续执行的异常类型；默认保留历史行为。
-        :param gc_after_trial: 是否在每次试验后执行垃圾回收。
-        :param fit_params: 本次训练参数，覆盖构造时的同名 fit_params。
+        :type catch: Tuple[Type[Exception], ...]
+        :param gc_after_trial: 默认值为 ``False`` 。是否在每次试验后执行垃圾回收
+        :type gc_after_trial: bool
+        :param fit_params: 默认值为 ``None`` 。本次训练参数，覆盖构造时的同名 fit_params
+        :type fit_params: Optional[Dict[str, Any]]
         :param optimize_kwargs: 透传 Optuna Study.optimize 的其他参数；n_jobs 由调参器管理。
         :return: 最佳参数字典（保持旧接口；并非 self）。最佳模型需调用 get_best_model()。
 
@@ -1777,7 +1917,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """获取单次试验的逐折模型、预测、得分与训练记录。
 
         :param number: Optuna Trial 编号，通常使用 best_trial_.number。
-        :param load: disk 策略是否读取完整折制品；False 返回轻量摘要。
+        :param load: 默认值为 ``True`` 。disk 策略是否读取完整折制品；False 返回轻量摘要
         :return: 中文键字典。能否包含模型/预测取决于 retention。
 
         **参考样例**
@@ -1866,8 +2006,8 @@ class ModelTuner(ArtifactSerializableMixin):
 
         **参数补充**
 
-        :param trial_number: Optuna Trial 编号；None 使用 tuner.best_trial_.number，编号见 get_optimization_history()。
-        :param fold: 折编号，从0开始；None 合并该试验保留的全部折。单次验证只有第0折。
+        :param trial_number: 默认值为 ``None`` 。Optuna Trial 编号；None 使用 tuner.best_trial_.number，编号见 get_optimization_history()
+        :param fold: 默认值为 ``None`` 。折编号，从0开始；None 合并该试验保留的全部折。单次验证只有第0折
 
         **参考样例**
 
@@ -1980,7 +2120,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """加载完整过程；移动折制品后可用 artifact_dir 指定新根目录。
 
         :param path: save 生成的本地制品路径。
-        :param artifact_dir: 可选的折制品新目录；不修改 Trial 数据。
+        :param artifact_dir: 默认值为 ``None`` 。可选的折制品新目录；不修改 Trial 数据
         :param kwargs: 传给制品加载器的参数。
         :return: 恢复后的 ModelTuner 实例。
 
@@ -2069,24 +2209,31 @@ class ModelTuner(ArtifactSerializableMixin):
 
         支持两种调用风格:
 
-        **sklearn风格**::
+        **sklearn风格** ::
 
             results = tuner.evaluate_trials(X_train, y_train, trial_points)
 
-        **scorecardpipeline风格** (在__init__中指定target)::
+        **scorecardpipeline风格**  (在__init__中指定target)::
 
             tuner = ModelTuner(..., target='label')
             results = tuner.evaluate_trials(df, trial_points=trial_points)
 
         :param X: 特征矩阵，或包含目标列的DataFrame（scorecardpipeline风格）
-        :param y: 目标变量，可选。如果为None，则从X中提取target列
-        :param trial_points: 超参数点列表，每个点是一个参数字典
-        :param sample_weight: 仅训练权重。
+        :type X: Union[np.ndarray, pd.DataFrame]
+        :param y: 默认值为 ``None`` 。目标变量，可选。如果为None，则从X中提取target列
+        :type y: Optional[Union[np.ndarray, pd.Series]]
+        :param trial_points: 默认值为 ``None`` 。超参数点列表，每个点是一个参数字典
+        :type trial_points: Optional[List[Dict[str, Any]]]
+        :param sample_weight: 默认值为 ``None`` 。仅训练权重
+        :type sample_weight: Optional[np.ndarray]
         :param evaluation_weight: 显式验证指标权重，默认None，不继承之前fit的评估权重。
-        :param groups: 本次交叉验证的分组标签，按当前数据重新划分。
-        :param fit_params: 本次评估的训练参数。以构造时 fit_params 为基础，不继承旧 fit 的临时参数。
-        :param eval_set: cv=None 时提供 [(X_valid, y_valid)]，按最后一集评分；未提供时重新做单次留出。
-        :param validation_weight: 本次最后一个评估集的指标权重，不继承旧验证权重。
+        :type evaluation_weight: Optional[np.ndarray]
+        :param groups: 默认值为 ``None`` 。本次交叉验证的分组标签，按当前数据重新划分
+        :type groups: Optional[Any]
+        :param fit_params: 默认值为 ``None`` 。本次评估的训练参数。以构造时 fit_params 为基础，不继承旧 fit 的临时参数
+        :type fit_params: Optional[Dict[str, Any]]
+        :param eval_set: 默认值为 ``None`` 。cv=None 时提供 [(X_valid, y_valid)]，按最后一集评分；未提供时重新做单次留出
+        :param validation_weight: 默认值为 ``None`` 。本次最后一个评估集的指标权重，不继承旧验证权重
         :return: 包含评估结果的DataFrame
 
         **参考样例**
@@ -2160,25 +2307,36 @@ class ModelTuner(ArtifactSerializableMixin):
         从 ``self.study_.trials[i]`` 取出对应超参数重新评估，便于复核某次
         采样的稳定性、或在新数据集上对比若干历史 trial 的效果。
 
-        与 :meth:`evaluate_trials` 的区别：本方法的超参数来自已学习完成的
+        与  :meth:`evaluate_trials`  的区别：本方法的超参数来自已学习完成的
         study（按 trial 索引取），而非外部传入的参数点；结果额外包含每个 trial
-        的索引、状态及 study 记录的原始得分（``study记录值`` 列），便于与重新
+        的索引、状态及 study 记录的原始得分（ ``study记录值`` 列），便于与重新
         评估的得分对照。
 
-        :param trial_indices: 要评估的 trial 索引，可选:
+        :param trial_indices: 默认值为 ``None`` 。要评估的 trial 索引，可选:
+
             - None: 评估全部已完成（COMPLETE）的 trial
+
             - int: 评估单个 trial，如 ``0`` 或 ``tuner.study_.best_trial.number``
+
             - 序列: 评估多个 trial，如 ``[0, 5, 10]``
+
+        :type trial_indices: Optional[Union[int, Sequence[int]]]
         :param X: 特征矩阵，或包含目标列的DataFrame；默认复用 fit 时的训练数据
+        :type X: Optional[Union[np.ndarray, pd.DataFrame]]
         :param y: 目标变量，可选；默认复用 fit 时的标签
+        :type y: Optional[Union[np.ndarray, pd.Series]]
         :param sample_weight: 样本权重，可选；默认复用 fit 时的样本权重
+        :type sample_weight: Optional[np.ndarray]
         :param evaluation_weight: 显式指标权重；仅X未传入时默认复用fit的评估权重。
-        :param groups: 传入新X时使用的分组标签；不复用旧数据的CV位置。
-        :param fit_params: 本次重评估训练参数；新数据仅继承构造参数，旧数据继承原 fit 参数。
+        :type evaluation_weight: Optional[np.ndarray]
+        :param groups: 默认值为 ``None`` 。传入新X时使用的分组标签；不复用旧数据的CV位置
+        :type groups: Optional[Any]
+        :param fit_params: 默认值为 ``None`` 。本次重评估训练参数；新数据仅继承构造参数，旧数据继承原 fit 参数
+        :type fit_params: Optional[Dict[str, Any]]
         :param eval_set: 评估集列表，按最后一集评分；不提供 X 时默认沿用 fit 的评估集。
         :param validation_weight: 最后一个评估集的指标权重；仅沿用原评估集时默认复用。
-        :return: 包含评估结果的DataFrame，含 ``trial索引``/``trial状态``/超参数/
-            重新评估指标/``study记录值`` 列
+        :return: 包含评估结果的DataFrame，含 ``trial索引`` / ``trial状态`` /超参数/
+            重新评估指标/ ``study记录值`` 列
 
         Example:
             >>> tuner.fit(X_train, y_train, n_trials=100)
@@ -2359,15 +2517,25 @@ class ModelTuner(ArtifactSerializableMixin):
         """XGBoost搜索空间 - 基于内部建模经验.
 
         参考内部代码（强正则、浅树、小学习率以抑制风控样本过拟合）:
+
         - max_depth: 风控场景通常2-4，防止过拟合
+
         - min_child_weight: 8-256（step 4），叶子最小样本权重，越大越保守
+
         - subsample: 0.35-0.85，行采样
+
         - colsample_bytree: 0.4-0.9，列采样
+
         - gamma: 0.0-32.0，分裂最小损失下降，越大越保守
+
         - scale_pos_weight: 围绕训练集负正样本比的 0.5-1.5 倍自适应
+
         - reg_alpha: 0.0-1.0（L1 正则）
+
         - reg_lambda: 32.0-128.0（L2 正则，强约束）
+
         - learning_rate: 0.0001-0.01，较小学习率更稳定
+
         - n_estimators: 32-256（step 16）
 
         固定项 ``objective='binary:logistic'`` / ``eval_metric='auc'`` /
@@ -2396,16 +2564,27 @@ class ModelTuner(ArtifactSerializableMixin):
         """LightGBM搜索空间 - 与XGBoost搜索空间对齐.
 
         参考风控小中型样本经验，并避免强正则导致所有样本预测相同:
+
         - num_leaves: 与max_depth相关，受 ``2**max_depth`` 上界约束（见 _sample_params）
+
         - max_depth: 风控场景通常2-4，防止过拟合
+
         - min_child_samples: 8-128（step 4），叶子最小样本数
+
         - subsample: 0.35-0.85，配合 subsample_freq=1 启用行采样
+
         - colsample_bytree: 0.4-0.9，列采样
+
         - min_split_gain: 0.0-1.0，保留小样本中的有效弱分裂
+
         - scale_pos_weight: 围绕训练集负正样本比的 0.5-1.5 倍自适应
+
         - reg_alpha: 0.0-1.0（L1 正则）
+
         - reg_lambda: 0.0-10.0（L2 正则）
+
         - learning_rate: 0.005-0.1，对数采样
+
         - n_estimators: 64-512（step 32）
         """
         class_weight_low, class_weight_high = self._get_class_weight_range()
@@ -2432,12 +2611,16 @@ class ModelTuner(ArtifactSerializableMixin):
         """逻辑回归搜索空间 - 基于内部建模经验.
 
         参考内部代码:
-        - C: 正则强度倒数，对数区间 0.01-32（越小正则越强）
-        - penalty: 仅 'l2'（评分卡常用，兼容多数 solver）
-        - class_weight: None / 'balanced'（均可安全持久化到 Optuna storage）
-        - max_iter: 16-256（对数区间），迭代上限
-        - solver: liblinear / sag / lbfgs / newton-cg
 
+        - C: 正则强度倒数，对数区间 0.01-32（越小正则越强）
+
+        - penalty: 仅 'l2'（评分卡常用，兼容多数 solver）
+
+        - class_weight: None / 'balanced'（均可安全持久化到 Optuna storage）
+
+        - max_iter: 16-256（对数区间），迭代上限
+
+        - solver: liblinear / sag / lbfgs / newton-cg
         """
         return {
             "C": {"type": "float", "low": 0.01, "high": 32.0, "log": True},
@@ -2478,9 +2661,13 @@ class ModelTuner(ArtifactSerializableMixin):
         """CatBoost搜索空间 - 基于风控场景优化.
 
         参考内部代码:
+
         - depth: 风控场景通常2-5，防止过拟合
+
         - learning_rate: 0.005-0.1，较小学习率更稳定
+
         - iterations: 50-500
+
         - l2_leaf_reg: 1e-8到10
         """
         return {
@@ -2496,7 +2683,9 @@ class ModelTuner(ArtifactSerializableMixin):
         """RandomForest搜索空间 - 基于内部建模经验.
 
         参考内部代码:
+
         - max_depth: 风控场景通常2-5，防止过拟合
+
         - n_estimators: 根据样本量调整
         """
         n_samples = self._n_samples or 10000
@@ -2521,11 +2710,17 @@ class ModelTuner(ArtifactSerializableMixin):
         """NGBoost搜索空间 - 基于风控场景优化.
 
         NGBoost 使用 CART 作为基学习器，参数名与其他 boosting 不同：
+
         - n_estimators: 自然梯度提升轮数，较小学习率需更多轮
+
         - learning_rate: 0.005-0.05，避免小样本下概率过快饱和
+
         - base_max_depth: 基学习器（CART）最大深度，风控场景通常2-3
+
         - base_min_samples_leaf: 叶节点最小样本数，抑制单样本叶节点导致的奇异自然梯度
+
         - minibatch_frac: 小批量采样比例（行采样），至少保留70%样本
+
         - col_sample: 特征采样比例
         """
         n_samples = self._n_samples or 10000
@@ -2547,7 +2742,9 @@ class ModelTuner(ArtifactSerializableMixin):
         """GradientBoosting搜索空间 - 基于风控场景优化.
 
         参考内部代码:
+
         - max_depth: 风控场景通常2-5，防止过拟合
+
         - learning_rate: 0.005-0.1，较小学习率更稳定
         """
         return {
@@ -2591,8 +2788,11 @@ class ModelTuner(ArtifactSerializableMixin):
         会先完成逆变换，再把内部参数传给 Study；公开记录仍保留最终值。
 
         :param params: 搜索点，可仅指定部分搜索参数，其他由采样器补全。
-        :param user_attrs: 写入 Trial 的附加信息字典。
-        :param skip_if_exists: 是否跳过已经存在的相同搜索点。
+        :type params: Dict[str, Any]
+        :param user_attrs: 默认值为 ``None`` 。写入 Trial 的附加信息字典
+        :type user_attrs: Optional[Dict[str, Any]]
+        :param skip_if_exists: 默认值为 ``False`` 。是否跳过已经存在的相同搜索点
+        :type skip_if_exists: bool
         :return: self；执行下一次 fit 时优先评估此点。
 
         **参考样例**
@@ -2642,14 +2842,19 @@ class ModelTuner(ArtifactSerializableMixin):
         """按 Optuna、GridSearch 或 skopt 格式追加一个或多个搜索点。
 
         若 study 已创建（已调用过 fit），则立即通过 ``study.enqueue_trial`` 入队，
-        在后续 ``fit`` 的采样中优先评估；否则缓存到 ``self.trial_points``，
+        在后续 ``fit`` 的采样中优先评估；否则缓存到 ``self.trial_points`` ，
         在下次 ``fit`` 创建 study 后入队。
 
-        :param trial_points: Optuna/hscredit 格式，``dict`` 或 ``list[dict]``
-        :param param_grid: GridSearch 格式，由 ``ParameterGrid`` 展开
-        :param x0: skopt 格式，单个值序列或多个值序列，顺序与搜索空间一致
-        :param user_attrs: 所有入队点共享的附加信息字典。
-        :param skip_if_exists: 是否跳过已存在的相同搜索点。
+        :param trial_points: 默认值为 ``None`` 。Optuna/hscredit 格式， ``dict`` 或 ``list[dict]``
+        :type trial_points: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]
+        :param param_grid: 默认值为 ``None`` 。GridSearch 格式，由 ``ParameterGrid`` 展开
+        :type param_grid: Optional[Union[Dict[str, Sequence[Any]], List[Dict[str, Sequence[Any]]]]]
+        :param x0: 默认值为 ``None`` 。skopt 格式，单个值序列或多个值序列，顺序与搜索空间一致
+        :type x0: Optional[Sequence[Any]]
+        :param user_attrs: 默认值为 ``None`` 。所有入队点共享的附加信息字典
+        :type user_attrs: Optional[Dict[str, Any]]
+        :param skip_if_exists: 默认值为 ``False`` 。是否跳过已存在的相同搜索点
+        :type skip_if_exists: bool
         :return: self，便于链式调用
 
         **参考样例**
@@ -2688,7 +2893,9 @@ class ModelTuner(ArtifactSerializableMixin):
         ``True`` 与 ``False`` 都会进入同一个 Study 队列，并在下一次 optimize 时执行。
 
         :param params: 参数字典或按搜索空间声明顺序排列的值序列。
-        :param lazy: 兼容参数；均在下次 fit 执行。
+        :type params: Union[Dict[str, Any], Sequence[Any]]
+        :param lazy: 默认值为 ``True`` 。兼容参数；均在下次 fit 执行
+        :type lazy: bool
         :return: self。
 
         **参考样例**
@@ -2724,7 +2931,7 @@ class ModelTuner(ArtifactSerializableMixin):
         而逻辑回归、sklearn 集成模型（RandomForest/ExtraTrees）等不支持这些参数，
         直接注入会触发 TypeError。
 
-        仅当参数是模型构造函数**显式声明**的命名参数时才注入：不依赖 ``**kwargs``，
+        仅当参数是模型构造函数 **显式声明** 的命名参数时才注入：不依赖 ``**kwargs`` ，
         因为 SklearnRiskModel 子类虽有 ``**kwargs`` 但会在内部硬编码
         ``early_stopping_rounds=None`` 转发，经 ``**kwargs`` 再次传入会导致
         "multiple values for keyword argument" 冲突。
@@ -2822,7 +3029,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """获取并缓存最佳模型；默认按各折最佳轮数使用全部输入重训。
 
         :param refit: True 时强制重新训练；默认复用已训练的 best_model_
-        :param full_data: 是否关闭最终模型的内部验证划分，使用完整输入
+        :param full_data: 默认值为 ``True`` 。是否关闭最终模型的内部验证划分，使用完整输入
         :param fit_params: 最终训练的额外原生参数
         :return: 已拟合模型。默认以各折早停最佳轮数中位数在完整输入重训。
 
@@ -2983,6 +3190,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """获取参数重要性.
 
         :param target: 多目标时指定要分析的指标索引，默认第一个
+        :type target: Optional[int]
         :return: 参数重要性Series
 
         **参考样例**
@@ -3011,8 +3219,8 @@ class ModelTuner(ArtifactSerializableMixin):
     def get_study(self) -> Any:
         """获取完整的原生 Optuna Study，不过滤试验、指标、属性或中间值。
 
-        两种训练入口使用同一契约：``model.tune(...)`` 之后可用
-        ``model.tuner.get_study()``；直接使用 ModelTuner 时用 ``tuner.get_study()``。
+        两种训练入口使用同一契约： ``model.tune(...)`` 之后可用
+        ``model.tuner.get_study()`` ；直接使用 ModelTuner 时用 ``tuner.get_study()`` 。
         返回值与 ``study_`` 是同一对象，可交给任何 Optuna 原生分析和可视化函数。
 
         :return: 原生 optuna.study.Study 对象。
@@ -3030,9 +3238,9 @@ class ModelTuner(ArtifactSerializableMixin):
     def visualization(self):
         """当前 Optuna 版本的完整可视化入口，自动传入本次搜索的 Study。
 
-        例如 ``tuner.visualization.plot_timeline()``、``plot_intermediate_values()``、
-        ``plot_rank(params=[...])``；Matplotlib 后端使用
-        ``tuner.visualization.matplotlib.plot_optimization_history()``。
+        例如 ``tuner.visualization.plot_timeline()`` 、 ``plot_intermediate_values()`` 、
+        ``plot_rank(params=[...])`` ；Matplotlib 后端使用
+        ``tuner.visualization.matplotlib.plot_optimization_history()`` 。
         用 ``dir(tuner.visualization)`` 可查看当前版本的全部入口。
 
         此入口保留 Optuna 原生语义：多目标的 target 使用函数，超体积图需要
@@ -3086,6 +3294,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """绘制优化历史.
 
         :param target: 多目标时指定要绘制的指标索引，默认第一个
+        :type target: Optional[int]
         :param kwargs: 绘图参数
         :return: plotly图形对象
 
@@ -3108,6 +3317,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """绘制参数重要性.
 
         :param target: 多目标时指定要分析的指标索引，默认第一个
+        :type target: Optional[int]
         :param kwargs: 绘图参数
         :return: plotly图形对象
 
@@ -3132,6 +3342,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """绘制参数切片图.
 
         :param target: 多目标时指定要绘制的指标索引，默认第一个
+        :type target: Optional[int]
         :param kwargs: 绘图参数
         :return: plotly图形对象
 
@@ -3174,7 +3385,9 @@ class ModelTuner(ArtifactSerializableMixin):
         """绘制参数等高线图.
 
         :param params: 要绘制的参数列表，默认前两个
+        :type params: Optional[List[str]]
         :param target: 多目标时指定要绘制的指标索引，默认第一个
+        :type target: Optional[int]
         :param kwargs: 绘图参数
         :return: plotly图形对象
 
@@ -3208,6 +3421,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """绘制平行坐标图.
 
         :param target: 多目标时指定要绘制的指标索引，默认第一个
+        :type target: Optional[int]
         :param kwargs: 绘图参数
         :return: plotly图形对象
 
@@ -3232,6 +3446,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """绘制经验分布函数图.
 
         :param target: 多目标时指定要绘制的指标索引，默认第一个
+        :type target: Optional[int]
         :param kwargs: 绘图参数
         :return: plotly图形对象
 
@@ -3293,25 +3508,45 @@ class AutoTuner:
         """创建自动调优器.
 
         :param model_type: 模型类型，可选:
+
             - 'xgboost' / 'xgb'
+
             - 'lightgbm' / 'lgb'
+
             - 'catboost' / 'cat'
+
             - 'ngboost' / 'ngb'
+
             - 'randomforest' / 'rf'
+
             - 'gradientboosting' / 'gbdt'
+
             - 'logisticregression' / 'lr'
+
             - 'svm' / 'svc'
+
             - 'decisiontree' / 'dt'
-        :param metric: 优化指标，可以是字符串、函数或列表
+
+        :type model_type: str
+        :param metric: 默认值为 ``'ks'`` 。优化指标，可以是字符串、函数或列表
+        :type metric: Union[str, Callable, List[Union[str, Callable]]]
         :param direction: 默认 None 按各指标推断；裸函数须明确方向，多目标可给列表。
-        :param metric_names: 指标名称列表（多目标时用于显示）
+        :type direction: Optional[Union[str, List[Optional[str]]]]
+        :param metric_names: 默认值为 ``None`` 。指标名称列表（多目标时用于显示）
+        :type metric_names: Optional[List[str]]
         :param target: 目标列名，用于scorecardpipeline风格的fit，默认'target'
+        :type target: str
         :param cv: 默认 None 使用单次验证；显式折数>=2、分割器或索引对序列启用多折。
-        :param random_state: 随机种子
-        :param verbose: 是否输出详细信息
+        :type cv: Optional[Any]
+        :param random_state: 默认值为 ``None`` 。随机种子
+        :type random_state: Optional[int]
+        :param verbose: 默认值为 ``False`` 。是否输出详细信息
+        :type verbose: bool
         :param early_stopping_rounds: 早停轮数，默认20
+        :type early_stopping_rounds: int
         :param kwargs: 传给 ModelTuner 的其他参数，例如 search_space、fixed_params、
             loss、fit_params、retention、n_jobs。search_space 可覆盖自动空间。
+
         :return: ModelTuner实例
 
         **参考样例**

@@ -18,14 +18,14 @@ from .types import StreamState, validate_result_type
 class QueryStream:
     """可中断并可合并已读数据的分块查询迭代器。
 
-    QueryStream 由 :meth:`Database.stream_query <hscredit.database.client.Database.stream_query>`
-    创建。迭代期间只持有当前数据库资源；``retain=True`` 时额外保留已经返回的标准化
+    QueryStream 由  :meth:`Database.stream_query <hscredit.database.client.Database.stream_query>`
+    创建。迭代期间只持有当前数据库资源； ``retain=True`` 时额外保留已经返回的标准化
     DataFrame 分块，用于停止或中断后合并结果。
 
     **参数**
 
     resource
-        实现 ``fetchmany(size)``、``close()`` 和 ``columns`` 的适配器查询资源。
+        实现 ``fetchmany(size)`` 、 ``close()`` 和 ``columns`` 的适配器查询资源。
     chunksize : int
         每次请求的最大行数。
     retain : bool, default=True
@@ -259,8 +259,9 @@ class QueryStream:
     def stop(self, reason: str = "用户主动停止") -> None:
         """安全停止读取并关闭底层查询资源。
 
-        :param reason: 写入流状态和最终 DataFrame 属性的停止原因。
-        :return: ``None``。已经读取的数据可继续通过 :meth:`to_result` 获取。
+        :param reason: 默认值为 ``'用户主动停止'`` 。写入流状态和最终 DataFrame 属性的停止原因
+        :type reason: str
+        :return: ``None`` 。已经读取的数据可继续通过  :meth:`to_result`  获取。
         """
 
         self._interrupt(reason)
@@ -268,7 +269,7 @@ class QueryStream:
     def close(self) -> None:
         """关闭查询资源但不把状态标记为主动中断。
 
-        尚在运行时状态会变为 ``closed``；重复调用不会重复关闭游标或连接。
+        尚在运行时状态会变为 ``closed`` ；重复调用不会重复关闭游标或连接。
         """
 
         if self.state is StreamState.RUNNING:
@@ -279,10 +280,11 @@ class QueryStream:
     def to_dataframe(self) -> pd.DataFrame:
         """把已保留分块合并为 DataFrame，并附加读取状态属性。
 
-        :return: 连续索引的合并 DataFrame。``attrs`` 包含 ``completed``、``rows_read``、
-            ``total_rows``、``state``、``interrupted_at`` 和 ``interrupt_reason``。
+        :return: 连续索引的合并 DataFrame。 ``attrs`` 包含 ``completed`` 、 ``rows_read`` 、
+            ``total_rows`` 、 ``state`` 、 ``interrupted_at`` 和 ``interrupt_reason`` 。
+
         :rtype: pandas.DataFrame
-        :raises StateError: 创建流时设置了 ``retain=False``。
+        :raises StateError: 创建流时设置了 ``retain=False`` 。
         """
 
         if not self.retain:
@@ -308,7 +310,7 @@ class QueryStream:
         """把已保留分块合并为记录字典列表。
 
         :return: 每行一个字段名到原始值映射的列表。
-        :raises StateError: 创建流时设置了 ``retain=False``。
+        :raises StateError: 创建流时设置了 ``retain=False`` 。
         """
 
         return self.to_dataframe().to_dict("records")
@@ -317,7 +319,7 @@ class QueryStream:
         """把已保留分块合并为原始行元组列表。
 
         :return: 字段顺序与查询结果一致的行元组列表。
-        :raises StateError: 创建流时设置了 ``retain=False``。
+        :raises StateError: 创建流时设置了 ``retain=False`` 。
         """
 
         frame = self.to_dataframe()
@@ -326,8 +328,8 @@ class QueryStream:
     def to_result(self) -> Any:
         """按创建流时的 ``result`` 配置返回合并结果。
 
-        :return: DataFrame、``list[dict]`` 或行元组列表。
-        :raises StateError: 创建流时设置了 ``retain=False``。
+        :return: DataFrame、 ``list[dict]`` 或行元组列表。
+        :raises StateError: 创建流时设置了 ``retain=False`` 。
         """
 
         if self.result == "dataframe":

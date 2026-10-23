@@ -52,20 +52,37 @@ class ExcelWriter:
     支持DataFrame数据写入、图片插入、超链接等功能。
     支持上下文管理器（with语句）自动保存。
 
+    **参数**
+
     :param style_excel: 样式模板或已有Excel文件路径，默认使用包内的template.xlsx
+    :type style_excel: Optional[str]
     :param style_sheet_name: 模板文件内初始样式sheet名称，默认为"初始化"；已有Excel中不存在该
         Sheet时保留全部业务Sheet，后续工作表直接创建为空白Sheet
+
+    :type style_sheet_name: str
     :param mode: 写入模式，可选'replace'或'append'，默认为'replace'
+
         - replace: 替换已有文件
+
         - append: 在已有文件基础上追加内容
+
+    :type mode: str
     :param fontsize: 字体大小，默认为10
+    :type fontsize: int
     :param font: 字体名称，默认为"阿里妈妈方圆体 VF Medium"；安装不可用时回退为"楷体"
+    :type font: Optional[str]
     :param theme_color: 主题颜色（不包含#），默认为"2639E9"
+    :type theme_color: str
     :param opacity: 颜色填充的透明度，默认为0.85
+    :type opacity: float
     :param system: 操作系统类型，可选'mac'、'windows'、'linux'，默认自动检测
+    :type system: Optional[str]
     :param condition_color: 条件格式颜色（不包含#），默认为副主题色"F76E6C"
-    :param max_table_cells: 单次表格写入的单元格数量上限，None不额外限制；
+    :type condition_color: str
+    :param max_table_cells: 默认值为 ``None`` 。单次表格写入的单元格数量上限，None不额外限制
         包括表头和可选索引，始终检查Excel工作表行列上限
+
+    :type max_table_cells: Optional[int]
 
     **参考样例**
 
@@ -205,6 +222,7 @@ class ExcelWriter:
         支持链式调用，可以与with语句配合使用。
 
         :param filename: 保存路径
+        :type filename: str
         :return: self
 
         **参考样例**
@@ -230,9 +248,13 @@ class ExcelWriter:
         """设置条件格式（数据条）。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param start_space: 开始单元格位置，如'B2'
+        :type start_space: str
         :param end_space: 结束单元格位置，如'B10'
+        :type end_space: str
         :param condition_color: 条件格式颜色，默认使用ExcelWriter的condition_color
+        :type condition_color: Optional[str]
         """
         worksheet.conditional_formatting.add(
             f"{start_space}:{end_space}",
@@ -244,8 +266,11 @@ class ExcelWriter:
         """调整Excel列宽。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param column: 列，可以是字母（如'B'）或索引（如2）
+        :type column: Union[str, int]
         :param width: 列宽
+        :type width: float
         """
         col_letter = column if isinstance(column, str) else get_column_letter(column)
         ExcelWriter._set_column_width_preserving_style(worksheet, col_letter, width)
@@ -331,12 +356,19 @@ class ExcelWriter:
         通过恢复调用前的单元格样式快照，并保留模板列维度样式，避免列宽调整影响空白区域白底。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param columns: 需要调整宽度的列，可以是列字母或列索引列表，默认为None（自动检测所有有数据的列）
-        :param start_col: 起始列，与 columns 参数互斥
-        :param end_col: 结束列，与 columns 参数互斥
+        :type columns: Optional[Union[str, List[str], int, List[int]]]
+        :param start_col: 默认值为 ``None`` 。起始列，与 columns 参数互斥
+        :type start_col: Optional[Union[str, int]]
+        :param end_col: 默认值为 ``None`` 。结束列，与 columns 参数互斥
+        :type end_col: Optional[Union[str, int]]
         :param max_width: 最大列宽，默认为50
+        :type max_width: float
         :param min_width: 最小列宽，默认为8
+        :type min_width: float
         :param extra_padding: 额外填充宽度，默认为2.0
+        :type extra_padding: float
 
         **参考样例**
 
@@ -431,8 +463,11 @@ class ExcelWriter:
         """设置数值显示格式。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param space: 单元格范围，如'B2:B10'
+        :type space: str
         :param _format: 显示格式，如'0.00%'或'#,##0'
+        :type _format: str
         """
         cells = worksheet[space]
         if isinstance(cells, Cell):
@@ -449,7 +484,9 @@ class ExcelWriter:
         """设置冻结窗格。
 
         :param worksheet: 工作表对象或名称
+        :type worksheet: Union[Worksheet, str]
         :param space: 冻结位置，如'B2'或(2, 2)
+        :type space: Union[str, Tuple[int, int]]
         """
         if not isinstance(worksheet, Worksheet):
             worksheet = self.get_sheet_by_name(worksheet)
@@ -467,7 +504,9 @@ class ExcelWriter:
         """给工作表添加自动筛选（auto_filter）。
 
         :param worksheet: 工作表对象或名称
+        :type worksheet: Union[Worksheet, str]
         :param ref: 筛选区域，如"A1:E10"，默认为整个有数据的区域
+        :type ref: Optional[str]
         """
         if not isinstance(worksheet, Worksheet):
             worksheet = self.get_sheet_by_name(worksheet)
@@ -481,6 +520,7 @@ class ExcelWriter:
         """获取或创建指定名称的工作表。
 
         :param name: 工作表名称
+        :type name: str
         :return: 工作表对象
         """
         if name not in self.workbook.sheetnames:
@@ -498,8 +538,11 @@ class ExcelWriter:
         """移动工作表位置。
 
         :param worksheet: 工作表对象或名称
+        :type worksheet: Union[Worksheet, str]
         :param offset: 相对移动位置，默认为0
+        :type offset: int
         :param index: 移动到的目标绝对位置索引（从0开始），默认为None；传入时忽略 ``offset``
+        :type index: Optional[int]
         """
         total_sheets = len(self.workbook.sheetnames)
 
@@ -530,11 +573,17 @@ class ExcelWriter:
         """向单元格插入超链接。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param insert_space: 插入位置，如'B2'或(2, 2)
-        :param hyperlink: 超链接地址，与target_space互斥
+        :type insert_space: Union[str, Tuple[int, int]]
+        :param hyperlink: 默认值为 ``None`` 。超链接地址，与target_space互斥
+        :type hyperlink: Optional[str]
         :param file: 超链接文件路径，默认当前文件
+        :type file: Optional[str]
         :param sheet: 超链接sheet名称，默认当前sheet
-        :param target_space: 超链接目标位置，如'B10'或(10, 2)
+        :type sheet: Optional[str]
+        :param target_space: 默认值为 ``None`` 。超链接目标位置，如'B10'或(10, 2)
+        :type target_space: Optional[Union[str, Tuple[int, int]]]
 
         **参考样例**
 
@@ -607,13 +656,21 @@ class ExcelWriter:
         """向单元格插入内容。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param insert_space: 插入位置，如'B2'或(2, 2)
+        :type insert_space: Union[str, Tuple[int, int]]
         :param value: 插入的内容，默认为""
+        :type value: Any
         :param style: 样式名称，默认为"content"
+        :type style: str
         :param auto_width: 是否自动调整列宽，默认为False（推荐在数据全部写入后使用 adjust_columns_width 批量调整）
+        :type auto_width: bool
         :param end_space: 合并单元格的结束位置，默认为None
+        :type end_space: Optional[Union[str, Tuple[int, int]]]
         :param align: 文本对齐方式，默认为None，例如{'horizontal': 'left', 'vertical': 'center'}
+        :type align: Optional[Dict[str, str]]
         :param max_col_width: 最大列宽，默认为50
+        :type max_col_width: int
         :return: (下一行行号, 下一列列号)
 
         **参考样例**
@@ -627,7 +684,7 @@ class ExcelWriter:
         >>> # 批量调整列宽（推荐在所有数据写入完成后调用）
         >>> writer.adjust_columns_width(worksheet, columns=['A', 'B', 'C'])
 
-        数字样字符串（如 ``"466"``、``"25%"``、``"00123"``）会保持为文本；保存时自动关闭
+        数字样字符串（如 ``"466"`` 、 ``"25%"`` 、 ``"00123"`` ）会保持为文本；保存时自动关闭
         Excel 的“以文本形式存储的数字”错误提示。
         """
         # 解析位置
@@ -703,9 +760,13 @@ class ExcelWriter:
         """向Excel插入图片。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param fig: 图片路径
+        :type fig: str
         :param insert_space: 插入位置，如'B2'或(2, 2)
+        :type insert_space: Union[str, Tuple[int, int]]
         :param figsize: 图片大小(宽, 高)，默认为(600, 250)
+        :type figsize: Tuple[int, int]
         :return: (下一行行号, 下一列列号)
         """
         # 解析位置
@@ -767,14 +828,19 @@ class ExcelWriter:
     ) -> Tuple[int, int]:
         """向Excel插入原生图表（openpyxl chart 对象）。
 
-        与 :meth:`insert_pic2sheet` 不同，此方法插入的是Excel原生图表（基于单元格数据动态生成），
+        与  :meth:`insert_pic2sheet`  不同，此方法插入的是Excel原生图表（基于单元格数据动态生成），
         而非静态图片，可在Excel中交互、随数据更新。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param insert_space: 插入位置（图表左上角锚点），如'B2'或(2, 2)
+        :type insert_space: Union[str, Tuple[int, int]]
         :param chart: openpyxl 图表对象（如 BarChart / LineChart）
+        :type chart: Any
         :param width: 图表宽度（厘米），默认为15.0
+        :type width: float
         :param height: 图表高度（厘米），默认为7.5
+        :type height: float
         :return: (下一行行号, 下一列列号)
         """
         # 解析锚点位置
@@ -814,25 +880,38 @@ class ExcelWriter:
         """基于已写入Excel的分箱统计表生成分箱图（柱状图 + 坏样本率折线，双坐标轴）。
 
         本方法复现 ``hscredit.core.viz.bin_plot`` 的样式：左轴堆叠柱状图展示各分箱好/坏样本数，
-        右轴折线展示坏样本率，配色与字体均采用 hscredit 主题风格。图表数据**直接引用**
+        右轴折线展示坏样本率，配色与字体均采用 hscredit 主题风格。图表数据 **直接引用**
         worksheet 中已写入的单元格区域，故图表会随表格数据联动。
 
-        使用前需先将 ``feature_bin_stats`` 输出的分箱表通过 :meth:`insert_df2sheet`
-        （或 :func:`dataframe2excel`）写入到 ``table_anchor`` 位置（含表头）。
+        使用前需先将 ``feature_bin_stats`` 输出的分箱表通过  :meth:`insert_df2sheet`
+        （或  :func:`dataframe2excel` ）写入到 ``table_anchor`` 位置（含表头）。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param data: 分箱统计表（与写入Excel的DataFrame一致，用于定位列）
+        :type data: pd.DataFrame
         :param table_anchor: 表格写入的左上角位置（含表头），如'B2'或(2, 2)
+        :type table_anchor: Union[str, Tuple[int, int]]
         :param chart_anchor: 图表插入位置，默认为None（自动置于表格右侧一列）
+        :type chart_anchor: Optional[Union[str, Tuple[int, int]]]
         :param bar_columns: 柱状图列名（左轴），默认为("好样本数", "坏样本数")
+        :type bar_columns: Tuple[str, ...]
         :param line_columns: 折线图列名（右轴），默认为("坏样本率",)
+        :type line_columns: Tuple[str, ...]
         :param category_column: 分类轴列名（横轴），默认为None（优先取"分箱标签"，其次"分箱"）
+        :type category_column: Optional[str]
         :param title: 图表标题，默认为None
+        :type title: Optional[str]
         :param header: 表格写入时是否含表头，默认为True
+        :type header: bool
         :param index: 表格写入时是否含索引，默认为False
+        :type index: bool
         :param bar_stacked: 柱状图是否堆叠，默认为True
+        :type bar_stacked: bool
         :param width: 图表宽度（厘米），默认为18.0
+        :type width: float
         :param height: 图表高度（厘米），默认为9.0
+        :type height: float
         :return: (下一行行号, 下一列列号)
 
         **参考样例**
@@ -973,20 +1052,35 @@ class ExcelWriter:
         """向Excel插入DataFrame。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param data: 需要插入的DataFrame
+        :type data: pd.DataFrame
         :param insert_space: 插入位置，如'B2'或(2, 2)
+        :type insert_space: Union[str, Tuple[int, int]]
         :param merge_column: 需要分组显示的列，默认为None
+        :type merge_column: Optional[Union[str, List[str]]]
         :param header: 是否存储DataFrame的header，默认为True
+        :type header: bool
         :param index: 是否存储DataFrame的index，默认为False
+        :type index: bool
         :param auto_width: 是否自动调整列宽，默认为False（在所有数据写入完成后统一调整，避免边框样式丢失）
+        :type auto_width: bool
         :param fill: 是否使用颜色填充而非边框，默认为False
+        :type fill: bool
         :param merge: 是否合并单元格，默认为False
+        :type merge: bool
         :param merge_index: 当存储index时，是否合并连续相同的index值，默认为True
+        :type merge_index: bool
         :param merge_header: 多层列名是否横向合并相邻相同标题，默认True合并全部层级；
-            可传False/``"none"``不合并，或传层级序号/序号列表仅合并指定层级
+            可传False/ ``"none"`` 不合并，或传层级序号/序号列表仅合并指定层级
+
+        :type merge_header: Union[bool, str, int, Sequence[int]]
         :param decimal: 浮点值保留小数位数，默认4；None表示不主动舍入
-        :param speed: 写入速度，可选``"auto"``、``"normal"``或``"fast"``，默认``"auto"``；
+        :type decimal: Optional[int]
+        :param speed: 写入速度，可选 ``"auto"`` 、 ``"normal"`` 或 ``"fast"`` ，默认 ``"auto"`` ；
             自动模式根据数据行数、有效列数和单元格数选择保样式写入路径
+
+        :type speed: str
         :return: (下一行行号, 下一列列号)
 
         **参考样例**
@@ -1444,14 +1538,23 @@ class ExcelWriter:
         """向Excel插入一行数据。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param row: 行数据
+        :type row: List
         :param row_index: 行索引
+        :type row_index: int
         :param col_index: 起始列索引或字母
+        :type col_index: Union[str, int]
         :param merge_rows: 需要合并的行索引列表，默认为None
+        :type merge_rows: Optional[List[int]]
         :param style: 样式名称，默认为空
+        :type style: str
         :param auto_width: 是否自动调整列宽，默认为False（推荐在数据全部写入后使用 adjust_columns_width 批量调整）
+        :type auto_width: bool
         :param style_only: 是否仅应用样式，默认为False
+        :type style_only: bool
         :param multi_levels: 是否多层索引，默认为False
+        :type multi_levels: bool
         """
         curr_col = column_index_from_string(col_index) if isinstance(col_index, str) else col_index
 
@@ -1567,8 +1670,11 @@ class ExcelWriter:
         """合并单元格并保证样式正确合并。
 
         :param worksheet: 工作表对象
+        :type worksheet: Worksheet
         :param start: 开始位置，如'B2'或(2, 2)
+        :type start: Union[str, Tuple[int, int]]
         :param end: 结束位置，如'F10'或(10, 6)
+        :type end: Union[str, Tuple[int, int]]
         """
         # 解析位置
         if isinstance(start, str):
@@ -1628,6 +1734,7 @@ class ExcelWriter:
         """检查字符串中是否包含中文。
 
         :param check_str: 需要检查的字符串
+        :type check_str: str
         :return: (每个字符是否是中文的列表, 英文字符个数, 中文字符个数)
         """
         out = []
@@ -1673,7 +1780,9 @@ class ExcelWriter:
         """格式化需要存储Excel的内容。
 
         :param value: 需要插入Excel的内容
+        :type value: Any
         :param decimal: 如果是浮点型，需要保留的小数位数，默认为4；None 表示不主动舍入
+        :type decimal: Optional[int]
         :return: 格式化后的内容
         """
         if re.search("tuple|list|set|numpy.ndarray|Categorical|numpy.dtype|Interval", str(type(value))):
@@ -1690,6 +1799,7 @@ class ExcelWriter:
         这类字符串在Excel中会显示绿色感叹号（以文本形式存储的数字）。
 
         :param value: 需要检查的值
+        :type value: Any
         :return: 如果是类似数字的字符串返回True，否则返回False
         """
         if not isinstance(value, str):
@@ -1754,7 +1864,9 @@ class ExcelWriter:
         """计算列表中从某个索引开始连续出现某个元素的个数。
 
         :param list_: 需要检索的列表
+        :type list_: List
         :param index_: 起始索引，默认为0
+        :type index_: int
         :return: (元素值, 索引值, 连续出现的个数)
 
         **参考样例**
@@ -1782,8 +1894,11 @@ class ExcelWriter:
         """生成边框样式。
 
         :param border: 边框样式列表，长度为3或4。长度为3表示[左, 右, 下]，长度为4表示[左, 右, 下, 上]
+        :type border: List[str]
         :param color: 边框颜色列表
+        :type color: List[str]
         :param white: 是否显示白色边框，默认为False
+        :type white: bool
         :return: 边框对象
         """
         if len(border) == 3:
@@ -1817,10 +1932,13 @@ class ExcelWriter:
         """转换单元格位置格式。
 
         支持两种格式：
+
         - 字符串格式: 'B2'
+
         - 元组格式: (2, 2) 表示第2行第2列
 
         :param space: 单元格位置
+        :type space: Union[str, Tuple[int, int]]
         :return: 转换后的格式
 
         **参考样例**
@@ -1848,8 +1966,11 @@ class ExcelWriter:
         """根据颜色和透明度计算对应的颜色值。
 
         :param hex_color: hex格式的颜色值
+        :type hex_color: str
         :param opacity: 透明度，[0, 1]之间的数值
+        :type opacity: float
         :param prefix: 返回颜色的前缀，默认为"#"
+        :type prefix: str
         :return: 对应某个透明度的颜色
         """
         rgb_color = tuple(int(hex_color.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
@@ -1860,8 +1981,11 @@ class ExcelWriter:
         """初始化单元格样式。
 
         :param font: 字体名称
+        :type font: str
         :param fontsize: 字体大小
+        :type fontsize: int
         :param theme_color: 主题颜色
+        :type theme_color: str
         """
         # 创建所有命名样式
         header_style = NamedStyle(name="header")
@@ -2089,8 +2213,8 @@ class ExcelWriter:
     ) -> None:
         """向单元格插入迷你图（Sparkline）。
 
-        在单个单元格内绘制折线图、柱状图或盈亏图，效果类似 xlsxwriter 的 ``add_sparkline``。
-        由于 openpyxl 不支持写入迷你图，本方法仅记录配置，在 :meth:`save` 时将
+        在单个单元格内绘制折线图、柱状图或盈亏图，效果类似 xlsxwriter 的 ``add_sparkline`` 。
+        由于 openpyxl 不支持写入迷你图，本方法仅记录配置，在  :meth:`save`  时将
         ``x14:sparklineGroups`` 注入到 worksheet XML 中。默认配色采用 hscredit 主题风格。
 
         .. note::
@@ -2099,25 +2223,45 @@ class ExcelWriter:
             建议迷你图在最终输出步骤添加。
 
         :param worksheet: 工作表对象或名称
+        :type worksheet: Union[Worksheet, str]
         :param location: 迷你图所在单元格，如'H2'；可传列表与 ``data_range`` 一一对应批量生成同组迷你图
+        :type location: Union[str, List[str]]
         :param data_range: 数据区域，如'B2:G2'或'Sheet1!B2:G2'（未含sheet名时默认当前sheet）；可传列表
+        :type data_range: Union[str, List[str]]
         :param type: 迷你图类型，可选'line'(折线)、'column'(柱状)、'win_loss'(盈亏)，默认'line'
+        :type type: str
         :param series_color: 主体颜色，默认为主题色
+        :type series_color: Optional[str]
         :param negative_color: 负值颜色（盈亏图/柱状图负值），默认为 hscredit 坏样本红
+        :type negative_color: Optional[str]
         :param markers: 是否显示数据点标记（仅折线图），默认为False
+        :type markers: bool
         :param marker_color: 标记颜色，默认同 ``series_color``
+        :type marker_color: Optional[str]
         :param high_point: 是否高亮最高点，默认为False
+        :type high_point: bool
         :param low_point: 是否高亮最低点，默认为False
+        :type low_point: bool
         :param first_point: 是否高亮首点，默认为False
+        :type first_point: bool
         :param last_point: 是否高亮尾点，默认为False
+        :type last_point: bool
         :param negative_points: 是否高亮负值点，默认为False
+        :type negative_points: bool
         :param high_color: 最高点颜色，默认同 ``series_color``
+        :type high_color: Optional[str]
         :param low_color: 最低点颜色，默认同 ``negative_color``
+        :type low_color: Optional[str]
         :param first_color: 首点颜色，默认为提升橙
+        :type first_color: Optional[str]
         :param last_color: 尾点颜色，默认为提升橙
+        :type last_color: Optional[str]
         :param display_x_axis: 是否显示横轴（数据含正负时分隔），默认为False
+        :type display_x_axis: bool
         :param show_empty_as: 空单元格显示方式，可选'gap'(留空)、'zero'(零)、'span'(连线)，默认'gap'
+        :type show_empty_as: str
         :param line_weight: 折线粗细（磅），默认为None（使用Excel默认）
+        :type line_weight: Optional[float]
 
         **参考样例**
 
@@ -2195,7 +2339,8 @@ class ExcelWriter:
         )
 
     def _build_sparkline_groups_xml(self, specs: List[Dict[str, Any]]) -> str:
-        """根据迷你图规格构建单个 sheet 的 ``x14:sparklineGroups`` 子元素 XML。"""
+        """根据迷你图规格构建单个 sheet 的 ``x14:sparklineGroups`` 子元素 XML。
+        """
         # 颜色元素需按 schema 顺序输出
         color_order = [
             "colorSeries",
@@ -2327,7 +2472,7 @@ class ExcelWriter:
     def _sanitize_sheet_title(title: str) -> str:
         """将字符串规范为合法的Excel工作表名（替换非法字符并截断到31字符）。
 
-        Excel 工作表名不允许包含 ``: \\ / ? * [ ]``，且长度上限为31个字符。
+        Excel 工作表名不允许包含 ``: \\ / ? * [ ]`` ，且长度上限为31个字符。
 
         :param title: 原始名称
         :return: 合法的工作表名
@@ -2380,48 +2525,75 @@ class ExcelWriter:
     ) -> Tuple[int, int]:
         """向工作表插入Excel原生数据透视表。
 
-        由于 openpyxl 不支持创建数据透视表，本方法仅记录配置，在 :meth:`save` 时将
+        由于 openpyxl 不支持创建数据透视表，本方法仅记录配置，在  :meth:`save`  时将
         ``pivotCacheDefinition`` / ``pivotCacheRecords`` / ``pivotTable`` 等部件注入到
-        xlsx 中，生成 Excel 可交互、可刷新的原生数据透视表。透视缓存写入 ``refreshOnLoad="1"``，
+        xlsx 中，生成 Excel 可交互、可刷新的原生数据透视表。透视缓存写入 ``refreshOnLoad="1"`` ，
         Excel 打开时会基于源数据自动刷新。
 
         .. note::
             将已有文件作为 ``style_excel`` 加载时，可保留其中已有透视表并继续追加。若仅在
-            :meth:`save` 阶段通过 ``mode='append'`` 合并另一个目标文件，仍只复制单元格值/样式，
+            :meth:`save`  阶段通过 ``mode='append'`` 合并另一个目标文件，仍只复制单元格值/样式，
             不保证保留该目标文件中的原生图、迷你图与图片；此类文件应先作为 ``style_excel`` 加载。
 
         :param worksheet: 透视表放置的工作表对象或名称
-        :param data: 源数据 DataFrame（透视缓存基于此构建）。省略时从
+        :type worksheet: Union[Worksheet, str]
+        :param data: 默认值为 ``None`` 。源数据 DataFrame（透视缓存基于此构建）。省略时从
             ``source_sheet`` 的 ``source_range`` 读取
-        :param pivot_anchor: 透视表左上角锚点，如'B2'或(2, 2)
+
+        :type data: Optional[pd.DataFrame]
+        :param pivot_anchor: 默认值为 ``None`` 。透视表左上角锚点，如'B2'或(2, 2)
+        :type pivot_anchor: Optional[Union[str, Tuple[int, int]]]
         :param rows: 行字段（列名或列名列表），默认为None
+        :type rows: Optional[Union[str, List[str]]]
         :param columns: 列字段（列名或列名列表），默认为None
+        :type columns: Optional[Union[str, List[str]]]
         :param values: 值字段，支持多种形式：
 
-            - ``'金额'`` 或 ``['金额', '数量']``：默认聚合（数值列求和，非数值列计数）
-            - ``[('金额', 'sum'), ('数量', 'mean')]``：显式指定聚合
-            - ``[('金额', 'sum', '全局占比')]``：聚合 + 占比显示（全局/行/列/组合占比）
-            - ``{'金额': 'sum'}`` 或 ``[{'field': '金额', 'agg': 'sum', 'show_as': '全局占比',
+            - ``'金额'`` 或 ``['金额', '数量']`` ：默认聚合（数值列求和，非数值列计数）
+
+            - ``[('金额', 'sum'), ('数量', 'mean')]`` ：显式指定聚合
+
+            - ``[('金额', 'sum', '全局占比')]`` ：聚合 + 占比显示（全局/行/列/组合占比）
+
+            - ``{'金额': 'sum'}`` 或 `` [{'field': '金额', 'agg': 'sum', 'show_as': '全局占比',
               'name': '占比', 'number_format': '0.00%'}]``
 
             聚合：sum/count/average(mean)/max/min/product/count_nums/std/stdp/var/varp
             （可用 ``hscredit.excel._pivot.register_aggregation`` 扩展别名）
-        :param filters: 页/筛选字段。列名/列名列表，或 ``{字段: [允许值]}`` 直接指定筛选项
-        :param filter_items: 筛选项 ``{字段: [允许值]}``，可作用于行/列/筛选任一字段，仅保留所列取值
-        :param groups: 数值字段分组 ``{字段: {'start': 起始值, 'interval': 步长}}``
-            （亦支持 ``{字段: (起始, 步长)}``），对横轴/纵轴数值特征按步长分桶统计
+
+        :type values: Optional[Any]
+        :param filters: 默认值为 ``None`` 。页/筛选字段。列名/列名列表，或 ``{字段: [允许值]}`` 直接指定筛选项
+        :type filters: Optional[Union[str, List[str], Dict[Any, Any]]]
+        :param filter_items: 默认值为 ``None`` 。筛选项 ``{字段: [允许值]}`` ，可作用于行/列/筛选任一字段，仅保留所列取值
+        :type filter_items: Optional[Dict[Any, Any]]
+        :param groups: 默认值为 ``None`` 。数值字段分组 ``{字段: {'start': 起始值, 'interval': 步长}}``
+            （亦支持 ``{字段: (起始, 步长)}`` ），对横轴/纵轴数值特征按步长分桶统计
+
+        :type groups: Optional[Dict[Any, Any]]
         :param subtotals: 是否对非最内层行/列字段显示分类汇总，默认为False
-        :param source_sheet: 源数据所在工作表对象或名称，默认为None（自动新建源数据表写入 ``data``）
+        :type subtotals: bool
+        :param source_sheet: 源数据所在工作表对象或名称，默认为None（自动新建源数据表写入 ``data`` ）
+        :type source_sheet: Optional[Union[Worksheet, str]]
         :param source_anchor: 源数据写入/定位的左上角（含表头），默认为(1, 1)
-        :param write_source: 是否写入源数据，默认为None（``source_sheet`` 为None时自动写入）
+        :type source_anchor: Union[str, Tuple[int, int]]
+        :param write_source: 是否写入源数据，默认为None（ ``source_sheet`` 为None时自动写入）
+        :type write_source: Optional[bool]
         :param name: 透视表名称，默认为None（自动命名「数据透视表N」）
+        :type name: Optional[str]
         :param show_row_totals: 是否显示行总计，默认为True
+        :type show_row_totals: bool
         :param show_col_totals: 是否显示列总计，默认为True
+        :type show_col_totals: bool
         :param theme_style: 是否套用适配 ``theme_color`` 的 hscredit 主题样式，默认为True
-        :param style: 透视表样式名，默认为None（``theme_style`` 为True时用主题样式，否则用内置 PivotStyleLight16）
+        :type theme_style: bool
+        :param style: 透视表样式名，默认为None（ ``theme_style`` 为True时用主题样式，否则用内置 PivotStyleLight16）
+        :type style: Optional[str]
         :param fill: 自动写入源数据时是否使用颜色填充，默认为True
-        :param source_range: 已有源数据区域（含首行字段名），如 ``'A1:H5000'``。
+        :type fill: bool
+        :param source_range: 默认值为 ``None`` 。已有源数据区域（含首行字段名），如 ``'A1:H5000'``
             仅在 ``data`` 为None时使用，且不会改写源数据
+
+        :type source_range: Optional[str]
         :return: (透视表区域下一行行号, 下一列列号)
 
         **参考样例**
@@ -2628,19 +2800,27 @@ class ExcelWriter:
         """基于已创建的数据透视表插入Excel原生数据透视图。
 
         本方法先用 openpyxl 在透视表输出区域上构建普通图表（柱状/折线/饼图），
-        并在 :meth:`save` 时向该图表 XML 注入 ``c:pivotSource``，使其成为绑定到透视表的
+        并在  :meth:`save`  时向该图表 XML 注入 ``c:pivotSource`` ，使其成为绑定到透视表的
         原生数据透视图，可随透视表刷新联动。
 
-        需先调用 :meth:`insert_pivot_table2sheet` 创建透视表。
+        需先调用  :meth:`insert_pivot_table2sheet`  创建透视表。
 
         :param worksheet: 透视图放置的工作表对象或名称（通常与透视表同表）
+        :type worksheet: Union[Worksheet, str]
         :param chart_anchor: 图表插入位置，如'H2'或(2, 8)
+        :type chart_anchor: Union[str, Tuple[int, int]]
         :param pivot_name: 关联的透视表名称，默认为None（取最近创建的透视表）
+        :type pivot_name: Optional[str]
         :param chart_type: 图表类型，可选'bar'(柱状)、'line'(折线)、'pie'(饼图)，默认'bar'
+        :type chart_type: str
         :param title: 图表标题，默认为None
+        :type title: Optional[str]
         :param width: 图表宽度（厘米），默认为15.0
+        :type width: float
         :param height: 图表高度（厘米），默认为7.5
+        :type height: float
         :param bar_stacked: 柱状图是否堆叠，默认为False
+        :type bar_stacked: bool
         :return: (下一行行号, 下一列列号)
 
         **参考样例**
@@ -2961,7 +3141,7 @@ class ExcelWriter:
         shutil.move(tmp_path, filename)
 
     def _build_pivot_chart_modifications(self, zin: "zipfile.ZipFile", names: set) -> Dict[str, bytes]:
-        """为数据透视图向对应 chart XML 注入 ``c:pivotSource``。
+        """为数据透视图向对应 chart XML 注入 ``c:pivotSource`` 。
 
         按透视表所在 sheet 名匹配 chart 部件（chart 的系列引用透视表输出区域，
         其 ``<c:f>`` 含该 sheet 名）。
@@ -3050,7 +3230,8 @@ class ExcelWriter:
         )
 
     def _inject_number_stored_as_text_ignored_errors(self, filename: str) -> None:
-        """向 xlsx 注入数字样文本单元格的 ``ignoredErrors`` 声明。"""
+        """向 xlsx 注入数字样文本单元格的 ``ignoredErrors`` 声明。
+        """
         refs_by_sheet = {}
         workbook_worksheets = set(self.workbook.worksheets)
         for worksheet, cells in self._number_stored_as_text_cells.items():
@@ -3135,7 +3316,9 @@ class ExcelWriter:
         保存失败不会覆盖此前成功文件。
 
         :param filename: 保存路径
+        :type filename: str
         :param close: 是否关闭workbook，默认为True
+        :type close: bool
         """
         # 移除样式模板sheet
         if self.style_sheet is not None and self.style_sheet.title in self.workbook.sheetnames:
@@ -3197,16 +3380,24 @@ def resolve_condition_color(
     :param condition_color: 条件格式颜色配置，支持以下类型：
 
         - str：所有列/行统一使用该颜色
-        - list/tuple：由 2 或 3 个颜色组成的色阶锚点（仅 ``color_cols``/``color_rows`` 颜色渐变完整生效；
+
+        - list/tuple：由 2 或 3 个颜色组成的色阶锚点（仅 ``color_cols`` / ``color_rows`` 颜色渐变完整生效；
           数据条等单色场景取末位颜色）
-        - dict：以列名（或行索引值）为key分别指定颜色，值可为 str 或上述 list/tuple，匹配方式类似 ``condition_cols``：
+
+        - dict：以列名（或行索引值）为key分别指定颜色，值可为 str 或上述 list/tuple，匹配方式类似 ``condition_cols`` ：
 
           - 单层列名：key直接为列名
+
           - 多层级列名：key可以是完整的列名tuple，也可以是其中任意一层级的名称（优先匹配完整tuple，其次按由内到外的层级匹配）
+
           - dict中未匹配到的列/行回退使用 ``default_color``
 
+    :type condition_color: Optional[Union[str, List[str], Dict[Any, Union[str, List[str]]]]]
+
     :param column: 当前列名或行索引值，多层级时为tuple
+    :type column: Any
     :param default_color: ``condition_color`` 为None，或为dict且未匹配到时使用的颜色
+    :type default_color: str
     :return: 最终使用的单个颜色（list/tuple 锚点取末位），去除 ``#`` 前缀并大写
 
     **参考样例**
@@ -3231,7 +3422,8 @@ def resolve_condition_color(
 
 
 def _clean_hex(color: str) -> str:
-    """规范化颜色为openpyxl可用的十六进制：去除 ``#`` 前缀并大写。"""
+    """规范化颜色为openpyxl可用的十六进制：去除 ``#`` 前缀并大写。
+    """
     return str(color).lstrip("#").upper()
 
 
@@ -3240,9 +3432,9 @@ def _resolve_condition_value(
     column: Any,
     default_color: str,
 ) -> Union[str, List[str]]:
-    """解析某一列（或行）配置的原始颜色值（单色 str 或多色锚点 list/tuple），未匹配回退 ``default_color``。
+    """解析某一列（或行）配置的原始颜色值（单色 str 或多色锚点 list/tuple），未匹配回退 ``default_color`` 。
 
-    与 :func:`resolve_condition_color` 共用匹配规则，但不折叠为单色，供颜色渐变构建多色阶使用。
+    与  :func:`resolve_condition_color`  共用匹配规则，但不折叠为单色，供颜色渐变构建多色阶使用。
     """
     if not isinstance(condition_color, dict):
         return condition_color if condition_color else default_color
@@ -3259,9 +3451,9 @@ def _resolve_condition_value(
 
 
 def _coerce_color_anchors(color_value: Union[str, List[str]]) -> List[str]:
-    """将颜色配置规范化为色阶锚点列表（1~3 个，去 ``#``、大写）。
+    """将颜色配置规范化为色阶锚点列表（1~3 个，去 ``#`` 、大写）。
 
-    多色锚点超过 3 个时自动取首/中/尾 3 个（``ColorScaleRule`` 最多支持 3 个色标）。
+    多色锚点超过 3 个时自动取首/中/尾 3 个（ ``ColorScaleRule`` 最多支持 3 个色标）。
     """
     if isinstance(color_value, (list, tuple)):
         anchors = [_clean_hex(c) for c in color_value if c]
@@ -3273,14 +3465,17 @@ def _coerce_color_anchors(color_value: Union[str, List[str]]) -> List[str]:
 
 
 def _build_color_scale_rule(values: pd.Series, color_value: Union[str, List[str]]) -> ColorScaleRule:
-    """根据锚点颜色构建颜色渐变规则 ``ColorScaleRule``，支持单/双/三色阶。
+    """根据锚点颜色构建颜色渐变规则 ``ColorScaleRule`` ，支持单/双/三色阶。
 
     :param values: 当前列（或行）数据，用于确定最小/最大值
     :param color_value: 颜色配置，单色 str 或由 2/3 个颜色组成的异色锚点 list/tuple
 
         - 单色：沿用「两端同色 + 白心（0 为基准）」的发散写法，保持向后兼容
-        - 双色 ``[低值色, 高值色]``：最小值 → 最大值 双色阶
-        - 三色 ``[低值色, 中值色, 高值色]``（异色）：最小值 → 中位数 → 最大值 三色阶
+
+        - 双色 ``[低值色, 高值色]`` ：最小值 → 最大值 双色阶
+
+        - 三色 ``[低值色, 中值色, 高值色]`` （异色）：最小值 → 中位数 → 最大值 三色阶
+
     :return: 颜色渐变规则
     """
     anchors = _coerce_color_anchors(color_value)
@@ -3358,41 +3553,73 @@ def dataframe2excel(
     这是一个便捷函数，封装了ExcelWriter的常用操作。
 
     :param data: 需要保存的DataFrame
+    :type data: pd.DataFrame
     :param excel_writer: 文件路径或ExcelWriter对象
+    :type excel_writer: Union[str, ExcelWriter]
     :param sheet_name: 工作表名称，默认为None
+    :type sheet_name: Optional[str]
     :param title: 标题，默认为None
+    :type title: Optional[str]
     :param header: 是否保存列名，默认为True
+    :type header: bool
     :param theme_color: 主题颜色，默认为"2639E9"
+    :type theme_color: str
     :param condition_color: 条件格式（数据条/颜色渐变）颜色，默认为None（使用ExcelWriter的condition_color，
         其默认值为副主题色"F76E6C"）。单次传入值优先于ExcelWriter配置。支持三种类型：
 
         - str：所有 condition_cols/color_cols/condition_rows/color_rows 统一使用该颜色
+
         - list/tuple：2 或 3 个颜色组成的异色色阶锚点，仅对 color_cols/color_rows 颜色渐变生效（2 色为
           ``[低值色, 高值色]`` 双色阶，3 色为 ``[低值色, 中值色, 高值色]`` 三色阶；超过 3 个自动取首/中/尾；
           数据条等单色场景取末位颜色）
+
         - dict：以列名（或行索引值）为key分别指定颜色，值可为 str 或上述 list/tuple，匹配方式类似 ``condition_cols`` —— 单层为列名，多层级可为完整列名tuple或其中任意层级名称；未匹配到的回退使用ExcelWriter的condition_color
+
+    :type condition_color: Optional[Union[str, List[str], Dict[Any, Union[str, List[str]]]]]
     :param fill: 是否使用颜色填充，默认为True
+    :type fill: bool
     :param percent_cols: 需要显示为百分数的列，默认为None
+    :type percent_cols: Optional[List]
     :param condition_cols: 需要显示数据条的列，默认为None
+    :type condition_cols: Optional[List]
     :param custom_cols: 需要自定义格式的列，默认为None
+    :type custom_cols: Optional[List]
     :param custom_format: 自定义格式，默认为"#,##0"
+    :type custom_format: str
     :param color_cols: 需要显示颜色渐变的列，默认为None
+    :type color_cols: Optional[List]
     :param percent_rows: 需要显示为百分数的行，默认为None
+    :type percent_rows: Optional[List]
     :param condition_rows: 需要显示数据条的行，默认为None
+    :type condition_rows: Optional[List]
     :param custom_rows: 需要自定义格式的行，默认为None
+    :type custom_rows: Optional[List]
     :param color_rows: 需要显示颜色渐变的行，默认为None
+    :type color_rows: Optional[List]
     :param left_cols: 需要左对齐的列名或列索引列表，默认为None（数据行，非表头）
+    :type left_cols: Optional[List]
     :param right_cols: 需要右对齐的列名或列索引列表，默认为None（数据行，非表头）
+    :type right_cols: Optional[List]
     :param start_col: 起始列，默认为2
+    :type start_col: int
     :param start_row: 起始行，默认为2
+    :type start_row: int
     :param mode: 写入模式，默认为"replace"
+    :type mode: str
     :param figures: 需要插入的图片路径，默认为None
+    :type figures: Optional[Union[str, List[str]]]
     :param figsize: 图片大小，默认为(600, 350)
+    :type figsize: Tuple[int, int]
     :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
+    :type image_bottom_padding_rows: int
     :param writer_params: ExcelWriter参数，默认为None
+    :type writer_params: Optional[Dict]
     :param decimal: 浮点值保留小数位数，默认4；None表示不主动舍入
-    :param speed: 写入速度，可选``"auto"``、``"normal"``或``"fast"``，默认``"auto"``；
+    :type decimal: Optional[int]
+    :param speed: 写入速度，可选 ``"auto"`` 、 ``"normal"`` 或 ``"fast"`` ，默认 ``"auto"`` ；
         自动模式在行数不少于500、有效列数不少于50或有效单元格数不少于10000时使用快速路径
+
+    :type speed: str
     :param kwargs: 其他参数，传递给insert_df2sheet
     :return: (下一行行号, 下一列列号)
 

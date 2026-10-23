@@ -21,12 +21,20 @@ class OrdinalRankLoss(BaseLoss):
     鼓励坏样本（label=1）的预测风险高于好样本（label=0）。
     导数按 n × 平均损失计算，返回 Hessian 的对角项；框架不使用跨样本二阶项。
 
+    **参数**
+
     :param rank_weight: 排序惩罚项权重，默认 1.0
+    :type rank_weight: float
     :param bce_weight: 交叉熵权重，默认 1.0
+    :type bce_weight: float
     :param temperature: 排序平滑温度，越小越强调排序间隔，默认 1.0
+    :type temperature: float
     :param max_pairs: 为控制计算开销，最多采样的正负样本对数，默认 20000
+    :type max_pairs: int
     :param random_state: 随机种子，保证采样对可复现，默认 42
+    :type random_state: int
     :param name: 损失函数名称，默认 "ordinal_rank_loss"
+    :type name: str
 
     **参考样例**
 
@@ -123,7 +131,9 @@ class OrdinalRankLoss(BaseLoss):
         """返回损失相对坏样本概率的一阶导数。
 
         :param y_true: 一维 0/1 标签，1 为坏样本。
+        :type y_true: np.ndarray
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :type y_pred: np.ndarray
         :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
         **参考样例**
@@ -156,7 +166,9 @@ class OrdinalRankLoss(BaseLoss):
         """返回损失相对坏样本概率的二阶导数。
 
         :param y_true: 一维 0/1 标签，1 为坏样本。
+        :type y_true: np.ndarray
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :type y_pred: np.ndarray
         :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
         **参考样例**
@@ -188,11 +200,18 @@ class LiftFocusedLoss(BaseLoss):
     并在头部区间进一步放大坏样本的惩罚，提升模型在高风险头部样本上的区分能力。
     排名权重在每次求导时固定，样本排名切换或同分边界处不可微。
 
+    **参数**
+
     :param top_ratio: 头部样本占比，默认 0.10
+    :type top_ratio: float
     :param penalty_factor: 头部惩罚倍数，默认 3.0
+    :type penalty_factor: float
     :param positive_class_boost: 头部坏样本额外增益倍数，默认 1.5
+    :type positive_class_boost: float
     :param base_weight: 非头部样本基础权重，默认 1.0
+    :type base_weight: float
     :param name: 损失函数名称，默认 "lift_focused_loss"
+    :type name: str
 
     Example:
         >>> import numpy as np
@@ -279,7 +298,9 @@ class LiftFocusedLoss(BaseLoss):
         """返回损失相对坏样本概率的一阶导数。
 
         :param y_true: 一维 0/1 标签，1 为坏样本。
+        :type y_true: np.ndarray
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :type y_pred: np.ndarray
         :return: 与输入等长的一阶导数组，标度为样本数乘以平均损失；详见 BaseLoss.gradient。
 
         **参考样例**
@@ -300,7 +321,9 @@ class LiftFocusedLoss(BaseLoss):
         """返回损失相对坏样本概率的二阶导数。
 
         :param y_true: 一维 0/1 标签，1 为坏样本。
+        :type y_true: np.ndarray
         :param y_pred: 同形状坏样本概率，范围 [0, 1]；不是原始分数。
+        :type y_pred: np.ndarray
         :return: 与输入等长的二阶导数组，标度同 BaseLoss.hessian；框架适配器再做链接函数转换。
 
         **参考样例**

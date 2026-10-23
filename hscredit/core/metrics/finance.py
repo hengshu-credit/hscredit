@@ -37,8 +37,11 @@ def lift(y_true: Union[np.ndarray, pd.Series], y_prob: Union[np.ndarray, pd.Seri
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测概率或评分（高值表示高风险）
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param threshold: 分类阈值，默认为0.5。高于此阈值的样本视为"命中"
+    :type threshold: float
     :return: Lift值（>1表示有效，>3表示良好）
     :raises ValueError: y_true和y_prob长度不一致时
 
@@ -86,14 +89,20 @@ def lift_table(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测概率或评分
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: 包含各分箱详细统计的DataFrame，列包括：分箱序号、最小概率、最大概率、
         样本数、好样本数、坏样本数、坏样本率、样本占比、Lift值、坏账改善、
         累积Lift值、累积坏账改善
+
     :raises ValueError: 数据全部为缺失值时
 
     **参考样例**
@@ -175,16 +184,27 @@ def lift_curve(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测概率或评分（高值表示高风险）
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param percentages: 百分比切分点列表，默认为 [0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50]
         支持任意比例组合
+
+    :type percentages: List[float]
     :param tail: False=从高概率端截取（头部高风险客群，适合风险识别场景），
         True=从低概率端截取（尾部低风险客群，适合优质客群筛选），默认为False
+
+    :type tail: bool
     :return: 包含各覆盖率统计的DataFrame，列包括：
+
         - 覆盖率: 百分比标签
+
         - 样本数: 截取的样本数
+
         - 坏样本数: 截取样本中的坏样本数
+
         - 坏样本捕获率: 坏样本捕获率
+
         - Lift值: 该覆盖率下的Lift值
 
     **参考样例**
@@ -254,11 +274,17 @@ def lift_at(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测概率或评分（高值表示高风险）
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param ratios: 覆盖率，标量（如 0.05）或列表（如 [0.01, 0.03, 0.05, 0.10]）。
         默认为 [0.01, 0.03, 0.05, 0.10]
+
+    :type ratios: Union[float, List[float]]
     :param ascending: False=高概率排前（风险模型头部），True=低概率排前（尾部分析），
         默认为False
+
+    :type ascending: bool
     :return: 单个 float（ratios 为标量时）或 DataFrame（ratios 为列表时），
         DataFrame列包括：覆盖率、样本数、坏样本数、坏样本率、坏样本捕获率、LIFT值
 
@@ -336,22 +362,40 @@ def lift_monotonicity_check(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测概率或评分（高值表示高风险）
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param max_n_bins: 分箱数，默认为10
+    :type max_n_bins: int
     :param direction: 检验方向，默认为'both'
+
         - 'head': 仅检验头部（高概率→低概率坏率是否递减）
+
         - 'tail': 仅检验尾部
+
         - 'both': 头尾均检验
+
+    :type direction: str
     :return: 字典，含以下键：
+
         - head_monotonic (bool): 头部是否单调
+
         - tail_monotonic (bool): 尾部是否单调
+
         - head_lift_values (list): 头部各分箱LIFT值（由高风险到低风险）
+
         - tail_lift_values (list): 尾部各分箱LIFT值（由低风险到高风险）
+
         - head_violations (list): 头部违反单调性的分箱对 [(i, j, 差值)]
+
         - tail_violations (list): 尾部违反单调性的分箱对
+
         - head_violation_ratio (float): 头部违反比例 0.0~1.0
+
         - tail_violation_ratio (float): 尾部违反比例 0.0~1.0
+
         - head_bin_table (pd.DataFrame): 头部分箱坏率统计表
+
         - tail_bin_table (pd.DataFrame): 尾部分箱坏率统计表
 
     **参考样例**
@@ -483,21 +527,37 @@ def rule_lift(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param rule_mask: 规则命中掩码（布尔数组或0/1数组，True/1表示样本命中该规则）
-    :param amount: 金额数据（可选，用于计算金额维度的Lift指标）
+    :type rule_mask: Union[np.ndarray, pd.Series]
+    :param amount: 默认值为 ``None`` 。金额数据（可选，用于计算金额维度的Lift指标）
+    :type amount: Optional[Union[np.ndarray, pd.Series]]
     :return: Lift指标字典，包含以下键：
+
         - hit_count: 命中样本数
+
         - hit_rate: 命中率（命中样本占总样本比例）
+
         - bad_count: 命中样本中的坏样本数
+
         - good_count: 命中样本中的好样本数
+
         - badrate: 命中样本坏账率
+
         - overall_badrate: 总体坏账率
+
         - lift: Lift值（命中坏账率/总体坏账率）
+
         - bad_improve: 坏账改善度（总体坏账率-非命中坏账率）/总体坏账率
+
         - total_amount: 总金额（当amount非None时）
+
         - hit_amount: 命中金额（当amount非None时）
+
         - bad_amount: 命中金额中的坏样本对应金额（当amount非None时）
+
         - amount_lift: 金额维度Lift值（当amount非None时）
+
     :raises ValueError: y_true和rule_mask长度不一致时
     :raises ValueError: amount长度与y_true不一致时
 
@@ -590,7 +650,9 @@ def badrate(y_true: Union[np.ndarray, pd.Series], weights: Optional[Union[np.nda
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
-    :param weights: 样本权重（可选），用于加权计算坏账率
+    :type y_true: Union[np.ndarray, pd.Series]
+    :param weights: 默认值为 ``None`` 。样本权重（可选），用于加权计算坏账率
+    :type weights: Optional[Union[np.ndarray, pd.Series]]
     :return: 坏账率，取值范围[0, 1]
 
     **参考样例**
@@ -623,16 +685,27 @@ def badrate_by_group(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param group: 分组标签（支持数值型或分类型，如渠道、地区、年龄段等）
-    :param weights: 样本权重（可选），用于加权计算各组坏账率
+    :type group: Union[np.ndarray, pd.Series]
+    :param weights: 默认值为 ``None`` 。样本权重（可选），用于加权计算各组坏账率
+    :type weights: Optional[Union[np.ndarray, pd.Series]]
     :return: 各组坏账率统计的DataFrame，按坏账率降序排列，列包括：
+
         - 分组: 分组标签
+
         - 样本数: 该组总样本数
+
         - 好样本数: 该组好样本数量
+
         - 坏样本数: 该组坏样本数量
+
         - 坏账率: 该组坏账率
+
         - 样本占比: 该组样本占总样本比例
+
         - 与总体差异: 该组坏账率与总体坏账率的差值
+
     :raises ValueError: y_true和group长度不一致时
 
     **参考样例**
@@ -693,20 +766,36 @@ def badrate_trend(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param date: 日期数据（支持pandas datetime、numpy datetime64或字符串日期）
+    :type date: Union[np.ndarray, pd.Series]
     :param freq: 时间频率，默认为'M'（月）
+
         - 'D': 按日统计
+
         - 'W': 按周统计
+
         - 'M': 按月统计
+
         - 'Q': 按季度统计
+
+    :type freq: str
     :return: 时间趋势数据DataFrame，列包括：
+
         - 时间周期: 统计时间段标签
+
         - 样本数: 该时间段内样本总数
+
         - 好样本数: 该时间段内好样本数量
+
         - 坏样本数: 该时间段内坏样本数量
+
         - 坏账率: 该时间段内坏账率
+
         - 环比变化: 与上一期坏账率的差值
+
         - 累积坏账率: 截至该时间段的累积坏账率
+
     :raises ValueError: y_true和date长度不一致时
     :raises ValueError: freq 不是 pandas 支持的正日期分组频率时
 
@@ -783,21 +872,36 @@ def badrate_by_score_bin(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param score: 评分或预测概率（高评分/高概率表示高风险）
+    :type score: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，默认为'quantile'（等频分箱），
         支持与OptimalBinning相同的全部分箱方法
+
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: 分箱坏账率统计DataFrame，列包括：
+
         - 分箱: 分箱序号
+
         - 最小评分: 该分箱内评分最小值
+
         - 最大评分: 该分箱内评分最大值
+
         - 样本数: 该分箱内样本总数
+
         - 好样本数: 该分箱内好样本数量
+
         - 坏样本数: 该分箱内坏样本数量
+
         - 坏账率: 该分箱内坏账率
+
         - 与总体差异: 该分箱坏账率与总体坏账率的差值
+
     :raises ValueError: 数据全部为缺失值时
     :raises ValueError: y_true和score长度不一致时
 
@@ -876,19 +980,33 @@ def score_stats(
     **参数**
 
     :param score: 评分或预测概率数据（支持数值型数组）
-    :param y_true: 真实标签（可选，0/1。如果提供则计算KS和AUC）
+    :type score: Union[np.ndarray, pd.Series]
+    :param y_true: 默认值为 ``None`` 。真实标签（可选，0/1。如果提供则计算KS和AUC）
+    :type y_true: Optional[Union[np.ndarray, pd.Series]]
     :return: 评分统计字典，包含以下键：
+
         - 样本数: 评分总样本数
+
         - 缺失数: 缺失值数量
+
         - 缺失率: 缺失值占比
+
         - 均值: 评分均值
+
         - 标准差: 评分标准差
+
         - 最小值: 评分最小值
+
         - 最大值: 评分最大值
+
         - 中位数: 评分中位数
+
         - 分位数_25: 25%分位数
+
         - 分位数_75: 75%分位数
+
         - KS: （仅当y_true非None时）KS统计量
+
         - AUC: （仅当y_true非None时）AUC值
 
     **参考样例**
@@ -949,18 +1067,30 @@ def score_stability(
     **参数**
 
     :param score_train: 训练集评分（期望分布）
+    :type score_train: Union[np.ndarray, pd.Series]
     :param score_test: 测试集评分（实际分布）
+    :type score_test: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，默认为'quantile'（等频分箱），
         支持与OptimalBinning相同的全部分箱方法
+
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: PSI详细统计表DataFrame，列包括：
+
         - 分箱: 分箱标签
+
         - 期望样本数: 训练集该分箱内样本数
+
         - 实际样本数: 测试集该分箱内样本数
+
         - 期望占比: 训练集该分箱样本占总样本比例
+
         - 实际占比: 测试集该分箱样本占总样本比例
+
         - PSI贡献: 该分箱对总PSI的贡献
 
     **参考样例**

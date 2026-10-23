@@ -65,7 +65,8 @@ class MySQLAdapter(DBAPIAdapter):
         return MySQLAtomicReplaceSession(self, table_name)
 
     def create_cursor(self, connection: Any, *, stream: bool = False) -> Any:
-        """流式读取时使用 PyMySQL ``SSCursor``。"""
+        """流式读取时使用 PyMySQL ``SSCursor`` 。
+        """
 
         if stream:
             return connection.cursor(self.driver.cursors.SSCursor)
@@ -420,7 +421,8 @@ ORDER BY CASE WHEN INDEX_NAME='PRIMARY' THEN 0 ELSE 1 END,
         key_columns: Optional[Sequence[str]] = None,
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> BatchWriteResult:
-        """通过 PyMySQL ``executemany`` 写入一个 DataFrame 批次。"""
+        """通过 PyMySQL ``executemany`` 写入一个 DataFrame 批次。
+        """
 
         del batch_index, dialect_options
         sql = self.build_insert_sql(

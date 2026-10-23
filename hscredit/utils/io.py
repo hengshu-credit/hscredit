@@ -61,20 +61,37 @@ def load_pickle(
     （gzip/bz2/xz/lz4/zstd）。支持根据文件扩展名自动检测。
 
     :param file: pickle 文件路径或可定位的二进制文件对象
-    :param source_name: 文件对象的原始文件名，仅用于格式推断，不会重新打开该路径
+    :type file: Union[str, Path]
+    :param source_name: 默认值为 ``None`` 。文件对象的原始文件名，仅用于格式推断，不会重新打开该路径
+    :type source_name: Optional[str]
     :param engine: 使用的序列化引擎，可选：
+
         - 'auto': 自动检测（根据文件内容和扩展名推断，默认）
+
         - 'joblib': 使用 joblib（推荐用于 numpy/scipy/sklearn 对象）
+
         - 'dill': 使用 dill（支持 lambda、嵌套函数等复杂对象）
+
         - 'cloudpickle': 使用 cloudpickle（常用于分布式计算如 PyTorch/Spark）
+
         - 'pickle': 使用标准库 pickle
-    :param compression: 压缩格式，可选：
+
+    :type engine: str
+    :param compression: 默认值为 ``None`` 。压缩格式，可选：
+
         - None: 根据文件扩展名自动检测（.gz/.bz2/.xz/.lz4/.zst）
+
         - 'gzip'/'gz': gzip 压缩
+
         - 'bz2': bzip2 压缩
+
         - 'xz': xz/lzma 压缩
+
         - 'lz4': lz4 压缩（需安装 lz4）
+
         - 'zstd'/'zstandard': zstd 压缩（需安装 zstandard）
+
+    :type compression: Optional[str]
     :return: 反序列化后的对象
 
     **参考样例**
@@ -165,22 +182,41 @@ def save_pickle(
     （gzip/bz2/xz/lz4/zstd），可处理大型模型和复杂对象。
 
     :param obj: 需要保存的数据对象
+    :type obj: Any
     :param file: 文件路径，建议扩展名 .pkl, .joblib, .dill 等
+    :type file: Union[str, Path]
     :param engine: 使用的序列化引擎，可选：
+
         - 'joblib': joblib（默认，推荐用于 numpy/scipy/sklearn 对象）
+
         - 'dill': dill（支持 lambda、嵌套函数等复杂对象）
+
         - 'cloudpickle': cloudpickle（常用于分布式计算）
+
         - 'pickle': 标准库 pickle
+
+    :type engine: str
     :param compression: 压缩格式，可选：
+
         - None: 不压缩（默认）
+
         - 'gzip'/'gz': gzip 压缩（兼容性好）
+
         - 'bz2': bzip2 压缩（压缩率高但较慢）
+
         - 'xz': xz/lzma 压缩（最高压缩率）
+
         - 'lz4': lz4 压缩（速度最快，需安装 lz4）
+
         - 'zstd'/'zstandard': zstd 压缩（速度与压缩率平衡，需安装 zstandard）
+
         - 'auto': 根据文件扩展名自动选择
+
+    :type compression: Optional[str]
     :param compression_level: 压缩级别（1-9，数字越大压缩率越高，默认取决于压缩算法）
+    :type compression_level: Optional[int]
     :param protocol: pickle 协议版本（默认使用最高可用版本）
+    :type protocol: Optional[int]
     :return: 保存的文件路径
 
     **参考样例**

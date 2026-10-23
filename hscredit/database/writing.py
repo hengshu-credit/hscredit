@@ -19,7 +19,7 @@ class BatchWriteResult:
     **参数**
 
     inserted、updated、skipped : int, optional
-        当前批次插入、更新和跳过的行数；后端无法可靠报告时为 ``None``。
+        当前批次插入、更新和跳过的行数；后端无法可靠报告时为 ``None`` 。
     """
 
     inserted: Optional[int] = None
@@ -196,8 +196,11 @@ def iter_write_batches(
     函数不会预执行、抽样或重试用户迭代器；每条输入记录只消费一次。
 
     :param data: DataFrame、DataFrame 分块、映射记录或位置行迭代器。
+    :type data: Any
     :param batch_size: 每个输出批次的最大行数，默认 10000。
-    :param columns: 显式字段顺序；位置行输入时必须提供。
+    :type batch_size: int
+    :param columns: 默认值为 ``None`` 。显式字段顺序；位置行输入时必须提供
+    :type columns: Optional[Sequence[str]]
     :return: 非空且字段顺序稳定的 DataFrame 迭代器。
     :raises InputValidationError: 输入为空之外的结构、字段或记录类型不一致。
     :raises ValidationError: ``batch_size`` 不是正整数。

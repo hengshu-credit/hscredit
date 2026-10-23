@@ -11,6 +11,7 @@ API 参考
 .. toctree::
    :maxdepth: 3
 
+   conventions
    core
    modeling
    tooling

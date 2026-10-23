@@ -102,6 +102,7 @@ def _summary_method(
     :param method: IV、趋势和PSI共用的分箱方法，默认'quantile'（等频分箱）
     :param bin_params: 传给OptimalBinning的完整参数；显式参数优先于配置，配置优先于默认值。
         user_splits字典按原DataFrame字段名配置
+
     :return: 综合特征描述DataFrame或字典
 
     Example:
@@ -277,8 +278,7 @@ def _dataframe_save(
     writer_params: Optional[Dict] = None,
     **kwargs,
 ) -> Union[Tuple[int, int], ExcelWriter]:
-    """
-    将DataFrame保存到Excel文件或已有的ExcelWriter中。
+    """将DataFrame保存到Excel文件或已有的ExcelWriter中。
 
     :param excel_writer: 文件路径或ExcelWriter对象
     :param worksheet: 工作表对象（如果提供，将写入该worksheet而不保存文件）
@@ -500,8 +500,7 @@ def _series_save(
     writer_params: Optional[Dict] = None,
     **kwargs,
 ) -> Union[Tuple[int, int], ExcelWriter]:
-    """
-    将Series保存到Excel文件或已有的ExcelWriter中。
+    """将Series保存到Excel文件或已有的ExcelWriter中。
     Series会被转换为单列DataFrame（保留name作为列名）。
 
     :param excel_writer: 文件路径或ExcelWriter对象
@@ -590,6 +589,11 @@ class BinTableDisplay:
 
     提供链式调用接口，方便在 Jupyter 中展示美观的分箱表。
 
+    **参数**
+
+    :param df: 分箱统计表
+    :type df: pd.DataFrame
+
     **参考样例**
 
     >>> table = feature_bin_stats(data, 'score', target='target')
@@ -622,16 +626,26 @@ class BinTableDisplay:
     ) -> "BinTableDisplay":
         """展示美化的分箱表.
 
-        :param max_rows: 最大显示行数
-        :param highlight_iv: 是否高亮 IV 值
-        :param highlight_bad_rate: 是否高亮坏样本率
-        :param highlight_lift: 是否高亮 LIFT 值
-        :param highlight_ks: 是否高亮 KS 值
-        :param compact: 是否使用紧凑模式
-        :param precision: 自定义小数位数
-        :param index_as_bin: 是否将分箱作为索引显示
+        :param max_rows: 默认值为 ``None`` 。最大显示行数
+        :type max_rows: Optional[int]
+        :param highlight_iv: 默认值为 ``True`` 。是否高亮 IV 值
+        :type highlight_iv: bool
+        :param highlight_bad_rate: 默认值为 ``True`` 。是否高亮坏样本率
+        :type highlight_bad_rate: bool
+        :param highlight_lift: 默认值为 ``True`` 。是否高亮 LIFT 值
+        :type highlight_lift: bool
+        :param highlight_ks: 默认值为 ``True`` 。是否高亮 KS 值
+        :type highlight_ks: bool
+        :param compact: 默认值为 ``False`` 。是否使用紧凑模式
+        :type compact: bool
+        :param precision: 默认值为 ``None`` 。自定义小数位数
+        :type precision: Optional[Dict[str, int]]
+        :param index_as_bin: 默认值为 ``False`` 。是否将分箱作为索引显示
+        :type index_as_bin: bool
         :param percent_format: 是否将百分比相关列显示为百分比格式（默认True）
-        :param high_tech_style: 是否使用高科技/AI风格样式
+        :type percent_format: bool
+        :param high_tech_style: 默认值为 ``False`` 。是否使用高科技/AI风格样式
+        :type high_tech_style: bool
         :param kwargs: 其他参数
         :return: self，支持链式调用
         """
@@ -660,7 +674,9 @@ class BinTableDisplay:
         """高亮指定的分箱行.
 
         :param bins: 要高亮的分箱索引或索引列表
-        :param color: 高亮颜色
+        :type bins: Union[int, List[int]]
+        :param color: 默认值为 ``'#e3f2fd'`` 。高亮颜色
+        :type color: str
         :return: self，支持链式调用
         """
         if self._styler is None:
@@ -687,6 +703,7 @@ class BinTableDisplay:
         """导出为 HTML 文件.
 
         :param filename: 文件名
+        :type filename: str
         :return: self，支持链式调用
         """
         if self._styler is None:
@@ -718,7 +735,9 @@ class BinTableDisplay:
         """导出为 Excel 文件.
 
         :param filename: 文件名
-        :param sheet_name: 工作表名称
+        :type filename: str
+        :param sheet_name: 默认值为 ``'分箱统计'`` 。工作表名称
+        :type sheet_name: str
         :return: self，支持链式调用
         """
         if self._styler is None:
@@ -1087,16 +1106,27 @@ def style_bin_table(
     使用 pandas Styler 对分箱表进行格式化和高亮，使其在 Jupyter 中更易读。
 
     :param df: 分箱统计表 DataFrame
-    :param max_rows: 最大显示行数，None 表示显示全部
-    :param highlight_iv: 是否高亮 IV 值
-    :param highlight_bad_rate: 是否高亮坏样本率（进度条）
-    :param highlight_lift: 是否高亮 LIFT 值（进度条）
-    :param highlight_ks: 是否高亮 KS 值（进度条）
-    :param compact: 是否使用紧凑模式（隐藏部分列）
-    :param precision: 自定义小数位数，格式为 {'列名': 位数}
-    :param index_as_bin: 是否将分箱作为索引显示
+    :type df: pd.DataFrame
+    :param max_rows: 默认值为 ``None`` 。最大显示行数，None 表示显示全部
+    :type max_rows: Optional[int]
+    :param highlight_iv: 默认值为 ``True`` 。是否高亮 IV 值
+    :type highlight_iv: bool
+    :param highlight_bad_rate: 默认值为 ``True`` 。是否高亮坏样本率（进度条）
+    :type highlight_bad_rate: bool
+    :param highlight_lift: 默认值为 ``True`` 。是否高亮 LIFT 值（进度条）
+    :type highlight_lift: bool
+    :param highlight_ks: 默认值为 ``True`` 。是否高亮 KS 值（进度条）
+    :type highlight_ks: bool
+    :param compact: 默认值为 ``False`` 。是否使用紧凑模式（隐藏部分列）
+    :type compact: bool
+    :param precision: 默认值为 ``None`` 。自定义小数位数，格式为 {'列名': 位数}
+    :type precision: Optional[Dict[str, int]]
+    :param index_as_bin: 默认值为 ``False`` 。是否将分箱作为索引显示
+    :type index_as_bin: bool
     :param percent_format: 是否将百分比相关列显示为百分比格式（默认True）
-    :param high_tech_style: 是否使用高科技/AI风格样式
+    :type percent_format: bool
+    :param high_tech_style: 默认值为 ``False`` 。是否使用高科技/AI风格样式
+    :type high_tech_style: bool
     :return: 格式化后的 Styler 对象
 
     **参考样例**
@@ -1131,12 +1161,17 @@ def style_rule_table(
 
     :param df: 规则表 DataFrame，兼容两种来源：
 
-        - :meth:`ManualTreeExtractor.get_rule_table` / :meth:`report` 的报告格式
+        - :meth:`ManualTreeExtractor.get_rule_table`  /  :meth:`report`  的报告格式
           （节点编号、是否叶子、指标含义、样本总数、样本占比、坏样本率、LIFT值、…）
+
         - 旧版精简格式（节点编号、是否叶子、规则表达式、样本数、坏账率、LIFT值、…）
 
+    :type df: pd.DataFrame
+
     :param overall_badrate: 全局坏样本率（用于计算颜色梯度），默认从数据推断
-    :param precision: 自定义小数位数，格式为 {'列名': 位数}
+    :type overall_badrate: Optional[float]
+    :param precision: 默认值为 ``None`` 。自定义小数位数，格式为 {'列名': 位数}
+    :type precision: Optional[dict]
     :return: 格式化后的 Styler 对象
 
     **参考样例**
@@ -1354,13 +1389,21 @@ def register_extensions():
     """注册 pandas DataFrame/Series 扩展方法.
 
     在导入 hscredit 时自动调用，将以下方法添加到 pandas:
+
     - df.summary(): 综合特征描述统计
+
     - df.eda_info(): EDA基础信息
+
     - df.missing_analysis(): 缺失值分析
+
     - df.show(): 美化展示分箱表
+
     - df.save(): 保存到Excel
+
     - s.summary(): 单字段综合特征描述统计
+
     - s.save(): Series保存到Excel
+
     - df/s/groupby.hscredit.apply() / hscredit(...).apply(): 严格单次并行 apply
 
     幂等：重复调用不会重复注册（已存在同名属性时跳过）。导入 hscredit 时已自动执行，

@@ -20,12 +20,13 @@ def npv(rate, values):
     （NPV > 0 表示在该折现率下项目可接受）。
 
     .. note::
-        采用 ``numpy_financial`` 约定：``values[0]`` 位于第 0 期、**不折现**，
-        与 Excel ``NPV``（从第 1 期开始折现所有值）相差一个 ``(1+rate)`` 因子。
+        采用 ``numpy_financial`` 约定： ``values[0]`` 位于第 0 期、 **不折现** ，
+        与 Excel ``NPV`` （从第 1 期开始折现所有值）相差一个 ``(1+rate)`` 因子。
 
     :param rate: 每期折现率，小数表示（如 0.05 表示每期 5%）
-    :param values: 现金流序列（类数组），``values[0]`` 通常为初始投资（负值），
+    :param values: 现金流序列（类数组）， ``values[0]`` 通常为初始投资（负值），
         其后为各期回报
+
     :return: 净现值，正值表示在该折现率下项目盈利
 
     **参考样例**
@@ -37,7 +38,7 @@ def npv(rate, values):
 
     **引用**
 
-    对应 ``numpy_financial.npv``：
+    对应 ``numpy_financial.npv`` ：
     https://numpy.org/numpy-financial/latest/functions/npv.html
     """
     values = np.asarray(values)
@@ -64,6 +65,7 @@ def irr(values):
 
     :param values: 现金流序列（类数组），通常 ``values[0]`` 为初始投资（负值），
         且序列中至少各有一个正值与一个负值
+
     :return: 内部收益率（每期，小数表示）
     :raises ValueError: 现金流未同时包含正负值、无法确定搜索上界或迭代不收敛时抛出
 
@@ -76,7 +78,7 @@ def irr(values):
 
     **引用**
 
-    对应 ``numpy_financial.irr``：
+    对应 ``numpy_financial.irr`` ：
     https://numpy.org/numpy-financial/latest/functions/irr.html
     """
     values = np.asarray(values, dtype=float)
@@ -141,7 +143,7 @@ def mirr(values, finance_rate, reinvest_rate):
     复利至末期，负现金流按融资成本折现至初期，再由两者之比反解年化收益。相比 IRR
     更贴近真实资金成本，且对单变号以外的现金流也唯一。
 
-    公式：``MIRR = (FV(正现金流) / -PV(负现金流)) ** (1/(n-1)) - 1``，其中 ``n``
+    公式： ``MIRR = (FV(正现金流) / -PV(负现金流)) ** (1/(n-1)) - 1`` ，其中 ``n``
     为现金流期数。
 
     :param values: 现金流序列（类数组），需同时包含正值与负值
@@ -159,7 +161,7 @@ def mirr(values, finance_rate, reinvest_rate):
 
     **引用**
 
-    对应 Excel ``MIRR`` 与 ``numpy_financial.mirr``：
+    对应 Excel ``MIRR`` 与 ``numpy_financial.mirr`` ：
     https://numpy.org/numpy-financial/latest/functions/mirr.html
     """
     values = np.asarray(values)

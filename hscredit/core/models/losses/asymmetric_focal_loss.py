@@ -19,14 +19,23 @@ class AsymmetricFocalLoss(BaseLoss):
     从而更灵活地强调坏样本识别或抑制易分类好样本的影响。
 
     数学形式:
+
         - 正样本: -alpha * (1 - p)^gamma_pos * log(p)
+
         - 负样本: -(1 - alpha) * p^gamma_neg * log(1 - p)
 
+    **参数**
+
     :param alpha: 正样本权重，默认 0.25
+    :type alpha: float
     :param gamma_pos: 正样本聚焦参数，默认 2.0
+    :type gamma_pos: float
     :param gamma_neg: 负样本聚焦参数，默认 1.0
+    :type gamma_neg: float
     :param clip_value: 对负样本概率进行裁剪，抑制极端易分类负样本影响，默认 0.0
+    :type clip_value: float
     :param name: 损失函数名称，默认 "asymmetric_focal_loss"
+    :type name: str
 
     **参考样例**
 

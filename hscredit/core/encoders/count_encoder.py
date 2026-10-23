@@ -19,17 +19,48 @@ class CountEncoder(BaseEncoder):
 
     **参数**
 
-    :param features: 需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :param target: 默认值为 ``None`` 。scorecardpipeline风格的目标列名。计数编码器不使用此参数，仅为API一致性保留
+    :type target: Optional[str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param passthrough_target: 是否在转换结果中保留目标列，默认 ``False`` 。
+        ``True`` 仅用于需要目标列的表格分析；连接预测 Pipeline 时应保持 ``False`` ，避免标签进入模型。
+
+    :type passthrough_target: bool
+
+    :param features: 默认值为 ``None`` 。需要编码的列名列表。如果为None，则自动识别所有列（支持类别型和数值型）
+    :type features: Optional[List[str]]
     :param normalize: 是否返回频率而不是计数，默认为False
+    :type normalize: bool
     :param min_group_size: 将频次低于此值的类别合并为"其他"，默认为None
+    :type min_group_size: Optional[int]
     :param handle_unknown: 处理未知类别的方式，默认为'value'
+    :type handle_unknown: str
     :param handle_missing: 处理缺失值的方式，默认为'value'
+    :type handle_missing: str
     :param drop_invariant: 是否删除方差为0的列，默认为False
+    :type drop_invariant: bool
     :param return_df: 是否返回DataFrame，默认为True
+    :type return_df: bool
 
     **属性**
 
     - mapping_: 计数编码映射字典，格式为 {col: {category: count}}
+
     - total_count_: 总样本数
 
     **参考样例**
@@ -48,13 +79,13 @@ class CountEncoder(BaseEncoder):
 
     **注意**
 
-    计数/频率编码为无监督方法，不使用标签 ``y``，仅以类别出现频次反映其流行度，对高基数
+    计数/频率编码为无监督方法，不使用标签 ``y`` ，仅以类别出现频次反映其流行度，对高基数
     类别尤其紧凑；但不同类别若频次相同会被编码为同一值（信息混淆），必要时与其他编码并用。
 
     **引用**
 
     频率/计数编码（frequency / count encoding）是类别特征工程的常用基线方法，参见
-    category_encoders ``CountEncoder``：
+    category_encoders ``CountEncoder`` ：
     https://contrib.scikit-learn.org/category_encoders/count.html
     """
 

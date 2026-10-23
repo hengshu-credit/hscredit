@@ -74,20 +74,61 @@ class PSISelector(BaseFeatureSelector):
     常用于跨时间验证和oot验证。
 
     PSI值解释:
+
     - < 0.1: 特征稳定性好
+
     - 0.1 - 0.25: 特征有轻微变化，需要关注
+
     - > 0.25: 特征分布变化显著，需要处理
 
     **参数**
 
+    :param include: 默认值为 ``None`` 。强制保留的特征列表，这些特征无论如何都会被保留
+    :type include: Optional[List[str]]
+    :param exclude: 默认值为 ``None`` 。强制剔除的特征列表，这些特征无论如何都会被剔除
+    :type exclude: Optional[List[str]]
+    :param force_drop: 默认值为 ``None`` 。强制剔除的特征列表，效果与 exclude 合并
+    :type force_drop: Optional[List[str]]
+    :param binner: 默认值为 ``None`` 。可选的已配置分箱器实例，支持已训练或待训练状态，不接受分箱器类
+    :type binner: Optional[Any]
+    :param bin_params: 默认值为 ``None`` 。可选的 ``OptimalBinning`` 构造参数字典。未传入 ``binner`` 时
+        基类使用该字典创建分箱器；同时传入时 ``binner`` 优先
+
+    :type bin_params: Optional[Dict[str, Any]]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param target_rm: 默认False保留输入中的目标列；仅显式True时移除，不影响拟合时目标隔离
+    :type target_rm: bool
+
     :param threshold: PSI阈值，默认为0.25
+
         - 0.25: 移除PSI值达到或超过0.25的特征
-    :param n_splits: 交叉验证折数，用于计算PSI
-    :param oot_df: 可选的真实 OOT 对照集；传入时直接计算训练集与 OOT 的 PSI
+
+    :type threshold: float
+    :param n_splits: 默认值为 ``5`` 。交叉验证折数，用于计算PSI
+    :type n_splits: int
+    :param oot_df: 默认值为 ``None`` 。可选的真实 OOT 对照集；传入时直接计算训练集与 OOT 的 PSI
+    :type oot_df: Optional[pd.DataFrame]
     :param psi_bins: 连续变量分箱数，默认为10；低基数/类别变量按类别对齐
-    :param random_state: 未传 OOT 时交叉分折的随机种子
+    :type psi_bins: int
+    :param random_state: 默认值为 ``42`` 。未传 OOT 时交叉分折的随机种子
+    :type random_state: Optional[int]
     :param target: 目标变量列名，默认为'target'
-    :param n_jobs: 并行计算的任务数
+    :type target: str
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
 
     **参考样例**
 
@@ -105,7 +146,7 @@ class PSISelector(BaseFeatureSelector):
 
     **引用**
 
-    PSI（群体稳定性指标）公式 ``PSI = Σ (实际占比 - 预期占比) × ln(实际占比 / 预期占比)``，
+    PSI（群体稳定性指标）公式 ``PSI = Σ (实际占比 - 预期占比) × ln(实际占比 / 预期占比)`` ，
     经验阈值 <0.1 稳定、0.1~0.25 轻微漂移、>0.25 显著漂移，广泛用于信用评分的稳定性
     监控，参见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """

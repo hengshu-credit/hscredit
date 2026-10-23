@@ -100,6 +100,7 @@ def iv_rating(iv: float) -> str:
     """IV值评级.
 
     :param iv: IV值
+    :type iv: float
     :return: 评级字符串
     """
     for low, high, rating in IV_RATING:
@@ -112,6 +113,7 @@ def psi_rating(psi: float) -> str:
     """PSI值评级.
 
     :param psi: PSI值
+    :type psi: float
     :return: 评级字符串
     """
     if not np.isfinite(psi):
@@ -126,6 +128,7 @@ def vif_rating(vif: float) -> str:
     """VIF值评级.
 
     :param vif: VIF值
+    :type vif: float
     :return: 评级字符串
     """
     for low, high, rating in VIF_RATING:
@@ -138,6 +141,7 @@ def corr_rating(corr: float) -> str:
     """相关系数评级.
 
     :param corr: 相关系数绝对值
+    :type corr: float
     :return: 评级字符串
     """
     corr = abs(corr)
@@ -160,21 +164,33 @@ def infer_feature_types(
     """推断特征类型.
 
     默认严格按照实际数据类型判断，不做任何自动转换：
+
     - 数值类型（int/float）-> 'numerical'
+
     - 非数值类型（object/string/category）-> 'categorical'
+
     - 日期时间类型 -> 'datetime'
+
     - 常数特征 -> 'constant'
+
     - ID特征 -> 'id'
 
     仅当用户指定参数时才进行特殊处理：
+
     - numeric_as_categorical: 将指定的数值列视为 categorical
+
     - force_numeric: 将指定的列视为 numerical
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param categorical_threshold: 保留参数，不再用于默认类型判断
+    :type categorical_threshold: int
     :param unique_ratio_threshold: 保留参数，不再用于默认类型判断
-    :param numeric_as_categorical: 强制视为分类变量的数值列名列表
-    :param force_numeric: 强制视为数值变量的列名列表
+    :type unique_ratio_threshold: float
+    :param numeric_as_categorical: 默认值为 ``None`` 。强制视为分类变量的数值列名列表
+    :type numeric_as_categorical: Optional[List[str]]
+    :param force_numeric: 默认值为 ``None`` 。强制视为数值变量的列名列表
+    :type force_numeric: Optional[List[str]]
     :return: 特征类型字典 {特征名: 类型}
         类型包括: 'numerical', 'categorical', 'datetime', 'constant', 'id'
     """
@@ -231,8 +247,11 @@ def validate_dataframe(df: pd.DataFrame, required_cols: List[str] = None, check_
     """验证DataFrame.
 
     :param df: 输入数据
-    :param required_cols: 必需列名列表
-    :param check_empty: 是否检查空数据
+    :type df: pd.DataFrame
+    :param required_cols: 默认值为 ``None`` 。必需列名列表
+    :type required_cols: List[str]
+    :param check_empty: 默认值为 ``True`` 。是否检查空数据
+    :type check_empty: bool
     :raises ValueError: 验证失败时抛出
     """
     if not isinstance(df, pd.DataFrame):
@@ -251,6 +270,7 @@ def validate_binary_target(series: pd.Series) -> None:
     """验证二元目标变量.
 
     :param series: 目标变量
+    :type series: pd.Series
     :raises ValueError: 验证失败时抛出
     """
     if not set(series.dropna().unique()).issubset({0, 1}):
@@ -268,8 +288,11 @@ def safe_divide(
     """安全除法，避免除以0.
 
     :param numerator: 分子
+    :type numerator: Union[float, np.ndarray, pd.Series]
     :param denominator: 分母
-    :param default: 除数为0时的返回值
+    :type denominator: Union[float, np.ndarray, pd.Series]
+    :param default: 默认值为 ``0.0`` 。除数为0时的返回值
+    :type default: float
     :return: 除法结果
     """
     if isinstance(denominator, (np.ndarray, pd.Series)):
@@ -285,6 +308,7 @@ def calculate_gini(x: np.ndarray) -> float:
     """计算Gini系数.
 
     :param x: 输入数组
+    :type x: np.ndarray
     :return: Gini系数
     """
     x = np.array(x, dtype=float)
@@ -307,8 +331,11 @@ def remove_outliers_iqr(df: pd.DataFrame, columns: List[str], multiplier: float 
     """使用IQR方法移除异常值.
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :param columns: 数值列列表
-    :param multiplier: IQR倍数
+    :type columns: List[str]
+    :param multiplier: 默认值为 ``1.5`` 。IQR倍数
+    :type multiplier: float
     :return: 过滤后的数据
     """
     mask = pd.Series(True, index=df.index)
@@ -335,6 +362,7 @@ def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
     """减少DataFrame内存使用.
 
     :param df: 输入数据
+    :type df: pd.DataFrame
     :return: 优化后的数据
     """
     result = df.copy()

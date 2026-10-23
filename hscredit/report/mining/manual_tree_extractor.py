@@ -213,9 +213,11 @@ def _prepare_training_features(
 ) -> np.ndarray:
     """根据 sklearn 版本与 missing 参数准备训练特征矩阵。
 
-    - 指定 ``missing``：将缺失等价为该数值后训练（任意 sklearn 版本均可）；
+    - 指定 ``missing`` ：将缺失等价为该数值后训练（任意 sklearn 版本均可）；
+
     - 未指定且 sklearn 支持原生缺失（>=1.3）：保留缺失，交由决策树原生处理；
-    - 未指定且旧版 sklearn 且数据含缺失：抛出明确提示，引导设置 ``missing``。
+
+    - 未指定且旧版 sklearn 且数据含缺失：抛出明确提示，引导设置 ``missing`` 。
 
     :param data: 训练数据（已过滤目标缺失）
     :param feature_list: 特征列
@@ -244,14 +246,16 @@ def _resolve_fit_data(
 ) -> Tuple[pd.DataFrame, List[str]]:
     """统一解析 sklearn 风格 (X, y) 与 scorecardpipeline 风格 (df) 两种调用方式。
 
-    - ``y`` 不为 None：sklearn 风格，``X`` 为特征矩阵（DataFrame 或 ndarray），
+    - ``y`` 不为 None：sklearn 风格， ``X`` 为特征矩阵（DataFrame 或 ndarray），
       ``y`` 为目标变量，目标列由 ``y`` 提供；
-    - ``y`` 为 None：scorecardpipeline 风格，``X`` 为含目标列的 DataFrame，从中提取目标。
+
+    - ``y`` 为 None：scorecardpipeline 风格， ``X`` 为含目标列的 DataFrame，从中提取目标。
 
     :param X: 特征矩阵或含目标列的 DataFrame
     :param y: 目标变量（可选）；传入时优先按 sklearn 风格解析
     :param features: 特征名列表（可选）。未指定时：scorecardpipeline 风格取除目标外的
         数值列；sklearn 风格的 DataFrame 取全部列，ndarray 取 ``feature_0`` 等默认名
+
     :param target: 目标列名
     :return: ``(含目标列的 DataFrame, 特征名列表)``
     :raises InputValidationError: 入参不满足任一风格时
@@ -308,18 +312,20 @@ def _rule_generator(clf, feature_name_list: List[str], missing: Optional[float] 
     :param feature_name_list: 特征名列表
     :param missing: 缺失值的等价填充数值（可选），按 sklearn 版本自动适配：
 
-        - ``None``（默认）：新版 sklearn（>=1.3）读取 ``tree_.missing_go_to_left``
+        - ``None`` （默认）：新版 sklearn（>=1.3）读取 ``tree_.missing_go_to_left``
           按决策树学到的方向路由缺失；旧版 sklearn 无原生缺失支持，按"缺失走右"
           （与 pandas eval 中 ``NaN`` 比较恒为 False、人工分裂缺失归右一致）。
+
         - 数值：将缺失等价为该数值参与比较（如训练前已将缺失填充为 -999，则传入
-          ``missing=-999``），按该数值是否满足各分裂条件决定缺失样本流向，
+          ``missing=-999`` ），按该数值是否满足各分裂条件决定缺失样本流向，
           适用于不支持原生缺失的旧版 sklearn。
+
     :return: 规则 DataFrame，含列：
         node / if_leaf / rule_list / node_path / node_samples / node_value / impurity
 
     .. note::
         当某节点缺失样本被路由到当前路径方向时，对应条件追加 ``| (特征 != 特征)``
-        （``NaN != NaN`` 为 True，用于在 pandas eval 中识别缺失），确保规则在数据集
+        （ ``NaN != NaN`` 为 True，用于在 pandas eval 中识别缺失），确保规则在数据集
         上的命中样本数与决策树节点样本数完全一致。
     """
     children_left = list(clf.tree_.children_left)
@@ -756,17 +762,17 @@ def _node_hit_report(
     parallel_config=None,
     **kwargs: Any,
 ) -> pd.DataFrame:
-    """对单个数据集，汇总每个节点规则 :meth:`Rule.report` 中"命中"分箱的结果行。
+    """对单个数据集，汇总每个节点规则  :meth:`Rule.report`  中"命中"分箱的结果行。
 
-    供 :class:`DecisionTreeAnalyzer` 和 :class:`ManualTreeExtractor` 的 ``report()`` 方法共用。
+    供  :class:`DecisionTreeAnalyzer`  和  :class:`ManualTreeExtractor`  的 ``report()`` 方法共用。
 
     :param df_rules: 规则 DataFrame（含 node / if_leaf / rule_list 列）
-    :param format_rule: 将 rule_list 解析为 :class:`Rule` 对象的函数（空规则返回 None）
+    :param format_rule: 将 rule_list 解析为  :class:`Rule`  对象的函数（空规则返回 None）
     :param data: 待评估数据集
     :param target: 目标变量列名
-    :param overdue: 逾期天数字段名，参考 :meth:`Rule.report`
-    :param dpds: 逾期定义方式，参考 :meth:`Rule.report`
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+    :param overdue: 逾期天数字段名，参考  :meth:`Rule.report`
+    :param dpds: 逾期定义方式，参考  :meth:`Rule.report`
+    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
     :param leaf_only: 是否仅评估叶子节点
     :return: 各节点效果评估 DataFrame
     """
@@ -909,10 +915,43 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
     **参数**
 
-    :param target: 目标变量列名（0=好样本，1=坏样本）
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+
+    :param missing: 缺失值的等价填充数值（可选），按 sklearn 版本自动适配缺失处理。
+        ``None`` （默认）时：新版 sklearn（>=1.3）按决策树学到的缺失值路由方向处理；
+        旧版 sklearn 无原生缺失支持，含缺失数据需传入本参数。传入数值时，训练/预测/
+        规则评估均将缺失等价为该数值，使规则命中样本数与决策树节点样本数完全一致，
+        并兼容不支持原生缺失的旧版 sklearn（例如训练前已将缺失填充为 -999，则传入
+        ``missing=-999`` ）。
+
+    :type missing: Optional[float]
+
+    :param target: 默认值为 ``'target'`` 。目标变量列名（0=好样本，1=坏样本）
+    :type target: str
     :param features: 特征名或特征名列表（默认自动从数据中推断数值列）
-    :param feature_map: 字段名到字段含义的映射，用于节点规则报告展示
+    :type features: FeatureNames
+    :param feature_map: 默认值为 ``None`` 。字段名到字段含义的映射，用于节点规则报告展示
+    :type feature_map: Optional[Dict[str, str]]
     :param tree_params: 决策树参数字典，默认值如下：
+
+    ::
 
         ============ ================================
         参数          默认值
@@ -924,6 +963,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         min_samples_leaf   1
         random_state  0
         ============ ================================
+
+
+    :type tree_params: Optional[Dict[str, Any]]
 
     **参考样例**
 
@@ -970,11 +1012,12 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             ============ ================================
 
         :param missing: 缺失值的等价填充数值（可选），按 sklearn 版本自动适配缺失处理。
-            ``None``（默认）时：新版 sklearn（>=1.3）按决策树学到的缺失值路由方向处理；
+            ``None`` （默认）时：新版 sklearn（>=1.3）按决策树学到的缺失值路由方向处理；
             旧版 sklearn 无原生缺失支持，含缺失数据需传入本参数。传入数值时，训练/预测/
             规则评估均将缺失等价为该数值，使规则命中样本数与决策树节点样本数完全一致，
             并兼容不支持原生缺失的旧版 sklearn（例如训练前已将缺失填充为 -999，则传入
-            ``missing=-999``）。
+            ``missing=-999`` ）。
+
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`min_weight_fraction_leaf=0.1` 等。
         """
@@ -1092,17 +1135,20 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         支持两种 API 风格：
 
-        - **sklearn 风格**：``fit(X, y)``，``X`` 为特征矩阵（DataFrame/ndarray），``y`` 为标签；
-        - **scorecardpipeline 风格**：``fit(df, features=[...])``，``df`` 含目标列，
+        - **sklearn 风格** ： ``fit(X, y)`` ， ``X`` 为特征矩阵（DataFrame/ndarray）， ``y`` 为标签；
+
+        - **scorecardpipeline 风格** ： ``fit(df, features=[...])`` ， ``df`` 含目标列，
           目标列名由初始化 ``target`` 指定。
 
         :param X: 特征矩阵（sklearn 风格）或含目标列的 DataFrame（scorecardpipeline 风格）
         :param y: 目标变量（可选）；传入时按 sklearn 风格解析，优先于 ``X`` 中的目标列
         :param features: 特征名或特征名列表（默认：scorecardpipeline 风格取除 target 外的数值列，
-            未指定时回退到构造参数 ``features``）
+            未指定时回退到构造参数 ``features`` ）
+
         :param tree_params: 决策树参数字典（与构造参数合并，覆盖默认参数）
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             优先级最高，会覆盖默认参数、tree_params 和构造参数中的同名值。
+
         :return: self
 
         **参考样例**
@@ -1154,6 +1200,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         """预测类别标签。
 
         :param df: 待预测数据（默认使用训练数据）
+        :type df: Optional[pd.DataFrame]
         :return: 预测结果数组
         """
         self._check_fitted()
@@ -1165,6 +1212,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         """预测类别概率。
 
         :param df: 待预测数据（默认使用训练数据）
+        :type df: Optional[pd.DataFrame]
         :return: 类别概率数组，形状 (n_samples, n_classes)
         """
         self._check_fitted()
@@ -1176,6 +1224,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         """返回每个样本所属叶子节点的编号。
 
         :param df: 待评估数据（默认使用训练数据）
+        :type df: Optional[pd.DataFrame]
         :return: 叶子节点编号数组
 
         **参考样例**
@@ -1203,7 +1252,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         支持多种评估指标，计算训练集及多个测试集的指标值。
 
         :param test_data_list: 测试数据集列表，元素为 (数据集名称, DataFrame)
-        :param metric_type: 评估指标类型
+        :type test_data_list: List[Tuple[str, pd.DataFrame]]
+        :param metric_type: 默认值为 ``'auc'`` 。评估指标类型
 
             ========= ==========================================
             类型       说明
@@ -1214,7 +1264,10 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             'top'     top客群坏样本率（与 lift 等价）
             ========= ==========================================
 
+        :type metric_type: str
+
         :param top_rate: lift/top 指标计算时取 top 的比例（默认 10%）
+        :type top_rate: float
         :return: 评估结果列表，元素为 (数据集名称, 指标值)
 
         **参考样例**
@@ -1273,23 +1326,33 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估决策树各节点规则的效果。
 
-        对每个节点（含分裂节点和叶子节点），将其规则路径解析为 :class:`Rule` 对象，
-        直接调用 :meth:`Rule.report` 计算统计指标，取其中"命中"分箱对应的结果行汇总，
+        对每个节点（含分裂节点和叶子节点），将其规则路径解析为  :class:`Rule`  对象，
+        直接调用  :meth:`Rule.report`  计算统计指标，取其中"命中"分箱对应的结果行汇总，
         得到各节点在新数据上的效果报告。
 
         **参数**
 
         :param datasets: 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
-        :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target``）
-        :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，
-            支持多标签多DPD联合分析），参考 :meth:`Rule.report`
+
+        :type datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]
+        :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target`` ）
+        :type target: Optional[TargetInput]
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本
+            支持多标签多DPD联合分析），参考  :meth:`Rule.report`
+
+        :type overdue: Optional[Union[str, List[str]]]
         :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），默认为0；
-            传入列表时支持多DPD联合分析，参考 :meth:`Rule.report`
-        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+            传入列表时支持多DPD联合分析，参考  :meth:`Rule.report`
+
+        :type dpds: Optional[Union[int, List[int]]]
+        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :type del_grey: bool
         :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
-        :param feature_map: 字段名到字段含义的映射，显式传入时覆盖构造参数
-        :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
+        :type leaf_only: bool
+        :param feature_map: 默认值为 ``None`` 。字段名到字段含义的映射，显式传入时覆盖构造参数
+        :type feature_map: Optional[Dict[str, str]]
+        :param kwargs: 其余传递给  :meth:`Rule.report`  的参数（如 ``amount`` 、 ``margins`` ）
         :return: 各节点效果评估表（DataFrame），结构与输入一致：
             单个 DataFrame 输入返回单个 DataFrame，列表输入返回 DataFrame 列表，
             字典输入返回 ``{名称: DataFrame}`` 字典
@@ -1302,10 +1365,12 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         >>> # 多标签（逾期天数）联合分析
         >>> result = fitter.report(df_test, overdue=['MOB1'], dpds=[7, 3, 0])
 
-        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
             满足比较条件记为坏样本(1)，否则为好样本(0)。
-            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+        :type overdue_operator: str
         """
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
@@ -1431,21 +1496,27 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     ) -> pd.DataFrame:
         """获取决策树所有节点（分裂节点+叶子节点）的规则效果表。
 
-        从每个节点提取规则路径，解析为 :class:`Rule` 对象后调用 :meth:`Rule.report`
+        从每个节点提取规则路径，解析为  :class:`Rule`  对象后调用  :meth:`Rule.report`
         在数据集上计算命中效果，取其中"命中"分箱对应的结果行汇总。各节点统计口径
-        与 :meth:`report` 完全一致（均基于规则在数据集上的真实命中情况计算，而非
+        与  :meth:`report`  完全一致（均基于规则在数据集上的真实命中情况计算，而非
         读取决策树内部存储的节点样本统计），便于与人工分裂结果横向对比。
 
         **参数**
 
         :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
-        :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target``）
-        :param overdue: 逾期天数字段名，参考 :meth:`Rule.report`
-        :param dpds: 逾期定义方式，参考 :meth:`Rule.report`
-        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+        :type datasets: Optional[pd.DataFrame]
+        :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target`` ）
+        :type target: Optional[TargetInput]
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名，参考  :meth:`Rule.report`
+        :type overdue: Optional[Union[str, List[str]]]
+        :param dpds: 默认值为 ``None`` 。逾期定义方式，参考  :meth:`Rule.report`
+        :type dpds: Optional[Union[int, List[int]]]
+        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :type del_grey: bool
         :param leaf_only: 是否仅返回叶子节点，默认 False
-        :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
-        :return: 规则效果表，列结构与 :meth:`report` 一致（节点编号、是否叶子、
+        :type leaf_only: bool
+        :param kwargs: 其余传递给  :meth:`Rule.report`  的参数（如 ``amount`` 、 ``margins`` ）
+        :return: 规则效果表，列结构与  :meth:`report`  一致（节点编号、是否叶子、
             规则分类、指标名称、指标含义、分箱、样本总数、样本占比、好样本数、
             坏样本数、坏样本率、LIFT值、坏账改善、风险拒绝比等）
 
@@ -1454,10 +1525,12 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         >>> table = fitter.get_rule_table()            # 在训练数据上评估
         >>> table = fitter.get_rule_table(df_test)     # 在新数据上评估
 
-        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
             满足比较条件记为坏样本(1)，否则为好样本(0)。
-            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+        :type overdue_operator: str
         """
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
@@ -1494,15 +1567,17 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         return " 且 ".join(parts)
 
     def _format_rule(self, rule_list: List) -> Optional[Rule]:
-        """将规则列表解析为 :class:`Rule` 对象。
+        """将规则列表解析为  :class:`Rule`  对象。
 
-        - ``expr``：pandas eval 表达式（用于 predict / report 等规则评估）
-        - ``name`` / ``description``：可读的中文规则串（用于表格展示）
+        - ``expr`` ：pandas eval 表达式（用于 predict / report 等规则评估）
+
+        - ``name`` / ``description`` ：可读的中文规则串（用于表格展示）
 
         根节点对应的空规则返回 None。
 
         :param rule_list: 规则列表，元素为 ``[特征名, 操作符, 阈值, 是否含缺失]``
             （第 4 个元素标记该条件是否需纳入缺失样本，由决策树缺失值路由方向决定）
+
         :return: 解析得到的 Rule 对象；空规则返回 None
         """
         if not rule_list:
@@ -1515,7 +1590,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         """将规则列表转换为 pandas eval 表达式。
 
         当规则需纳入缺失样本时（决策树将缺失值路由到当前路径方向），对应条件追加
-        ``| (特征 != 特征)``（NaN != NaN 为 True，用于在 pandas eval 中识别缺失），
+        ``| (特征 != 特征)`` （NaN != NaN 为 True，用于在 pandas eval 中识别缺失），
         确保命中样本数与决策树节点样本数完全一致。
         """
         if not rule_list:
@@ -1543,9 +1618,12 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     ) -> str:
         """导出决策树为 DOT 格式。
 
-        :param out_file: 输出 .dot 文件路径（可选，指定时同时写入文件）
-        :param max_depth: 最大显示深度（None=全部显示）
+        :param out_file: 默认值为 ``None`` 。输出 .dot 文件路径（可选，指定时同时写入文件）
+        :type out_file: Optional[str]
+        :param max_depth: 默认值为 ``None`` 。最大显示深度（None=全部显示）
+        :type max_depth: Optional[int]
         :param class_names: 类别名列表，默认 ['好', '坏']
+        :type class_names: Optional[List[str]]
         :return: DOT 格式字符串
 
         **参考样例**
@@ -1574,10 +1652,13 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     ) -> Any:
         """绘制当前决策树结构。
 
-        :param backend: 渲染后端，可选 ``matplotlib`` / ``pyecharts`` / ``graphviz``
-        :param save: 保存路径（可选）
-        :param title: 图表标题
-        :param kwargs: 其余参数透传给 :func:`hscredit.core.viz.plot_tree`
+        :param backend: 默认值为 ``'matplotlib'`` 。渲染后端，可选 ``matplotlib`` / ``pyecharts`` / ``graphviz``
+        :type backend: str
+        :param save: 默认值为 ``None`` 。保存路径（可选）
+        :type save: Optional[str]
+        :param title: 默认值为 ``''`` 。图表标题
+        :type title: str
+        :param kwargs: 其余参数透传给  :func:`hscredit.core.viz.plot_tree`
         :return: matplotlib Figure / pyecharts Chart / graphviz Source
 
         **参考样例**
@@ -1600,7 +1681,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         """将决策树保存为 pickle 文件。
 
         :param file_path: 保存路径
+        :type file_path: str
         :param include_data: 是否包含训练数据（默认 True，保存后可直接 load 并 evaluate）
+        :type include_data: bool
 
         **参考样例**
 
@@ -1625,6 +1708,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         """从 pickle 文件加载决策树。
 
         :param file_path: 模型文件路径
+        :type file_path: str
         :return: 加载后的 DecisionTreeAnalyzer 实例
 
         **参考样例**
@@ -1673,24 +1757,54 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 class ManualTreeExtractor(ParallelizableMixin):
     """人工决策树提取器。
 
-    支持对 sklearn 决策树进行**人工指定分裂节点**后重新训练，
+    支持对 sklearn 决策树进行 **人工指定分裂节点** 后重新训练，
     适合将业务经验注入数据驱动模型。
 
     核心流程：
+
     1. 用数据训练一棵基础决策树（或直接指定特征/阈值）
+
     2. 人工在指定节点分裂（manual_split），指定特征和阈值
+
     3. 获取规则表或在新数据集上评估效果
 
     **参数**
 
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Optional[Union[int, float]]
+
     :param target: 目标变量列名（坏样本标签，0=好，1=坏），默认 'target'
+    :type target: str
     :param max_depth: 树的最大深度，默认 2
+    :type max_depth: int
     :param min_samples_split: 分裂节点最小样本数，默认 10
+    :type min_samples_split: int
     :param min_samples_leaf: 叶子节点最小样本数，默认 5
+    :type min_samples_leaf: int
     :param random_state: 随机种子，默认 0
+    :type random_state: int
     :param features: 参与建树的字段名或字段名列表，默认None（自动推断数值字段）
-    :param feature_map: 字段名到字段含义的映射，用于节点规则报告展示
-    :param missing: 缺失值的等价填充数值（可选），参考 :class:`DecisionTreeAnalyzer`
+    :type features: FeatureNames
+    :param feature_map: 默认值为 ``None`` 。字段名到字段含义的映射，用于节点规则报告展示
+    :type feature_map: Optional[Dict[str, str]]
+    :param missing: 默认值为 ``None`` 。缺失值的等价填充数值（可选），参考  :class:`DecisionTreeAnalyzer`
+    :type missing: Optional[float]
 
     **参考样例**
 
@@ -1730,10 +1844,11 @@ class ManualTreeExtractor(ParallelizableMixin):
         :param min_samples_leaf: 叶子节点最小样本数，默认 5
         :param random_state: 随机种子，默认 0
         :param missing: 缺失值的等价填充数值（可选），按 sklearn 版本自动适配缺失处理。
-            ``None``（默认）时：新版 sklearn（>=1.3）按决策树学到的缺失值路由方向处理；
+            ``None`` （默认）时：新版 sklearn（>=1.3）按决策树学到的缺失值路由方向处理；
             旧版 sklearn 无原生缺失支持，含缺失数据需传入本参数。传入数值时，训练/分裂/
             规则评估均将缺失等价为该数值，使规则命中样本数与决策树节点样本数完全一致，
             并兼容不支持原生缺失的旧版 sklearn。
+
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`criterion='entropy'` 等。
         """
@@ -1778,9 +1893,13 @@ class ManualTreeExtractor(ParallelizableMixin):
         **参数**
 
         :param clf: 已训练的 sklearn DecisionTreeClassifier
+        :type clf: DecisionTreeClassifier
         :param features: 特征名列表（默认从 clf.feature_names_in_ 推断）
+        :type features: Optional[List[str]]
         :param target: 目标变量名（仅用于存储，不参与训练），默认 'target'
-        :param missing: 缺失值的等价填充数值（可选），参考 :class:`DecisionTreeAnalyzer`
+        :type target: Optional[TargetInput]
+        :param missing: 默认值为 ``None`` 。缺失值的等价填充数值（可选），参考  :class:`DecisionTreeAnalyzer`
+        :type missing: Optional[float]
         :return: ManualTreeExtractor 实例（已 fitted 状态）
 
         **参考样例**
@@ -1877,21 +1996,24 @@ class ManualTreeExtractor(ParallelizableMixin):
         使用数据训练一棵标准 sklearn 决策树。后续可通过 manual_split
         在指定节点人工干预分裂。支持两种 API 风格：
 
-        - **sklearn 风格**：``fit(X, y)``，``X`` 为特征矩阵（DataFrame/ndarray），``y`` 为标签；
-        - **scorecardpipeline 风格**：``fit(df, features=[...])``，``df`` 含目标列，
+        - **sklearn 风格** ： ``fit(X, y)`` ， ``X`` 为特征矩阵（DataFrame/ndarray）， ``y`` 为标签；
+
+        - **scorecardpipeline 风格** ： ``fit(df, features=[...])`` ， ``df`` 含目标列，
           目标列名由初始化 ``target`` 指定。
 
         **参数**
 
         :param X: 特征矩阵（sklearn 风格）或含目标列的 DataFrame（scorecardpipeline 风格）
         :param y: 目标变量（可选）；传入时按 sklearn 风格解析，优先于 ``X`` 中的目标列
-        :param features: 特征名或特征名列表（默认回退到构造参数 ``features``，
+        :param features: 特征名或特征名列表（默认回退到构造参数 ``features`` ，
             两者均未传入时使用除 target 外的所有数值列）
+
         :param max_depth: 树最大深度（覆盖构造参数）
         :param min_samples_split: 分裂最小样本数（覆盖构造参数）
         :param min_samples_leaf: 叶子最小样本数（覆盖构造参数）
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             优先级最高，会覆盖默认参数和构造参数中的同名值。
+
         :return: self
 
         **参考样例**
@@ -1990,9 +2112,14 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         :param data: 用于计算分裂阈值的数据集（需包含分裂特征与目标列）。可直接传入
             原始训练数据，方法会根据 node 的当前路径自动筛选该节点命中的样本
+
+        :type data: pd.DataFrame
         :param feature: 分裂特征名
-        :param threshold: 分裂阈值（None=自动计算最优阈值）
+        :type feature: str
+        :param threshold: 默认值为 ``None`` 。分裂阈值（None=自动计算最优阈值）
+        :type threshold: Optional[float]
         :param node: 分裂的节点 ID，默认 0（根节点）
+        :type node: int
         :return: self
 
         **参考样例**
@@ -2113,7 +2240,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         """按当前树结构中 node 的路径规则筛选节点样本。
 
         根节点直接返回原始数据；非根节点使用当前 ``_df_rules`` 中对应节点的
-        ``rule_list`` 转成 :class:`Rule` 后预测命中样本。这样 ``manual_split`` 可以
+        ``rule_list`` 转成  :class:`Rule`  后预测命中样本。这样 ``manual_split`` 可以
         每次传入原始训练数据，节点样本口径仍与 ``get_rule_table`` / ``report`` 一致。
         """
         if node == 0:
@@ -2135,6 +2262,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         **参数**
 
         :param node: 待删除的节点 ID
+        :type node: int
         :return: self
 
         **参考样例**
@@ -2196,8 +2324,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         """用训练数据按各节点规则命中重算 n_node_samples / value（好坏样本数）。
 
         人工分裂会按目标节点路径筛选样本并确定阈值，但节点统计应按全量训练数据沿该路径的
-        命中情况计算，从而与 :meth:`get_rule_table`（基于 :meth:`Rule.report`）及
-        决策树可视化保持完全一致。无训练数据（如 :meth:`from_sklearn`）时跳过。
+        命中情况计算，从而与  :meth:`get_rule_table` （基于  :meth:`Rule.report` ）及
+        决策树可视化保持完全一致。无训练数据（如  :meth:`from_sklearn` ）时跳过。
         """
         if self._data is None or self._tree_info is None or self._df_rules is None:
             return
@@ -2253,15 +2381,17 @@ class ManualTreeExtractor(ParallelizableMixin):
         return " 且 ".join(parts)
 
     def _format_rule(self, rule_list: List) -> Optional[Rule]:
-        """将规则列表解析为 :class:`Rule` 对象。
+        """将规则列表解析为  :class:`Rule`  对象。
 
-        - ``expr``：pandas eval 表达式（用于 predict / report 等规则评估）
-        - ``name`` / ``description``：可读的中文规则串（用于表格展示）
+        - ``expr`` ：pandas eval 表达式（用于 predict / report 等规则评估）
+
+        - ``name`` / ``description`` ：可读的中文规则串（用于表格展示）
 
         根节点对应的空规则返回 None。
 
         :param rule_list: 规则列表，元素为 ``[特征名, 操作符, 阈值, 是否含缺失]``
             （第 4 个元素标记该条件是否需纳入缺失样本，由决策树缺失值路由方向决定）
+
         :return: 解析得到的 Rule 对象；空规则返回 None
         """
         if not rule_list:
@@ -2288,27 +2418,34 @@ class ManualTreeExtractor(ParallelizableMixin):
     ) -> pd.DataFrame:
         """获取当前树各节点规则在数据集上的效果表。
 
-        从树的每个节点提取规则路径，解析为 :class:`Rule` 对象后调用 :meth:`Rule.report`
+        从树的每个节点提取规则路径，解析为  :class:`Rule`  对象后调用  :meth:`Rule.report`
         在数据集上计算命中效果，取其中"命中"分箱对应的结果行汇总。这样人工分裂节点与
         自动分裂节点的统计口径完全一致（均基于规则在数据集上的真实命中情况计算，而非
-        读取决策树内部存储的节点样本统计），与 :meth:`report` 输出格式保持一致。
+        读取决策树内部存储的节点样本统计），与  :meth:`report`  输出格式保持一致。
 
         **参数**
 
         :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
-        :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target``）
-        :param overdue: 逾期天数字段名，参考 :meth:`Rule.report`
-        :param dpds: 逾期定义方式，参考 :meth:`Rule.report`
-        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+        :type datasets: Optional[pd.DataFrame]
+        :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target`` ）
+        :type target: Optional[TargetInput]
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名，参考  :meth:`Rule.report`
+        :type overdue: Optional[Union[str, List[str]]]
+        :param dpds: 默认值为 ``None`` 。逾期定义方式，参考  :meth:`Rule.report`
+        :type dpds: Optional[Union[int, List[int]]]
+        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :type del_grey: bool
         :param leaf_only: 是否仅返回叶子节点，默认 False
-        :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
-        :return: 规则效果表，列结构与 :meth:`report` 一致（节点编号、是否叶子、
+        :type leaf_only: bool
+        :param kwargs: 其余传递给  :meth:`Rule.report`  的参数（如 ``amount`` 、 ``margins`` ）
+        :return: 规则效果表，列结构与  :meth:`report`  一致（节点编号、是否叶子、
             规则分类、指标名称、指标含义、分箱、样本总数、样本占比、好样本数、
             坏样本数、坏样本率、LIFT值、坏账改善、风险拒绝比等）。其中（参考
-            :meth:`Rule.report` 的口径，将命中节点的样本视为"拒绝"客群）：
+            :meth:`Rule.report`  的口径，将命中节点的样本视为"拒绝"客群）：
 
-            - **坏账改善** = (整体坏账率 - 拒绝后剩余客群坏账率) / 整体坏账率
-            - **风险拒绝比** = 坏账改善 / 样本占比
+            - **坏账改善**  = (整体坏账率 - 拒绝后剩余客群坏账率) / 整体坏账率
+
+            - **风险拒绝比**  = 坏账改善 / 样本占比
 
         **参考样例**
 
@@ -2316,10 +2453,12 @@ class ManualTreeExtractor(ParallelizableMixin):
         >>> print(ext.get_rule_table())          # 在训练数据上评估
         >>> print(ext.get_rule_table(df_test))   # 在新数据上评估
 
-        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
             满足比较条件记为坏样本(1)，否则为好样本(0)。
-            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+        :type overdue_operator: str
         """
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
@@ -2348,10 +2487,13 @@ class ManualTreeExtractor(ParallelizableMixin):
     ) -> Any:
         """绘制当前人工决策树结构。
 
-        :param backend: 渲染后端，可选 ``matplotlib`` / ``pyecharts`` / ``graphviz``
-        :param save: 保存路径（可选）
-        :param title: 图表标题
-        :param kwargs: 其余参数透传给 :func:`hscredit.core.viz.plot_tree`
+        :param backend: 默认值为 ``'matplotlib'`` 。渲染后端，可选 ``matplotlib`` / ``pyecharts`` / ``graphviz``
+        :type backend: str
+        :param save: 默认值为 ``None`` 。保存路径（可选）
+        :type save: Optional[str]
+        :param title: 默认值为 ``''`` 。图表标题
+        :type title: str
+        :param kwargs: 其余参数透传给  :func:`hscredit.core.viz.plot_tree`
         :return: matplotlib Figure / pyecharts Chart / graphviz Source
 
         **参考样例**
@@ -2371,10 +2513,10 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         每次调用都会根据当前树结构重新生成，确保 manual_split / delete_node 后显示最新状态。
 
-        决策树图使用 :func:`hscredit.core.viz.plot_tree_matplotlib`（AntV G6 卡片式风格）
+        决策树图使用  :func:`hscredit.core.viz.plot_tree_matplotlib` （AntV G6 卡片式风格）
         绘制：卡片节点 + 主题色标题栏 + 节点指标，按坏账率从浅蓝（低风险）到浅红（高风险）
         着色，人工修改节点（manual_split）使用副主题色边框标记。规则表使用
-        :func:`style_rule_table` 美化展示。
+        :func:`style_rule_table`  美化展示。
 
         **参考样例**
 
@@ -2426,23 +2568,33 @@ class ManualTreeExtractor(ParallelizableMixin):
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估当前树各节点规则的效果。
 
-        对每个节点（含分裂节点和叶子节点），将其规则路径解析为 :class:`Rule` 对象，
-        直接调用 :meth:`Rule.report` 计算统计指标，取其中"命中"分箱对应的结果行汇总，
+        对每个节点（含分裂节点和叶子节点），将其规则路径解析为  :class:`Rule`  对象，
+        直接调用  :meth:`Rule.report`  计算统计指标，取其中"命中"分箱对应的结果行汇总，
         得到各节点在新数据上的效果报告。
 
         **参数**
 
         :param datasets: 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
-        :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target``）
-        :param overdue: 逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，
-            支持多标签多DPD联合分析），参考 :meth:`Rule.report`
+
+        :type datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]
+        :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target`` ）
+        :type target: Optional[TargetInput]
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本
+            支持多标签多DPD联合分析），参考  :meth:`Rule.report`
+
+        :type overdue: Optional[Union[str, List[str]]]
         :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），默认为0；
-            传入列表时支持多DPD联合分析，参考 :meth:`Rule.report`
-        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+            传入列表时支持多DPD联合分析，参考  :meth:`Rule.report`
+
+        :type dpds: Optional[Union[int, List[int]]]
+        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :type del_grey: bool
         :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
-        :param feature_map: 字段名到字段含义的映射，显式传入时覆盖构造参数
-        :param kwargs: 其余传递给 :meth:`Rule.report` 的参数（如 ``amount``、``margins``）
+        :type leaf_only: bool
+        :param feature_map: 默认值为 ``None`` 。字段名到字段含义的映射，显式传入时覆盖构造参数
+        :type feature_map: Optional[Dict[str, str]]
+        :param kwargs: 其余传递给  :meth:`Rule.report`  的参数（如 ``amount`` 、 ``margins`` ）
         :return: 各节点效果评估表（DataFrame），结构与输入一致：
             单个 DataFrame 输入返回单个 DataFrame，列表输入返回 DataFrame 列表，
             字典输入返回 ``{名称: DataFrame}`` 字典
@@ -2455,10 +2607,12 @@ class ManualTreeExtractor(ParallelizableMixin):
         >>> # 多标签（逾期天数）联合分析
         >>> result = ext.report(df_test, overdue=['MOB1'], dpds=[7, 3, 0])
 
-        :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+        :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
             满足比较条件记为坏样本(1)，否则为好样本(0)。
-            ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+            ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+        :type overdue_operator: str
         """
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
@@ -2564,7 +2718,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         """将规则列表转换为 pandas eval 表达式。
 
         当规则需纳入缺失样本时（决策树将缺失值路由到当前路径方向），对应条件追加
-        ``| (特征 != 特征)``（NaN != NaN 为 True，用于在 pandas eval 中识别缺失），
+        ``| (特征 != 特征)`` （NaN != NaN 为 True，用于在 pandas eval 中识别缺失），
         确保命中样本数与决策树节点样本数完全一致。
         """
         if not rule_list:

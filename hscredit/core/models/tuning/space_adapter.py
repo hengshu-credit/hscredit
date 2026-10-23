@@ -271,10 +271,13 @@ def _normalize_optuna(name: str, raw: Any) -> Dict[str, Any]:
 def normalize_space_param(name: str, raw: Any) -> Dict[str, Any]:
     """将一个参数声明转换为经过校验的内部规格。
 
-    :param name: 非空模型参数名，不能使用保留前缀 ``__hscredit__``。
-    :param raw: ``Integer``、``Real``、``Categorical``，或兼容的列表、元组、
+    :param name: 非空模型参数名，不能使用保留前缀 ``__hscredit__`` 。
+    :type name: str
+    :param raw: ``Integer`` 、 ``Real`` 、 ``Categorical`` ，或兼容的列表、元组、
         字典、SciPy 分布及 Optuna 分布。元组 ``(1, 5)`` 是闭区间，
         列表 ``[1, 5]`` 只有两个候选值。
+
+    :type raw: Any
     :return: 描述分布类型、边界及采样约束的新字典。
     :raises ValueError: 参数名、边界或分布声明无效。
 
@@ -313,11 +316,13 @@ def normalize_search_space(search_space: Optional[Any]) -> Optional[Dict[str, Di
     """校验并统一搜索空间，不执行采样。
 
     :param search_space: 参数名到分布的字典，或带 ``name`` 的 hscredit
-        维度列表；``None`` 表示交由调用方选择模型默认空间。
-    :return: 规范化字典；输入为 ``None`` 时返回 ``None``。
+        维度列表； ``None`` 表示交由调用方选择模型默认空间。
+
+    :type search_space: Optional[Any]
+    :return: 规范化字典；输入为 ``None`` 时返回 ``None`` 。
     :raises ValueError: 出现重复名称、无效边界、不支持的分布或保留参数名。
 
-    推荐仅使用 ``Integer``、``Real``、``Categorical`` 三种声明。
+    推荐仅使用 ``Integer`` 、 ``Real`` 、 ``Categorical`` 三种声明。
     其他风格用于兼容已有代码。SciPy ``randint`` 的上界不包含，
     ``Integer`` 和数值元组的上界包含；带非零 ``loc`` 的 SciPy
     对数均匀分布无法保持原分布语义，会明确报错。
@@ -353,10 +358,11 @@ class SearchSpaceAdapter:
     **参数**
 
     :param search_space: 与 normalize_search_space 相同的搜索空间声明。
+    :type search_space: Optional[Any]
 
     **属性**
 
-    ``space`` 为规范化规格；``names`` 为用户定义的参数名列表。
+    ``space`` 为规范化规格； ``names`` 为用户定义的参数名列表。
     非原生分布在 Optuna 中存储潜变量，使用 ``public_params`` 还原模型参数。
 
     **参考样例**
@@ -423,8 +429,11 @@ class SearchSpaceAdapter:
         """采样一个参数并还原为模型接收的值。
 
         :param trial: 提供 suggest_int/float/categorical 的 Optuna trial。
+        :type trial: Any
         :param name: 公开参数名。
-        :param spec: 可选的规范化规格；省略时使用实例中的规格。
+        :type name: str
+        :param spec: 默认值为 ``None`` 。可选的规范化规格；省略时使用实例中的规格
+        :type spec: Optional[Mapping[str, Any]]
         :return: 模型参数值，可与 trial.params 记录的潜变量不同。
         """
         spec = dict(spec or (self.space or {})[name])
@@ -474,7 +483,9 @@ class SearchSpaceAdapter:
         """批量采样空间，返回可直接传给模型的参数字典。
 
         :param trial: Optuna Trial 或 FixedTrial。
-        :param skip: 本次不采样的公开参数名，例如由条件空间单独决定的参数。
+        :type trial: Any
+        :param skip: 默认值为 ``None`` 。本次不采样的公开参数名，例如由条件空间单独决定的参数
+        :type skip: Optional[Iterable[str]]
         :return: 公开参数名到实际模型值的字典。
         """
         skipped = set(skip or ())
@@ -486,6 +497,7 @@ class SearchSpaceAdapter:
         """还原试验记录中的潜变量，保留本空间已记录的参数。
 
         :param params_or_trial: Optuna Trial/FrozenTrial，或其 params 字典。
+        :type params_or_trial: Any
         :return: 参数字典，供最佳参数、结果表和模型重新训练使用。
         """
         raw_params = params_or_trial.params if hasattr(params_or_trial, "params") else params_or_trial
@@ -597,6 +609,8 @@ class SearchSpaceAdapter:
 
         :param point: 完整或部分参数点，取值须在空间内并满足 step/q；
             未指定的参数在执行 trial 时继续采样。
+
+        :type point: Mapping[str, Any]
         :return: 已通过可达性验证的内部参数字典。
         :raises ValueError: 参数未知、候选不可达或权重为零。
 

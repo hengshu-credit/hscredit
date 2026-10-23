@@ -25,7 +25,8 @@ def parse_describe_formatted(
     database_name: str,
     table_name: str,
 ) -> List[Dict[str, Any]]:
-    """解析 Hive/Impala ``DESCRIBE FORMATTED`` 的列与原始表属性。"""
+    """解析 Hive/Impala ``DESCRIBE FORMATTED`` 的列与原始表属性。
+    """
 
     materialized = list(rows)
     columns: List[Tuple[str, Any, Any]] = []
@@ -100,7 +101,8 @@ class HiveAdapter(DBAPIAdapter):
     )
 
     def json_extract_expression(self, column_sql: str, path: str) -> str:
-        """使用 Hive ``GET_JSON_OBJECT`` 提取 JSON 路径。"""
+        """使用 Hive ``GET_JSON_OBJECT`` 提取 JSON 路径。
+        """
 
         return f"GET_JSON_OBJECT({column_sql}, '{path}')"
 

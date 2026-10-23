@@ -19,15 +19,17 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, su
 
     修改 pandas 默认配置、固定随机种子；默认保留警告。
 
-    :param font_path: 画图时图像使用的字体，支持系统已注册字体名称或本地 ``.ttf``
+    :param font_path: 默认值为 ``None`` 。画图时图像使用的字体，支持系统已注册字体名称或本地 ``.ttf``
         字体文件路径；为 None 时自动安装并使用包内置字体，安装不可用时回退到“楷体”
+
     :param seed: 随机种子，默认为 None（不固定）。非 None 时调用
         :func:`~hscredit.utils.seed_everything`
+
     :param freeze_torch: 是否同时固定 PyTorch 随机种子，默认 False（仅 seed 非 None 时生效）
     :param logger: 是否返回一个日志器，默认为 False
     :param suppress_warnings: 显式屏蔽全局警告，默认False；库导入不应隐藏数据与模型警告
     :param kwargs: 当 logger 为 True 时传给 ``logging.getLogger`` 的参数
-    :return: 当 logger 为 True 时返回 ``logging.Logger``，否则返回 None
+    :return: 当 logger 为 True 时返回 ``logging.Logger`` ，否则返回 None
 
     **注意**
 

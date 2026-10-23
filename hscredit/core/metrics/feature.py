@@ -49,19 +49,29 @@ def iv(
     IV分级标准:
 
     - IV < 0.02: 无预测能力，应剔除
+
     - 0.02 <= IV < 0.1: 弱预测能力
+
     - 0.1 <= IV < 0.3: 中等预测能力
+
     - 0.3 <= IV < 0.5: 强预测能力
+
     - IV >= 0.5: 极强预测能力，但需警惕过拟合
 
     **参数**
 
     :param y_true: 目标变量 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param feature: 特征变量（支持数值型和分类型，自动处理缺失值）
+    :type feature: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，默认为'quantile'（等频分箱），
         支持与OptimalBinning相同的全部分箱方法
+
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: IV值
     :raises ValueError: 数据全部为缺失值或y_true非二值时
@@ -102,13 +112,19 @@ def iv_table(
     **参数**
 
     :param y_true: 目标变量 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param feature: 特征变量（支持数值型和分类型，自动处理缺失值）
+    :type feature: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: 包含各分箱详细统计的DataFrame，列包括：分箱标签、样本数、坏样本数、好样本数、
         坏样本率、好样本率、WOE值、分档IV值、累积IV值等
+
     :raises ValueError: 数据全部为缺失值时
 
     **参考样例**
@@ -161,10 +177,15 @@ def chi2_test(x: Union[np.ndarray, pd.Series], y: Union[np.ndarray, pd.Series]) 
     **参数**
 
     :param x: 特征变量（可以是分类或数值型，数值型会自动进行等频分箱）
+    :type x: Union[np.ndarray, pd.Series]
     :param y: 目标变量 (0/1)
+    :type y: Union[np.ndarray, pd.Series]
     :return: 二元组 (卡方统计量, p值)
+
         - 卡方统计量: 值越大表示偏离独立假设越远
+
         - p值: 小于显著性水平（通常0.05）时拒绝独立假设
+
     :raises ValueError: x和y长度不一致时
 
     **参考样例**
@@ -205,12 +226,19 @@ def cramers_v(x: Union[np.ndarray, pd.Series], y: Union[np.ndarray, pd.Series]) 
     **参数**
 
     :param x: 特征变量（数值型会自动分箱为10个区间）
+    :type x: Union[np.ndarray, pd.Series]
     :param y: 目标变量 (0/1)
+    :type y: Union[np.ndarray, pd.Series]
     :return: Cramer's V值，取值范围[0, 1]
+
         - 0: 完全独立
+
         - 0.1: 弱关联
+
         - 0.3: 中等关联
+
         - 0.5+: 强关联
+
     :raises ValueError: x和y长度不一致时
 
     **参考样例**
@@ -258,10 +286,16 @@ def feature_importance(
     **参数**
 
     :param X: 特征矩阵（DataFrame或numpy数组，DataFrame时使用列名作为索引名）
+    :type X: Union[pd.DataFrame, np.ndarray]
     :param y: 目标变量 (0/1)
+    :type y: Union[np.ndarray, pd.Series]
     :param method: 计算方法
+
         - 'gini': 使用决策树（max_depth=3）基于基尼重要性计算，默认为此值
+
         - 'entropy': 使用随机森林（默认100棵树，max_depth=3）基于信息熵计算
+
+    :type method: str
     :param kwargs: 其他传递给模型的参数（如n_estimators、max_depth等）
     :return: 特征重要性Series，索引为特征名（DataFrame输入时）或feature_0, feature_1...，
         值为重要性得分（归一化和为1）

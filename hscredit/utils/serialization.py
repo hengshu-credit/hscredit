@@ -163,9 +163,12 @@ class ArtifactSerializableMixin:
         """保存完整 hscredit 对象.
 
         :param file: 输出文件路径
-        :param engine: joblib、pickle、dill 或 cloudpickle
-        :param compression: 可选压缩格式
-        :param kwargs: 传递给 :func:`hscredit.utils.save_pickle`
+        :type file: Union[str, Path]
+        :param engine: 默认值为 ``'joblib'`` 。joblib、pickle、dill 或 cloudpickle
+        :type engine: str
+        :param compression: 默认值为 ``None`` 。可选压缩格式
+        :type compression: Optional[str]
+        :param kwargs: 传递给  :func:`hscredit.utils.save_pickle`
         :return: 保存后的文件路径
         """
         path = Path(file)

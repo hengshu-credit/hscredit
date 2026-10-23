@@ -55,11 +55,14 @@ def ks(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本，1为正样本
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测为正样本的概率或评分；标签或分数缺失的样本成对删除
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param pos_label: 正样本标签，默认为1；非0/1标签需明确正样本
     :param sample_weight: 可选非负样本权重；默认不加权
     :return: KS统计量，取值范围[0, 1]，越接近1区分能力越强
     :raises ValueError: 标签非二值或y_true/y_prob长度不一致时
+
     单一0/1类别时返回0.0。
 
     **参考样例**
@@ -93,7 +96,9 @@ def ks_2samps(sample1: Union[np.ndarray, pd.Series], sample2: Union[np.ndarray, 
     适用于好坏样本分布对比分析。
 
     :param sample1: 第一组样本（通常是好样本的分数）
+    :type sample1: Union[np.ndarray, pd.Series]
     :param sample2: 第二组样本（通常是坏样本的分数）
+    :type sample2: Union[np.ndarray, pd.Series]
     :return: KS统计量，取值范围[0, 1]
 
     **参考样例**
@@ -108,7 +113,7 @@ def ks_2samps(sample1: Union[np.ndarray, pd.Series], sample2: Union[np.ndarray, 
 
     **引用**
 
-    封装自 :func:`scipy.stats.ks_2samp`（两样本 Kolmogorov-Smirnov 检验），
+    封装自  :func:`scipy.stats.ks_2samp` （两样本 Kolmogorov-Smirnov 检验），
     取其返回的统计量分量。详见
     https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ks_2samp.html
     """
@@ -137,11 +142,15 @@ def auc(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本，1为正样本
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测为正样本的概率或评分；标签或分数缺失的样本成对删除
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param pos_label: 正样本标签，默认为1；非0/1标签需明确正样本
     :param score_direction: auto（默认，原始AUC小于0.5时反向）、higher_risk（值越大正样本风险越高）
         或higher_safe（值越大越安全）；显式方向不会自动反向
-    :param sample_weight: 可选非负样本权重，与标签、分数按位置对应；零权重样本不参与计算
+
+    :type score_direction: str
+    :param sample_weight: 默认值为 ``None`` 。可选非负样本权重，与标签、分数按位置对应；零权重样本不参与计算
     :return: auto模式取值范围[0.5, 1.0]；显式方向模式取值范围[0.0, 1.0]
     :raises ValueError: y_true/y_prob长度不一致时
 
@@ -155,7 +164,7 @@ def auc(
 
     **引用**
 
-    基于 :func:`sklearn.metrics.roc_curve` 和 :func:`sklearn.metrics.auc`，
+    基于  :func:`sklearn.metrics.roc_curve`  和  :func:`sklearn.metrics.auc` ，
     与绘图共享曲线及面积。AUC 的概率解释（随机抽取一正一负
     样本，正样本得分更高的概率）见 Fawcett, T. (2006). *An introduction to ROC
     analysis.* Pattern Recognition Letters, 27(8), 861-874。
@@ -180,10 +189,13 @@ def gini(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本，1为正样本
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测为正样本的概率值
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param pos_label: 正样本标签，默认为1
-    :param score_direction: 同 ``auc``，支持auto、higher_risk和higher_safe
-    :param sample_weight: 可选非负样本权重，同 ``auc``
+    :param score_direction: 默认值为 ``'auto'`` 。同 ``auc`` ，支持auto、higher_risk和higher_safe
+    :type score_direction: str
+    :param sample_weight: 默认值为 ``None`` 。可选非负样本权重，同 ``auc``
     :return: 基尼系数，auto模式取值范围[0, 1]，显式方向模式取值范围[-1, 1]
     :raises ValueError: y_true/y_prob长度不一致时
 
@@ -214,7 +226,9 @@ def accuracy(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.
     **参数**
 
     :param y_true: 真实标签（任意类型）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测标签（与y_true类型一致）
+    :type y_pred: Union[np.ndarray, pd.Series]
     :return: 准确率，取值范围[0, 1]
     :raises ValueError: y_true/y_pred长度不一致时
 
@@ -239,9 +253,13 @@ def precision(
     **参数**
 
     :param y_true: 真实标签
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测标签
+    :type y_pred: Union[np.ndarray, pd.Series]
     :param average: 平均方式，'binary'（二分类默认只看正类），'micro'（全局TP/FP/FN），
         'macro'（各类分别计算后取平均），'weighted'（加权平均），默认为'binary'
+
+    :type average: str
     :return: 精确率，取值范围[0, 1]
 
     **参考样例**
@@ -267,9 +285,13 @@ def recall(
     **参数**
 
     :param y_true: 真实标签
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测标签
+    :type y_pred: Union[np.ndarray, pd.Series]
     :param average: 平均方式，'binary'（二分类默认只看正类），'micro'，'macro'，'weighted'，
         默认为'binary'
+
+    :type average: str
     :return: 召回率，取值范围[0, 1]
 
     **参考样例**
@@ -291,9 +313,13 @@ def f1(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series
     **参数**
 
     :param y_true: 真实标签
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测标签
+    :type y_pred: Union[np.ndarray, pd.Series]
     :param average: 平均方式，'binary'（二分类默认只看正类），'micro'，'macro'，'weighted'，
         默认为'binary'
+
+    :type average: str
     :return: F1分数，取值范围[0, 1]
 
     **参考样例**
@@ -323,28 +349,50 @@ def ks_bucket(
     **参数**
 
     :param y_true: 真实标签 (0/1)，0为负样本（好样本），1为正样本（坏样本）
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测为正样本的概率值
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，取值与 OptimalBinning.VALID_METHODS 一致（共17种），
         默认为'quantile'。常用值：
+
         - quantile: 等频分箱
+
         - uniform: 等宽分箱
+
         - tree: 决策树最优分箱
+
         - chi: 卡方分箱
+
         - mdlp: MDLP信息论分箱
+
         - best_iv/best_ks: 最优IV/KS分箱
-        完整列表见 :class:`~hscredit.core.binning.OptimalBinning`
+
+        完整列表见  :class:`~hscredit.core.binning.OptimalBinning`
+
+    :type method: str
     :param max_n_bins: 最大分桶数量，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每桶最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: 包含桶统计信息的DataFrame，列包括：
+
         - 桶编号: 分箱序号
+
         - 最小概率: 该桶内概率最小值
+
         - 最大概率: 该桶内概率最大值
+
         - 样本数: 该桶内样本数量
+
         - 坏样本率: 该桶内坏样本占比
+
         - 累积坏样本率: 累积坏样本占总坏样本比例
+
         - 累积好样本率: 累积好样本占总好样本比例
+
         - KS贡献: 该桶对KS值的贡献
+
     :raises ValueError: 数据全部为缺失值时
 
     **参考样例**
@@ -416,18 +464,24 @@ def roc_curve(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """计算ROC曲线数据.
 
-    返回与 ``auc``、``ks_plot``、``roc_plot`` 同口径的FPR、TPR和阈值数据。
+    返回与 ``auc`` 、 ``ks_plot`` 、 ``roc_plot`` 同口径的FPR、TPR和阈值数据。
 
     **参数**
 
     :param y_true: 真实标签 (0/1)
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_prob: 预测为正样本的概率值
+    :type y_prob: Union[np.ndarray, pd.Series]
     :param pos_label: 正样本标签，默认为1
-    :param score_direction: 同 ``auc``，默认auto；higher_risk保留原始分数方向
-    :param sample_weight: 可选非负样本权重
+    :param score_direction: 同 ``auc`` ，默认auto；higher_risk保留原始分数方向
+    :type score_direction: str
+    :param sample_weight: 默认值为 ``None`` 。可选非负样本权重
     :return: 三元组 (fpr, tpr, thresholds)
+
         - fpr: 假阳性率（False Positive Rate）数组
+
         - tpr: 真阳性率（True Positive Rate）数组
+
         - thresholds: 对应的分数阈值数组；反向时对应取负后的分数，首项为正无穷
 
     **参考样例**
@@ -451,10 +505,15 @@ def confusion_matrix(
     **参数**
 
     :param y_true: 真实标签
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测标签
+    :type y_pred: Union[np.ndarray, pd.Series]
     :param labels: 类别标签列表，指定矩阵的行序和列序，默认为None（自动推断）
+    :type labels: Optional[list]
     :return: 混淆矩阵（2D ndarray）
+
         - 行表示真实类别，列表示预测类别
+
         - 二分类时：[[TN, FP], [FN, TP]]
 
     **参考样例**
@@ -482,9 +541,13 @@ def classification_report(
     **参数**
 
     :param y_true: 真实标签
+    :type y_true: Union[np.ndarray, pd.Series]
     :param y_pred: 预测标签
-    :param target_names: 目标类别名称列表，用于报告中替代类别标签显示
+    :type y_pred: Union[np.ndarray, pd.Series]
+    :param target_names: 默认值为 ``None`` 。目标类别名称列表，用于报告中替代类别标签显示
+    :type target_names: Optional[list]
     :param output_dict: 如果为True，返回字典格式；否则返回格式化字符串，默认为False
+    :type output_dict: bool
     :return: 当output_dict=False时返回格式化字符串，当output_dict=True时返回字典
 
     **参考样例**

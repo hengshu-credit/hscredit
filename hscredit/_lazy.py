@@ -23,7 +23,7 @@ class LazyModule(ModuleType):
 
     **参数**
 
-    :param import_name: 目标模块的导入名，如 ``"seaborn"``、``"statsmodels.api"``
+    :param import_name: 目标模块的导入名，如 ``"seaborn"`` 、 ``"statsmodels.api"``
 
     **参考样例**
 

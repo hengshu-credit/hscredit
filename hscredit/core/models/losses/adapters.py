@@ -28,6 +28,7 @@ class XGBoostLossAdapter:
     **参数**
 
     :param loss: BaseLoss 实例，训练接收一维原始分数并自动处理样本权重。
+    :type loss: BaseLoss
 
     **属性**
 
@@ -47,8 +48,9 @@ class XGBoostLossAdapter:
     def objective(self, api="native"):
         """生成训练目标。
 
-        :param api: ``'native'`` 接收 (preds, DMatrix)，``'sklearn'`` 接收
+        :param api: 默认值为 ``'native'`` 。 ``'native'`` 接收 (preds, DMatrix)， ``'sklearn'`` 接收
             (y_true, y_pred, sample_weight=None)；预测均为原始分数。
+
         :return: 回调，返回对原始分数求导的 (grad, hess) 数组。
 
         >>> from hscredit.core.models.losses import FocalLoss, XGBoostLossAdapter
@@ -59,8 +61,8 @@ class XGBoostLossAdapter:
     def metric(self, metric=None, api="native"):
         """生成配合本自定义目标使用的评估回调，自动转换原始分数。
 
-        :param metric: BaseMetric 实例，默认 ``loss.metric()``。
-        :param api: ``'native'`` 或 ``'sklearn'``，须与训练接口相同。
+        :param metric: BaseMetric 实例，默认 ``loss.metric()`` 。
+        :param api: 默认值为 ``'native'`` 。 ``'native'`` 或 ``'sklearn'`` ，须与训练接口相同
         :return: native 返回 (name, value)，sklearn 返回 value 的回调。
             不改变指标符号，早停方向须按 metric.greater_is_better 配置。
 
@@ -77,6 +79,7 @@ class LightGBMLossAdapter:
     **参数**
 
     :param loss: BaseLoss 实例，训练输入为一维原始分数。
+    :type loss: BaseLoss
 
     **属性**
 
@@ -97,6 +100,7 @@ class LightGBMLossAdapter:
 
         :param api: 默认 ``'sklearn'`` 接收 (y_true, y_pred, sample_weight=None)；
             ``'native'`` 接收 (preds, Dataset)，用于 params['objective']。
+
         :return: 目标回调，自动应用 sigmoid 和数据集权重。
 
         >>> from hscredit.core.models.losses import FocalLoss, LightGBMLossAdapter
@@ -107,8 +111,8 @@ class LightGBMLossAdapter:
     def metric(self, metric=None, api="sklearn"):
         """生成自动转换原始分数的评估回调，和自定义目标配套使用。
 
-        :param metric: BaseMetric 实例，默认 ``loss.metric()``。
-        :param api: ``'sklearn'`` 或 ``'native'``，须与训练接口相同。
+        :param metric: BaseMetric 实例，默认 ``loss.metric()`` 。
+        :param api: 默认值为 ``'sklearn'`` 。 ``'sklearn'`` 或 ``'native'`` ，须与训练接口相同
         :return: 回调，返回 (name, value, greater_is_better)。
 
         >>> from hscredit.core.models.losses import FocalLoss, KSMetric, LightGBMLossAdapter
@@ -124,6 +128,7 @@ class CatBoostLossAdapter:
     **参数**
 
     :param loss: 支持独立逐行计算的 BaseLoss，例如固定类别权重的 FocalLoss。
+    :type loss: BaseLoss
 
     **属性**
 
@@ -144,6 +149,7 @@ class CatBoostLossAdapter:
 
         :return: 对象，calc_ders_range 接收原始分数、0/1 标签和可选权重，
             输出逐样本 (-grad, -hess)，符合 CatBoost 的符号约定。
+
         :raises ValueError: 损失依赖全量排序、动态类别权重或绑定逐行数组。
 
         >>> from hscredit.core.models.losses import FocalLoss, CatBoostLossAdapter
@@ -213,7 +219,10 @@ class TabNetLossAdapter:
 
     将自定义损失函数转换为PyTorch可用的格式，适用于TabNet。
 
+    **参数**
+
     :param loss: 损失函数对象
+    :type loss: BaseLoss
 
     **参考样例**
 
@@ -241,9 +250,10 @@ class TabNetLossAdapter:
     def loss_fn(self):
         """获取支持 PyTorch 反向传播的二分类损失模块。
 
-        :return: ``nn.Module``，调用签名为 (y_pred, y_true)。y_pred 是一维、
+        :return: ``nn.Module`` ，调用签名为 (y_pred, y_true)。y_pred 是一维、
             单列或两列原始 logits，y_true 是同批 0/1 标签；返回平均损失张量。
             NumPy 计算的解析梯度由自定义 autograd 返回到 logits。
+
         :raises ImportError: 未安装 PyTorch。
         :raises ValueError: 损失依赖全量排序、动态类别权重或绑定样本数组。
 
@@ -301,7 +311,10 @@ class NGBoostLossAdapter:
 
         dL/d(logit) = dL/dp × dp/d(logit) = dL/dp × p × (1 - p)
 
+    **参数**
+
     :param loss: 损失函数对象
+    :type loss: BaseLoss
 
     **参考样例**
 
@@ -321,8 +334,11 @@ class NGBoostLossAdapter:
     **注意**
 
     - 仅支持二分类 Bernoulli 分布；需使用本损失提供的分布子类。
+
     - ``score()`` 与 ``d_score()`` 使用同一个自定义损失
+
     - ``d_score()`` 使用自定义loss的梯度驱动自然梯度更新
+
     - 推荐使用 ``loss.ngboost_params()`` 同时配套 Score 与 Dist。
     """
 
@@ -334,6 +350,7 @@ class NGBoostLossAdapter:
 
         :return: Score 类，score 返回逐行损失，d_score 返回 logit 导数，
             metric 返回 Bernoulli Fisher 信息；不直接接收框架外部预测。
+
         :raises ImportError: 未安装 NGBoost。
         :raises ValueError: 损失不支持独立逐行计算。
 

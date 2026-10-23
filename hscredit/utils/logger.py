@@ -19,10 +19,15 @@ def init_logger(
     """初始化日志记录器。
 
     :param name: logger 名称，默认为 "hscredit"
+    :type name: str
     :param level: 日志级别，默认为 logging.INFO
+    :type level: int
     :param log_file: 日志文件路径，默认为 None（不写入文件）
+    :type log_file: str
     :param format: 日志格式，默认为 "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    :type format: str
     :param console: 是否输出到控制台，默认为 True
+    :type console: bool
     :return: 配置好的 logger 对象
 
     **参考样例**
@@ -68,10 +73,12 @@ def init_logger(
 
 
 def get_logger(name: str = "hscredit") -> logging.Logger:
-    """获取已存在的 logger（``logging.getLogger`` 的轻封装）。
+    """获取已存在的 logger（ ``logging.getLogger`` 的轻封装）。
 
-    :param name: logger 名称，默认 ``"hscredit"``。应与 :func:`init_logger`
+    :param name: logger 名称，默认 ``"hscredit"`` 。应与  :func:`init_logger`
         创建时使用的名称一致，以复用其 handler 配置
+
+    :type name: str
     :return: 对应名称的 ``logging.Logger`` 对象
 
     **参考样例**

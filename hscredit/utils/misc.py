@@ -16,11 +16,11 @@ import importlib.util
 def trapz(y, x=None, dx=1.0, axis=-1):
     """梯形法则数值积分（跨 NumPy 版本兼容）.
 
-    NumPy 2.0 起将 ``np.trapz`` 重命名为 ``np.trapezoid``，旧名在 2.0 中弃用、
+    NumPy 2.0 起将 ``np.trapz`` 重命名为 ``np.trapezoid`` ，旧名在 2.0 中弃用、
     在更高版本中移除。本函数按版本自动选择可用实现，保证在新旧 NumPy 下行为一致。
 
     :param y: 被积函数值数组
-    :param x: 采样点坐标，可选
+    :param x: 默认值为 ``None`` 。采样点坐标，可选
     :param dx: 采样间隔（x 未提供时使用），默认 1.0
     :param axis: 积分所沿的轴，默认 -1
     :return: 积分结果
@@ -42,7 +42,8 @@ def round_float(num, decimal: int = 4):
     """调整数值分箱的上下界小数点精度，如未超出精度保持原样输出。
 
     :param num: 分箱的上界或者下界
-    :param decimal: 小数点保留的精度
+    :param decimal: 默认值为 ``4`` 。小数点保留的精度
+    :type decimal: int
     :return: 精度调整后的数值
 
     **参考样例**

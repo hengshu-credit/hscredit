@@ -29,12 +29,15 @@ class ModelExplainer:
     **参数**
 
     :param model: 已拟合且提供预测接口的模型。
-    :param background_data: SHAP 背景数据；未提供时从解释数据确定性抽样。
-    :param algorithm: ``auto``、``tree``、``linear``、``permutation`` 或 ``kernel``。
+    :type model: Any
+    :param background_data: 默认值为 ``None`` 。SHAP 背景数据；未提供时从解释数据确定性抽样
+    :type background_data: Optional[Union[np.ndarray, pd.DataFrame]]
+    :param algorithm: 默认值为 ``'auto'`` 。 ``auto`` 、 ``tree`` 、 ``linear`` 、 ``permutation`` 或 ``kernel``
+    :type algorithm: str
 
     **属性**
 
-    :attr:`last_result_`: 最近一次 :class:`ExplanationResult`。
+    :attr:`last_result_` : 最近一次  :class:`ExplanationResult` 。
 
     **参考样例**
 
@@ -401,10 +404,11 @@ class ModelExplainer:
     def select_representative_samples(self, result=None, threshold=0.5, risk_direction=None) -> pd.DataFrame:
         """选择最高/最低风险、阈值附近、中位输出和贡献最大的代表样本。
 
-        :param result: 结构化解释结果；None 时使用最近一次结果。
-        :param threshold: 当前输出尺度下的业务决策阈值。
-        :param risk_direction: ``higher_output_higher_risk`` 或 ``higher_output_lower_risk``；
+        :param result: 默认值为 ``None`` 。结构化解释结果；None 时使用最近一次结果
+        :param threshold: 默认值为 ``0.5`` 。当前输出尺度下的业务决策阈值
+        :param risk_direction: 默认值为 ``None`` 。 ``higher_output_higher_risk`` 或 ``higher_output_lower_risk``
             None 时从解释元信息推导。
+
         :return: 包含样本索引、选择理由、模型输出、风险排名和阈值距离的中文表。
         """
         result = self._require_result(result)
@@ -699,7 +703,8 @@ class ModelExplainer:
         return self._plot("plot_explanation_overview", result, **kwargs)
 
     def plot_shap_summary(self, X=None, plot_type="dot", max_display=20, show=True, **kwargs):
-        """绘制 SHAP summary 图；支持 ``dot``、``violin`` 和 ``bar``。"""
+        """绘制 SHAP summary 图；支持 ``dot`` 、 ``violin`` 和 ``bar`` 。
+        """
         result = (
             X if isinstance(X, ExplanationResult) else (self.explain(X) if X is not None else self._require_result())
         )

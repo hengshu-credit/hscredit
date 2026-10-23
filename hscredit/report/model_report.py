@@ -127,8 +127,8 @@ def _execute_model_comparison_plan(function, tasks, plan, **kwargs):
 def _normalize_feature_names(features) -> Optional[List[str]]:
     """将特征名入参统一规整为 Python ``str`` 列表.
 
-    兼容 numpy 数组、``np.str_`` 标量、pandas Index 等输入，
-    避免对 numpy 数组直接做真值判断（``if``/``or``）时报错。
+    兼容 numpy 数组、 ``np.str_`` 标量、pandas Index 等输入，
+    避免对 numpy 数组直接做真值判断（ ``if`` / ``or`` ）时报错。
     """
     if features is None:
         return None
@@ -316,7 +316,8 @@ def _feature_metric_worker(task) -> Tuple[float, float, float]:
 
 
 def _compare_model_worker(task) -> Tuple[str, pd.DataFrame]:
-    """构建单模型摘要；用于 ``compare_models`` 的模型外层并行。"""
+    """构建单模型摘要；用于 ``compare_models`` 的模型外层并行。
+    """
     name, model, X_train, y_train, X_test, y_test, n_jobs, backend, config = task
     report = ModelReport(
         model=model,
@@ -425,7 +426,8 @@ def _merge_multi_label_bin_tables(tables: List[pd.DataFrame], labels: List[str])
 
 
 def _drop_bin_meta_cols(table: pd.DataFrame) -> pd.DataFrame:
-    """删除分箱表中的 ``指标名称`` / ``指标含义`` 列（兼容扁平列与 MultiIndex 列）。"""
+    """删除分箱表中的 ``指标名称`` / ``指标含义`` 列（兼容扁平列与 MultiIndex 列）。
+    """
     drop_names = {"指标名称", "指标含义"}
     if isinstance(table.columns, pd.MultiIndex):
         keep = [c for c in table.columns if c[-1] not in drop_names]
@@ -487,24 +489,68 @@ class ModelReport(ModelContextMixin):
 
     **参数**
 
-    （完整说明见 :meth:`__init__`）
+    （完整说明见  :meth:`__init__` ）
+
+    :param X_train: 默认值为 ``None`` 。训练集特征（命名为 训练集）
+    :param y_train: 默认值为 ``None`` 。训练集标签，None 时从 X_train 中通过 target / overdue+dpds 构建
+    :param X_test: 默认值为 ``None`` 。测试集特征（命名为 测试集）
+    :param y_test: 默认值为 ``None`` 。测试集标签，None 时从 X_test 中通过 target / overdue+dpds 构建
+    :param X_oot: 默认值为 ``None`` 。跨时间验证集特征（命名为 跨时间验证集）
+    :param y_oot: 默认值为 ``None`` 。跨时间验证集标签，None 时从 X_oot 中通过 target / overdue+dpds 构建
+    :param prediction_method: 默认值为 ``'predict_proba'`` 。数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
+    :type prediction_method: Union[str, Callable]
+    :param prediction_kwargs: 默认值为 ``None`` 。callable 同名参数的显式覆盖字典
+    :type prediction_kwargs: Optional[Dict[str, Any]]
+    :param explain_config: 默认值为 ``None`` 。可选模型解释配置；None 不生成可选解释章节，由 normalize_explain_config 校验
+    :type explain_config: Optional[Dict[str, Any]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param score_direction: higher_risk/higher_safe；默认按预测方法和评分刻度确定，不按标签反转概率。
+    :type score_direction: Optional[str]
+    :param metrics: 默认值为 ``None`` 。get_metric/ loss.metric() 等统一指标对象或名称，附加到性能表与Excel
+        这些指标需要 prediction_method='predict_proba' 的概率输入。
+
+    :param sample_weight: 默认值为 ``None`` 。指标权重，可传列名、{数据集名称: 权重} 或单数据集的一维权重
 
     :param model: 已训练好的模型，需实现 ``predict`` / ``predict_proba``
-    :param datasets: 数据集字典或列表（推荐），如 ``{'train': df, 'test': df}``；
-        DataFrame 需含目标列或配合 ``overdue``/``dpds`` 构建标签
+    :param datasets: 默认值为 ``None`` 。数据集字典或列表（推荐），如 ``{'train': df, 'test': df}``
+        DataFrame 需含目标列或配合 ``overdue`` / ``dpds`` 构建标签
+
+    :type datasets: Optional[Union[List, Dict]]
     :param X_train/y_train/X_test/y_test: 兼容 sklearn 风格的数据传入方式
-    :param target: 目标列名（sklearn/scorecardpipeline 风格）
-    :param overdue: 逾期天数列名或列表，配合 ``dpds`` 自动构建 0/1 标签
+    :param target: 默认值为 ``None`` 。目标列名（sklearn/scorecardpipeline 风格）
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期天数列名或列表，配合 ``dpds`` 自动构建 0/1 标签
+    :type overdue: Optional[Union[str, List[str]]]
     :param dpds: 逾期定义天数或列表（默认逾期天数 > dpds 记为坏样本）
+    :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param overdue_operator: 比较符（>、>=、<、<=）；独立逾期参数，缺省时使用 >。
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param features: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
+    :type overdue_operator: Optional[str]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
+    :param features: 默认值为 ``None`` 。特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
+    :type features: Optional[List[str]]
 
     **属性**
 
     - model: 传入的已训练模型
+
     - features: 最终使用的特征名称列表
-    - _datasets: 解析后的各数据集（key -> :class:`ReportDataset`）
+
+    - _datasets: 解析后的各数据集（key ->  :class:`ReportDataset` ）
 
     **参考样例**
 
@@ -562,14 +608,18 @@ class ModelReport(ModelContextMixin):
 
         1. datasets 为 dict：直接以 key 作为数据集名称，
            如 ``{'训练集': df, 'OOT': df}`` 或 ``{'train': (X, y), 'test': (X, y)}``
+
         2. datasets 为 list：依次命名为 数据集1、数据集2、...、数据集N
+
         3. X_train/X_test/X_oot 参数：依次命名为 训练集、测试集、跨时间验证集
 
         标签（y）解析遵循 hscredit 统一的两种传参风格：
 
         - sklearn 风格：显式传入 y（如 ``X_train=X, y_train=y`` 或
-          ``datasets={'train': (X, y)}``），y 优先使用
+          ``datasets={'train': (X, y)}`` ），y 优先使用
+
         - scorecardpipeline 风格：数据全部在 X 中，通过 ``target='列名'`` 提取标签
+
         - overdue + dpds 组合：与 target 模式互斥，按 overdue_operator 比较逾期天数与阈值构建标签
 
         示例::
@@ -604,19 +654,24 @@ class ModelReport(ModelContextMixin):
         :param y_oot: 跨时间验证集标签，None 时从 X_oot 中通过 target / overdue+dpds 构建
         :param features: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
         :param target: 目标列配置；None 且未指定 overdue/dpds 时继承模型或 Pipeline 末端的目标列。
+
             - str: 列名，如 'target'，数据全部在 X 中时使用
+
             - dict: {标签名: Series/ndarray/list/callable}，每个标签独立统计
+
         :param overdue: 逾期列名（str）或多个列名（List[str]），与 target 模式互斥
         :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
         :param overdue_operator: 比较符（>、>=、<、<=）；None 时默认 >。
             target 模式不解释 overdue_operator。
-        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
+
+        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
         :param prediction_method: 数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
         :param prediction_kwargs: callable 同名参数的显式覆盖字典
         :param explain_config: 可选模型解释配置；None 不生成可选解释章节，由 normalize_explain_config 校验。
         :param score_direction: higher_risk/higher_safe；默认按预测方法和评分刻度确定，不按标签反转概率。
         :param metrics: get_metric/ loss.metric() 等统一指标对象或名称，附加到性能表与Excel。
             这些指标需要 prediction_method='predict_proba' 的概率输入。
+
         :param sample_weight: 指标权重，可传列名、{数据集名称: 权重} 或单数据集的一维权重。
         :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
         :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
@@ -1052,8 +1107,10 @@ class ModelReport(ModelContextMixin):
         命名规则：
 
         - datasets 为 dict：直接以 key 作为数据集名称；
-          value 支持 ``DataFrame``（y 为 None，自动构建标签）或 ``(X, y)`` 元组
+          value 支持 ``DataFrame`` （y 为 None，自动构建标签）或 ``(X, y)`` 元组
+
         - datasets 为 list/tuple：依次命名为 数据集1、数据集2、...、数据集N
+
         - X_train/X_test/X_oot 参数：依次命名为 训练集、测试集、跨时间验证集；
           y 为 None 时从 X 中通过 target / overdue+dpds 自动构建标签
         """
@@ -1089,6 +1146,7 @@ class ModelReport(ModelContextMixin):
         标签解析规则（y 优先，其次 target，最后 overdue+dpds）：
 
         - y 不为 None（sklearn 风格）：直接使用传入的 y
+
         - y 为 None（scorecardpipeline 风格）：从 X 中通过 target 列名提取，
           或通过 overdue+dpds 组合构建标签
         """
@@ -1159,10 +1217,13 @@ class ModelReport(ModelContextMixin):
         """添加额外数据集（如 OOT）用于报告.
 
         :param key: 数据集标识
+        :type key: str
         :param label: 数据集标签
+        :type label: str
         :param X: DataFrame（含目标列时 y 可为 None，自动构建标签）
-        :param y: 标签列，None 时从 X 中通过 target / overdue+dpds 自动构建
-        :param features: 特征名列表
+        :param y: 默认值为 ``None`` 。标签列，None 时从 X 中通过 target / overdue+dpds 自动构建
+        :param features: 默认值为 ``None`` 。特征名列表
+        :type features: Optional[List[str]]
         """
         X = _ensure_dataframe(X, features=_normalize_feature_names(features) or self.feature_names)
         # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
@@ -1230,21 +1291,24 @@ class ModelReport(ModelContextMixin):
 
     @property
     def _train_key(self) -> str:
-        """训练集对应的内部 key：优先 ``'train'``，否则回退到第一个数据集."""
+        """训练集对应的内部 key：优先 ``'train'`` ，否则回退到第一个数据集.
+        """
         if "train" in self._datasets:
             return "train"
         return next(iter(self._datasets))
 
     @property
     def _test_key(self) -> Optional[str]:
-        """测试集对应的内部 key：优先 ``'test'``，否则回退到第二个数据集（不存在时为 None）."""
+        """测试集对应的内部 key：优先 ``'test'`` ，否则回退到第二个数据集（不存在时为 None）.
+        """
         if "test" in self._datasets:
             return "test"
         keys = [k for k in self._datasets if k != self._train_key]
         return keys[0] if keys else None
 
     def _resolve_dataset_key(self, dataset: str) -> str:
-        """解析数据集标识，支持 ``'train'`` / ``'test'`` 在缺省时回退到第一 / 第二个数据集."""
+        """解析数据集标识，支持 ``'train'`` / ``'test'`` 在缺省时回退到第一 / 第二个数据集.
+        """
         if dataset in self._datasets:
             return dataset
         if dataset == "train":
@@ -1277,7 +1341,8 @@ class ModelReport(ModelContextMixin):
         return dict(zip(self._label_names, display))
 
     def _normalize_overdue_bin_columns(self, table: pd.DataFrame) -> pd.DataFrame:
-        """将 ``feature_bin_stats`` 的原生逾期标签统一为报告标签。"""
+        """将 ``feature_bin_stats`` 的原生逾期标签统一为报告标签。
+        """
         if not isinstance(table.columns, pd.MultiIndex):
             return table
         overdue_cols, dpds_vals = self._overdue_dpds()
@@ -1296,7 +1361,8 @@ class ModelReport(ModelContextMixin):
     def get_metrics(self, label: Optional[str] = None) -> pd.DataFrame:
         """KS / AUC / PSI 等核心指标.
 
-        :param label: 多标签模式下指定标签名，None 时使用 combined y
+        :param label: 默认值为 ``None`` 。多标签模式下指定标签名，None 时使用 combined y
+        :type label: Optional[str]
 
         **参考样例**
 
@@ -3096,12 +3162,12 @@ class ModelReport(ModelContextMixin):
     def summary(self) -> pd.DataFrame:
         """模型核心指标摘要表（多层列：统计指标 × 数据集；行：逾期指标）.
 
-        参考 :mod:`hscredit.report.rule_strategy` 中拒绝规则策略表的展示方式：
+        参考  :mod:`hscredit.report.rule_strategy`  中拒绝规则策略表的展示方式：
         列为「统计指标 × 数据集」两层表头，便于同一指标在各数据集上横向对比；
-        行为不同逾期指标。``overdue`` + ``dpds`` 多标签模式下每个逾期标签独占一行，
+        行为不同逾期指标。 ``overdue`` + ``dpds`` 多标签模式下每个逾期标签独占一行，
         单标签模式下仅一行（行名为目标列名）。
 
-        :return: 行索引为 ``逾期指标``、列为 ``(统计指标, 数据集)`` 两层表头的 DataFrame
+        :return: 行索引为 ``逾期指标`` 、列为 ``(统计指标, 数据集)`` 两层表头的 DataFrame
 
         **参考样例**
 
@@ -3317,26 +3383,47 @@ class ModelReport(ModelContextMixin):
         **参数补充**
 
         :param filepath: 输出 .xlsx 路径，支持相对或绝对路径。事务模式的实际路径见返回值或 result.artifacts。
+        :type filepath: str
         :param max_n_bins: 报告分箱数量，默认10；使用 hscredit 分箱器，不改变模型参数或预测。
+        :type max_n_bins: int
         :param method: 报告分箱方法，默认 quantile；不是模型预测方法，预测方法在构造报告时配置。
-        :param amount: 金额字段名，启用金额口径分析；不等同于报告指标 sample_weight，若需金额加权指标须另行指定。
-        :param date: 日期字段名，用于分月/分期分析；该列可保留在报告 DataFrame 中而不作为模型特征。
-        :param freq: 日期汇总频率，如 D、W、M、Q；None 根据日期跨度推断。
-        :param group: 可选分组字段，用于分组样本量和坏样本率分析。
+        :type method: str
+        :param amount: 默认值为 ``None`` 。金额字段名，启用金额口径分析；不等同于报告指标 sample_weight，若需金额加权指标须另行指定
+        :type amount: Optional[str]
+        :param date: 默认值为 ``None`` 。日期字段名，用于分月/分期分析；该列可保留在报告 DataFrame 中而不作为模型特征
+        :type date: Optional[str]
+        :param freq: 默认值为 ``None`` 。日期汇总频率，如 D、W、M、Q；None 根据日期跨度推断
+        :type freq: Optional[str]
+        :param group: 默认值为 ``None`` 。可选分组字段，用于分组样本量和坏样本率分析
+        :type group: Optional[str]
         :param with_plots: 是否生成并插入图表，默认 True；False 只输出数据表，图形章节记为不适用。
-        :param model_name: 报告中展示的模型名称，None 使用模型类名。
-        :param project_desc: 项目说明文本，写入基本信息页，不参与训练。
-        :param feature_map: {字段名: 业务含义}，用于报告展示，不重命名模型真实输入字段。
-        :param feature_info: 可选特征部署信息 DataFrame，如变量来源与加工说明。
+        :type with_plots: bool
+        :param model_name: 默认值为 ``None`` 。报告中展示的模型名称，None 使用模型类名
+        :type model_name: Optional[str]
+        :param project_desc: 默认值为 ``None`` 。项目说明文本，写入基本信息页，不参与训练
+        :type project_desc: Optional[str]
+        :param feature_map: 默认值为 ``None`` 。{字段名: 业务含义}，用于报告展示，不重命名模型真实输入字段
+        :type feature_map: Optional[Dict[str, str]]
+        :param feature_info: 默认值为 ``None`` 。可选特征部署信息 DataFrame，如变量来源与加工说明
+        :type feature_info: Optional[pd.DataFrame]
         :param show_lift: 是否展示 LIFT 曲线，默认 True；与 with_plots 配合。
+        :type show_lift: bool
         :param show_importance: 是否展示特征重要性，默认 True；算法无对应能力时在报告状态中说明。
+        :type show_importance: bool
         :param feature_contribution_label_max_features: 贡献图最多标注的特征数，默认10；None 全部标注，0不标注。
-        :param data_source: 数据来源说明文本，用于报告基本信息。
-        :param loc_cols: 订单等定位字段名或列表，仅在输出逐行生产测试用例时使用。
+        :type feature_contribution_label_max_features: Optional[int]
+        :param data_source: 默认值为 ``None`` 。数据来源说明文本，用于报告基本信息
+        :type data_source: Optional[str]
+        :param loc_cols: 默认值为 ``None`` 。订单等定位字段名或列表，仅在输出逐行生产测试用例时使用
+        :type loc_cols: Optional[Union[str, List[str]]]
         :param mode: strict 在必需章节失败时抛出 ReportGenerationError；best_effort 保留成功章节并记录失败。默认 best_effort；事务模式默认 strict。
+        :type mode: Optional[str]
         :param return_result: 默认 False；to_excel 返回文件路径，auto_model_report 返回 ModelReport。True 改为返回 ReportResult，可检查 complete、status_table() 和 artifacts。
+        :type return_result: bool
         :param transactional: 默认 False；True 将 Excel 与图片发布到独立版本目录，返回实际版本文件路径，不覆盖旧版本。
+        :type transactional: bool
         :param include_sample_records: 默认 True 输出逐行订单及模型分数；False 不导出这些明细，章节记为不适用。
+        :type include_sample_records: bool
 
         **参考样例**
 
@@ -3499,15 +3586,20 @@ class ModelReport(ModelContextMixin):
         """生成多 Sheet 结构的 Excel 模型报告.
 
         Sheet 结构：
+
         - 目录
+
         - 1-基本信息（项目目标、样本统计、分月/分组分布）
+
         - 2-模型性能（指标、TOP n%、PSI矩阵、分箱效果）
+
         - 3-入模变量分析（重要性、相关性、逐特征分箱/KS/PSI）
 
         :param show_lift: 是否生成并插入 LIFT 曲线；LIFT 数值表始终保留
         :param show_importance: 是否显示入模变量重要性及分布汇总章节
         :param feature_contribution_label_max_features: 贡献图显示数据标签的最大特征数；默认 10，
             ``None`` 始终显示，0 始终隐藏
+
         :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，仅用于生产订单测试用例
         :param include_sample_records: 是否导出生产订单样例；False保留不适用说明，不写逐行数据
         """
@@ -5290,8 +5382,10 @@ def auto_model_report(
     数据集传入支持三种方式，内部统一规整为 ``{数据集名称: (X, y)}`` 结构：
 
     1. datasets 为 dict：直接以 key 作为数据集名称，
-       如 ``{'建模集': df, 'OOT': df}``，DataFrame 需包含目标列，或通过 overdue/dpds 自动构建标签
+       如 ``{'建模集': df, 'OOT': df}`` ，DataFrame 需包含目标列，或通过 overdue/dpds 自动构建标签
+
     2. datasets 为 list：依次命名为 数据集1、数据集2、...、数据集N
+
     3. X_train/X_test/X_oot 参数：依次命名为 训练集、测试集、跨时间验证集
 
     标签解析遵循 hscredit 统一传参风格：显式传入 y 优先（sklearn 风格）；
@@ -5337,56 +5431,101 @@ def auto_model_report(
         )
 
     :param model: 训练好的模型（ScoreCard / XGBoost / LightGBM / sklearn 等）
-    :param datasets: 数据集字典/列表，字典键直接作为数据集名称（推荐）
-    :param X_train: 训练集特征（命名为 训练集）
-    :param y_train: 训练集标签，None 时从 X_train 中自动构建
-    :param X_test: 测试集特征（命名为 测试集）
-    :param y_test: 测试集标签，None 时从 X_test 中自动构建
-    :param X_oot: 跨时间验证集特征（命名为 跨时间验证集）
-    :param y_oot: 跨时间验证集标签，None 时从 X_oot 中自动构建
-    :param features: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
-    :param target: 目标列配置，str 为列名，dict 为 {标签名: 一维数据或 callable}
-    :param overdue: 逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
-    :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本；``<``、``<=`` 下不剔除。
-    :param excel_path: Excel 报告输出路径
-    :param verbose: 是否打印控制台报告
-    :param max_n_bins: 分箱数
-    :param method: 分箱方法
-    :param amount: 金额字段（用于金额口径分析）
-    :param date: 日期字段（用于分月分析）
+    :param datasets: 默认值为 ``None`` 。数据集字典/列表，字典键直接作为数据集名称（推荐）
+    :type datasets: Optional[Union[List, Dict]]
+    :param X_train: 默认值为 ``None`` 。训练集特征（命名为 训练集）
+    :param y_train: 默认值为 ``None`` 。训练集标签，None 时从 X_train 中自动构建
+    :param X_test: 默认值为 ``None`` 。测试集特征（命名为 测试集）
+    :param y_test: 默认值为 ``None`` 。测试集标签，None 时从 X_test 中自动构建
+    :param X_oot: 默认值为 ``None`` 。跨时间验证集特征（命名为 跨时间验证集）
+    :param y_oot: 默认值为 ``None`` 。跨时间验证集标签，None 时从 X_oot 中自动构建
+    :param features: 默认值为 ``None`` 。特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
+    :type features: Optional[List[str]]
+    :param target: 默认值为 ``None`` 。目标列配置，str 为列名，dict 为 {标签名: 一维数据或 callable}
+    :type target: Optional[TargetInput]
+    :param overdue: 默认值为 ``None`` 。逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
+    :type overdue: Optional[Union[str, List[str]]]
+    :param dpds: 默认值为 ``None`` 。逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
+    :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
+    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :type del_grey: bool
+    :param excel_path: 默认值为 ``None`` 。Excel 报告输出路径
+    :type excel_path: Optional[str]
+    :param verbose: 默认值为 ``True`` 。是否打印控制台报告
+    :type verbose: bool
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
+    :param method: 默认值为 ``'quantile'`` 。分箱方法
+    :type method: str
+    :param amount: 默认值为 ``None`` 。金额字段（用于金额口径分析）
+    :type amount: Optional[str]
+    :param date: 默认值为 ``None`` 。日期字段（用于分月分析）
+    :type date: Optional[str]
     :param freq: 日期频率，支持 'D', 'W', 'M', 'Q' 等（默认自动推断）
-    :param group: 分组字段（用于分组坏样本率分析）
-    :param with_plots: 是否生成图表
-    :param model_name: 模型名称
-    :param project_desc: 项目描述
-    :param feature_map: 特征名称到含义的映射
-    :param feature_info: 特征部署信息表
-    :param show_lift: 是否在报告中显示 LIFT 曲线
-    :param show_importance: 是否在报告中显示特征重要性
+    :type freq: Optional[str]
+    :param group: 默认值为 ``None`` 。分组字段（用于分组坏样本率分析）
+    :type group: Optional[str]
+    :param with_plots: 默认值为 ``True`` 。是否生成图表
+    :type with_plots: bool
+    :param model_name: 默认值为 ``None`` 。模型名称
+    :type model_name: Optional[str]
+    :param project_desc: 默认值为 ``None`` 。项目描述
+    :type project_desc: Optional[str]
+    :param feature_map: 默认值为 ``None`` 。特征名称到含义的映射
+    :type feature_map: Optional[Dict[str, str]]
+    :param feature_info: 默认值为 ``None`` 。特征部署信息表
+    :type feature_info: Optional[pd.DataFrame]
+    :param show_lift: 默认值为 ``True`` 。是否在报告中显示 LIFT 曲线
+    :type show_lift: bool
+    :param show_importance: 默认值为 ``True`` 。是否在报告中显示特征重要性
+    :type show_importance: bool
     :param feature_contribution_label_max_features: 贡献图显示数据标签的最大特征数；默认 10，
         ``None`` 始终显示，0 始终隐藏
-    :param data_source: 数据源描述
-    :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，用于生产测试用例列
+
+    :type feature_contribution_label_max_features: Optional[int]
+    :param data_source: 默认值为 ``None`` 。数据源描述
+    :type data_source: Optional[str]
+    :param loc_cols: 默认值为 ``None`` 。定位字段（订单号等），支持 str 或 List[str]，用于生产测试用例列
+    :type loc_cols: Optional[Union[str, List[str]]]
     :param include_sample_records: 是否输出逐行订单/模型分数测试用例，默认True；False标记该章节不适用
-    :param prediction_method: 数据集唯一预测方法，默认 ``predict_proba``，也支持 callable
-    :param prediction_kwargs: callable 同名参数的显式覆盖字典
-    :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
-    :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
-    :param parallel_config: joblib 其他并行配置
+    :type include_sample_records: bool
+    :param prediction_method: 数据集唯一预测方法，默认 ``predict_proba`` ，也支持 callable
+    :type prediction_method: Union[str, Callable]
+    :param prediction_kwargs: 默认值为 ``None`` 。callable 同名参数的显式覆盖字典
+    :type prediction_kwargs: Optional[Dict[str, Any]]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
     :param kwargs: 透传给 callable 的额外同名参数
     :param mode: strict 在必需章节失败时抛出 ReportGenerationError；best_effort 保留成功章节并记录失败。默认 best_effort；事务模式默认 strict。
+    :type mode: Optional[str]
     :param return_result: 默认 False；to_excel 返回文件路径，auto_model_report 返回 ModelReport。True 改为返回 ReportResult，可检查 complete、status_table() 和 artifacts。
+    :type return_result: bool
     :param transactional: 默认 False；True 将 Excel 与图片发布到独立版本目录，返回实际版本文件路径，不覆盖旧版本。
-    :param metrics: 统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置。
-    :param sample_weight: 样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重。
+    :type transactional: bool
+    :param metrics: 默认值为 ``None`` 。统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置
+    :param sample_weight: 默认值为 ``None`` 。样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重
     :param score_direction: higher_risk 表示值越大风险越高（概率默认）；higher_safe 表示值越大越安全；auto 仅显式指定时自动判断。
     :return: ModelReport 实例
 
-    :param overdue_operator: 逾期标签比较符，支持 ``>``、``>=``、``<``、``<=``，默认 ``>``。
+    :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
-        ``del_grey=True`` 时，``>`` 剔除 ``(0, dpd]``，``>=`` 剔除 ``(0, dpd)``；
+        ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
+
+    :type overdue_operator: Optional[str]
 
     **参考样例**
 
@@ -5480,18 +5619,32 @@ def compare_models(
 ) -> pd.DataFrame:
     """横向对比多个模型的评估指标.
 
-    对每个模型分别构建 :class:`ModelReport` 并取其 :meth:`~ModelReport.summary`，
+    对每个模型分别构建  :class:`ModelReport`  并取其  :meth:`~ModelReport.summary` ，
     按输入映射顺序纵向拼接为一张对比表；任一模型失败时立即抛出并保留原始异常链。
 
     :param models: 模型名称到模型对象的映射，如 ``{'XGB': xgb_model, 'LR': lr_model}``
+    :type models: Dict[str, object]
     :param X_train: 训练集特征
     :param y_train: 训练集标签（0/1）
-    :param X_test: 测试集特征，可选
-    :param y_test: 测试集标签，可选
-    :param excel_path: 可选，若提供则将对比表导出到该 Excel 路径
-    :param n_jobs: 模型外层并行工作数；-1 自动保留 CPU
-    :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
-    :param parallel_config: joblib 其他并行配置
+    :param X_test: 默认值为 ``None`` 。测试集特征，可选
+    :param y_test: 默认值为 ``None`` 。测试集标签，可选
+    :param excel_path: 默认值为 ``None`` 。可选，若提供则将对比表导出到该 Excel 路径
+    :type excel_path: Optional[str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
     :return: 含 ``模型名称`` 列的指标对比 ``DataFrame``
 
     **参考样例**

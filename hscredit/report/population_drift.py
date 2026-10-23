@@ -77,22 +77,50 @@ def population_drift(
     """生成客群偏移综合监控结果（Excel）.
 
     报告包含以下Sheet:
-    - **总览**: 各特征PSI汇总及稳定性等级
-    - **特征分布对比**: 各特征在基准/实际数据集的分箱分布对比
-    - **逾期率对比** (可选): 各特征分箱下的逾期率差异
-    - **评分分布** (可选): 模型评分在两个数据集的分布对比
+
+    - **总览** : 各特征PSI汇总及稳定性等级
+
+    - **特征分布对比** : 各特征在基准/实际数据集的分箱分布对比
+
+    - **逾期率对比**  (可选): 各特征分箱下的逾期率差异
+
+    - **评分分布**  (可选): 模型评分在两个数据集的分布对比
+
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
 
     :param expected: 基准数据集（如训练集）
+    :type expected: pd.DataFrame
     :param actual: 实际/监控数据集（如生产数据）
+    :type actual: pd.DataFrame
     :param features: 监控特征列表
-    :param target: 目标变量列名（如有，则生成逾期率对比Sheet）
-    :param date: 时间列名（如有，用于按时间拆分实际数据）
-    :param score_col: 评分列名（如有，则生成评分分布Sheet）
-    :param max_n_bins: 分箱数
-    :param output: 输出文件路径
-    :param mode: strict 拒绝缺失字段或失败章节；best_effort 披露状态并保留成功结果
-    :param missing_date: 日期缺失策略：error 拒绝、drop 显式排除、separate 独立统计
-    :param return_result: True 返回包含状态、样本口径和结果表的 ReportResult
+    :type features: List[str]
+    :param target: 默认值为 ``None`` 。目标变量列名（如有，则生成逾期率对比Sheet）
+    :type target: Optional[str]
+    :param date: 默认值为 ``None`` 。时间列名（如有，用于按时间拆分实际数据）
+    :type date: Optional[str]
+    :param score_col: 默认值为 ``None`` 。评分列名（如有，则生成评分分布Sheet）
+    :type score_col: Optional[str]
+    :param max_n_bins: 默认值为 ``10`` 。分箱数
+    :type max_n_bins: int
+    :param output: 默认值为 ``'客群偏移监控报告.xlsx'`` 。输出文件路径
+    :type output: str
+    :param mode: 默认值为 ``'best_effort'`` 。strict 拒绝缺失字段或失败章节；best_effort 披露状态并保留成功结果
+    :type mode: str
+    :param missing_date: 默认值为 ``'error'`` 。日期缺失策略：error 拒绝、drop 显式排除、separate 独立统计
+    :type missing_date: str
+    :param return_result: 默认值为 ``False`` 。True 返回包含状态、样本口径和结果表的 ReportResult
+    :type return_result: bool
     :return: 默认输出文件路径；return_result=True 时为结构化结果
 
     **参考样例**

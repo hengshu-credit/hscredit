@@ -47,18 +47,26 @@ def psi(
     PSI分级标准:
 
     - PSI < 0.1: 没有显著变化，分布稳定
+
     - 0.1 <= PSI < 0.25: 有轻微变化，需关注
+
     - PSI >= 0.25: 有显著变化，模型可能需要重新训练
 
     **参数**
 
     :param expected: 期望分布数据（通常是训练集或基准数据的特征/评分）
+    :type expected: Union[np.ndarray, pd.Series]
     :param actual: 实际分布数据（通常是测试集或新上线数据的特征/评分）
+    :type actual: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 可传baseline=MonitoringBaseline复用冻结基准，include_missing默认True。
         默认quantile仅在基准期拟合；其他有监督方法保留两期联合比较口径，详情见结果attrs。
+
     :return: PSI值
 
     **参考样例**
@@ -90,18 +98,30 @@ def psi_table(
     **参数**
 
     :param expected: 期望分布数据（通常是训练集或基准数据）
+    :type expected: Union[np.ndarray, pd.Series]
     :param actual: 实际分布数据（通常是测试集或新数据）
+    :type actual: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: baseline为已拟合MonitoringBaseline；include_missing=False显式计算非缺失条件分布。
         默认quantile冻结基准；其他方法保留两期联合分箱并在attrs标记。
+
     :return: 包含各分箱详细统计的DataFrame，列包括：
+
         - 分箱: 分箱标签
+
         - 期望样本数: 该分箱内期望数据量
+
         - 实际样本数: 该分箱内实际数据量
+
         - 期望占比: 期望样本占总样本比例
+
         - 实际占比: 实际样本占总样本比例
+
         - PSI贡献: 该分箱对总PSI的贡献
 
     **参考样例**
@@ -241,9 +261,13 @@ def psi_rating(psi_value: float) -> str:
     **参数**
 
     :param psi_value: PSI值（通常由psi()函数计算得到）
+    :type psi_value: float
     :return: 稳定性评级描述字符串
+
         - PSI < 0.1: "没有显著变化 (PSI < 0.1)"
+
         - 0.1 <= PSI < 0.25: "有轻微变化 (0.1 <= PSI < 0.25)"
+
         - PSI >= 0.25: "有显著变化 (PSI >= 0.25)"
 
     **参考样例**
@@ -280,10 +304,15 @@ def csi(
     **参数**
 
     :param expected: 期望分布数据（通常是训练集的特征数据）
+    :type expected: Union[np.ndarray, pd.Series]
     :param actual: 实际分布数据（通常是测试集或新数据的特征）
+    :type actual: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: CSI值（计算方法与PSI相同）
     :raises ValueError: 数据为空时
@@ -314,10 +343,15 @@ def csi_table(
     **参数**
 
     :param expected: 期望分布数据（通常是训练集的特征数据）
+    :type expected: Union[np.ndarray, pd.Series]
     :param actual: 实际分布数据（通常是测试集或新数据的特征）
+    :type actual: Union[np.ndarray, pd.Series]
     :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: 包含各分箱详细统计的DataFrame，列与psi_table相同，PSI贡献列重命名为CSI贡献
 
@@ -352,15 +386,24 @@ def batch_psi(
     **参数**
 
     :param X_train: 训练集特征DataFrame
+    :type X_train: pd.DataFrame
     :param X_test: 测试集特征DataFrame（与X_train列结构一致）
+    :type X_test: pd.DataFrame
     :param features: 需要计算PSI的特征列表，默认为None（计算全部共同列）
+    :type features: Optional[List[str]]
     :param method: 分箱方法，默认为'quantile'（等频分箱）
+    :type method: str
     :param max_n_bins: 最大分箱数，默认为10
+    :type max_n_bins: int
     :param min_bin_size: 每箱最小样本占比，默认为0.01
+    :type min_bin_size: float
     :param kwargs: 其他传递给OptimalBinning的参数
     :return: 包含各特征PSI结果的DataFrame，列包括：
+
         - 特征: 特征名称
+
         - PSI: PSI值
+
         - 评级: 稳定性评级（由psi_rating函数返回）
 
     **参考样例**

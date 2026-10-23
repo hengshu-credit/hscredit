@@ -21,39 +21,101 @@ class ChiMergeBinning(BaseBinning):
     一种自底向上（bottom-up）的有监督分箱方法。其核心假设是：若相邻两箱的好坏样本
     分布无显著差异（卡方值小），则可以合并。算法流程：
 
-    1. **初始化**：将每个唯一值（或预分位点）各作为一个箱；
-    2. **迭代合并**：对所有相邻箱对计算 2×2 列联表的卡方统计量，合并卡方值最小的一对；
-    3. **停止**：当最小卡方值超过阈值 ``min_chi2_threshold``，或箱数降至 ``max_n_bins``、
+    1. **初始化** ：将每个唯一值（或预分位点）各作为一个箱；
+
+    2. **迭代合并** ：对所有相邻箱对计算 2×2 列联表的卡方统计量，合并卡方值最小的一对；
+
+    3. **停止** ：当最小卡方值超过阈值 ``min_chi2_threshold`` ，或箱数降至 ``max_n_bins`` 、
        ``min_n_bins`` 限制时停止。
 
-    卡方值越大表示相邻两箱坏样本率差异越显著、越不应合并。继承 :class:`BaseBinning`，
+    卡方值越大表示相邻两箱坏样本率差异越显著、越不应合并。继承  :class:`BaseBinning` ，
     完整的分箱通用参数、属性与转换语义见基类。
 
-    **参数（本算法特有及关键项）**
+    **参数**
+
+    :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
+        ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
+        ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
+        字符串、category 和布尔字段本身按类别处理；该参数不用于合并低频类别。
+
+    :type cat_cutoff: Optional[Union[float, int]]
+    :param category_order: 类别顺序，默认 ``None`` 按训练集坏样本率升序排列，同率按首次出现顺序。
+        可传 ``{字段名: 完整类别序列}`` 或 ``callable(feature, x, y)`` ；
+        顺序必须覆盖该字段全部非缺失训练类别，不能重复或包含未知类别。
+
+    :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
+        返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
+        也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
+
+    :type handle_unknown: Union[int, str]
+    :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
+        正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
+        不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :type n_jobs: Union[int, float]
+    :param parallel_backend: joblib 后端名称，默认 ``None`` 由模块选择；常用 ``"threading"`` 、
+        ``"loky"`` 、 ``"multiprocessing"`` ，也可使用已注册后端。
+        显式后端必须与 ``parallel_config`` 中的共享内存要求兼容。
+
+    :type parallel_backend: Optional[str]
+    :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
+        ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
+        ``temp_folder`` 、 ``timeout`` 、 ``verbose`` 、 ``inner_max_num_threads`` 、
+        ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
+
+    :type parallel_config: Optional[Dict[str, Any]]
+    :param user_splits: 自定义规则字典或返回规则的可调用对象，默认 ``None`` 。数值规则为严格递增的
+        有限内部切点（不含正负无穷）；类别规则为完整覆盖训练类别的嵌套列表。
+        缺失标记最多出现一次，可独立成箱或加入指定箱。
+
+    :type user_splits: Optional[Dict[str, List]]
+    :param user_splits_fixed: 固定用户节点，默认 ``None`` 表示不固定；可传全局布尔值或
+        ``{字段名: 布尔值或布尔序列}`` 。数值序列长度须等于有限切点数；
+        类别序列长度须等于用户分组数。 ``True`` 保留节点， ``False`` 允许合并。
+
+    :type user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]]
 
     :param target: 目标列名（scorecardpipeline 风格），默认为 ``'target'``
+    :type target: str
     :param max_n_bins: 最大分箱数，默认为 ``10``
+    :type max_n_bins: int
     :param min_n_bins: 最小分箱数，默认为 ``2``
-    :param min_chi2_threshold: 卡方合并阈值（停止合并的下限），默认为 ``None``。
+    :type min_n_bins: int
+    :param min_chi2_threshold: 卡方合并阈值（停止合并的下限），默认为 ``None`` 。
         为 ``None`` 时取自由度 1、显著性水平 ``significance_level`` 的卡方临界值
         （如 0.05 对应约 3.841）。当相邻箱的最小卡方值大于该阈值即停止合并
+
+    :type min_chi2_threshold: Optional[float]
     :param significance_level: 显著性水平，用于在 ``min_chi2_threshold`` 为 ``None`` 时
-        换算卡方临界值，默认为 ``0.05``（值越小阈值越大、分箱越粗）
-    :param min_bin_size: 每箱最小样本数（``>=1``）或占比（``<1``），默认为 ``0.01``
+        换算卡方临界值，默认为 ``0.05`` （值越小阈值越大、分箱越粗）
+
+    :type significance_level: float
+    :param min_bin_size: 每箱最小样本数（ ``>=1`` ）或占比（ ``<1`` ），默认为 ``0.01``
+    :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认为 ``None``
+    :type max_bin_size: Optional[Union[float, int]]
     :param min_bad_rate: 每箱最小坏样本率，默认为 ``0.0``
-    :param monotonic: 坏样本率单调性约束，取值见 :class:`BaseBinning`，默认为 ``False``
+    :type min_bad_rate: float
+    :param monotonic: 坏样本率单调性约束，取值见  :class:`BaseBinning` ，默认为 ``False``
+    :type monotonic: Union[bool, str]
     :param special_codes: 特殊值列表，单独成箱，默认为 ``None``
+    :type special_codes: Optional[List]
     :param missing_separate: 是否将缺失值单独成箱，默认为 ``True``
+    :type missing_separate: bool
     :param random_state: 随机种子，默认为 ``None``
+    :type random_state: Optional[int]
     :param verbose: 是否输出合并过程日志，默认为 ``False``
+    :type verbose: Union[bool, int]
     :param decimal: 数值切分点保留小数位，默认为 ``4``
+    :type decimal: int
 
     **属性**
 
-    - ``splits_``: 每个特征的分箱切分点
-    - ``n_bins_``: 每个特征的实际分箱数
-    - ``bin_tables_``: 每个特征的分箱统计表（中文列名，见 :class:`BaseBinning`）
+    - ``splits_`` : 每个特征的分箱切分点
+
+    - ``n_bins_`` : 每个特征的实际分箱数
+
+    - ``bin_tables_`` : 每个特征的分箱统计表（中文列名，见  :class:`BaseBinning` ）
 
     **参考样例**
 
@@ -130,11 +192,13 @@ class ChiMergeBinning(BaseBinning):
         """拟合卡方分箱。
 
         对每个特征执行 ChiMerge 合并，得到切分点与分箱统计表。支持 sklearn 风格
-        ``fit(X, y)`` 与 scorecardpipeline 风格 ``fit(df)``（目标列由 ``target`` 指定），
-        详见 :meth:`BaseBinning.fit`。
+        ``fit(X, y)`` 与 scorecardpipeline 风格 ``fit(df)`` （目标列由 ``target`` 指定），
+        详见  :meth:`BaseBinning.fit` 。
 
-        :param X: 训练数据，shape ``(n_samples, n_features)``；可为 DataFrame 或 ndarray
-        :param y: 目标变量，二分类（0=好/1=坏）；scorecardpipeline 风格下可省略
+        :param X: 训练数据，shape ``(n_samples, n_features)`` ；可为 DataFrame 或 ndarray
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param y: 默认值为 ``None`` 。目标变量，二分类（0=好/1=坏）；scorecardpipeline 风格下可省略
+        :type y: Optional[Union[pd.Series, np.ndarray]]
         :param kwargs: 透传给基类的其他参数
         :return: 拟合后的分箱器自身（便于链式调用）
 
@@ -670,14 +734,21 @@ class ChiMergeBinning(BaseBinning):
         将原始特征值转换为分箱索引、分箱标签或WOE值。
 
         :param X: 待转换数据, DataFrame或数组格式
-        :param metric: 转换类型, 可选值:
+        :type X: Union[pd.DataFrame, np.ndarray]
+        :param metric: 默认值为 ``'indices'`` 。转换类型, 可选值:
+
             - 'indices': 返回分箱索引 (0, 1, 2, ...), 用于后续处理
+
             - 'bins': 返回分箱标签字符串, 用于可视化或报告
+
             - 'woe': 返回WOE值, 用于逻辑回归建模
+
+        :type metric: str
         :param kwargs: 其他参数
         :return: 转换后的数据, 格式与输入X相同
 
-        :example:
+        **参考样例**
+
         >>> binner = ChiMergeBinning()
         >>> binner.fit(X_train, y_train)
         >>>

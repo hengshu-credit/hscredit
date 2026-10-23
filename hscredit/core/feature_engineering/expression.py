@@ -180,24 +180,27 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
     通过一组 ``(新特征名, 表达式)`` 规则批量衍生新特征，兼容 sklearn Pipeline。
     根据输入类型自动选择计算后端：
 
-    - 输入 ``DataFrame``：受限 AST 调用 numpy/pandas 向量化运算，支持中文列名。
+    - 输入 ``DataFrame`` ：受限 AST 调用 numpy/pandas 向量化运算，支持中文列名。
       非标字段通过 ``col('年 龄')`` 引用；后续规则可引用此前产生的衍生字段。
-    - 输入 ``ndarray``：走 numexpr 计算（需安装 ``numexpr``），列以 ``f0``、``f1`` …
+
+    - 输入 ``ndarray`` ：走 numexpr 计算（需安装 ``numexpr`` ），列以 ``f0`` 、 ``f1`` …
       命名引用。
 
-    表达式语法基于 Python/numpy，额外支持 ``where(cond, a, b)``（自动转换为
-    :func:`numpy.where`）以及 ``sin``/``cos``/``tan``/``abs``/``exp``/``log``/
-    ``sqrt``/``power``/``floor``/``ceil`` 等 numpy 函数。
+    表达式语法基于 Python/numpy，额外支持 ``where(cond, a, b)`` （自动转换为
+    :func:`numpy.where` ）以及 ``sin`` / ``cos`` / ``tan`` / ``abs`` / ``exp`` / ``log`` /
+    ``sqrt`` / ``power`` / ``floor`` / ``ceil`` 等 numpy 函数。
 
     **参数**
 
-    :param derivings: 衍生规则列表，每个元素为 ``(name, expr)`` 二元组：
+    :param derivings: 默认值为 ``None`` 。衍生规则列表，每个元素为 ``(name, expr)`` 二元组：
 
         - ``name`` (str)：新特征列名
-        - ``expr`` (str)：基于已有列名的表达式字符串，如 ``"f1 + f2"``、
+
+        - ``expr`` (str)：基于已有列名的表达式字符串，如 ``"f1 + f2"`` 、
           ``"where(score >= 600, '高', '低')"``
 
         为 ``None`` 或空列表时在初始化/fit 阶段抛出 ``ValueError``
+
     :param trusted_python: 默认 False，禁止导入、任意属性访问和任意函数调用。
         True 允许完整 Python 表达式，仅适用于可信开发者代码，不能用于不可信配置。
 
@@ -247,8 +250,9 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         """初始化特征衍生器。
 
         :param derivings: 衍生规则列表，每个元素为 ``(name, expr)`` 二元组，
-            ``name`` 为新特征列名（str），``expr`` 为表达式字符串（str）。
-            默认 ``None``，但 ``None``/空列表会立即抛出 ``ValueError``
+            ``name`` 为新特征列名（str）， ``expr`` 为表达式字符串（str）。
+            默认 ``None`` ，但 ``None`` /空列表会立即抛出 ``ValueError``
+
         :raises ValueError: derivings 为空、非列表，或元素不是 (str, str) 二元组时
         """
         self.derivings = derivings
@@ -267,8 +271,8 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """拟合特征衍生器（校验规则与输入维度，不学习任何参数）。
 
-        :param X: 输入数据，``DataFrame`` 或 2 维 ``ndarray``
-        :param y: 目标变量，未使用，仅为兼容 sklearn 接口而保留
+        :param X: 输入数据， ``DataFrame`` 或 2 维 ``ndarray``
+        :param y: 默认值为 ``None`` 。目标变量，未使用，仅为兼容 sklearn 接口而保留
         :return: self，支持链式调用
         :raises ValueError: derivings 非法，或 X 不是 2 维时
         """
@@ -365,8 +369,11 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
         """转换 DataFrame，支持任意类型数据。
 
         策略：
+
         - 纯数值列 -> numpy eval（最快）
+
         - 含字符串/布尔/日期等 -> pandas Series eval（类型安全）
+
         np.where 接收 Series 时行为正确（字符串/布尔/数值均能正确处理）。
         """
         feature_names = X.columns.tolist()
@@ -425,11 +432,12 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
 
         :param X: 输入数据：
 
-            - ``DataFrame``：表达式按列名引用，返回 ``原始列 + 衍生列`` 的新 DataFrame
-            - 2 维 ``ndarray``：列以 ``f0``/``f1``/… 引用，返回水平拼接的新数组
-              （需安装 ``numexpr``）
+            - ``DataFrame`` ：表达式按列名引用，返回 ``原始列 + 衍生列`` 的新 DataFrame
 
-        :return: 含衍生特征的 ``DataFrame``（DataFrame 输入）或 ``ndarray``（数组输入）
+            - 2 维 ``ndarray`` ：列以 ``f0`` / ``f1`` /… 引用，返回水平拼接的新数组
+              （需安装 ``numexpr`` ）
+
+        :return: 含衍生特征的 ``DataFrame`` （DataFrame 输入）或 ``ndarray`` （数组输入）
         :raises ImportError: 输入为 ndarray 且未安装 numexpr 时
         """
         self._check_keywords()
