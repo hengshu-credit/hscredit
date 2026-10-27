@@ -22,6 +22,7 @@
 
 from ...utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
 from ...utils.arguments import analysis_inputs
+from ..metrics._semantics import metric_metadata, rejection_statistics, validate_amounts
 
 import ast
 import copy
@@ -540,7 +541,8 @@ class Rule(ParallelizableMixin):
             再对当前规则进行评估
 
         :type prior_rules: Optional['Rule']
-        :param amount: 默认值为 ``None`` 。金额字段名（可选），传入时以金额口径而非样本数口径进行统计
+        :param amount: 默认值为 ``None`` 。金额字段名（可选），有效标签人群的金额必须为有限非负数值；
+            传入时业务指标按金额统计，准确率/精确率/召回率/F1仍按样本数统计
         :type amount: Optional[str]
         :param margins: 是否在报告末尾添加合计行，默认为False
         :type margins: bool
@@ -614,173 +616,61 @@ class Rule(ParallelizableMixin):
                     data, target=target, desc=desc, prior_rules=None, margins=margins, amount=amount
                 )
                 prior_tables["规则分类"] = "先验规则"
-                temp = data[~prior_rules.predict(data)]
-                if amount is not None and amount in temp.columns:
-                    rule_result = pd.DataFrame(
-                        {
-                            rule_expr: np.where(self.predict(temp), "命中", "未命中"),
-                            amount: temp[amount].values,
-                            "target": temp[target].tolist(),
-                        }
-                    )
-                else:
-                    rule_result = pd.DataFrame(
-                        {rule_expr: np.where(self.predict(temp), "命中", "未命中"), "target": temp[target].tolist()}
-                    )
+                data = data.loc[~prior_rules.predict(data)]
             else:
                 prior_tables = pd.DataFrame(columns=return_cols)
-                if amount is not None and amount in data.columns:
-                    rule_result = pd.DataFrame(
-                        {
-                            rule_expr: np.where(self.predict(data), "命中", "未命中"),
-                            amount: data[amount].values,
-                            "target": data[target].tolist(),
-                        }
-                    )
-                else:
-                    rule_result = pd.DataFrame(
-                        {rule_expr: np.where(self.predict(data), "命中", "未命中"), "target": data[target].tolist()}
-                    )
 
-            # 判断是否使用金额口径
-            has_amount = amount is not None and amount in rule_result.columns
-
-            if has_amount:
-                # 金额口径：使用金额替代样本数，但列名保持统一
-                total_amount = rule_result[amount].sum()
-                total_good_amount = rule_result[rule_result["target"] == 0][amount].sum()
-                total_bad_amount = rule_result[rule_result["target"] == 1][amount].sum()
-                overall_bad_rate = total_bad_amount / total_amount if total_amount > 0 else 0
-
-                rows = []
-                for bin_name in ["命中", "未命中"]:
-                    matched = rule_result[rule_result[rule_expr] == bin_name]
-                    bin_amount = matched[amount].sum()
-                    bin_bad_amount = matched[matched["target"] == 1][amount].sum()
-                    bin_good_amount = bin_amount - bin_bad_amount
-
-                    # 使用统一的列名，但存储金额数据
-                    sample_ratio = bin_amount / total_amount if total_amount > 0 else 0
-                    good_ratio = bin_good_amount / total_good_amount if total_good_amount > 0 else 0
-                    bad_ratio = bin_bad_amount / total_bad_amount if total_bad_amount > 0 else 0
-                    bad_rate = bin_bad_amount / bin_amount if bin_amount > 0 else 0
-                    lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0
-                    # 拒绝后剩余样本坏样本率 = (全量坏金额 - 当前箱坏金额) / (全量金额 - 当前箱金额)
-                    other_bad = total_bad_amount - bin_bad_amount
-                    other_total = total_amount - bin_amount
-                    remaining_bad_rate = other_bad / other_total if other_total > 0 else 0
-                    bad_decrease = (
-                        (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
-                    )
-
-                    row = {
-                        "指标名称": rule_expr,
-                        "指标含义": desc if desc else "",
-                        "分箱": bin_name,
-                        "样本总数": bin_amount,  # 金额口径：存储金额
-                        "样本占比": sample_ratio,  # 金额占比
-                        "好样本数": bin_good_amount,  # 好金额
-                        "好样本占比": good_ratio,  # 好金额占比
-                        "坏样本数": bin_bad_amount,  # 坏金额
-                        "坏样本占比": bad_ratio,  # 坏金额占比
-                        "坏样本率": bad_rate,  # 金额口径坏账率
-                        "LIFT值": lift,
-                        "坏账改善": bad_decrease,
-                    }
-                    rows.append(row)
-
-                table = pd.DataFrame(rows)
-
-                # 计算合计行
-                total_row_data = {
-                    "指标名称": "合计",
-                    "指标含义": "",
-                    "分箱": "合计",
-                    "样本总数": total_amount,
-                    "样本占比": 1.0,
-                    "好样本数": total_good_amount,
-                    "好样本占比": 1.0,
-                    "坏样本数": total_bad_amount,
-                    "坏样本占比": 1.0,
-                    "坏样本率": overall_bad_rate,
-                    "LIFT值": 1.0,
-                    "坏账改善": 0.0,
-                }
-            else:
-                # 样本数口径（原有逻辑）
-                total = len(rule_result)
-                total_good = rule_result["target"].eq(0).sum()
-                total_bad = rule_result["target"].eq(1).sum()
-                overall_bad_rate = rule_result["target"].mean() if total > 0 else 0
-
-                rows = []
-                for bin_name in ["命中", "未命中"]:
-                    matched = rule_result[rule_result[rule_expr] == bin_name]
-                    bin_total = len(matched)
-                    bin_bad = matched["target"].sum() if bin_total > 0 else 0
-                    bin_good = bin_total - bin_bad
-
-                    sample_ratio = bin_total / total if total > 0 else 0
-                    good_ratio = bin_good / total_good if total_good > 0 else 0
-                    bad_ratio = bin_bad / total_bad if total_bad > 0 else 0
-                    bad_rate = bin_bad / bin_total if bin_total > 0 else 0
-                    lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 0
-                    # 拒绝后剩余样本坏样本率 = (全量坏样本数 - 当前箱坏样本数) / (全量样本数 - 当前箱样本数)
-                    other_bad = total_bad - bin_bad
-                    other_total = total - bin_total
-                    remaining_bad_rate = other_bad / other_total if other_total > 0 else 0
-                    bad_decrease = (
-                        (overall_bad_rate - remaining_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
-                    )
-
-                    row = {
-                        "指标名称": rule_expr,
-                        "指标含义": desc if desc else "",
-                        "分箱": bin_name,
-                        "样本总数": bin_total,
-                        "样本占比": sample_ratio,
-                        "好样本数": bin_good,
-                        "好样本占比": good_ratio,
-                        "坏样本数": bin_bad,
-                        "坏样本占比": bad_ratio,
-                        "坏样本率": bad_rate,
-                        "LIFT值": lift,
-                        "坏账改善": bad_decrease,
-                    }
-                    rows.append(row)
-
-                table = pd.DataFrame(rows)
-
-                # 计算合计行
-                y_true = rule_result["target"]
-                y_pred = rule_result[rule_expr].map({"命中": 1, "未命中": 0})
-
-                total_row_data = {
-                    "指标名称": "合计",
-                    "指标含义": "",
-                    "分箱": "合计",
-                    "样本总数": total,
-                    "样本占比": 1.0,
-                    "好样本数": total_good,
-                    "好样本占比": 1.0 if total_good > 0 else 0.0,
-                    "坏样本数": total_bad,
-                    "坏样本占比": 1.0 if total_bad > 0 else 0.0,
-                    "坏样本率": rule_result["target"].mean(),
-                    "LIFT值": 1.0,
-                    "坏账改善": 0.0,
-                }
-
-            # 添加风险拒绝比 = 坏账改善 / 样本占比
-            table["风险拒绝比"] = np.divide(
-                table["坏账改善"],
-                table["样本占比"],
-                out=np.zeros(len(table), dtype=float),
-                where=table["样本占比"].to_numpy() != 0,
+            # 标签、命中掩码和金额分开保存，避免用户字段名与表达式覆盖内部列。
+            hits = np.asarray(self.predict(data), dtype=bool)
+            labels = data[target].to_numpy()
+            weights = (
+                validate_amounts(data[amount], len(data)) if amount is not None else np.ones(len(data), dtype=np.int64)
             )
-
-            # 计算准确率、精确率、召回率、F1分数
-            y_true = rule_result["target"]
-            y_pred = rule_result[rule_expr].map({"命中": 1, "未命中": 0})
+            total = weights.sum()
+            total_bad = weights[labels == 1].sum()
+            total_good = total - total_bad
+            overall_bad_rate = total_bad / total if total > 0 else 0.0
+            rows = []
+            for bin_name, selected in [("命中", hits), ("未命中", ~hits)]:
+                count = weights[selected].sum()
+                bad = weights[selected & (labels == 1)].sum()
+                good = count - bad
+                rate = bad / count if count > 0 else 0.0
+                _, improvement, efficiency = rejection_statistics(total, total_bad, count, bad)
+                rows.append(
+                    {
+                        "指标名称": rule_expr,
+                        "指标含义": desc if desc else "",
+                        "分箱": bin_name,
+                        "样本总数": count,
+                        "样本占比": count / total if total > 0 else 0.0,
+                        "好样本数": good,
+                        "好样本占比": good / total_good if total_good > 0 else 0.0,
+                        "坏样本数": bad,
+                        "坏样本占比": bad / total_bad if total_bad > 0 else 0.0,
+                        "坏样本率": rate,
+                        "LIFT值": rate / overall_bad_rate if overall_bad_rate > 0 else 0.0,
+                        "坏账改善": float(improvement),
+                        "风险拒绝比": float(efficiency),
+                    }
+                )
+            table = pd.DataFrame(rows)
+            total_row_data = {
+                "指标名称": "合计",
+                "指标含义": "",
+                "分箱": "合计",
+                "样本总数": total,
+                "样本占比": float(total > 0),
+                "好样本数": total_good,
+                "好样本占比": float(total_good > 0),
+                "坏样本数": total_bad,
+                "坏样本占比": float(total_bad > 0),
+                "坏样本率": overall_bad_rate,
+                "LIFT值": 1.0 if overall_bad_rate > 0 else 0.0,
+                "坏账改善": 0.0,
+            }
+            y_true = pd.Series(labels)
+            y_pred = pd.Series(hits.astype(int))
 
             metrics_data = {
                 "分箱": ["命中", "未命中"],
@@ -837,8 +727,27 @@ class Rule(ParallelizableMixin):
             if "指标含义" in return_cols:
                 merge_columns.append("指标含义")
             labels = targets.names("space")
+            task_data = datasets
+            expression_rules = [self] + ([prior_rules] if prior_rules is not None else [])
+            if all(
+                type(rule) is Rule and getattr(rule.predict, "__func__", None) is Rule.predict
+                for rule in expression_rules
+            ):
+                # 标签已绑定；标准表达式规则只携带所需字段，避免每个标签复制整张宽表。
+                # 自定义 predict 的依赖不可由表达式推断，保持其完整输入。
+                required = set(targets.columns)
+                if amount is not None:
+                    required.add(amount)
+                try:
+                    for rule in expression_rules:
+                        required.update(rule.feature_names_in_)
+                        required.update(get_columns_from_query(rule.expr))
+                except (ValueError, SyntaxError):
+                    required = set(datasets.columns)
+                if datasets.columns.is_unique and required.issubset(datasets.columns):
+                    task_data = datasets.loc[:, [column for column in datasets.columns if column in required]]
             tasks = (
-                (copy.deepcopy(self), datasets, definition.column, desc, copy.deepcopy(prior_rules), amount, margins)
+                (copy.deepcopy(self), task_data, definition.column, desc, copy.deepcopy(prior_rules), amount, margins)
                 for definition in targets.labels
             )
             tables = self._parallel_execute(
@@ -848,9 +757,9 @@ class Rule(ParallelizableMixin):
                 default_backend="threading",
                 workload=ParallelWorkload(
                     task_count=len(targets),
-                    rows=len(datasets),
-                    columns=len(targets),
-                    data_bytes=int(datasets.memory_usage(deep=True).sum()),
+                    rows=len(task_data),
+                    columns=len(task_data.columns),
+                    data_bytes=int(task_data.memory_usage(deep=True).sum()),
                     cost_per_item=6.0,
                     capability="thread_safe",
                     releases_gil=True,
@@ -878,6 +787,12 @@ class Rule(ParallelizableMixin):
             table = _report_one_rule(datasets.loc[valid], column, desc=desc, prior_rules=prior_rules)
         table.attrs["target_mode"] = targets.mode
         table.attrs["target_names"] = targets.names("space")
+        table.attrs["统计口径"] = {
+            **metric_metadata("amount_weighted" if amount is not None else "binary"),
+            "分类指标单位": "准确率、精确率、召回率、F1按样本计数",
+            "逾期比较符": targets.operator if targets.mode == "overdue" else None,
+            "剔灰": bool(del_grey),
+        }
 
         # 处理 filter_cols
         if filter_cols:

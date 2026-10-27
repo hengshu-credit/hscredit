@@ -1,0 +1,165 @@
+{
+  "日期": "2026-10-27",
+  "基线提交": "40d04400663ed9015c79902445ed3dd6d15cd3b4",
+  "解释器": "E:\\workspace\\hscredit\\.audit_tmp\\defect-repairs\\runtime\\Scripts\\python.exe",
+  "依赖版本": {
+    "numpy": "2.4.6",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.6.1",
+    "pytest": "8.3.5"
+  },
+  "数据摘要": {
+    "行数": 970,
+    "列数": 18,
+    "好样本数": 834,
+    "坏样本数": 136
+  },
+  "修复后真实数据金额分箱": [
+    {
+      "分箱标签": "[-inf, 0.0541)",
+      "样本总数": 1017776.0,
+      "坏样本数": 83896.0,
+      "坏账改善": -0.1392,
+      "风险拒绝比": -0.5589
+    },
+    {
+      "分箱标签": "[0.0541, 0.0838)",
+      "样本总数": 1043419.0,
+      "坏样本数": 159908.0,
+      "坏账改善": 0.027,
+      "风险拒绝比": 0.1059
+    },
+    {
+      "分箱标签": "[0.0838, 0.1239)",
+      "样本总数": 1033804.0,
+      "坏样本数": 119405.0,
+      "坏账改善": -0.0633,
+      "风险拒绝比": -0.2502
+    },
+    {
+      "分箱标签": "[0.1239, +inf)",
+      "样本总数": 992204.0,
+      "坏样本数": 217402.0,
+      "坏账改善": 0.1739,
+      "风险拒绝比": 0.7163
+    }
+  ],
+  "修复后单类金额IV": 0.0,
+  "修复后KS分桶": [
+    {
+      "桶编号": 0,
+      "最小概率": 0.0,
+      "最大概率": 3.0,
+      "样本数": 4,
+      "坏样本率": 0.25,
+      "累积坏样本率": 1.0,
+      "累积好样本率": 1.0,
+      "KS贡献": 0.0
+    },
+    {
+      "桶编号": 1,
+      "最小概率": 4.0,
+      "最大概率": 7.0,
+      "样本数": 4,
+      "坏样本率": 0.75,
+      "累积坏样本率": 0.75,
+      "累积好样本率": 0.25,
+      "KS贡献": 0.4999999999875
+    }
+  ],
+  "修复后阈值表": [
+    {
+      "评分阈值": 6.000000000000001,
+      "通过人数": 3
+    },
+    {
+      "评分阈值": 3.0000000000000004,
+      "通过人数": 6
+    }
+  ],
+  "修复后连续目标合计": {
+    "分箱": 0,
+    "分箱标签": "合计",
+    "样本总数": 4,
+    "样本占比": 1.0,
+    "目标值总和": 28.0,
+    "目标值均值": 7.0,
+    "目标值标准差": 5.244044240850758,
+    "目标值最小值": 1.0,
+    "目标值最大值": 14.0,
+    "目标值占比": 0.9999999999964286,
+    "平均LIFT值": 0.9999999999857143,
+    "贡献改善": -3.571365425257067e-12,
+    "累积样本数": 4.0,
+    "累积目标值": 28.0,
+    "累积平均值": 7.0,
+    "累积LIFT值": 0.9999999999857143,
+    "累积贡献改善": -3.571365425257067e-12,
+    "分档KS值": 0.35714285714336735
+  },
+  "源码SHA256": {
+    "hscredit/core/metrics/_binning.py": "f55c413b201152f14ef188951fe1102f11a4009b9dd0ca076986bb1bd08f2fa6",
+    "hscredit/core/metrics/classification.py": "7fa1984f3c293ffde6fc6e87eac98df85e84417639f19b020a1cb8e91d11bef9",
+    "hscredit/core/eda/strategy.py": "6f339a3a86192d759b1e48d285d3afd93f920f032ec3956b218d79677a385b25",
+    "hscredit/report/mining/metrics.py": "77c76a9c07d1ecab97e251792e3de3a3a1307e86d10f4ffa6e2b27bc0c6c029b"
+  },
+  "修复前常规测试": {
+    "通过": 6482,
+    "跳过": 9,
+    "排除": 27,
+    "耗时秒": 903.1
+  },
+  "修复后常规测试": {
+    "tests": 6553,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 9,
+    "passed": 6544,
+    "deselected": 27,
+    "seconds": 868.283
+  },
+  "跳过明细": [
+    {
+      "用例": "tests.test_database.integration.test_clickhouse_integration.test_clickhouse_real_native_stream_and_write",
+      "原因": "未配置 HSCREDIT_TEST_CLICKHOUSE_HOST"
+    },
+    {
+      "用例": "tests.test_database.integration.test_hive_integration.test_hive_real_pool_stream_and_metadata",
+      "原因": "未配置 HSCREDIT_TEST_HIVE_HOST"
+    },
+    {
+      "用例": "tests.test_database.integration.test_impala_integration.test_impala_real_pool_stream_and_metadata",
+      "原因": "未配置 HSCREDIT_TEST_IMPALA_HOST"
+    },
+    {
+      "用例": "tests.test_database.integration.test_maxcompute_integration.test_maxcompute_real_query_write_and_metadata",
+      "原因": "未配置 HSCREDIT_TEST_MAXCOMPUTE_PROJECT"
+    },
+    {
+      "用例": "tests.test_database.integration.test_mongodb_integration.test_mongodb_real_pool_and_adaptive_crud",
+      "原因": "未配置 HSCREDIT_TEST_MONGODB_URI"
+    },
+    {
+      "用例": "tests.test_database.integration.test_mysql_integration.test_mysql_real_pool_stream_and_write_modes",
+      "原因": "未配置 HSCREDIT_TEST_MYSQL_HOST"
+    },
+    {
+      "用例": "tests.test_database.integration.test_oracle_integration.test_oracle_real_pool_stream_and_merge_modes",
+      "原因": "未配置 HSCREDIT_TEST_ORACLE_DSN"
+    },
+    {
+      "用例": "tests.test_database.integration.test_redis_integration.test_redis_real_pool_and_adaptive_crud",
+      "原因": "未配置 HSCREDIT_TEST_REDIS_URL"
+    },
+    {
+      "用例": "tests.test_database.integration.test_starrocks_integration.test_starrocks_real_pool_stream_and_table_models",
+      "原因": "未配置 HSCREDIT_TEST_STARROCKS_HOST"
+    }
+  ],
+  "静态验证": {
+    "Black": "562 files would be left unchanged",
+    "关键flake8": "通过 E9,F63,F7,F82,F601",
+    "mypy": "项目指定的 3 个基础设施文件通过",
+    "Python39语法": "4 个变更库模块通过 AST 语法检查，非 3.9 运行环境验收"
+  }
+}

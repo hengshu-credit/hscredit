@@ -21,6 +21,9 @@ from ...core.metrics import (
 logger = logging.getLogger(__name__)
 
 from ...utils.parallel import ParallelizableMixin
+from ...utils.arguments import bind_column
+from ...utils.data_contracts import prepare_xy
+from ...core.metrics._semantics import rejection_statistics
 from .base import _mining_workload
 
 
@@ -112,9 +115,9 @@ class RuleMetrics(ParallelizableMixin):
         :type X_test: Optional[pd.DataFrame]
         :param y_test: 默认值为 ``None`` 。测试集标签（可选）
         :type y_test: Optional[pd.Series]
-        :param amount_train: 默认值为 ``None`` 。训练集金额（可选）
+        :param amount_train: 默认值为 ``None`` 。训练集金额（可选），追加金额指标，不替换件数指标；Series 按索引对齐
         :type amount_train: Optional[pd.Series]
-        :param amount_test: 默认值为 ``None`` 。测试集金额（可选）
+        :param amount_test: 默认值为 ``None`` 。测试集金额（可选），仅作用于测试集的金额指标
         :type amount_test: Optional[pd.Series]
         :return: 评估指标字典
         """
@@ -131,8 +134,12 @@ class RuleMetrics(ParallelizableMixin):
             for k, v in test_metrics.items():
                 result[f"测试_{k}"] = v
 
-            # 稳定性指标 - 使用统一的PSI计算
-            result["badrate_diff"] = train_metrics.get("命中LIFT值", 0) - test_metrics.get("命中LIFT值", 0)
+            # 同一命中口径的坏率差（训练减测试）；无命中人群时不虚构差值。
+            result["badrate_diff"] = (
+                train_metrics["命中坏样本率"] - test_metrics["命中坏样本率"]
+                if train_metrics["命中样本数"] > 0 and test_metrics["命中样本数"] > 0
+                else np.nan
+            )
 
         return result
 
@@ -144,6 +151,13 @@ class RuleMetrics(ParallelizableMixin):
         规则效果类指标统一通过 Rule.report 计算得到；
         分类指标（accuracy/precision/recall/f1）仍基于命中掩码计算。
         """
+        prepared = prepare_xy(X, y, require_y=True, allow_empty_features=True)
+        X, y = prepared.X, prepared.y
+        labels = pd.unique(y)
+        if len(labels) > 2 or (len(labels) == 2 and self.target_positive not in labels):
+            raise ValueError("规则评估目标必须为二分类，且包含指定的 target_positive 正类")
+        y = y.eq(self.target_positive).astype(int)
+
         # 应用规则掩码（用于分类指标）
         if hasattr(rule, "evaluate"):
             mask = rule.evaluate(X)
@@ -156,14 +170,8 @@ class RuleMetrics(ParallelizableMixin):
             mask = mask.values
 
         # Rule.report 计算规则效果
-        data = X.copy()
-        data["__target__"] = y.values
-        amount = None
-        if amount is not None:
-            amount = "__amount__"
-            data[amount] = amount.values if isinstance(amount, pd.Series) else amount
-
-        report_df = rule.report(datasets=data, target="__target__", amount=amount)
+        data = X
+        report_df = rule.report(datasets=data, target=y.to_numpy())
 
         hit = (
             report_df[report_df["分箱"] == "命中"].iloc[0].to_dict()
@@ -181,16 +189,13 @@ class RuleMetrics(ParallelizableMixin):
         f1 = f1_score(y, y_pred, zero_division=0)
 
         # 混淆矩阵
-        tn, fp, fn, tp = confusion_matrix(y, y_pred).ravel()
+        tn, fp, fn, tp = confusion_matrix(y, y_pred, labels=[0, 1]).ravel()
 
         total_bad = y.sum()
         total = len(y)
         hit_bad = float(hit.get("坏样本数", np.sum(y[mask]) if np.any(mask) else 0))
         hit_count = float(hit.get("样本总数", np.sum(mask)))
-        overall_badrate = total_bad / total if total > 0 else 0
-
-        badrate_after = (total_bad - hit_bad) / (total - hit_count) if (total - hit_count) > 0 else 0
-        badrate_reduction = (overall_badrate - badrate_after) / overall_badrate if overall_badrate > 0 else 0
+        badrate_after, badrate_reduction, _ = rejection_statistics(total, total_bad, hit_count, hit_bad)
 
         metrics = {
             "命中样本数": hit_count,
@@ -207,22 +212,25 @@ class RuleMetrics(ParallelizableMixin):
             "假正例": int(fp),
             "真负例": int(tn),
             "假负例": int(fn),
-            "拦截后坏样本率": badrate_after,
-            "坏账改善": badrate_reduction,
+            "拦截后坏样本率": float(badrate_after),
+            "坏账改善": float(badrate_reduction),
         }
 
-        # 金额口径指标（当传入amount时，Rule.report已按金额口径计算）
+        # 金额指标另行调用统一规则报告，不能与上方件数分母混算。
         if amount is not None:
-            total_amount = float(data[amount].sum())
-            selected_amount = float(hit.get("样本总数", 0))
-            bad_amount = float(hit.get("坏样本数", 0))
+            amount_data, amount_column = bind_column(data, amount, "amount")
+            amount_report = rule.report(datasets=amount_data, target=y.to_numpy(), amount=amount_column, margins=True)
+            amount_hit = amount_report.loc[amount_report["分箱"] == "命中"].iloc[0]
+            total_amount = float(amount_report.loc[amount_report["分箱"] == "合计", "样本总数"].iloc[0])
+            selected_amount = float(amount_hit["样本总数"])
+            bad_amount = float(amount_hit["坏样本数"])
             metrics.update(
                 {
                     "总金额": total_amount,
                     "命中金额": selected_amount,
                     "命中金额占比": selected_amount / total_amount if total_amount > 0 else 0,
                     "命中损失率": bad_amount / selected_amount if selected_amount > 0 else 0,
-                    "命中金额LIFT值": float(hit.get("LIFT值", 0)),
+                    "命中金额LIFT值": float(amount_hit["LIFT值"]),
                 }
             )
 

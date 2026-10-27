@@ -52,8 +52,8 @@ def approval_badrate_tradeoff(
     """通过率 vs 坏率权衡分析.
 
     生成「通过率 - 坏率」权衡曲线数据，每行对应一个评分阈值，
-    输出该阈值下的通过率、拒绝率、通过人群坏率、拒绝人群坏率
-    以及 KS 值，用于向业务方解释策略调整影响。
+    输出该阈值下的通过率、拒绝率、通过人群坏率、拒绝人群坏率，
+    用于向业务方解释策略调整影响。评分阈值保留决策时的完整精度。
 
     :param y_true: 真实标签序列（0/1）
     :type y_true: pd.Series
@@ -71,11 +71,22 @@ def approval_badrate_tradeoff(
     >>> # 找坏率≤3% 时通过率最高的阈值
     >>> tradeoff[tradeoff['通过人群坏率(%)'] <= 3].head(1)
     """
-    # 统一转换为 Series（按位置对齐），兼容传入 np.ndarray / list / Series
-    y = pd.to_numeric(pd.Series(np.asarray(y_true)), errors="coerce")
-    s = pd.to_numeric(pd.Series(np.asarray(score)), errors="coerce")
+    y_values, score_values = np.asarray(y_true), np.asarray(score)
+    if y_values.ndim != 1 or score_values.ndim != 1 or len(y_values) != len(score_values):
+        raise ValueError("标签和评分必须是一维等长数组")
+    if score_low_risk not in ("high", "low"):
+        raise ValueError("score_low_risk 必须为 'high' 或 'low'")
+    if isinstance(n_points, (bool, np.bool_)) or not isinstance(n_points, (int, np.integer)) or n_points <= 0:
+        raise ValueError("n_points 必须为正整数")
+    # 按位置配对后删除成对缺失值，禁止由 pandas 索引交集静默截断。
+    y = pd.to_numeric(pd.Series(y_values), errors="coerce")
+    s = pd.to_numeric(pd.Series(score_values), errors="coerce")
     mask = y.notna() & s.notna()
     y, s = y[mask], s[mask]
+    if len(y) == 0:
+        raise ValueError("标签和评分没有有效数据")
+    if not np.isfinite(s).all():
+        raise ValueError("评分必须为有限数值")
     _check_binary_target(y, "y_true")
 
     total = len(y)
@@ -99,7 +110,7 @@ def approval_badrate_tradeoff(
         rej_bad_rate = round(_safe_div(rejected_bad, rejected_n) * 100, 4) if rejected_n > 0 else np.nan
 
         row: Dict[str, Any] = {
-            "评分阈值": round(float(thr), 4),
+            "评分阈值": float(thr),
             "通过率(%)": approved_rate,
             "拒绝率(%)": round(100 - approved_rate, 2),
             "通过人数": approved_n,

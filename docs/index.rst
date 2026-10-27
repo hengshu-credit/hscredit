@@ -39,8 +39,8 @@ hscredit 文档
 
 .. note::
 
-   当前版本 |release|。基础安装保持轻量，Boosting、深度学习、调参、解释、PMML
-   等能力按需安装，详见 :doc:`installation`。
+   当前版本 |release|。基础安装已含 SHAP、OR-Tools 与 PyArrow；Boosting、深度学习、
+   调参、PMML 与数据库驱动按需安装，详见 :doc:`installation`。
 
 能力一览
 --------

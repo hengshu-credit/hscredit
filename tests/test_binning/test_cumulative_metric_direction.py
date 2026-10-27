@@ -37,7 +37,7 @@ def test_cumulative_metrics_start_from_the_higher_risk_normal_bin_end():
     np.testing.assert_array_equal(table["累积坏样本数"], [6, 5, 3, 7])
     np.testing.assert_allclose(table["累积LIFT值"], [8 / 7, 10 / 7, 12 / 7, 1])
     np.testing.assert_allclose(table["累积坏账改善"], [3 / 7, 3 / 7, 5 / 21, 1])
-    np.testing.assert_allclose(table["累计风险拒绝比"], [4 / 7, 6 / 7, 20 / 21, 1])
+    np.testing.assert_allclose(table["累计风险拒绝比"], [4 / 7, 6 / 7, 20 / 21, np.nan])
     np.testing.assert_allclose(table["分档KS值"], [4 / 21, 8 / 21, 20 / 63, 0], atol=1e-10)
 
 
@@ -81,7 +81,8 @@ def test_amount_weighted_cumulative_metrics_use_the_same_risk_direction():
     np.testing.assert_allclose(table["累积好样本数"], [6, 3, 1, 9])
     np.testing.assert_allclose(table["累积坏样本数"], [6, 5, 3, 7])
     np.testing.assert_allclose(table["累积LIFT值"], [8 / 7, 10 / 7, 12 / 7, 1], atol=1e-4)
-    np.testing.assert_allclose(table["累计风险拒绝比"], [0.75, 0.5, 0.25, 1], atol=1e-4)
+    # 单位金额必须与件数口径相同：改善除以累计拒绝占比，而非占比本身。
+    np.testing.assert_allclose(table["累计风险拒绝比"], [4 / 7, 6 / 7, 20 / 21, np.nan], atol=1e-10)
 
 
 def test_add_margins_does_not_sum_prefix_counts_or_copy_a_bin_ratio():
@@ -113,5 +114,5 @@ def test_add_margins_does_not_sum_prefix_counts_or_copy_a_bin_ratio():
     assert total["坏账改善"] == 0
     assert total["风险拒绝比"] == 0
     assert total["累积LIFT值"] == table.iloc[-1]["累积LIFT值"]
-    assert total["累积坏账改善"] == table.iloc[-1]["累积坏账改善"]
-    assert total["累计风险拒绝比"] == table.iloc[-1]["累计风险拒绝比"]
+    assert total["累积坏账改善"] == table.iloc[-1]["累积坏账改善"] == 1
+    assert np.isnan(total["累计风险拒绝比"]) and np.isnan(table.iloc[-1]["累计风险拒绝比"])

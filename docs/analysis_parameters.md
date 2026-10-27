@@ -74,6 +74,18 @@
 
 模型报告原先的预测方法 `method` 改为 `prediction_method`，预测方法的额外参数改为 `prediction_kwargs`，从而让报告中的 `method` 明确表示分箱方法。
 
+## 指标边界、合计与精度
+
+`feature_bin_stats` 和 `feature_bin_stats_2d` 支持 `round_digits=False` 返回原始精度；默认在合计完成后才舍入展示值。`return_cols` 也在合计完成后生效，不会因隐藏计数列而丢失总体坏率。多特征和长表多标签分别合计，重复添加合计不会叠加已有合计行。
+
+结果表和报告只展示指标数值，不添加指标状态、原因列或额外的“不适用”说明。坏账改善沿用兼容值：全拒绝且总体坏率大于 0 时为 1，总体坏率为 0 时为 0。全部拒绝时，风险拒绝比和累计风险拒绝比为 NaN；未拒绝时风险拒绝比为 0。NaN 在 Excel 中显示为空。单类分箱 KS 保留 0。
+
+模型 TOP 表的坏账改善仍使用拒绝 TOP 后的计算口径及上述兼容值，不使用 `LIFT−1`。Swap 客群比较表保持其总体比较口径。
+
+启用 `woe_clip` 后，原有 IV 列仍使用截断后的 WOE；同时提供 `原始分档WOE值`、`原始分档IV值` 和 `原始指标IV值`。连续目标含负数或没有正总量时，普通统计矩仍可计算，贡献分布指标为空。
+
+详细定义和复核证据见 [指标逐项修复与逻辑复核](HSCREDIT_METRIC_RECHECK_2026-10-27.md)。
+
 ## 主要旧名称
 
 `date_col/date_freq/psi_date_col/psi_freq` → `date/freq`；`group_col/group_cols/dimension_col/dimension_cols/psi_group_col` → `group`；`amount_col` → `amount`。

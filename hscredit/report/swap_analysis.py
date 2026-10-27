@@ -39,6 +39,11 @@ from .mining.base import _mining_workload
 from ..utils.parallel import parallel_execute, resolve_n_jobs, validate_parallel_config
 
 
+def _format_stat_number(value, specification=".4f"):
+    """无定义的风险指标导出为空，不生成 'nan' 文本。"""
+    return format(value, specification) if value is not None and np.isfinite(value) else None
+
+
 def _validate_report_parallel(n_jobs, parallel_backend, parallel_config) -> None:
     validate_parallel_config(parallel_backend, parallel_config)
     resolve_n_jobs(n_jobs, task_count=1)
@@ -194,12 +199,12 @@ class RiskRejectionMetrics:
         """转换为字典."""
         return {
             "拒绝率": f"{self.rejection_rate:.2%}",
-            "风险拒绝率": f"{self.risk_rejection_rate:.4f}",
-            "通过率下降1%的坏账改善": f"{self.pass_rate_drop_1pct_improvement:.4f}",
-            "原坏账率": f"{self.bad_rate_before:.4f}",
-            "新坏账率": f"{self.bad_rate_after:.4f}",
-            "坏账率改善(绝对)": f"{self.bad_rate_improvement:.4f}",
-            "坏账率改善(相对)": f"{self.bad_rate_relative_improvement:.2f}%",
+            "风险拒绝率": _format_stat_number(self.risk_rejection_rate),
+            "通过率下降1%的坏账改善": _format_stat_number(self.pass_rate_drop_1pct_improvement),
+            "原坏账率": _format_stat_number(self.bad_rate_before),
+            "新坏账率": _format_stat_number(self.bad_rate_after),
+            "坏账率改善(绝对)": _format_stat_number(self.bad_rate_improvement),
+            "坏账率改善(相对)": _format_stat_number(self.bad_rate_relative_improvement / 100, ".2%"),
         }
 
 
@@ -723,11 +728,18 @@ class SwapAnalyzer(BaseEstimator):
 
         bad_rate_before = original_pass.get(f"adjusted_bad_rate_{target}", 0)
         bad_rate_after = new_pass.get(f"adjusted_bad_rate_{target}", 0)
-        bad_rate_improvement = bad_rate_before - bad_rate_after
+        if original_pass.get("total_count", 0) <= 0:
+            bad_rate_before = np.nan
+        if new_pass.get("total_count", 0) <= 0:
+            bad_rate_after = np.nan
+        actual_change = bad_rate_before - bad_rate_after
+        compatible_before = original_pass.get(f"adjusted_bad_rate_{target}", 0)
+        compatible_after = new_pass.get(f"adjusted_bad_rate_{target}", 0)
+        bad_rate_improvement = compatible_before - compatible_after
 
         # 计算相对改善（百分比）
-        if bad_rate_before > 0:
-            bad_rate_relative_improvement = (bad_rate_improvement / bad_rate_before) * 100
+        if compatible_before > 0:
+            bad_rate_relative_improvement = (bad_rate_improvement / compatible_before) * 100
         else:
             bad_rate_relative_improvement = 0.0
 
@@ -736,7 +748,7 @@ class SwapAnalyzer(BaseEstimator):
         rejection_rate = in_out_ratio + out_out_ratio
 
         if rejection_rate > 0:
-            risk_rejection_rate = bad_rate_improvement / rejection_rate
+            risk_rejection_rate = actual_change / rejection_rate
         else:
             risk_rejection_rate = 0.0
 
@@ -744,9 +756,9 @@ class SwapAnalyzer(BaseEstimator):
         pass_rate_drop = -pass_rate_analysis.absolute_change
 
         if pass_rate_drop > 0:
-            pass_rate_drop_1pct_improvement = bad_rate_improvement / (pass_rate_drop * 100)
+            pass_rate_drop_1pct_improvement = actual_change / (pass_rate_drop * 100)
         else:
-            pass_rate_drop_1pct_improvement = 0.0
+            pass_rate_drop_1pct_improvement = np.nan
 
         return RiskRejectionMetrics(
             rejection_rate=rejection_rate,
@@ -828,9 +840,10 @@ class SwapAnalysisResult:
         rows = []
         key_order = ["original_pass", "swap_out", "original_keep", "swap_in", "new_pass"]
 
-        overall_bad_rate = combined.get("all", {}).get(f"adjusted_bad_rate_{target}", 0) or combined["new_pass"].get(
-            f"adjusted_bad_rate_{target}", 0
-        )
+        stats = self.count_stats if metric == "count" else self.amount_stats
+        total_population = sum(stat["total_count"] for stat in stats.values())
+        total_bad = sum(stat.get(f"adjusted_bad_count_{target}", 0) for stat in stats.values())
+        overall_bad_rate = total_bad / total_population if total_population > 0 else np.nan
 
         for key in key_order:
             if key in combined:
@@ -860,15 +873,21 @@ class SwapAnalysisResult:
 
                 # 添加风险指标到每行
                 if overall_bad_rate > 0:
-                    bad_rate = combined[key].get(f"adjusted_bad_rate_{target}", 0)
-                    row["坏账率变化(绝对)"] = f"{bad_rate - overall_bad_rate:.4f}"
+                    bad_rate = (
+                        combined[key].get(f"adjusted_bad_rate_{target}", 0)
+                        if combined[key].get("total_count", 0) > 0
+                        else np.nan
+                    )
+                    row["坏账率变化(绝对)"] = _format_stat_number(bad_rate - overall_bad_rate)
                     if overall_bad_rate > 0:
-                        row["坏账率变化(相对)"] = f"{((bad_rate - overall_bad_rate) / overall_bad_rate) * 100:.2f}%"
+                        row["坏账率变化(相对)"] = _format_stat_number(
+                            (bad_rate - overall_bad_rate) / overall_bad_rate, ".2%"
+                        )
                     else:
-                        row["坏账率变化(相对)"] = "-"
+                        row["坏账率变化(相对)"] = None
                 else:
-                    row["坏账率变化(绝对)"] = "-"
-                    row["坏账率变化(相对)"] = "-"
+                    row["坏账率变化(绝对)"] = None
+                    row["坏账率变化(相对)"] = None
 
                 rows.append(row)
 
@@ -904,15 +923,21 @@ class SwapAnalysisResult:
 
                     # 添加风险指标
                     if overall_bad_rate > 0:
-                        bad_rate = combined[key].get(f"adjusted_bad_rate_{target}", 0)
-                        row["坏账率变化(绝对)"] = f"{bad_rate - overall_bad_rate:.4f}"
+                        bad_rate = (
+                            combined[key].get(f"adjusted_bad_rate_{target}", 0)
+                            if combined[key].get("total_count", 0) > 0
+                            else np.nan
+                        )
+                        row["坏账率变化(绝对)"] = _format_stat_number(bad_rate - overall_bad_rate)
                         if overall_bad_rate > 0:
-                            row["坏账率变化(相对)"] = f"{((bad_rate - overall_bad_rate) / overall_bad_rate) * 100:.2f}%"
+                            row["坏账率变化(相对)"] = _format_stat_number(
+                                (bad_rate - overall_bad_rate) / overall_bad_rate, ".2%"
+                            )
                         else:
-                            row["坏账率变化(相对)"] = "-"
+                            row["坏账率变化(相对)"] = None
                     else:
-                        row["坏账率变化(绝对)"] = "-"
-                        row["坏账率变化(相对)"] = "-"
+                        row["坏账率变化(绝对)"] = None
+                        row["坏账率变化(相对)"] = None
 
                     rows.append(row)
 
@@ -941,6 +966,11 @@ class SwapAnalysisResult:
             if col not in df.columns:
                 df[col] = None
 
+        df.attrs["统计口径"] = {
+            "风险改善": "当前客群坏率相对总体坏率的改善，并非移除该客群后的改善",
+            "风险拒绝比": "当前客群相对改善/客群样本占比",
+            "无有效人群": "坏率及派生风险变化不适用，返回空值",
+        }
         return df[columns]
 
     def _format_summary_row(self, stat: Dict, target: str, overall_bad_rate: float) -> Dict:
@@ -958,25 +988,28 @@ class SwapAnalysisResult:
         sample_ratio = stat.get("sample_ratio", 0)
         bad_count = stat.get(f"adjusted_bad_count_{target}", 0)
         total_count = stat.get("total_count", 0)
+        if total_count <= 0:
+            bad_rate = np.nan
 
         # 计算LIFT
-        lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else 1.0
+        lift = bad_rate / overall_bad_rate if overall_bad_rate > 0 else np.nan
 
         # 计算风险改善
-        bad_improvement = (overall_bad_rate - bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0
+        compatible_bad_rate = stat.get(f"adjusted_bad_rate_{target}", 0)
+        bad_improvement = (overall_bad_rate - compatible_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else 0.0
 
         # 计算风险拒绝比
-        risk_reject_ratio = bad_improvement / sample_ratio if sample_ratio > 0 else 0
+        risk_reject_ratio = bad_improvement / sample_ratio if sample_ratio > 0 else np.nan
 
         return {
             "阶段": stat.get("name", ""),
             "样本数": total_count,
             "样本占比": f"{sample_ratio:.2%}",
             "坏样本数": f"{bad_count:.1f}",
-            "坏样本率": f"{bad_rate:.4f}",
-            "LIFT": f"{lift:.4f}",
-            "风险改善": f"{bad_improvement:.4f}",
-            "风险拒绝比": f"{risk_reject_ratio:.4f}",
+            "坏样本率": _format_stat_number(bad_rate),
+            "LIFT": _format_stat_number(lift),
+            "风险改善": _format_stat_number(bad_improvement),
+            "风险拒绝比": _format_stat_number(risk_reject_ratio),
         }
 
     @property
@@ -1014,7 +1047,9 @@ class SwapAnalysisResult:
                 "说明": self._get_swap_description(swap_type),
                 "样本数": stat["total_count"],
                 "样本占比": f"{stat['sample_ratio']:.2%}",
-                f"坏样本率({target_alias})": f"{stat.get(f'adjusted_bad_rate_{target}', 0):.4f}",
+                f"坏样本率({target_alias})": _format_stat_number(
+                    stat.get(f"adjusted_bad_rate_{target}", 0) if stat["total_count"] > 0 else np.nan
+                ),
                 "风险上浮": f"{self.config.out_in_uplift:.1f}x" if swap_type == SwapType.OUT_IN else "-",
             }
             rows.append(row)

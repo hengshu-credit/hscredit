@@ -754,26 +754,37 @@ def _build_swap_pipeline(
         append_row("ALL-IN置换", "", stages.s2, stages.s2, stages.s2, "状态")
 
     pipeline_df = pd.DataFrame(rows)
+    empty_population = pipeline_df["样本总数"].eq(0)
+    for rate_column in ("坏样本率", "原始坏样本率", "调整后坏样本率"):
+        if rate_column in pipeline_df:
+            pipeline_df.loc[empty_population, rate_column] = np.nan
     pipeline_df["LIFT值"] = pipeline_df["坏样本率"].apply(
         lambda value: value / full_bad_rate if full_bad_rate > 0 else 0.0
     )
     pipeline_df["好样本数"] = pipeline_df["样本总数"] - pipeline_df["坏样本数"]
     pipeline_df["好样本占比"] = 1.0 - pipeline_df["坏样本率"]
     pipeline_df["坏样本占比"] = pipeline_df["坏样本率"]
-    pipeline_df["坏账改善"] = pipeline_df["坏样本率"].apply(
-        lambda value: (full_bad_rate - value) / full_bad_rate if full_bad_rate > 0 else 0.0
+    pipeline_df["坏账改善"] = (
+        pipeline_df["坏样本率"]
+        .fillna(0.0)
+        .apply(lambda value: (full_bad_rate - value) / full_bad_rate if full_bad_rate > 0 else 0.0)
     )
     pipeline_df["风险拒绝比"] = pipeline_df.apply(
-        lambda row: row["坏账改善"] / row["样本占比"] if row["样本占比"] > 0 else 0.0,
+        lambda row: row["坏账改善"] / row["样本占比"] if row["样本占比"] > 0 else np.nan,
         axis=1,
     )
+    pipeline_df.attrs["统计口径"] = {
+        "坏账改善": "当前行客群坏率相对全量坏率的改善，不表示移除该客群",
+        "风险拒绝比": "当前行改善/该行样本占比",
+        "无有效人群": "坏率及风险相对变化不适用，返回空值",
+    }
 
     before_mask = stages.in_in if rules_in else stages.s2
     after_mask = stages.s2
     pass_rate_before = production_rate(before_mask)
     pass_rate_after = production_rate(after_mask)
-    bad_rate_before = float(adjusted_risk.loc[before_mask].mean()) if before_mask.any() else 0.0
-    bad_rate_after = float(adjusted_risk.loc[after_mask].mean()) if after_mask.any() else 0.0
+    bad_rate_before = float(adjusted_risk.loc[before_mask].mean()) if before_mask.any() else np.nan
+    bad_rate_after = float(adjusted_risk.loc[after_mask].mean()) if after_mask.any() else np.nan
     raw_bad_before = float(raw_risk.loc[before_mask].sum())
     raw_bad_after = float(raw_risk.loc[after_mask].sum())
     effective_uplift_before = (

@@ -10,6 +10,7 @@ from typing import Union, Tuple, Optional, List, Literal
 from scipy import stats
 
 from ._base import _woe_iv_vectorized
+from ._semantics import format_bin_stats, metric_metadata, rejection_statistics, validate_amounts
 
 
 def _safe_divide(numerator, denominator, default: float = 0.0) -> np.ndarray:
@@ -523,12 +524,19 @@ def compute_bin_stats(
         当某箱无坏样本或无好样本时 WOE 可能趋于 ``±inf`` ，
         设置后将 WOE 限制在 ``[-woe_clip, woe_clip]`` ，避免评分卡分数异常
 
+        截断后的 WOE 继续参与原有 IV 列计算；额外输出 ``原始分档WOE值`` 、
+        ``原始分档IV值`` 和 ``原始指标IV值`` ，以便区分原始信息量与实际编码信息量。
+
     :return: 分箱统计 DataFrame（中文列名）。 ``binary`` 模式主要列包括：
         ``分箱`` / ``分箱标签`` / ``样本总数`` / ``好样本数`` / ``坏样本数`` /
         ``样本占比`` / ``坏样本率`` / ``WOE值`` / ``分档IV值`` / ``LIFT值`` /
         ``累积坏样本数`` / ``累积好样本数`` / ``分档KS值`` / ``坏账改善`` 等。
         累积类指标从正常分箱中坏样本率较高的一端开始计算，缺失值、特殊值等
         保留箱最后纳入累计，输出行顺序保持不变
+
+    单类或某类别有效金额为0时，分档KS采用与 ``ks`` 相同的0兼容值；
+    坏账改善保留原有兼容值：全拒绝且总体坏率大于0时为1，总体坏率为0时为0。
+    全部拒绝时风险拒绝比为NaN；未拒绝时为0。不添加指标状态或原因说明列。
 
     **参考样例**
 
@@ -567,9 +575,7 @@ def compute_bin_stats(
     elif target_type == "amount_weighted":
         if amount is None:
             raise ValueError("target_type='amount_weighted'时必须提供amount参数")
-        amount = np.asarray(amount, dtype=np.float64)
-        if amount.ndim != 1 or len(amount) != len(y) or not np.isfinite(amount).all() or np.any(amount < 0):
-            raise ValueError("amount 必须为与目标等长的有限非负一维数组")
+        amount = validate_amounts(amount, len(y))
         return _compute_bin_stats_amount_weighted(bins, y, amount, epsilon, bin_labels, round_digits, woe_clip)
     else:
         raise ValueError(f"target_type必须是'binary'/'continuous'/'amount_weighted'，得到: {target_type}")
@@ -627,11 +633,20 @@ def _compute_bin_stats_binary(
 
 
 def _binary_stats_from_counts(
-    unique_bins, good_counts, bad_counts, epsilon=1e-10, bin_labels=None, round_digits=True, woe_clip=None
+    unique_bins,
+    good_counts,
+    bad_counts,
+    epsilon=1e-10,
+    bin_labels=None,
+    round_digits=True,
+    woe_clip=None,
+    *,
+    amount_weighted=False,
 ):
-    """行级与分块聚合共用的二分类派生指标内核。"""
+    """行级、分块聚合与金额加权共用的二分类派生指标内核。"""
     n_bins = len(unique_bins)
     counts = good_counts + bad_counts
+    count_dtype = np.float64 if amount_weighted else np.int64
 
     bad_rate = _safe_divide(bad_counts, counts)
 
@@ -653,17 +668,7 @@ def _binary_stats_from_counts(
     # 计算LIFT值
     lift = _safe_divide(bad_rate, overall_bad_rate)
 
-    # 坏账改善 = (全量坏样本率 - 拒绝后剩余样本坏样本率) / 全量坏样本率
-    # 拒绝后剩余样本坏样本率 = (total_bad - bin_bad) / (total - bin_total)
-    # 展开后与 (overall_bad_rate - bad_rate) / overall_bad_rate 等价
-    other_bad = total_bad - bad_counts
-    other_total = total - counts
-    other_bad_rate = _safe_divide(other_bad, other_total)
-    bad_improve = _safe_divide(overall_bad_rate - other_bad_rate, overall_bad_rate)
-
-    # 风险拒绝比 = 坏账改善 / 当前箱样本占比
-    # 反映"每拒绝1%样本能带来多少坏账改善"
-    risk_reject = _safe_divide(bad_improve, count_distr)
+    _, bad_improve, risk_reject = rejection_statistics(total, total_bad, counts, bad_counts)
 
     # 从正常分箱中风险较高的一端累计；缺失值、特殊值等保留箱最后纳入累计
     cum_good, cum_bad = _risk_oriented_cumulative_sums(unique_bins, good_counts, bad_counts)
@@ -671,18 +676,12 @@ def _binary_stats_from_counts(
 
     cum_bad_rate = _safe_divide(cum_bad, cum_total)
     cum_lift = _safe_divide(cum_bad_rate, overall_bad_rate)
-    # 累计坏账改善 = (全量坏样本率 - 累计拒绝后剩余样本坏样本率) / 全量坏样本率
-    other_cum_bad = total_bad - cum_bad
-    other_cum_total = total - cum_total
-    other_cum_bad_rate = _safe_divide(other_cum_bad, other_cum_total)
-    cum_bad_improve = _safe_divide(overall_bad_rate - other_cum_bad_rate, overall_bad_rate)
-    # 累计风险拒绝比 = 累计坏账改善 / 累计样本占比
-    cum_risk_reject = _safe_divide(cum_bad_improve, _safe_divide(cum_total, total))
+    _, cum_bad_improve, cum_risk_reject = rejection_statistics(total, total_bad, cum_total, cum_bad)
 
     # 计算KS值（使用cum_bad计算累积坏样本数）
-    cum_good_rate = cum_good / (total_good + epsilon)
-    cum_bad_rate_ks = cum_bad / (total_bad + epsilon)
-    ks_values = np.abs(cum_bad_rate_ks - cum_good_rate)
+    ks_values = np.zeros(n_bins)
+    if total_good > 0 and total_bad > 0:
+        ks_values = np.abs(cum_bad / total_bad - cum_good / total_good)
 
     # 构建DataFrame
     data = {"分箱": unique_bins}
@@ -692,9 +691,9 @@ def _binary_stats_from_counts(
 
     data.update(
         {
-            "样本总数": counts.astype(np.int64),
-            "好样本数": good_counts.astype(np.int64),
-            "坏样本数": bad_counts.astype(np.int64),
+            "样本总数": counts.astype(count_dtype),
+            "好样本数": good_counts.astype(count_dtype),
+            "坏样本数": bad_counts.astype(count_dtype),
             "样本占比": count_distr,
             "好样本占比": good_distr,
             "坏样本占比": bad_distr,
@@ -708,37 +707,23 @@ def _binary_stats_from_counts(
             "累积LIFT值": cum_lift,
             "累积坏账改善": cum_bad_improve,
             "累计风险拒绝比": cum_risk_reject,
-            "累积好样本数": cum_good.astype(np.int64),
-            "累积坏样本数": cum_bad.astype(np.int64),
+            "累积好样本数": cum_good.astype(count_dtype),
+            "累积坏样本数": cum_bad.astype(count_dtype),
             "分档KS值": ks_values,
         }
     )
 
     df = pd.DataFrame(data)
 
-    # 对浮点数列进行四舍五入格式化
-    if round_digits:
-        float_columns = {
-            "样本占比": 6,
-            "好样本占比": 6,
-            "坏样本占比": 6,
-            "坏样本率": 6,
-            "分档WOE值": 6,
-            "分档IV值": 6,
-            "指标IV值": 6,
-            "LIFT值": 4,
-            "坏账改善": 4,
-            "风险拒绝比": 4,
-            "累积LIFT值": 4,
-            "累积坏账改善": 4,
-            "累计风险拒绝比": 4,
-            "分档KS值": 6,
-        }
-        for col, digits in float_columns.items():
-            if col in df.columns:
-                df[col] = np.round(df[col], digits)
+    if woe_clip is not None:
+        original_woe, original_iv, original_total_iv = _woe_iv_vectorized(good_counts, bad_counts, epsilon)
+        df["原始分档WOE值"] = original_woe
+        df["原始分档IV值"] = original_iv
+        df["原始指标IV值"] = original_total_iv
+    target_type = "amount_weighted" if amount_weighted else "binary"
+    df.attrs["统计口径"] = metric_metadata(target_type, total_good=total_good, total_bad=total_bad, woe_clip=woe_clip)
 
-    return df
+    return format_bin_stats(df, target_type=target_type, round_digits=round_digits)
 
 
 def _compute_bin_stats_continuous(
@@ -812,16 +797,17 @@ def _compute_bin_stats_continuous(
     total_y = y_sum.sum()
 
     count_distr = counts / total if total > 0 else np.zeros(n_bins)
-    y_distr = y_sum / (total_y + epsilon) if total_y > 0 else np.zeros(n_bins)
+    contribution_valid = bool(total_y > 0 and np.all(y >= 0))
+    y_distr = y_sum / total_y if contribution_valid else np.full(n_bins, np.nan)
 
     # 计算总体均值（用于LIFT）
     overall_mean = total_y / total if total > 0 else 0.0
 
     # 计算LIFT值（连续目标的LIFT = 该箱均值 / 总体均值）
-    lift = np.where(y_mean > 0, y_mean / (overall_mean + epsilon), 0.0)
+    lift = y_mean / overall_mean if contribution_valid else np.full(n_bins, np.nan)
 
     # 计算"改善"指标（连续目标的改善 = 该箱贡献度与该箱样本占比的差异）
-    bad_improve = np.where(count_distr > 0, (y_distr - count_distr) / (count_distr + epsilon), 0.0)
+    bad_improve = _safe_divide(y_distr - count_distr, count_distr, default=np.nan)
 
     # 按分箱顺序计算累积指标
     cum_counts = np.cumsum(counts)
@@ -829,14 +815,14 @@ def _compute_bin_stats_continuous(
     cum_mean = np.where(cum_counts > 0, cum_y / cum_counts, 0.0)
 
     # 累积LIFT
-    cum_lift = np.where(cum_mean > 0, cum_mean / (overall_mean + epsilon), 0.0)
+    cum_lift = cum_mean / overall_mean if contribution_valid else np.full(n_bins, np.nan)
 
     # 累积占比
     cum_count_distr = cum_counts / total if total > 0 else np.zeros(n_bins)
-    cum_y_distr = cum_y / (total_y + epsilon) if total_y > 0 else np.zeros(n_bins)
+    cum_y_distr = cum_y / total_y if contribution_valid else np.full(n_bins, np.nan)
 
     # 累积改善
-    cum_bad_improve = np.where(cum_count_distr > 0, (cum_y_distr - cum_count_distr) / (cum_count_distr + epsilon), 0.0)
+    cum_bad_improve = _safe_divide(cum_y_distr - cum_count_distr, cum_count_distr, default=np.nan)
 
     # 计算KS值（对于连续目标，使用金额累积占比 vs 样本累积占比的差）
     ks_values = np.abs(cum_y_distr - cum_count_distr)
@@ -870,27 +856,15 @@ def _compute_bin_stats_continuous(
 
     df = pd.DataFrame(data)
 
-    # 对浮点数列进行四舍五入格式化
-    if round_digits:
-        float_columns = {
-            "样本占比": 6,
-            "目标值均值": 2,
-            "目标值标准差": 2,
-            "目标值最小值": 2,
-            "目标值最大值": 2,
-            "目标值占比": 6,
-            "平均LIFT值": 4,
-            "贡献改善": 4,
-            "累积平均值": 2,
-            "累积LIFT值": 4,
-            "累积贡献改善": 4,
-            "分档KS值": 6,
-        }
-        for col, digits in float_columns.items():
-            if col in df.columns:
-                df[col] = np.round(df[col], digits)
-
-    return df
+    df.attrs["统计口径"] = {
+        "目标类型": "continuous",
+        "统计单位": "样本与连续目标值分别统计",
+        "KS定义": "非负目标贡献累计占比与样本累计占比的差，非二分类KS",
+        "贡献指标状态": "可计算" if contribution_valid else "不适用：目标含负数或没有正总量，贡献/LIFT/KS为空",
+        "累计方向": "按分箱顺序累计",
+        "展示舍入": False,
+    }
+    return format_bin_stats(df, target_type="continuous", round_digits=round_digits)
 
 
 def _compute_bin_stats_amount_weighted(
@@ -952,102 +926,16 @@ def _compute_bin_stats_amount_weighted(
     # 计算每个分箱的好金额和坏金额（金额口径的核心）
     good_amounts = np.bincount(bin_indices, weights=(y == 0).astype(float) * amount, minlength=n_bins)
     bad_amounts = np.bincount(bin_indices, weights=y.astype(float) * amount, minlength=n_bins)
-    amount_totals = good_amounts + bad_amounts
-
-    # 计算占比（基于金额）
-    total_amount = amount_totals.sum()
-    total_good_amount = good_amounts.sum()
-    total_bad_amount = bad_amounts.sum()
-
-    amount_ratios = amount_totals / total_amount if total_amount > 0 else np.zeros(n_bins)
-    good_amount_ratios = good_amounts / total_good_amount if total_good_amount > 0 else np.zeros(n_bins)
-    bad_amount_ratios = bad_amounts / total_bad_amount if total_bad_amount > 0 else np.zeros(n_bins)
-
-    # 金额口径坏账率 = 坏金额 / 总金额
-    bad_rate = _safe_divide(bad_amounts, amount_totals)
-
-    # 计算WOE和IV（基于金额占比）
-    good_amounts_smooth = np.where(good_amounts == 0, epsilon, good_amounts)
-    bad_amounts_smooth = np.where(bad_amounts == 0, epsilon, bad_amounts)
-    total_good_smooth = good_amounts_smooth.sum()
-    total_bad_smooth = bad_amounts_smooth.sum()
-
-    good_distr = good_amounts_smooth / total_good_smooth if total_good_smooth > 0 else np.zeros(n_bins)
-    bad_distr = bad_amounts_smooth / total_bad_smooth if total_bad_smooth > 0 else np.zeros(n_bins)
-
-    woe = np.log(bad_distr / good_distr)
-
-    # 截断极端WOE值，防止评分卡分数异常
-    if woe_clip is not None:
-        woe = np.clip(woe, -woe_clip, woe_clip)
-
-    bin_iv = (bad_distr - good_distr) * woe
-    total_iv = bin_iv.sum()
-
-    # 计算LIFT值（金额口径）
-    overall_bad_rate = total_bad_amount / total_amount if total_amount > 0 else 0.0
-    lift = _safe_divide(bad_rate, overall_bad_rate)
-
-    # 坏账改善 = (全量坏样本率 - 拒绝后坏样本率) / 全量坏样本率
-    # 拒绝后坏样本率 = other_bad / other_total
-    other_bad = total_bad_amount - bad_amounts
-    other_total = total_amount - amount_totals
-    other_bad_rate = _safe_divide(other_bad, other_total)
-    bad_improve = _safe_divide(overall_bad_rate - other_bad_rate, overall_bad_rate)
-    # 风险拒绝比 = 样本占比 = 该箱金额 / 全量金额
-    risk_reject = amount_ratios
-
-    # 金额口径与样本口径保持一致，从正常分箱中风险较高的一端累计
-    cum_good, cum_bad = _risk_oriented_cumulative_sums(unique_bins, good_amounts, bad_amounts)
-    cum_total = cum_good + cum_bad
-
-    cum_bad_rate = _safe_divide(cum_bad, cum_total)
-    cum_lift = _safe_divide(cum_bad_rate, overall_bad_rate)
-    other_cum_bad = total_bad_amount - cum_bad
-    other_cum_total = total_amount - cum_total
-    # 累计坏账改善 = (全量坏样本率 - 累计拒绝后坏样本率) / 全量坏样本率
-    other_cum_bad_rate = _safe_divide(other_cum_bad, other_cum_total)
-    cum_bad_improve = _safe_divide(overall_bad_rate - other_cum_bad_rate, overall_bad_rate)
-    # 累计风险拒绝比 = 累计样本占比
-    cum_risk_reject = _safe_divide(cum_total, total_amount)
-
-    # 计算KS值（基于金额累积占比）
-    cum_good_rate = cum_good / (total_good_amount + epsilon)
-    cum_bad_rate = cum_bad / (total_bad_amount + epsilon)
-    ks_values = np.abs(cum_bad_rate - cum_good_rate)
-
-    # 构建DataFrame（使用与样本口径统一的列名，便于统一处理）
-    data = {"分箱": unique_bins}
-
-    if bin_labels is not None and len(bin_labels) == n_bins:
-        data["分箱标签"] = bin_labels
-
-    # 使用与样本口径相同的列名，便于统一处理
-    data.update(
-        {
-            "样本总数": np.round(amount_totals, 2),
-            "好样本数": np.round(good_amounts, 2),
-            "坏样本数": np.round(bad_amounts, 2),
-            "样本占比": np.round(amount_ratios, 6),
-            "好样本占比": np.round(good_amount_ratios, 6),
-            "坏样本占比": np.round(bad_amount_ratios, 6),
-            "坏样本率": np.round(bad_rate, 6),
-            "分档WOE值": np.round(woe, 6),
-            "分档IV值": np.round(bin_iv, 6),
-            "指标IV值": np.round(total_iv, 6),
-            "LIFT值": np.round(lift, 4),
-            "坏账改善": np.round(bad_improve, 4),
-            "风险拒绝比": np.round(risk_reject, 4),
-            "累积LIFT值": np.round(cum_lift, 4),
-            "累积坏账改善": np.round(cum_bad_improve, 4),
-            "累计风险拒绝比": np.round(cum_risk_reject, 4),
-            "累积好样本数": np.round(cum_good, 2),
-            "累积坏样本数": np.round(cum_bad, 2),
-            "分档KS值": np.round(ks_values, 6),
-        }
+    return _binary_stats_from_counts(
+        unique_bins,
+        good_amounts,
+        bad_amounts,
+        epsilon,
+        bin_labels,
+        round_digits,
+        woe_clip,
+        amount_weighted=True,
     )
-
-    return pd.DataFrame(data)
 
 
 def add_margins(table: pd.DataFrame) -> pd.DataFrame:
@@ -1057,11 +945,13 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
     对率值类列按总体重算。
     缺失值箱与特殊值箱被放在正常分箱之后、合计行之前。
     兼容单层表头与多级表头（MultiIndex），同时支持样本口径与金额口径。
+    多特征分别合计，重复调用不重复累计已有合计行。累计全量拒绝的风险拒绝比为NaN。
 
     **参数**
 
     :param table: 分箱统计表，通常由  :func:`compute_bin_stats`  生成，
-        需包含 ``分箱标签`` 列；为空表时原样返回
+        需包含 ``分箱标签`` 列；为空表时原样返回。连续目标的总体矩由各箱统计合并，
+        应传入 ``round_digits=False`` 的统计表以保留合计精度；已舍入的数据不能恢复原始精度
 
     :return: 在末尾添加 ``合计`` 行后的分箱表（不修改入参，返回新对象）
 
@@ -1087,6 +977,21 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
 
     if bin_label_col is None:
         return table
+
+    group_cols = [col for col in table.columns if (col[1] if is_multi else col) in {"指标名称", "逾期标签"}]
+    if group_cols and len(table[group_cols].drop_duplicates()) > 1:
+        group_key = group_cols[0] if len(group_cols) == 1 else group_cols
+        result = pd.concat(
+            [add_margins(part) for _, part in table.groupby(group_key, sort=False, dropna=False)],
+            ignore_index=True,
+        )
+        result.attrs = dict(table.attrs)
+        return result
+    # 合计为保留标签，重复调用不再次把已有合计当作原始数据累计。
+    detail = table.loc[table[bin_label_col] != "合计"]
+    if detail.empty:
+        return table.copy()
+    table = detail
 
     # 分离正常分箱、缺失值、特殊值
     normal_bins = []
@@ -1147,7 +1052,7 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
         if matching_total_col is not None:
             total_row[cumulative_col] = total_row[matching_total_col]
 
-    # 计算占比类指标 = 1
+    # 非空类别的总体占比为1；空类别不能凭空生成100%的占比。
     ratio_cols = []
     for col in table.columns:
         col_name = col[1] if is_multi else col
@@ -1155,7 +1060,10 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
             ratio_cols.append(col)
 
     for col in ratio_cols:
-        total_row[col] = 1.0
+        name = col[1] if is_multi else col
+        denominator_name = {"样本占比": "样本总数", "好样本占比": "好样本数", "坏样本占比": "坏样本数"}[name]
+        count_col = _resolve_count_column(denominator_name, _column_group(col))
+        total_row[col] = float(total_row[count_col] > 0) if count_col is not None else np.nan
 
     # 计算坏样本率
     bad_rate_cols = [col for col in table.columns if (col[1] if is_multi else col) == "坏样本率"]
@@ -1169,40 +1077,37 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
             # 缺少坏样本数/样本总数时无法重算总体坏样本率，置空避免沿用首行的错误值
             total_row[bad_rate_col] = np.nan
 
-    # 合计行表示总体：LIFT=1，单箱拒绝改善=0；累计全量指标回到总体基准
-    overall_metric_values = {
-        "LIFT值": 1.0,
-        "坏账改善": 0.0,
-        "风险拒绝比": 0.0,
-    }
-    cumulative_metric_names = {"累积LIFT值", "累积坏账改善", "累计风险拒绝比"}
+    # 合计表示总体基准；改善保留兼容值，累计全量拒绝的效率为NaN。
+    ratio_metric_names = {"LIFT值", "坏账改善", "风险拒绝比", "累积LIFT值", "累积坏账改善", "累计风险拒绝比"}
     for col in table.columns:
         col_name = col[1] if is_multi else col
-        if col_name in overall_metric_values:
-            total_row[col] = overall_metric_values[col_name]
-        elif col_name in cumulative_metric_names:
+        if col_name in ratio_metric_names:
             group = _column_group(col)
             bad_sample_col = _resolve_count_column("坏样本数", group)
             sample_total_col = _resolve_count_column("样本总数", group)
-            total_row[col] = (
-                1.0
-                if (
-                    bad_sample_col is not None
-                    and sample_total_col is not None
-                    and total_row[bad_sample_col] > 0
-                    and total_row[sample_total_col] > 0
-                )
-                else 0.0
+            valid = (
+                bad_sample_col is not None
+                and sample_total_col is not None
+                and total_row[bad_sample_col] > 0
+                and total_row[sample_total_col] > 0
             )
+            if col_name in {"LIFT值", "累积LIFT值"}:
+                total_row[col] = 1.0 if valid else 0.0
+            elif col_name in {"坏账改善", "风险拒绝比"}:
+                total_row[col] = 0.0
+            elif col_name == "累积坏账改善":
+                total_row[col] = 1.0 if valid else 0.0
+            else:
+                total_row[col] = 0.0 if sample_total_col is not None and total_row[sample_total_col] == 0 else np.nan
 
     # WOE和IV值：分档WOE=0，分档IV=0，指标IV=各分档IV之和
     for col in table.columns:
         col_name = col[1] if is_multi else col
-        if col_name == "分档WOE值":
+        if col_name in {"分档WOE值", "原始分档WOE值"}:
             total_row[col] = 0.0
-        elif col_name == "分档IV值":
+        elif col_name in {"分档IV值", "原始分档IV值"}:
             total_row[col] = 0.0
-        elif col_name == "指标IV值":
+        elif col_name in {"指标IV值", "原始指标IV值"}:
             total_row[col] = table[col].iloc[0]
 
     # KS值：取最大KS
@@ -1210,6 +1115,62 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
         col_name = col[1] if is_multi else col
         if col_name == "分档KS值":
             total_row[col] = table[col].max()
+
+    # 连续目标：合并各箱的原始矩，不能沿用首行或简单平均箱均值。
+    for col in table.columns:
+        if (col[1] if is_multi else col) != "目标值总和":
+            continue
+        group = _column_group(col)
+        columns = {
+            (candidate[1] if is_multi else candidate): candidate
+            for candidate in table.columns
+            if _column_group(candidate) == group
+        }
+        count_col = _resolve_count_column("样本总数", group)
+        if count_col is None:
+            continue
+        counts = table[count_col].to_numpy(dtype=float)
+        count = counts.sum()
+        target_sum = table[col].sum()
+        mean = target_sum / count if count else np.nan
+        totals = {
+            "目标值总和": target_sum,
+            "目标值均值": mean,
+            "累积样本数": count,
+            "累积目标值": target_sum,
+            "累积平均值": mean,
+        }
+        for metric, operation in [("目标值最小值", "min"), ("目标值最大值", "max"), ("目标值占比", "sum")]:
+            if metric in columns:
+                totals[metric] = (
+                    table[columns[metric]].sum(min_count=1)
+                    if operation == "sum"
+                    else getattr(table[columns[metric]], operation)()
+                )
+        if "目标值标准差" in columns:
+            totals["目标值标准差"] = np.nan
+            if "目标值均值" in columns and count > 0:
+                nonempty = counts > 0
+                means = table[columns["目标值均值"]].to_numpy(dtype=float)[nonempty]
+                stds = table[columns["目标值标准差"]].to_numpy(dtype=float)[nonempty]
+                weights = counts[nonempty]
+                offsets = means - means[0]
+                centered = offsets - np.average(offsets, weights=weights)
+                totals["目标值标准差"] = np.sqrt(np.average(stds**2 + centered**2, weights=weights))
+        if "累积样本数" in columns:
+            # 全量累计行保留原内核的零分母/连续目标改善口径。
+            endpoint = table.iloc[int(np.argmax(table[columns["累积样本数"]].to_numpy()))]
+            for destination, source in [
+                ("平均LIFT值", "累积LIFT值"),
+                ("累积LIFT值", "累积LIFT值"),
+                ("贡献改善", "累积贡献改善"),
+                ("累积贡献改善", "累积贡献改善"),
+            ]:
+                if source in columns:
+                    totals[destination] = endpoint[columns[source]]
+        for metric, value in totals.items():
+            if metric in columns:
+                total_row[columns[metric]] = value
 
     # 重新组合：正常分箱 -> 缺失值 -> 特殊值 -> 合计
     result_rows = []
@@ -1232,6 +1193,7 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
     # 重建DataFrame
     result_table = pd.DataFrame(result_rows)
     result_table = result_table.reset_index(drop=True)
+    result_table.attrs = dict(table.attrs)
 
     return result_table
 

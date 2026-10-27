@@ -1,0 +1,28 @@
+{
+  "日期": "2026-10-27",
+  "展示": "仅数值，不增加指标状态、原因或不适用说明",
+  "全拒绝样例": {
+    "坏账改善": 1.0,
+    "风险拒绝比": null,
+    "累计风险拒绝比": null
+  },
+  "回归": {
+    "tests": 2000,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 2000
+  },
+  "范围": "分箱、规则和报告测试；排除 slow/integration 标记及完整真实数据参数矩阵模块，包含真实数据指标核算和报告导出测试",
+  "排除标记用例": 1,
+  "源码SHA256": {
+    "hscredit/core/metrics/_semantics.py": "58dfd0484232f386bb3a7016dcb268c8cb5a931c1fc9e09aaf38a26846e4de5d",
+    "hscredit/core/metrics/_binning.py": "3db1fc881fad288eb0855c120b5cc06b7529b7dd5e8620b46e435c7e20ada842",
+    "hscredit/core/rules/rule.py": "0742b5f8fda1c192da6fb0d7837f046c2e4634203fea3484ed7c31026bf442a3",
+    "hscredit/report/model_report.py": "5c04db1858a212165b831349ca41bbdb19a399cf3ad72b3b0fe8f4aa2f4399b8",
+    "hscredit/report/feature_analyzer.py": "7ecf41d4fc334177647f6cb0e00a23ab573d7df0adc2fcbf69f9231b423a18f2",
+    "hscredit/report/result.py": "0cf92206fb6df050cd47aba4e62431ae79001c4e665053f1b80e0991ecb3660c",
+    "hscredit/report/swap_analysis.py": "4db9accecb9bdf1ff598648a96a18dac43f0d2d4fedfeb81cddb077a943fae09",
+    "hscredit/report/rule_analysis.py": "6271ef7ce563d7589edc82f5c127d5b9a3a4b37f32db7a9b31917d2e90d1d689"
+  }
+}

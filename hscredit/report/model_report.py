@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 from ..utils.overdue import overdue_label, validate_overdue_operator
+from ..core.metrics._semantics import rejection_statistics, validate_amounts
 from ..utils.input_utils import normalize_dpd_values
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
 from ._model_context import ModelContextMixin, report_model_current, has_bound_sample_params, _model_stamp
@@ -1967,12 +1968,20 @@ class ModelReport(ModelContextMixin):
                 if tables and len(tables) > 1 and hasattr(tables[1], "data"):
                     rows = tables[1].data
                     return pd.DataFrame(rows[1:], columns=rows[0])
-            except Exception:
-                pass
+                self._report_warning("评分卡逻辑回归统计摘要格式无效 [模型=%s]", type(lr_model).__name__)
+            except Exception as exc:
+                self._report_warning("读取评分卡逻辑回归统计摘要失败 [模型=%s]: %s", type(lr_model).__name__, exc)
 
         try:
             coefficients = np.asarray(lr_model.coef_, dtype=float)
-        except Exception:
+        except AttributeError as exc:
+            if not callable(getattr(lr_model, "summary", None)):
+                self._report_not_applicable("评分卡逻辑回归系数", "基础模型不提供线性系数或统计摘要")
+            else:
+                self._report_warning("读取评分卡逻辑回归系数失败 [模型=%s]: %s", type(lr_model).__name__, exc)
+            return pd.DataFrame()
+        except Exception as exc:
+            self._report_warning("读取评分卡逻辑回归系数失败 [模型=%s]: %s", type(lr_model).__name__, exc)
             return pd.DataFrame()
         coefficients = coefficients.mean(axis=0) if coefficients.ndim > 1 else coefficients
         features = getattr(lr_model, "feature_names_in_", self.feature_names)
@@ -2370,11 +2379,13 @@ class ModelReport(ModelContextMixin):
                 selected = fractions[pct] * weights
                 top_bad_rate = float(np.dot(y_arr, selected) / selected.sum()) if selected.sum() else np.nan
                 lift = top_bad_rate / overall_bad_rate if overall_bad_rate > 0 else np.nan
-                improvement = (top_bad_rate - overall_bad_rate) / overall_bad_rate if overall_bad_rate > 0 else np.nan
+                _, improvement, _ = rejection_statistics(
+                    weights.sum(), np.dot(y_arr, weights), selected.sum(), np.dot(y_arr, selected)
+                )
                 key = f"TOP {int(pct * 100)}%"
                 bad_rates[key] = top_bad_rate
                 lifts[key] = lift
-                improvements[key] = improvement
+                improvements[key] = float(improvement)
 
             bad_rates["TOTAL"] = overall_bad_rate
             lifts["TOTAL"] = 1.0 if overall_bad_rate > 0 else np.nan
@@ -2386,12 +2397,8 @@ class ModelReport(ModelContextMixin):
 
             # 金额口径替代订单口径；调用方会将两个结果并排展示。
             if amount and amount in ds.X.columns:
-                amounts = (
-                    pd.to_numeric(ds.X[amount], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)[valid]
-                )
-                overall_bad_amount = (
-                    float((y_arr * amounts).sum() / amounts.sum()) if amounts.sum() > 0 else overall_bad_rate
-                )
+                amounts = validate_amounts(ds.X[amount].to_numpy()[valid], n)
+                overall_bad_amount = float((y_arr * amounts).sum() / amounts.sum()) if amounts.sum() > 0 else np.nan
 
                 amt_bad_rates: Dict[str, float] = {}
                 amt_lifts: Dict[str, float] = {}
@@ -2399,15 +2406,15 @@ class ModelReport(ModelContextMixin):
 
                 for pct in percentiles:
                     top_amt = amounts * fractions[pct]
-                    top_bad_amt = float((y_arr * top_amt).sum() / top_amt.sum()) if top_amt.sum() > 0 else 0.0
+                    top_bad_amt = float((y_arr * top_amt).sum() / top_amt.sum()) if top_amt.sum() > 0 else np.nan
                     lift_amt = top_bad_amt / overall_bad_amount if overall_bad_amount > 0 else np.nan
-                    imp_amt = (
-                        (top_bad_amt - overall_bad_amount) / overall_bad_amount if overall_bad_amount > 0 else np.nan
+                    _, imp_amt, _ = rejection_statistics(
+                        amounts.sum(), np.dot(y_arr, amounts), top_amt.sum(), np.dot(y_arr, top_amt)
                     )
                     key = f"TOP {int(pct * 100)}%"
                     amt_bad_rates[key] = top_bad_amt
                     amt_lifts[key] = lift_amt
-                    amt_improvements[key] = imp_amt
+                    amt_improvements[key] = float(imp_amt)
 
                 amt_bad_rates["TOTAL"] = overall_bad_amount
                 amt_lifts["TOTAL"] = 1.0 if overall_bad_amount > 0 else np.nan
@@ -5285,9 +5292,8 @@ class ModelReport(ModelContextMixin):
                 style="header",
                 end_space=(2, 9),
             )
-            writer.insert_df2sheet(
-                status_sheet, execution_result.status_table(), "B4", index=False, auto_width=True, speed="fast"
-            )
+            statuses = execution_result.status_table()
+            writer.insert_df2sheet(status_sheet, statuses, "B4", index=False, auto_width=True, speed="fast")
             _insert_required_hyperlink(status_sheet, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
         if execution_result is not None:
             execution_result.current_section = "工作簿发布"

@@ -1785,6 +1785,8 @@ class ExcelWriter:
         :type decimal: Optional[int]
         :return: 格式化后的内容
         """
+        if ExcelWriter._is_missing_merge_value(value):
+            return None
         if re.search("tuple|list|set|numpy.ndarray|Categorical|numpy.dtype|Interval", str(type(value))):
             return str(value)
         elif re.search("float", str(type(value))):

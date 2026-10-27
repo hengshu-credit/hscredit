@@ -1393,6 +1393,40 @@ def feature_group_binning_summary(
     return binning_tables, binning_summary
 
 
+def _finalize_bin_table(table, *, amount, round_digits, return_cols, targets, del_grey):
+    """合计完成后再选择字段与展示精度，并保留标签/指标口径。"""
+    from ..core.metrics._semantics import format_bin_stats, metric_metadata
+
+    target_type = "amount_weighted" if amount is not None else "binary"
+    table.attrs.setdefault("统计口径", metric_metadata(target_type))
+    table.attrs["标签口径"] = {
+        "模式": targets.mode,
+        "标签": targets.names(),
+        "逾期比较符": targets.operator if targets.mode == "overdue" else None,
+        "剔灰": bool(del_grey),
+        "缺失处理": (
+            "逾期缺失不满足比较条件，负数按比较符判定"
+            if targets.mode == "overdue"
+            else "非0/1及缺失值按当前剔灰配置删除或记为0"
+        ),
+    }
+    table = format_bin_stats(table, target_type=target_type, round_digits=round_digits)
+    if return_cols is not None:
+        base = ["指标名称", "指标含义", "逾期标签", "分箱标签", "分箱"]
+        wanted = list(dict.fromkeys(base + list(return_cols)))
+        if isinstance(table.columns, pd.MultiIndex):
+            columns = [
+                (group, name)
+                for group in dict.fromkeys(table.columns.get_level_values(0))
+                for name in wanted
+                if (group, name) in table.columns
+            ]
+        else:
+            columns = [name for name in wanted if name in table.columns]
+        table = table.loc[:, columns]
+    return table
+
+
 def _create_bin_table(
     bins: np.ndarray,
     y: np.ndarray,
@@ -1402,6 +1436,7 @@ def _create_bin_table(
     amount: Optional[np.ndarray] = None,
     bin_labels: Optional[List[str]] = None,
     keep_bin_ids: bool = False,
+    woe_clip: Optional[float] = None,
 ) -> pd.DataFrame:
     """创建分箱统计表。"""
     if bin_labels is None:
@@ -1414,9 +1449,13 @@ def _create_bin_table(
             target_type="amount_weighted",
             amount=amount,
             bin_labels=bin_labels,
+            round_digits=False,
+            woe_clip=woe_clip,
         )
     else:
-        stats = compute_bin_stats(bins, y, target_type="binary", bin_labels=bin_labels)
+        stats = compute_bin_stats(
+            bins, y, target_type="binary", bin_labels=bin_labels, round_digits=False, woe_clip=woe_clip
+        )
 
     stats.insert(0, "指标含义", desc if desc else feature_name)
     stats.insert(0, "指标名称", feature_name)
@@ -1602,6 +1641,7 @@ def feature_bin_stats(
     *,
     overdue_operator: str = ">",
     return_binner: bool = False,
+    round_digits: bool = True,
     features=None,
     bin_params=None,
     **kwargs,
@@ -1779,6 +1819,8 @@ def feature_bin_stats(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+    :param round_digits: 默认 True，合计完成后才按展示精度舍入；False 返回原始计算精度。
+    :type round_digits: bool
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
@@ -1811,7 +1853,8 @@ def feature_bin_stats(
             "missing_separate": missing_separate,
             "prebinning": prebinning,
             "prebinning_params": prebinning_params,
-            "return_cols": return_cols,
+            "return_cols": None,
+            "round_digits": False,
             "return_rules": True,
             "return_binner": return_binner,
             "del_grey": del_grey,
@@ -1860,6 +1903,14 @@ def feature_bin_stats(
             final_table = _reorder_long_format_columns(final_table)
         elif margins:
             final_table = add_margins(final_table)
+        final_table = _finalize_bin_table(
+            final_table,
+            amount=amount,
+            round_digits=round_digits,
+            return_cols=return_cols,
+            targets=target,
+            del_grey=del_grey,
+        )
         if return_rules and return_binner:
             return final_table, rules_by_feature, binners_by_feature
         if return_binner:
@@ -2053,22 +2104,12 @@ def feature_bin_stats(
                 amount=amount_values,
                 bin_labels=bin_labels,
                 keep_bin_ids=return_binner,
+                woe_clip=getattr(current_binner, "woe_clip", None),
             )
 
             # 长格式：插入"逾期标签"列标识当前目标
             if long_format:
                 bin_table.insert(2, "逾期标签", target_name)
-
-            # 筛选指定列
-            if return_cols is not None:
-                # 确保基础列存在
-                base_cols = ["指标名称", "指标含义", "分箱标签"]
-                if return_binner:
-                    base_cols.append("分箱")
-                if long_format:
-                    base_cols.insert(2, "逾期标签")
-                available_cols = [c for c in base_cols + return_cols if c in bin_table.columns]
-                bin_table = bin_table[available_cols]
 
             feat_tables.append(bin_table)
 
@@ -2114,6 +2155,14 @@ def feature_bin_stats(
         final_table = add_margins(final_table)
 
     final_table.attrs["target_display_names"] = dict(zip(target.names(), target.names("at")))
+    final_table = _finalize_bin_table(
+        final_table,
+        amount=amount,
+        round_digits=round_digits,
+        return_cols=return_cols,
+        targets=target,
+        del_grey=del_grey,
+    )
     if return_rules and return_binner:
         return final_table, all_feature_rules, all_feature_binners
     if return_binner:
@@ -2147,6 +2196,7 @@ def feature_bin_stats_2d(
     parallel_config: Optional[Dict[str, Any]] = None,
     *,
     overdue_operator: str = ">",
+    round_digits: bool = True,
     x1=None,
     x2=None,
     bin_params=None,
@@ -2157,6 +2207,9 @@ def feature_bin_stats_2d(
     二维区域在第一个目标口径上拟合一次，其余逾期目标复用同一套区域，并按各自
     ``overdue × dpd`` 口径重新计算样本数、坏样本率、WOE、IV、KS 等指标。
     ``del_grey=True`` 时每个目标按 overdue_operator 对应区间独立剔除灰样本。
+
+    :param round_digits: 默认 True，在合计和多目标合并后舍入展示结果；False 保留原始精度。
+    :type round_digits: bool
 
     :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
         ``batch_size`` 、 ``pre_dispatch`` 、 ``max_nbytes`` 、 ``mmap_mode`` 、
@@ -2291,10 +2344,8 @@ def feature_bin_stats_2d(
             desc=description,
             amount=amount_values,
             bin_labels=bin_labels,
+            woe_clip=getattr(fitted_binner, "woe_clip", None),
         )
-        if return_cols is not None:
-            base_columns = ["指标名称", "指标含义", "分箱标签"]
-            table = table[[column for column in base_columns + list(return_cols) if column in table.columns]]
         if long_format:
             table.insert(2, "逾期标签", config["name"])
         if margins:
@@ -2314,8 +2365,23 @@ def feature_bin_stats_2d(
 
     final_table.attrs["target_display_names"] = dict(zip(target.names(), target.names("at")))
     if return_binner:
+        final_table = _finalize_bin_table(
+            final_table,
+            amount=amount,
+            round_digits=round_digits,
+            return_cols=return_cols,
+            targets=target,
+            del_grey=del_grey,
+        )
         return final_table, fitted_binner
-    return final_table
+    return _finalize_bin_table(
+        final_table,
+        amount=amount,
+        round_digits=round_digits,
+        return_cols=return_cols,
+        targets=target,
+        del_grey=del_grey,
+    )
 
 
 @binning_options
@@ -4147,7 +4213,8 @@ def _auto_feature_analysis_impl(
         writer.insert_value2sheet(
             status_sheet, "B2", "报告完整" if _report_result.complete else "报告不完整：请检查失败章节", style="header"
         )
-        writer.insert_df2sheet(status_sheet, _report_result.status_table(), "B4", index=False, auto_width=True)
+        statuses = _report_result.status_table()
+        writer.insert_df2sheet(status_sheet, statuses, "B4", index=False, auto_width=True)
     if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet, Worksheet):
         if _report_result is not None:
             _report_result.current_section = "工作簿发布"

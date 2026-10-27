@@ -26,6 +26,7 @@ from typing import Union, Tuple, Optional, Dict, Any, List
 
 from ._base import _validate_same_length, _validate_binary_target
 from ._binning import compute_bin_stats
+from ._semantics import rejection_statistics, validate_amounts
 
 
 def lift(y_true: Union[np.ndarray, pd.Series], y_prob: Union[np.ndarray, pd.Series], threshold: float = 0.5) -> float:
@@ -573,38 +574,26 @@ def rule_lift(
     """
     y_true = np.asarray(y_true)
     rule_mask = np.asarray(rule_mask)
-
+    if y_true.ndim != 1 or rule_mask.ndim != 1:
+        raise ValueError("标签和规则命中掩码必须是一维数组")
     _validate_same_length(y_true, rule_mask, ("y_true", "rule_mask"))
-
+    _validate_binary_target(y_true)
+    if not np.isin(rule_mask, [0, 1]).all():
+        raise ValueError("规则命中掩码只能包含布尔值或0/1")
+    rule_mask = rule_mask.astype(bool)
+    if amount is not None:
+        amount = validate_amounts(amount, len(y_true))
     total = len(y_true)
     total_bad = np.sum(y_true)
     overall_badrate = total_bad / total if total > 0 else 0.0
-
-    hit_count = np.sum(rule_mask)
+    hit_count = np.count_nonzero(rule_mask)
     hit_rate = hit_count / total if total > 0 else 0.0
-
-    if hit_count == 0:
-        return {
-            "hit_count": 0,
-            "hit_rate": 0.0,
-            "bad_count": 0,
-            "good_count": 0,
-            "badrate": 0.0,
-            "overall_badrate": overall_badrate,
-            "lift": 0.0,
-            "bad_improve": 0.0,
-        }
-
     hit_bad = np.sum(y_true[rule_mask])
     hit_good = hit_count - hit_bad
-    hit_badrate = hit_bad / hit_count
-
+    hit_badrate = hit_bad / hit_count if hit_count > 0 else 0.0
     lift_value = hit_badrate / overall_badrate if overall_badrate > 0 else 0.0
-
-    other_bad = total_bad - hit_bad
-    other_total = total - hit_count
-    other_badrate = other_bad / other_total if other_total > 0 else 0.0
-    bad_improve = (overall_badrate - other_badrate) / overall_badrate if overall_badrate > 0 else 0.0
+    _, bad_improve, _ = rejection_statistics(total, total_bad, hit_count, hit_bad)
+    bad_improve = float(bad_improve)
 
     result = {
         "hit_count": int(hit_count),

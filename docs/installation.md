@@ -1,7 +1,7 @@
 # 安装
 
-`hscredit` 需要 **Python 3.9+**。基础安装保持轻量，重型依赖（Boosting、深度学习、
-调参、PMML 与数据库驱动）按需安装。
+`hscredit` 需要 **Python 3.9+**。基础安装包含常用风控分析、SHAP 解释和运筹分箱依赖；
+Boosting、深度学习、调参、PMML 与数据库驱动按需安装。
 
 ## 基础安装
 
@@ -10,8 +10,8 @@ pip install hscredit
 ```
 
 基础依赖包含 `numpy`、`pandas`、`scipy`、`scikit-learn`、`statsmodels`、`matplotlib`、
-`seaborn`、`openpyxl` 等，足以覆盖数据探索、分箱、编码、特征筛选、评分卡建模、指标计算、
-可视化与 Excel 报告。
+`seaborn`、`openpyxl`、`shap`、`ortools`、`pyarrow` 等，覆盖数据探索、分箱、编码、
+特征筛选、评分卡建模、指标计算、可视化与 Excel 报告。懒加载减少导入时开销，不代表减少安装体积。
 
 ## 可选能力
 

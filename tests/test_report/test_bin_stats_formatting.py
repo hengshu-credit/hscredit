@@ -1,102 +1,37 @@
-"""测试 compute_bin_stats 的数值格式化功能."""
+"""用断言验证分箱格式化，而非打印失败文字后继续通过。"""
 
 import numpy as np
-import pandas as pd
+import pytest
 
 from hscredit.core.metrics import compute_bin_stats
 
 
-def test_formatting():
-    """测试数值格式化."""
-    print("=" * 80)
-    print("测试 compute_bin_stats 数值格式化")
-    print("=" * 80)
-
-    # 创建测试数据
-    np.random.seed(42)
-    n = 1000
-
-    # 创建分箱
-    bins = np.random.randint(0, 5, n)
-    y = np.random.randint(0, 2, n)
-
-    print(f"\n测试数据: {n} 个样本, 5 个分箱")
-    print(f"坏样本率: {y.mean():.4f}")
-
-    # 测试默认行为（round_digits=True）
-    print("\n" + "-" * 80)
-    print("测试 1: round_digits=True (默认)")
-    print("-" * 80)
-    df_formatted = compute_bin_stats(bins, y, round_digits=True)
-
-    print("\n分箱统计表（格式化）:")
-    print(df_formatted.to_string())
-
-    # 检查是否有科学计数法
-    print("\n检查科学计数法:")
-    for col in df_formatted.columns:
-        if df_formatted[col].dtype in ["float64", "float32"]:
-            # 检查是否有科学计数法
-            values = df_formatted[col].values
-            has_scientific = any(abs(v) < 1e-4 or abs(v) > 1e4 for v in values if v != 0)
-            print(f"  {col}: 最大值={values.max():.6f}, 最小值={values.min():.6f}, 可能科学计数={has_scientific}")
-
-    # 测试不格式化
-    print("\n" + "-" * 80)
-    print("测试 2: round_digits=False")
-    print("-" * 80)
-    df_raw = compute_bin_stats(bins, y, round_digits=False)
-
-    print("\n分箱统计表（原始精度）:")
-    print(df_raw.to_string())
-
-    # 验证 WOE 值是否一致
-    print("\n" + "-" * 80)
-    print("验证 WOE 值一致性")
-    print("-" * 80)
-    woe_diff = (df_formatted["分档WOE值"] - df_raw["分档WOE值"]).abs().max()
-    iv_diff = (df_formatted["指标IV值"] - df_raw["指标IV值"]).abs().max()
-
-    print(f"WOE 最大差异: {woe_diff:.10f}")
-    print(f"IV 最大差异: {iv_diff:.10f}")
-
-    if woe_diff < 1e-5 and iv_diff < 1e-5:
-        print("✓ 格式化不影响 WOE 和 IV 的计算精度")
+@pytest.mark.parametrize("weighted", [False, True])
+def test_formatting(weighted):
+    bins = np.array([0, 0, 0, 1, 1, 1, 1])
+    y = np.array([0, 0, 1, 0, 1, 1, 1])
+    options = (
+        dict(target_type="amount_weighted", amount=[1.1234, 2.2345, 3.3456, 4.4567, 5.5678, 6.6789, 7.7891])
+        if weighted
+        else {}
+    )
+    raw = compute_bin_stats(bins, y, round_digits=False, **options)
+    shown = compute_bin_stats(bins, y, round_digits=True, **options)
+    for column, digits in {"坏样本率": 6, "分档WOE值": 6, "指标IV值": 6, "LIFT值": 4, "坏账改善": 4}.items():
+        np.testing.assert_array_equal(shown[column], np.round(raw[column], digits))
+    if weighted:
+        np.testing.assert_allclose(raw["样本总数"], [6.7035, 24.4925], rtol=0, atol=1e-12)
+        np.testing.assert_array_equal(shown["样本总数"], [6.7, 24.49])
     else:
-        print("✗ 警告：格式化可能影响计算精度")
-
-    # 测试极值情况
-    print("\n" + "=" * 80)
-    print("测试 3: 极值情况")
-    print("=" * 80)
-
-    # 创建极端不平衡的数据
-    y_extreme = np.zeros(n)
-    y_extreme[:10] = 1  # 只有 1% 的坏样本
-    bins_extreme = np.random.randint(0, 3, n)
-
-    print(f"\n极端不平衡数据: 坏样本率 = {y_extreme.mean():.4f}")
-
-    df_extreme = compute_bin_stats(bins_extreme, y_extreme, round_digits=True)
-    print("\n分箱统计表（极端不平衡）:")
-    print(df_extreme.to_string())
-
-    print("\n检查是否还有科学计数法:")
-    for col in df_extreme.columns:
-        if df_extreme[col].dtype in ["float64", "float32"]:
-            values = df_extreme[col].values
-            # 转换为字符串检查是否有 'e'
-            str_values = [str(v) for v in values]
-            has_scientific = any("e" in s.lower() for s in str_values)
-            if has_scientific:
-                print(f"  ✗ {col}: 发现科学计数法")
-            else:
-                print(f"  ✓ {col}: 无科学计数法")
-
-    print("\n" + "=" * 80)
-    print("测试完成!")
-    print("=" * 80)
+        np.testing.assert_array_equal(shown["样本总数"], [3, 4])
+        assert raw.iloc[0]["坏样本率"] == 1 / 3
+    assert raw.attrs["统计口径"]["展示舍入"] is False
+    assert shown.attrs["统计口径"]["展示舍入"] is True
 
 
-if __name__ == "__main__":
-    test_formatting()
+def test_continuous_formatting_keeps_unrounded_source():
+    raw = compute_bin_stats([0, 0, 1], [1.1111, 2.2222, 4.4444], target_type="continuous", round_digits=False)
+    shown = compute_bin_stats([0, 0, 1], [1.1111, 2.2222, 4.4444], target_type="continuous")
+    np.testing.assert_allclose(raw["目标值均值"], [1.66665, 4.4444])
+    np.testing.assert_array_equal(shown["目标值均值"], [1.67, 4.44])
+    np.testing.assert_allclose(shown["目标值总和"].sum(), 7.7777)

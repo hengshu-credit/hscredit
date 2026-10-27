@@ -428,6 +428,8 @@ def ks_bucket(
     bins = binner.transform(df[["prob"]], metric="indices").values.flatten()
 
     stats_df = compute_bin_stats(bins, y_true_clean, round_digits=False)
+    total_bad = np.count_nonzero(y_true_clean == 1)
+    total_good = np.count_nonzero(y_true_clean == 0)
 
     results = []
     for _, row in stats_df.iterrows():
@@ -437,7 +439,6 @@ def ks_bucket(
         prob_min = y_prob_clean[mask].min() if mask.sum() > 0 else np.nan
         prob_max = y_prob_clean[mask].max() if mask.sum() > 0 else np.nan
 
-        cum_total = row["累积坏样本数"] + row["累积好样本数"]
         results.append(
             {
                 "桶编号": bin_idx,
@@ -445,8 +446,8 @@ def ks_bucket(
                 "最大概率": prob_max,
                 "样本数": int(row["样本总数"]),
                 "坏样本率": row["坏样本率"],
-                "累积坏样本率": row["累积坏样本数"] / cum_total if cum_total > 0 else 0,
-                "累积好样本率": row["累积好样本数"] / cum_total if cum_total > 0 else 0,
+                "累积坏样本率": row["累积坏样本数"] / total_bad if total_bad > 0 else 0,
+                "累积好样本率": row["累积好样本数"] / total_good if total_good > 0 else 0,
                 "KS贡献": row["分档KS值"],
             }
         )

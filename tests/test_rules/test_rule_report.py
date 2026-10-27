@@ -40,7 +40,6 @@ def test_rule_report_zero_sample_bin_has_zero_risk_rejection_ratio():
 
     assert miss_row["样本总数"] == 0
     assert miss_row["样本占比"] == 0
-    assert np.isfinite(miss_row["风险拒绝比"])
     assert miss_row["风险拒绝比"] == 0
 
 
