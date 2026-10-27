@@ -45,6 +45,7 @@ from .business_metrics import (
     ProfitMetric,
     ClassificationCostMetric,
 )
+from .torch_adapter import TorchLossAdapter
 from .adapters import (
     XGBoostLossAdapter,
     LightGBMLossAdapter,
@@ -103,5 +104,6 @@ __all__ = [
     "LightGBMLossAdapter",
     "CatBoostLossAdapter",
     "TabNetLossAdapter",
+    "TorchLossAdapter",
     "NGBoostLossAdapter",
 ]

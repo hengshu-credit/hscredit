@@ -12,7 +12,17 @@ import pandas as pd
 
 def restore_model_defaults(model):
     """迁移旧制品缺失的新配置；不猜测或重建任何已学习模型参数。"""
-    added_options = {"history_policy", "max_history", "statistics_level", "max_dense_bytes", "weight_type"}
+    added_options = {
+        "history_policy",
+        "max_history",
+        "statistics_level",
+        "max_dense_bytes",
+        "weight_type",
+        "loss",
+        "loss_params",
+        "optimizer",
+        "optimizer_params",
+    }
     defaults = {"history_policy": "summary", "max_history": 20}
     for name, parameter in inspect.signature(type(model).__init__).parameters.items():
         if name in added_options and parameter.default is not inspect.Parameter.empty:
@@ -48,6 +58,11 @@ def dependency_versions():
         "catboost",
         "ngboost",
         "optuna",
+        "torch",
+        "rtdl-revisiting-models",
+        "tabpfn",
+        "tabm",
+        "rtdl-num-embeddings",
     ):
         try:
             result[package] = version(package)

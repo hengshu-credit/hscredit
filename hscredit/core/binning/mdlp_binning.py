@@ -66,8 +66,13 @@ class MDLPBinning(BaseBinning):
 
     **参数**
 
-    :param kwargs: 兼容入口，当前实现不读取或转发这些额外参数。
-        请使用本页明确列出的参数；通过此入口传入的 ``decimal`` 或 ``woe_clip`` 不会生效。
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
+    :param kwargs: 转发给 BaseBinning 的公共参数，包括 ``decimal`` 和 ``woe_clip``，
+        并在 sklearn clone 与再次拟合时完整保留。
 
     :param min_bin_size: 每箱最小样本数或占比，默认为0.01；None表示不限制最小样本数
 
@@ -214,6 +219,7 @@ class MDLPBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
         **kwargs,
     ):
         super().__init__(
@@ -236,6 +242,8 @@ class MDLPBinning(BaseBinning):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            **kwargs,
+            constraint_policy=constraint_policy,
         )
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
@@ -280,8 +288,9 @@ class MDLPBinning(BaseBinning):
             bins = self._apply_splits(X, splits, "categorical")
         else:
             x_numeric = pd.to_numeric(X, errors="coerce")
-            x_clean = x_numeric.dropna()
-            y_clean = y[x_numeric.notna()]
+            mask = x_numeric.notna() & ~self._special_mask(X)
+            x_clean = x_numeric[mask]
+            y_clean = y[mask]
             if len(x_clean) >= self.min_samples_split:
                 splits = self._mdlp_split_v3(x_clean.values, y_clean.values)
                 self.splits_[feature] = self._round_splits(np.sort(splits))
@@ -350,24 +359,8 @@ class MDLPBinning(BaseBinning):
         return sorted(list(set(splits)))
 
     def _find_all_candidates_v3(self, x: np.ndarray, y: np.ndarray) -> List[int]:
-        """找到所有可能的候选切分点位置 - V3版本."""
-        n = len(x)
-        # 保留原有候选顺序，避免逐样本Python循环。
-        candidates = (np.flatnonzero(y[1:] != y[:-1]) + 1).tolist()
-
-        # 如果没有足够的类别变化点，使用动态策略
-        if len(candidates) < self.min_n_bins * 2:
-            if n <= 100:
-                step = 1
-            elif n <= 1000:
-                step = max(1, n // 100)
-            else:
-                step = max(1, n // 200)
-
-            additional = list(range(self.min_samples_leaf, n - self.min_samples_leaf, step))
-            candidates = sorted(list(set(candidates + additional)))
-
-        return candidates
+        """候选只取不同数值之间的边界，重复值内部不能切开。"""
+        return (np.flatnonzero(x[1:] > x[:-1]) + 1).tolist()
 
     def _recurse_v3(
         self,
@@ -526,7 +519,7 @@ class MDLPBinning(BaseBinning):
         min_samples = self._get_min_samples(n)
 
         # 目标是达到max_n_bins个分箱（而不仅仅是min_n_bins）
-        target_n_bins = self.max_n_bins - 1
+        target_n_bins = self.min_n_bins - 1
 
         # 首先找到所有可能的候选切分点及其IV
         positions = np.asarray(all_candidates, dtype=np.intp)
@@ -618,9 +611,8 @@ class MDLPBinning(BaseBinning):
         return ent_y - (n_left * ent_left + n_right * ent_right) / n
 
     def _get_min_samples(self, n_total: int) -> int:
-        """获取最小样本数."""
-        # 使用 min_samples_leaf 或根据数据量计算
-        return max(self.min_samples_leaf, int(n_total * 0.01))
+        """使用统一的最小样本数取整口径。"""
+        return super()._get_min_samples(n_total)
 
     def _apply_splits(self, x: pd.Series, splits, feature_type: str) -> np.ndarray:
         """应用切分点.

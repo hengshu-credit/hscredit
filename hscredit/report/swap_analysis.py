@@ -1424,14 +1424,15 @@ def swap_analysis(
     :type reference_df: pd.DataFrame
     :param score_col: 默认值为 ``'score'`` 。评分字段名，用于风险预估
     :type score_col: str
-    :param target: 默认值为 ``None`` 。目标变量字段名（可选），与overdue+dpds二选一
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名或列表（可选），如'MOB1'或['MOB1','MOB3']
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 逾期定义天数或列表（可选），如15或[15,30]
-
-        - 默认逾期天数>dpds为坏样本(1)，可通过 overdue_operator 调整
-
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, List[int]]]
     :param swap_type_col: 默认值为 ``'swap_type'`` 。swap类型字段名
     :type swap_type_col: str
@@ -1487,6 +1488,10 @@ def swap_analysis(
     >>> result.pass_rate_report
     >>> result.risk_rejection_report
 
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
         ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；

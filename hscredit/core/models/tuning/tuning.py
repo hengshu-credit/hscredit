@@ -83,7 +83,7 @@ from ...._compat import installed_version, needs_logistic_regression_parallel_co
 from ....utils.parallel import resolve_n_jobs
 from ....utils.serialization import ArtifactSerializableMixin
 from sklearn.base import clone
-from sklearn.model_selection import ParameterGrid, StratifiedKFold
+from sklearn.model_selection import KFold, ParameterGrid, StratifiedKFold
 from sklearn.metrics import get_scorer, log_loss, roc_curve
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 from ...metrics import auc as auc_metric
@@ -408,7 +408,7 @@ class ModelTuner(ArtifactSerializableMixin):
         ``fixed_params`` 的显式值具有最高优先级
 
     :type model_params: Optional[Dict[str, Any]]
-    :param metric: 默认值为 ``'ks'`` 。优化指标（决定评估计算逻辑），可选:
+    :param metric: 默认 None，按任务选择 KS/RMSE 或 BaseLoss 配套指标；优化指标可选:
 
         - 字符串: 'auc', 'ks', 'ks_diff', 'accuracy', 'precision', 'recall', 'f1', 'logloss'
 
@@ -441,7 +441,7 @@ class ModelTuner(ArtifactSerializableMixin):
     :type verbose: bool
     :param early_stopping_rounds: 早停轮数，默认20
     :type early_stopping_rounds: int
-    :param loss: 默认值为 ``None`` 。HSCredit 提升树训练所用 BaseLoss；metric 控制折外评分，彼此独立
+    :param loss: 默认值为 ``None`` 。提升树使用 BaseLoss；可训练 net 模型还支持 PyTorch 损失；metric 独立控制评分
     :type loss: Optional[Any]
     :param record_terminator_scores: 旧版 Optuna 终止分析兼容选项，默认None。
         Optuna 4.9及以后默认不调用弃用接口；True显式启用，False关闭专用CV记录。
@@ -526,7 +526,7 @@ class ModelTuner(ArtifactSerializableMixin):
         search_space: Optional[Any] = None,
         fixed_params: Optional[Dict[str, Any]] = None,
         model_params: Optional[Dict[str, Any]] = None,
-        metric: Union[str, Callable, List[Union[str, Callable]]] = "ks",
+        metric: Union[str, Callable, List[Union[str, Callable]], None] = None,
         direction: Optional[Union[str, List[Optional[str]]]] = None,
         metric_names: Optional[List[str]] = None,
         objective: Union[str, Callable, None] = None,
@@ -565,7 +565,7 @@ class ModelTuner(ArtifactSerializableMixin):
         :param fixed_params: 明确固定的模型参数，优先级高于搜索参数和实例配置。
         :param model_params: 模型默认构造参数；搜索结果会覆盖同名默认值。
         :param metric: 字符串、BaseMetric、BaseLoss、带方向的 Metric 或函数；列表表示多目标。
-            None 时使用 loss.metric()，无 loss 时使用 KS。
+            None 时优先使用 BaseLoss 的配套指标；否则二分类使用 KS，回归使用 RMSE。
 
         :param direction: None 按指标对象/内置名称推断；裸函数须声明优化方向。
         :param metric_names: 指标显示名称列表，需与指标数一致且名称不重复。
@@ -621,8 +621,9 @@ class ModelTuner(ArtifactSerializableMixin):
         :param retention: 结果保留策略：full、predictions、summary、best、disk。
             None 按 store_models 保持旧行为；disk 必须指定 artifact_dir，按需读取且不常驻折模型。
 
-        :param loss: 用于模型训练的 BaseLoss 实例，与决定搜索优劣的 metric 分开。
-            支持 HSCredit XGBoost、LightGBM、CatBoost、NGBoost；例如
+        :param loss: 训练损失，与搜索指标 metric 分开。提升树接收 BaseLoss；
+            ResNet、FTTransformer、TabM 还支持损失名称、PyTorch 损失及逐行张量函数；
+            TabPFN 为预训练推理，不接收此参数。例如
             ``ModelTuner(XGBoost, loss=FocalLoss(), metric='auc')`` 。
             ``metric=None`` 时使用该损失的配套指标（越小越好）。
 
@@ -685,6 +686,7 @@ class ModelTuner(ArtifactSerializableMixin):
         self.model_params = self._canonical_params(self.model_params, prefer_alias=True)
         self.trial_objective = trial_objective
         self._explicit_fixed_params = dict(fixed_params or {})
+        self._task = self._infer_task()
         fixed_target = self._explicit_fixed_params.get("target")
         if target is not None and fixed_target is not None and fixed_target != target:
             raise ValueError("target 与 fixed_params['target'] 不一致，请统一目标列配置")
@@ -744,7 +746,7 @@ class ModelTuner(ArtifactSerializableMixin):
         if isinstance(objective, BaseLoss):
             raise TypeError("objective 是旧版搜索指标参数；训练损失请使用 loss=，评估损失请使用 metric=loss.metric()")
         if metric is None:
-            metric = "ks" if loss is None else loss.metric()
+            metric = loss.metric() if isinstance(loss, BaseLoss) else "rmse" if self._task == "regression" else "ks"
         # 若指定了 objective（TuningObjective 风格），将其转换为 metric callable
         if objective is not None:
             if isinstance(objective, str):
@@ -787,6 +789,13 @@ class ModelTuner(ArtifactSerializableMixin):
 
         if self.loss is None:
             return
+        if self.model_class.__name__ == "TabPFN":
+            raise ValueError("当前 TabPFN 封装使用预训练推理，不支持 loss 训练配置；请搜索原生推理参数")
+        if getattr(self.model_class, "_supports_gradient_training", False):
+            if "loss" in self._explicit_fixed_params:
+                raise ValueError("loss 与 fixed_params['loss'] 不能同时设置")
+            self._explicit_fixed_params["loss"] = self.loss
+            return
         if not isinstance(self.loss, BaseLoss):
             raise TypeError("loss 必须是 BaseLoss 实例；原生目标回调请通过模型 objective 配置")
         model_module = getattr(self.model_class, "__module__", "")
@@ -794,11 +803,29 @@ class ModelTuner(ArtifactSerializableMixin):
         if not model_module.startswith("hscredit.") or model_name not in {"XGBoost", "LightGBM", "CatBoost", "NGBoost"}:
             raise ValueError(
                 "该模型训练器不支持自定义 loss；XGBoost、LightGBM、CatBoost、NGBoost 支持此入口，"
-                "其他模型请用 metric=loss.metric() 选模；Pipeline 请预配置最终模型的 objective"
+                "ResNet、FTTransformer、TabM 支持梯度训练；TabPFN 当前仅支持预训练推理，"
+                "其他模型请用 metric=loss.metric() 选模；Pipeline 请预配置最终模型的损失"
             )
         if any(key in self._explicit_fixed_params for key in ("objective", "loss_function")):
             raise ValueError("loss 与 fixed_params 中的 objective/loss_function 不能同时设置")
         self._explicit_fixed_params["objective"] = self.loss
+
+    def _infer_task(self):
+        """按固定模型配置识别任务，不依据标签取值猜测回归/分类。"""
+        params = {**self.model_params, **self._explicit_fixed_params}
+        if params.get("steps"):
+            prefix = ""
+            steps = params["steps"]
+            while steps:
+                name, estimator = steps[-1]
+                prefix += name + "__"
+                steps = getattr(estimator, "steps", None)
+            objective = params.get(prefix + "objective", getattr(estimator, "objective", None))
+            kind = getattr(estimator, "_estimator_type", None)
+        else:
+            objective = params.get("objective")
+            kind = getattr(self.model_class, "_estimator_type", None)
+        return "regression" if objective == "regression" or kind == "regressor" else "binary"
 
     @staticmethod
     def _validate_loss_sample_arrays(value):
@@ -839,6 +866,14 @@ class ModelTuner(ArtifactSerializableMixin):
         def normalize(value):
             if value is None or isinstance(value, (str, bytes, bool, int, float, np.ndarray, np.generic)):
                 return value
+            if type(value).__module__.split(".")[0] == "torch" and hasattr(value, "detach"):
+                # 损失模块中的 pos_weight 等张量必须按内容比较，不能只散列空 __dict__。
+                tensor = value.detach().cpu()
+                try:
+                    array = tensor.numpy()
+                except TypeError:
+                    array = tensor.float().numpy()
+                return ("张量", str(value.dtype), array)
             if isinstance(value, type):
                 return ("类型", value.__module__, value.__qualname__)
             if isinstance(value, types.ModuleType):
@@ -953,6 +988,16 @@ class ModelTuner(ArtifactSerializableMixin):
         for m, d, name in zip(metrics_list, directions_list, metric_names):
             if d not in (None, "maximize", "minimize"):
                 raise ValueError("direction 只能是 'maximize' 或 'minimize'")
+            if self._task == "regression":
+                from ._regression import RegressionMetric
+
+                if isinstance(m, Metric):
+                    if d is not None and d != m.direction:
+                        raise ValueError(f"direction 与指标 {m.name} 自身声明的方向不一致")
+                    self.metrics.append(RegressionMetric(m.metric, name=name or m.name, direction=d or m.direction))
+                else:
+                    self.metrics.append(RegressionMetric(m, name=name, direction=d))
+                continue
             if isinstance(m, BaseLoss):
                 m = m.metric()
             if isinstance(m, Metric):
@@ -995,7 +1040,15 @@ class ModelTuner(ArtifactSerializableMixin):
         :return: (X, y) 处理后的特征和目标
         """
         X, y = extract_target(X, y, self.target)
-        validate_labels(y)
+        if self._task == "regression":
+            try:
+                values = np.asarray(y, dtype=float)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("回归调参的标签必须是有限数值") from exc
+            if not len(values) or not np.isfinite(values).all():
+                raise ValueError("回归调参的标签必须是非空、有限的一维数组")
+        else:
+            validate_labels(y)
         return X, y
 
     def fit(
@@ -1470,6 +1523,9 @@ class ModelTuner(ArtifactSerializableMixin):
         if nested:
             model.set_params(**nested)
         terminal = self._final_estimator(model)
+        kind = getattr(terminal, "_estimator_type", None)
+        if kind in ("classifier", "regressor") and (kind == "regressor") != (self._task == "regression"):
+            raise ValueError("一次调参只能处理同一种任务，不能在搜索空间中切换二分类和回归")
         from ..scorecard.model_scorecard import ProbabilityScoreCard
         from ..scorecard.scorecard import ScoreCard
         from ..calibration.model import ProbabilityCalibrator
@@ -1523,11 +1579,15 @@ class ModelTuner(ArtifactSerializableMixin):
                     X, y, groups
                 )
             train, valid = train_test_split(
-                np.arange(len(y)), test_size=fraction, random_state=self.random_state, stratify=y
+                np.arange(len(y)),
+                test_size=fraction,
+                random_state=self.random_state,
+                stratify=None if self._task == "regression" else y,
             )
             return iter([(train, valid)])
         if isinstance(self.cv, (int, np.integer)):
-            splitter = StratifiedKFold(n_splits=int(self.cv), shuffle=True, random_state=self.random_state)
+            splitter_class = KFold if self._task == "regression" else StratifiedKFold
+            splitter = splitter_class(n_splits=int(self.cv), shuffle=True, random_state=self.random_state)
         else:
             splitter = self.cv
         if hasattr(splitter, "split"):
@@ -1663,7 +1723,10 @@ class ModelTuner(ArtifactSerializableMixin):
         from sklearn.model_selection import train_test_split
 
         train_idx, valid_idx = train_test_split(
-            np.arange(len(y)), test_size=0.2, stratify=y, random_state=self.random_state
+            np.arange(len(y)),
+            test_size=0.2,
+            stratify=None if self._task == "regression" else y,
+            random_state=self.random_state,
         )
         runtime = dict(params)
         validation_params = {}
@@ -1734,7 +1797,7 @@ class ModelTuner(ArtifactSerializableMixin):
             for metric in self.metrics:
                 metric.validate_evaluation_weight()
         fold_results = {i: [] for i in range(len(self.metrics))}
-        fold_lifts = {float(ratio): [] for ratio in self.eval_ratios}
+        fold_lifts = {} if self._task == "regression" else {float(ratio): [] for ratio in self.eval_ratios}
         splits = cv_splits if cv_splits is not None else getattr(self, "_cv_splits", None)
         if splits is None:
             splits = self._validated_splits(X, y, groups=getattr(self, "_groups", None))
@@ -1785,12 +1848,16 @@ class ModelTuner(ArtifactSerializableMixin):
                     )
                 else:
                     self._fit_fold(fold_model, X_train_fold, y_train_fold, fit_kwargs)
-                y_train_pred = positive_probability(fold_model.predict_proba(X_train_fold), fold_model.classes_, 1)
-                y_val_pred = positive_probability(fold_model.predict_proba(X_val_fold), fold_model.classes_, 1)
+                if self._task == "regression":
+                    y_train_pred = np.asarray(fold_model.predict(X_train_fold), dtype=float)
+                    y_val_pred = np.asarray(fold_model.predict(X_val_fold), dtype=float)
+                else:
+                    y_train_pred = positive_probability(fold_model.predict_proba(X_train_fold), fold_model.classes_, 1)
+                    y_val_pred = positive_probability(fold_model.predict_proba(X_val_fold), fold_model.classes_, 1)
                 y_val_arr, y_train_arr = np.asarray(y_val_fold), np.asarray(y_train_fold)
-                record.update(
-                    真实标签=y_val_arr, 预测概率=y_val_pred, 训练真实标签=y_train_arr, 训练预测概率=y_train_pred
-                )
+                prediction_key = "预测值" if self._task == "regression" else "预测概率"
+                record.update(真实标签=y_val_arr, 训练真实标签=y_train_arr)
+                record.update({prediction_key: y_val_pred, "训练" + prediction_key: y_train_pred})
                 scores = {}
                 for i, metric in enumerate(self.metrics):
                     value = metric(
@@ -1807,7 +1874,8 @@ class ModelTuner(ArtifactSerializableMixin):
                     scores[metric.name] = float(value)
                 record["指标"] = scores
                 record["评估口径"] = "未加权" if validation_weight is None else "显式评估权重"
-                record["补充LIFT口径"] = "按样本行，未应用评估权重"
+                if self._task != "regression":
+                    record["补充LIFT口径"] = "按样本行，未应用评估权重"
                 for ratio in fold_lifts:
                     fold_lifts[ratio].append(TuningObjective.lift_head(y_val_arr, y_val_pred, ratio=ratio))
                 record["状态"] = "完成"
@@ -2042,20 +2110,21 @@ class ModelTuner(ArtifactSerializableMixin):
         if getattr(self, "_training_data_released_", False):
             raise ValueError("训练数据已释放，无法组装完整标签的折外预测；请重新 fit")
         record = self.get_trial_result(trial_number, load=False)
-        if not any("预测概率" in fold or "制品路径" in fold for fold in record.get("各折", [])):
+        prediction_key = "预测值" if getattr(self, "_task", "binary") == "regression" else "预测概率"
+        if not any(prediction_key in fold or "制品路径" in fold for fold in record.get("各折", [])):
             raise ValueError("当前保留策略未保留该试验的折外预测，请使用 full、predictions、disk 或最佳试验")
         sums, counts = np.zeros(n_samples), np.zeros(n_samples, dtype=int)
         for summary in record["各折"]:
             fold = load_fold(summary, self)
-            if "预测概率" in fold:
-                np.add.at(sums, fold["验证位置"], fold["预测概率"])
+            if prediction_key in fold:
+                np.add.at(sums, fold["验证位置"], fold[prediction_key])
                 np.add.at(counts, fold["验证位置"], 1)
         probability = np.divide(sums, counts, out=np.full(n_samples, np.nan), where=counts > 0)
         return pd.DataFrame(
             {
                 "样本位置": np.arange(n_samples),
                 "真实标签": np.asarray(labels),
-                "预测概率": probability,
+                prediction_key: probability,
                 "验证次数": counts,
             }
         )
@@ -2130,6 +2199,8 @@ class ModelTuner(ArtifactSerializableMixin):
         >>> restored.fit(X_train, y_train, n_trials=10)
         """
         tuner = cls.load_artifact(path, **kwargs)
+        if not hasattr(tuner, "_task"):
+            tuner._task = tuner._infer_task()
         if artifact_dir is not None:
             tuner.artifact_dir = str(artifact_dir)
         if not hasattr(tuner, "retention_"):
@@ -2485,6 +2556,11 @@ class ModelTuner(ArtifactSerializableMixin):
         """
         # 获取模型类型
         model_name = self.model_class.__name__.lower()
+
+        if getattr(self.model_class, "_supports_gradient_training", False) or model_name == "tabpfn":
+            from ._net import net_search_space
+
+            return net_search_space(self.model_class, {**self.model_params, **self.fixed_params})
 
         if "xgboost" in model_name or "xgb" in model_name:
             return self._get_xgboost_search_space()
@@ -2950,6 +3026,8 @@ class ModelTuner(ArtifactSerializableMixin):
             "validation_fraction": 0.2,
         }
         for name, value in fit_params.items():
+            if getattr(self.model_class, "_supports_gradient_training", False) and name in params:
+                continue  # 网络实例显式传入 None 表示关闭早停，不能被调参器默认值覆盖。
             if name in accepted and name not in self._explicit_fixed_params and params.get(name) is None:
                 params[name] = value
 
@@ -3077,6 +3155,18 @@ class ModelTuner(ArtifactSerializableMixin):
                 "gradientboosting",
             )
         )
+        trainable_net = bool(getattr(estimator, "_supports_gradient_training", False))
+        if full_data and trainable_net:
+            try:
+                folds = self.get_trial_result(self.best_trial_.number, load=False).get("各折", [])
+            except ValueError:
+                folds = []
+            epochs = [fold["最佳迭代"] for fold in folds if fold.get("启用早停") and fold.get("最佳迭代") is not None]
+            if epochs:
+                estimator_params["max_epochs"] = max(1, int(np.ceil(np.median(epochs))))
+            estimator_params.update(early_stopping_rounds=None, validation_fraction=0.0)
+            estimator.set_params(**estimator_params)
+            params = model.get_params(deep=False)
         if full_data and boosting and hasattr(estimator, "set_params"):
             try:
                 folds = self.get_trial_result(self.best_trial_.number, load=False).get("各折", [])
@@ -3495,7 +3585,7 @@ class AutoTuner:
     def create(
         cls,
         model_type: str,
-        metric: Union[str, Callable, List[Union[str, Callable]]] = "ks",
+        metric: Union[str, Callable, List[Union[str, Callable]], None] = None,
         direction: Optional[Union[str, List[Optional[str]]]] = None,
         metric_names: Optional[List[str]] = None,
         target: str = "target",
@@ -3527,8 +3617,10 @@ class AutoTuner:
 
             - 'decisiontree' / 'dt'
 
+            - 'resnet' / 'fttransformer' / 'ft_transformer' / 'tabm' / 'tabpfn'
+
         :type model_type: str
-        :param metric: 默认值为 ``'ks'`` 。优化指标，可以是字符串、函数或列表
+        :param metric: 默认 None 按任务选择 KS 或 RMSE，也可传指标字符串、函数或列表
         :type metric: Union[str, Callable, List[Union[str, Callable]]]
         :param direction: 默认 None 按各指标推断；裸函数须明确方向，多目标可给列表。
         :type direction: Optional[Union[str, List[Optional[str]]]]
@@ -3579,6 +3671,11 @@ class AutoTuner:
             "svc": "SVM",
             "decisiontree": "DecisionTreeClassifier",
             "dt": "DecisionTreeClassifier",
+            "resnet": "ResNet",
+            "fttransformer": "FTTransformer",
+            "ft_transformer": "FTTransformer",
+            "tabm": "TabM",
+            "tabpfn": "TabPFN",
         }
 
         model_type = model_type.lower()

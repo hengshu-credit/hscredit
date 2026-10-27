@@ -338,6 +338,18 @@ class BaseLoss(ABC):
 
         return CatBoostLossAdapter(self).objective()
 
+    def to_torch(self, reduction="none"):
+        """转换为接收原始 logits 的 PyTorch 二分类损失。
+
+        :param reduction: none 返回逐行损失，mean/sum 返回均值/和。
+        :return: 可反向传播的 nn.Module；仅支持 is_additive=True 的可分解损失。
+
+        >>> criterion = FocalLoss().to_torch(reduction='none')
+        """
+        from .torch_adapter import TorchLossAdapter
+
+        return TorchLossAdapter(self).loss_fn(reduction=reduction)
+
     def to_ngboost(self):
         """生成 NGBoost Score；必须同时使用返回类的 distribution。
 

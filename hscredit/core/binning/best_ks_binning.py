@@ -25,6 +25,11 @@ class BestKSBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
         与显式参数重名或不存在的参数会被构造函数拒绝。
 
@@ -153,6 +158,7 @@ class BestKSBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
         **kwargs,
     ):
         super().__init__(
@@ -175,6 +181,7 @@ class BestKSBinning(BaseBinning):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             **kwargs,
+            constraint_policy=constraint_policy,
         )
 
     def fit(
@@ -263,7 +270,7 @@ class BestKSBinning(BaseBinning):
 
         if len(unique_values) <= self.max_n_bins:
             # 唯一值较少时，直接使用唯一值边界（避免退化为单箱）
-            return unique_values[:-1].tolist()
+            return (unique_values[:-1] / 2.0 + unique_values[1:] / 2.0).tolist()
 
         # 限制候选分割点数量，避免过多唯一值导致性能问题
         max_candidates = min(len(unique_values) - 1, 100)
@@ -276,7 +283,7 @@ class BestKSBinning(BaseBinning):
             candidates = candidates[(candidates > x_min) & (candidates < x_max)]
         else:
             # 相邻唯一值的中点
-            candidates = (unique_values[:-1] + unique_values[1:]) / 2
+            candidates = unique_values[:-1] / 2.0 + unique_values[1:] / 2.0
 
         # 预计算排序后的数据
         sorted_indices = np.argsort(x_vals)
@@ -300,19 +307,20 @@ class BestKSBinning(BaseBinning):
 
         while len(selected_splits) < self.max_n_bins - 1 and len(candidates) > 0:
             best_ks = -1
+            best_iv = -1.0
             best_split_idx = -1
             best_split = None
 
             for i, candidate in enumerate(candidates):
                 # 找到候选点在排序数据中的位置
-                split_pos = np.searchsorted(x_sorted, candidate, side="right")
+                split_pos = np.searchsorted(x_sorted, candidate, side="left")
 
                 if split_pos == 0 or split_pos >= len(x_sorted):
                     continue
 
                 # 计算该分割点与已选分割点组合的 KS
                 test_splits = sorted(selected_splits + [candidate])
-                split_positions = [np.searchsorted(x_sorted, s, side="right") for s in test_splits]
+                split_positions = [np.searchsorted(x_sorted, s, side="left") for s in test_splits]
                 split_positions = [0] + split_positions + [len(x_sorted)]
                 if any(
                     (split_positions[j + 1] - split_positions[j]) < min_samples for j in range(len(split_positions) - 1)
@@ -320,8 +328,12 @@ class BestKSBinning(BaseBinning):
                     continue
                 ks = self._calc_ks_fast(x_sorted, y_sorted, cum_good, cum_bad, total_good, total_bad, test_splits)
 
-                if ks > best_ks:
+                from ..metrics._binning import iv_for_splits
+
+                iv = iv_for_splits(x_sorted, y_sorted, test_splits)
+                if ks > best_ks + 1e-12 or (abs(ks - best_ks) <= 1e-12 and iv > best_iv + 1e-12):
                     best_ks = ks
+                    best_iv = iv
                     best_split_idx = i
                     best_split = candidate
 
@@ -360,7 +372,7 @@ class BestKSBinning(BaseBinning):
             return 0.0
 
         # 找到所有分割点的位置
-        split_positions = [np.searchsorted(x_sorted, s, side="right") for s in sorted(splits)]
+        split_positions = [np.searchsorted(x_sorted, s, side="left") for s in sorted(splits)]
         split_positions = [0] + split_positions + [len(x_sorted)]
 
         max_ks = 0

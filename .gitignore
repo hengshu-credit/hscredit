@@ -259,3 +259,13 @@ tmp_outputs
 artifacts/models_audit_20261023/optional_runtime/
 docs/audits/*
 artifacts
+docs/validation/*
+!docs/validation/binning-method-audit-2026-10-27.ipynb
+!docs/validation/binning-method-audit-2026-10-27.json
+!docs/validation/binning-method-repair-2026-10-27.ipynb
+!docs/validation/binning-method-repair-2026-10-27.json
+!docs/validation/binning-objectives-and-constraints-2026-10-27.json
+!docs/validation/categorical-binning-audit-2026-10-27.json
+!docs/validation/categorical-binning-recheck-2026-10-27.json
+!docs/validation/overdue-target-2026-10-27.json
+!docs/validation/prepush-review-2026-10-28.json

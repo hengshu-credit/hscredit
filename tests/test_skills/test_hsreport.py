@@ -56,6 +56,7 @@ def test_feature_report_records_effective_overdue_operator(tmp_path, credit_fram
     )
     assert result["status"] == "success"
     assert result["summary"]["overdue_operator"] == expected
+    assert result["summary"]["del_grey"] is True
     assert result["summary"]["label_combinations"] == [{"overdue": "MOB1", "dpd": 3}, {"overdue": "MOB1", "dpd": 0}]
     workbook = _workbook(result)
     values = [cell.value for row in workbook.active for cell in row]

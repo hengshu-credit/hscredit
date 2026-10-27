@@ -530,15 +530,23 @@ class ModelReport(ModelContextMixin):
 
     :type datasets: Optional[Union[List, Dict]]
     :param X_train/y_train/X_test/y_test: 兼容 sklearn 风格的数据传入方式
-    :param target: 默认值为 ``None`` 。目标列名（sklearn/scorecardpipeline 风格）
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+        None 且未指定逾期模式时沿用模型的目标配置。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期天数列名或列表，配合 ``dpds`` 自动构建 0/1 标签
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 逾期定义天数或列表（默认逾期天数 > dpds 记为坏样本）
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param overdue_operator: 比较符（>、>=、<、<=）；独立逾期参数，缺省时使用 >。
     :type overdue_operator: Optional[str]
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
     :param features: 默认值为 ``None`` 。特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
     :type features: Optional[List[str]]
@@ -652,18 +660,21 @@ class ModelReport(ModelContextMixin):
         :param X_oot: 跨时间验证集特征（命名为 跨时间验证集）
         :param y_oot: 跨时间验证集标签，None 时从 X_oot 中通过 target / overdue+dpds 构建
         :param features: 特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
-        :param target: 目标列配置；None 且未指定 overdue/dpds 时继承模型或 Pipeline 末端的目标列。
-
-            - str: 列名，如 'target'，数据全部在 X 中时使用
-
-            - dict: {标签名: Series/ndarray/list/callable}，每个标签独立统计
-
-        :param overdue: 逾期列名（str）或多个列名（List[str]），与 target 模式互斥
-        :param dpds: 逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时沿用模型的目标配置。
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :param overdue_operator: 比较符（>、>=、<、<=）；None 时默认 >。
             target 模式不解释 overdue_operator。
 
-        :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :param prediction_method: 数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
         :param prediction_kwargs: callable 同名参数的显式覆盖字典
         :param explain_config: 可选模型解释配置；None 不生成可选解释章节，由 normalize_explain_config 校验。
@@ -5441,13 +5452,20 @@ def auto_model_report(
     :param y_oot: 默认值为 ``None`` 。跨时间验证集标签，None 时从 X_oot 中自动构建
     :param features: 默认值为 ``None`` 。特征名称列表，可选；None 时自动从模型 feature_names_ / feature_names_in_ 获取
     :type features: Optional[List[str]]
-    :param target: 默认值为 ``None`` 。目标列配置，str 为列名，dict 为 {标签名: 一维数据或 callable}
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期列名（str）或多个列名（List[str]），与 dpds 配合自动构建标签
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 默认值为 ``None`` 。逾期天数阈值（int/float）或多个阈值（List），与 overdue 配合使用
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
     :param excel_path: 默认值为 ``None`` 。Excel 报告输出路径
     :type excel_path: Optional[str]

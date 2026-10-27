@@ -6,6 +6,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Tuple
 
+import numpy as np
 import pandas as pd
 
 from ...core.binning import OptimalBinning, OptimalBinning2D
@@ -89,7 +90,7 @@ def _target_parameters(context, parameters):
 def _as_parameter_list(value: Any) -> list:
     if value is None:
         return []
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, np.ndarray, pd.Index, pd.Series)):
         return list(value)
     return [value]
 
@@ -100,14 +101,16 @@ def _label_combinations(parameters: Mapping[str, Any], *, paired: bool = False) 
     if not overdue_fields or parameters.get("dpds") is None:
         return []
     dpds = normalize_dpd_values(parameters["dpds"], deduplicate=not paired)
-    if paired:
-        return [{"overdue": overdue, "dpd": dpd} for overdue, dpd in zip(overdue_fields, dpds)]
-    return [{"overdue": overdue, "dpd": dpd} for overdue in overdue_fields for dpd in dpds]
+    pairs = zip(overdue_fields, dpds) if paired else ((column, dpd) for column in overdue_fields for dpd in dpds)
+    return [{"overdue": column, "dpd": dpd} for column, dpd in dict.fromkeys(pairs)]
 
 
 def _overdue_summary(parameters: Mapping[str, Any], *, default_operator: str = ">", paired: bool = False) -> dict:
     """记录实际生成的逾期标签组合；配对图形保留一一对应的阈值。"""
     summary = {}
+    configured = parameters.get("bin_params") or {}
+    grey = parameters.get("del_grey")
+    grey = configured.get("del_grey", False) if grey is None else grey
     target = parameters.get("target")
     if target is not None:
         names = (
@@ -115,11 +118,15 @@ def _overdue_summary(parameters: Mapping[str, Any], *, default_operator: str = "
             if isinstance(target, Mapping)
             else [target if isinstance(target, str) else getattr(target, "name", None) or "target"]
         )
-        summary.update(target_mode="target", target_names=names, del_grey=bool(parameters.get("del_grey", False)))
+        summary.update(target_mode="target", target_names=names, del_grey=bool(grey))
     combinations = _label_combinations(parameters, paired=paired)
     if combinations:
         summary["label_combinations"] = combinations
-        summary["overdue_operator"] = parameters.get("overdue_operator", default_operator)
+        operator = parameters.get("overdue_operator")
+        summary["overdue_operator"] = (
+            configured.get("overdue_operator", default_operator) if operator is None else operator
+        )
+        summary["del_grey"] = bool(grey)
     return summary
 
 

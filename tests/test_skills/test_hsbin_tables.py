@@ -48,6 +48,7 @@ def test_overdue_operator_is_forwarded_and_recorded(tmp_path, credit_frame):
     )
     assert result["status"] == "success"
     assert result["summary"]["overdue_operator"] == "<="
+    assert result["summary"]["del_grey"] is True
     assert result["summary"]["label_combinations"] == [{"overdue": "MOB1", "dpd": 3}, {"overdue": "MOB1", "dpd": 0}]
     workbook = _workbook(result)
     values = [cell.value for row in workbook.active for cell in row]

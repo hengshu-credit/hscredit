@@ -128,6 +128,7 @@ from .losses import (
     LightGBMLossAdapter,
     CatBoostLossAdapter,
     TabNetLossAdapter,
+    TorchLossAdapter,
     NGBoostLossAdapter,
 )
 
@@ -136,6 +137,7 @@ from .base import BaseRiskModel
 
 # 导入提升树模型 (boosting/, 可选重依赖 xgboost/lightgbm/catboost/ngboost，懒加载)
 _LAZY_BOOSTING_MODELS = ("XGBoost", "LightGBM", "CatBoost", "NGBoost")
+_LAZY_NET_MODELS = ("ResNet", "FTTransformer", "TabM", "TabPFN")
 
 # 导入经典模型 (classical/)
 from .classical import (
@@ -231,6 +233,8 @@ def __getattr__(name):
     """懒加载 boosting/tuning 子包及 ModelReport 兼容别名，避免 import hscredit 时即时加载重依赖."""
     if name in _LAZY_BOOSTING_MODELS:
         value = getattr(importlib.import_module(".boosting", __name__), name)
+    elif name in _LAZY_NET_MODELS:
+        value = getattr(importlib.import_module(".net", __name__), name)
     elif name in _LAZY_TUNING_MODELS:
         value = getattr(importlib.import_module(".tuning", __name__), name)
     elif name == "ModelReport":
@@ -291,6 +295,7 @@ __all__ = [
     "LightGBMLossAdapter",
     "CatBoostLossAdapter",
     "TabNetLossAdapter",
+    "TorchLossAdapter",
     "NGBoostLossAdapter",
     # 模型基类
     "BaseRiskModel",

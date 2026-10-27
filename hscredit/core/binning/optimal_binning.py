@@ -22,6 +22,7 @@ import warnings
 from ...exceptions import NotFittedError, ParallelExecutionError
 from ...utils.parallel import ParallelWorkload, parallel_execute
 from .base import BaseBinning
+from ._objectives import OBJECTIVE_METHODS, NATIVE_OBJECTIVES, COMPOSITE_OBJECTIVES, resolve_objective
 from ._contracts import (
     HandleUnknown,
     UNKNOWN_BIN,
@@ -109,6 +110,23 @@ class OptimalBinning(BaseBinning):
        预分箱+二次分箱的两阶段分箱流程
 
     **参数**
+
+    :param objective: or_tools、cp_sat、genetic 的优化目标名称或回调，默认 None 使用对应方法的原生默认目标。
+        其他方法不接收该参数；回调接收 (bin_stats, total_good, total_bad)，返回越大越好的有限实数。
+    :type objective: Optional[Union[str, Callable]]
+
+    :param objective_params: 预定义目标的权重，或传给自定义目标函数的附加关键字参数，默认 None。
+    :type objective_params: Optional[Dict]
+
+    ``objective`` 可为原生目标名称、``CustomObjectives.names()`` 中的复合目标名称，
+    或 ``callable(bin_stats, total_good, total_bad, **objective_params)``。回调须返回有限实数，越大越好。
+    回调统计复用 ``compute_bin_stats``，``iv`` 为分档 IV，``woe`` 为 log(坏分布/好分布)。
+    原 ``objective="custom", custom_objective=函数`` 写法继续可用。
+
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
 
     :param missing_separate: 是否将缺失值单独分为一箱，默认为True
     :type missing_separate: bool
@@ -255,7 +273,7 @@ class OptimalBinning(BaseBinning):
     :type random_state: Optional[int]
     :param verbose: 是否输出详细信息，默认为False
     :type verbose: Union[bool, int]
-    :param decimal: 数值型切分点保留的小数位数，默认为4
+    :param decimal: 分箱标签显示的小数位数，默认为4；实际切点保持完整精度
     :type decimal: int
     :param woe_clip: WOE值截断阈值，默认为None
         当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
@@ -389,6 +407,9 @@ class OptimalBinning(BaseBinning):
         n_jobs: Union[int, float] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        objective: Optional[Union[str, Callable]] = None,
+        objective_params: Optional[Dict[str, Any]] = None,
+        constraint_policy: str = "raise",
         **kwargs,
     ):
         super().__init__(
@@ -413,12 +434,15 @@ class OptimalBinning(BaseBinning):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            constraint_policy=constraint_policy,
         )
 
         # 仅校验不归一化：sklearn clone 要求构造参数按对象原样保存，
         # 大小写/空白归一化推迟到 fit 时统一进行
         self.validate_method(method)
         self.method = method
+        self.objective = objective
+        self.objective_params = objective_params
         self.user_splits = user_splits
         self.user_splits_fixed = user_splits_fixed
         self.prebinning = prebinning
@@ -446,6 +470,31 @@ class OptimalBinning(BaseBinning):
         self._ordinary_binner_ = None
         self._ordinary_features_ = ()
         self.monotonic_trend_ = {}
+        self._validate_objective_parameters()
+
+    @classmethod
+    def available_objectives(cls, method: str):
+        """列出该方法支持的目标名称；固定算法目标的方法返回空列表。"""
+        method = cls.validate_method(method)
+        if method not in OBJECTIVE_METHODS:
+            return []
+        native = NATIVE_OBJECTIVES if method == "or_tools" else ("iv", "ks", "gini")
+        return list(native + COMPOSITE_OBJECTIVES)
+
+    def _validate_objective_parameters(self):
+        method = self.validate_method(self.method)
+        if self.objective is None and self.objective_params is None and self.kwargs.get("custom_objective") is None:
+            return
+        if method not in OBJECTIVE_METHODS:
+            raise ValueError(
+                f"方法 '{method}' 使用固定算法目标，不支持 objective；可选方法为 {list(OBJECTIVE_METHODS)}"
+            )
+        resolve_objective(
+            "iv" if self.objective is None else self.objective,
+            self.objective_params,
+            self.kwargs.get("custom_objective"),
+            native_names=NATIVE_OBJECTIVES if method == "or_tools" else ("iv", "ks", "gini"),
+        )
 
     def _clean_kwargs(self, kwargs: Dict) -> Dict:
         """清理kwargs，移除不应该传递给底层分箱器的参数.
@@ -475,7 +524,7 @@ class OptimalBinning(BaseBinning):
             for name, parameter in inspect.signature(binner_class.__init__).parameters.items():
                 if name != "self" and parameter.kind not in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
                     names.add(name)
-        return names
+        return names | {"smoothing_method"}
 
     @classmethod
     def _method_classes(cls) -> Dict[str, type]:
@@ -503,6 +552,7 @@ class OptimalBinning(BaseBinning):
         """在不改变 ``**kwargs`` 入口的前提下暴露方法专属参数。"""
         params = super().get_params(deep=deep)
         params.update(self.kwargs)
+        params.update(self._fit_control_options)
         return params
 
     def set_params(self, **params) -> "OptimalBinning":
@@ -531,9 +581,10 @@ class OptimalBinning(BaseBinning):
             if name in explicit:
                 setattr(self, name, value)
             else:
-                self.kwargs[name] = value
                 if name in control_params:
                     self._fit_control_options[name] = value
+                else:
+                    self.kwargs[name] = value
         if nested:
             super().set_params(**nested)
         return self
@@ -552,6 +603,8 @@ class OptimalBinning(BaseBinning):
         """
         # 防御 set_params 绕过 __init__ 校验的场景，统一归一化 method
         self.method = self.validate_method(self.method)
+        self._validate_objective_parameters()
+        self.__dict__.pop("_candidate_splits_", None)
         X, y = self._check_input(X, y)
         imported_features = [
             feature
@@ -589,8 +642,8 @@ class OptimalBinning(BaseBinning):
             self._fit_with_prebinning(X, y)
 
             # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
-            # 默认开启，可通过 lift_refine=False 关闭
-            if self._fit_control_options.get("lift_refine", True) and self.method != "uniform":
+            # 仅在显式请求时启用，保持原分箱方法的优化目标。
+            if self._fit_control_options.get("lift_refine", False) and self.method != "uniform":
                 self._refine_splits_for_lift_stability(X, y)
 
             # quantile 方法需保持分位数切分点精确，跳过所有后处理
@@ -629,8 +682,8 @@ class OptimalBinning(BaseBinning):
                 return self
 
             # 统一后处理：围绕头尾Lift与样本稳定性微调切分点
-            # 默认开启，可通过 lift_refine=False 关闭
-            if self._fit_control_options.get("lift_refine", True) and self.method != "uniform":
+            # 仅在显式请求时启用，保持原分箱方法的优化目标。
+            if self._fit_control_options.get("lift_refine", False) and self.method != "uniform":
                 self._refine_splits_for_lift_stability(X, y)
 
             # 统一收口约束：确保不同方法都遵守单调性/最小箱/最大箱限制
@@ -898,11 +951,12 @@ class OptimalBinning(BaseBinning):
         base_params = {
             "target": self.target,
             "max_n_bins": 20,  # 默认预分箱为20箱
+            "constraint_policy": self.constraint_policy,
             "min_n_bins": 2,
             "min_bin_size": self.min_bin_size,
-            "max_bin_size": self.max_bin_size,
-            "min_bad_rate": self.min_bad_rate,
-            "monotonic": self.monotonic,
+            "max_bin_size": None,
+            "min_bad_rate": 0.0,
+            "monotonic": False,
             "missing_separate": self.missing_separate,
             "special_codes": self.special_codes,
             "cat_cutoff": self.cat_cutoff,
@@ -964,6 +1018,11 @@ class OptimalBinning(BaseBinning):
 
         # 4. 所有主方法都真实拟合，使方法专属参数完整生效；随后把结果约束到
         # 预分箱候选边界。预分箱只定义搜索空间，不能替代主方法结果。
+        self._candidate_splits_ = {
+            feature: np.asarray(cuts, dtype=float)
+            for feature, cuts in pre_splits.items()
+            if self._detect_feature_type(X[feature]) == "numerical"
+        }
         self._fit_with_method(X, y)
         self._restrict_to_prebin_candidates(X, y, pre_splits)
 
@@ -1053,7 +1112,7 @@ class OptimalBinning(BaseBinning):
         y: pd.Series,
         pre_splits: Dict[str, np.ndarray],
     ) -> None:
-        """把主方法结果约束到预分箱候选边界，避免预分箱退化为结果复制。"""
+        """核验主方法结果属于预分箱候选；类别预组按现有原子分组契约合并。"""
         for feature in X.columns:
             if self.feature_types_.get(feature) == "categorical":
                 groups = self._prebinner._cat_bins_.get(feature)
@@ -1077,24 +1136,9 @@ class OptimalBinning(BaseBinning):
             candidates = np.unique(np.sort(candidates[np.isfinite(candidates)]))
             if len(candidates) == 0:
                 continue
-            proposed = np.asarray(self.splits_.get(feature, np.array([])), dtype=float)
-            proposed = proposed[np.isfinite(proposed)]
-            projected = (
-                np.unique([candidates[int(np.argmin(np.abs(candidates - split)))] for split in proposed])
-                if len(proposed)
-                else np.array([], dtype=float)
-            )
-            required = min(max(0, self.min_n_bins - 1), len(candidates), max(0, self.max_n_bins - 1))
-            if len(projected) < required:
-                remaining = [
-                    value for value in candidates if not np.any(np.isclose(projected, value, rtol=0, atol=1e-12))
-                ]
-                for value in remaining:
-                    projected = np.unique(np.append(projected, value))
-                    if len(projected) >= required:
-                        break
-            if len(projected) > self.max_n_bins - 1:
-                projected = self._optimize_iv_splits(X[feature].dropna(), y.loc[X[feature].dropna().index], projected)
+            projected = np.asarray(self.splits_.get(feature, np.array([])), dtype=float)
+            if not np.isin(projected, candidates).all():
+                raise ValueError(f"特征 '{feature}' 的结果包含预分箱候选之外的切点")
             self.splits_[feature] = self._round_splits(projected)
             self.n_bins_[feature] = len(projected) + 1
             bins = self._apply_bins(X[feature], self.splits_[feature], "numerical", feature)
@@ -1559,7 +1603,9 @@ class OptimalBinning(BaseBinning):
 
             # Step2: 补点搜索（避免过度合并，强化头尾区分）
             max_splits_allowed = max(1, max_search_bins - 1)
-            pool = np.unique(np.quantile(x_valid, np.linspace(0.05, 0.95, 19)))
+            pool = getattr(self, "_candidate_splits_", {}).get(feature)
+            if pool is None:
+                pool = np.unique(np.quantile(x_valid, np.linspace(0.05, 0.95, 19)))
             pool = np.array([v for v in pool if np.isfinite(v)], dtype=float)
 
             improved = True
@@ -1623,6 +1669,11 @@ class OptimalBinning(BaseBinning):
         }
 
         base_params.update(self.kwargs)
+        if self.method in OBJECTIVE_METHODS:
+            if self.objective is not None:
+                base_params["objective"] = self.objective
+            if self.objective_params is not None:
+                base_params["objective_params"] = self.objective_params
 
         # 需要 target 参数的方法
         target_params = {"target": self.target, **base_params}
@@ -1651,6 +1702,9 @@ class OptimalBinning(BaseBinning):
         }
 
         full_params.update(self.kwargs)
+        for name in ("objective", "objective_params"):
+            if name in base_params:
+                full_params[name] = base_params[name]
 
         if self.method == "uniform":
             uniform_params = target_params.copy()
@@ -1739,7 +1793,9 @@ class OptimalBinning(BaseBinning):
         elif self.method == "genetic":
             self._binner = GeneticBinning(**base_params)
         elif self.method == "smooth":
-            self._binner = SmoothBinning(**base_params)
+            smooth_params = base_params.copy()
+            smooth_params["method"] = smooth_params.pop("smoothing_method", "adaptive")
+            self._binner = SmoothBinning(**smooth_params)
         elif self.method == "kernel_density":
             kernel_params = {
                 "target": self.target,
@@ -1773,6 +1829,9 @@ class OptimalBinning(BaseBinning):
 
         # woe_clip 属于统一统计契约；部分直接分箱器未把它重复暴露在构造签名中。
         self._binner.woe_clip = self.woe_clip
+        self._binner.constraint_policy = self.constraint_policy
+        if hasattr(self, "_candidate_splits_"):
+            self._binner._candidate_splits_ = deepcopy(self._candidate_splits_)
         self._binner.fit(X, y)
 
         # 复制属性
@@ -1780,6 +1839,8 @@ class OptimalBinning(BaseBinning):
         self.n_bins_ = self._binner.n_bins_
         self.bin_tables_ = self._binner.bin_tables_
         self.feature_types_ = self._binner.feature_types_
+        self.solver_info_ = deepcopy(getattr(self._binner, "solver_info_", {}))
+        self.constraint_violations_ = deepcopy(getattr(self._binner, "constraint_violations_", {}))
         if self.method in ("uniform", "quantile"):
             self._copy_finalized_bin_state_from(self._binner)
         else:

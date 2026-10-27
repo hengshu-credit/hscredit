@@ -366,9 +366,6 @@ def _resolve_bin_table(
             if target is None and (overdue is None or dpds is None):
                 raise ValueError("从 data 自动生成 bin_table 时，必须传入 target 或 (overdue + dpds) 参数")
             reference_data = data.copy()
-            ref_col = target if isinstance(target, str) else overdue[0] if isinstance(overdue, list) else overdue
-            if ref_col and ref_col in reference_data.columns:
-                reference_data = reference_data.dropna(subset=[ref_col])
         else:
             raise ValueError("必须传入 bin_table 或 reference_data 参数之一")
 
@@ -394,6 +391,7 @@ def _resolve_bin_table(
         dpds,
         merged_params.get("del_grey", False),
         merged_params.get("overdue_operator", ">"),
+        allow_missing=True,
     )
     overdue, dpds = None, None
     tasks = [(name, col, reference_data, target, overdue, dpds, merged_params) for name, col in score_map.items()]
@@ -995,17 +993,25 @@ def ruleset_analysis(
     :type datasets: pd.DataFrame
     :param rules: 规则列表
     :type rules: List[Rule]
-    :param target: 默认值为 ``None`` 。目标变量名称
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+        None 且未指定逾期模式时使用数据中的 ``target`` 列。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名称（支持多标签，传入列表）
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 默认值为 ``None`` 。逾期定义方式（支持多标签，传入列表）
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, List[int]]]
     :param filter_cols: 默认值为 ``None`` 。指定返回的字段列表
     :type filter_cols: Optional[List[str]]
     :param amount: 默认值为 ``None`` 。金额字段名称，用于金额口径分析
     :type amount: Optional[str]
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
     :return: 规则集效果评估表。单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）
 
@@ -1362,11 +1368,15 @@ def rule_swap_analysis(
         - None：自动从 reference_data 计算
 
     :type bin_table: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame]]]
-    :param target: 默认值为 ``None`` 。目标变量名（与 bin_table 二选一）
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期天数字段（多标签场景）
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 默认值为 ``None`` 。逾期天数阈值
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, List[int]]]
     :param score_weights: 默认值为 ``None`` 。多模型权重（可选）
     :type score_weights: Optional[Dict[str, float]]
@@ -1394,9 +1404,10 @@ def rule_swap_analysis(
     :type missing_separate: bool
     :param bin_params: 默认值为 ``None`` 。额外分箱参数 dict，会透传给 ``feature_bin_stats``
     :type bin_params: Optional[dict]
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
-        兼容读取 ``bin_params['del_grey']`` ，默认 False
-
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 None 表示沿用 ``bin_params`` 配置，未配置时为 False；显式值优先。
     :type del_grey: Optional[bool]
     :param rule_analysis_mode: 规则分析模式，默认 'independent'。
 
@@ -1455,16 +1466,16 @@ def rule_swap_analysis(
         raise TypeError("data 必须为 pandas DataFrame")
     if data.empty:
         raise ValueError("data 不能为空")
+    # 在原始作用数据上只求值一次；自动参考集复用绑定列，不能重置索引后重算外部标签。
+    effective_operator = (
+        (bin_params or {}).get("overdue_operator", ">") if overdue_operator is None else overdue_operator
+    )
+    effective_grey = (bin_params or {}).get("del_grey", False) if del_grey is None else del_grey
+    data, actual_targets = bind_targets(
+        data, target, overdue, dpds, effective_grey, effective_operator, allow_missing=True
+    )
     if not data.index.is_unique:
-        # 标签先绑定到原始行，索引归一化不能改变 callable 的作用数据。
-        effective_operator = overdue_operator or (bin_params or {}).get("overdue_operator", ">")
-        effective_grey = (bin_params or {}).get("del_grey", False) if del_grey is None else del_grey
-        data, actual_targets = bind_targets(
-            data, target, overdue, dpds, effective_grey, effective_operator, allow_missing=True
-        )
         data = data.reset_index(drop=True)
-    else:
-        actual_targets = None
     try:
         sample_survival_rate = float(sample_survival_rate)
     except (TypeError, ValueError) as exc:
@@ -1531,9 +1542,9 @@ def rule_swap_analysis(
         reference_data=reference_data,
         bin_table=bin_table,
         score=score,
-        target=target,
-        overdue=overdue,
-        dpds=dpds,
+        target=actual_targets if reference_data is None else target,
+        overdue=None if reference_data is None else overdue,
+        dpds=None if reference_data is None else dpds,
         method=method,
         max_n_bins=max_n_bins,
         min_bin_size=min_bin_size,
@@ -1548,9 +1559,9 @@ def rule_swap_analysis(
     # ── 第三步半：解析分析样本的实际表现标签 ──────────────────────────────
     y = _resolve_target_series(
         data,
-        actual_targets if actual_targets is not None else target,
-        None if actual_targets is not None else overdue,
-        None if actual_targets is not None else dpds,
+        actual_targets,
+        None,
+        None,
         del_grey=del_grey,
         overdue_operator=overdue_operator,
     )

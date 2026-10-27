@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 import sklearn
+from packaging.version import Version
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 
 from ...utils.overdue import validate_overdue_operator
@@ -136,11 +137,7 @@ def _sklearn_supports_native_missing() -> bool:
     暴露 ``missing_go_to_left`` 记录缺失样本的路由方向；旧版本不支持，含缺失数据
     需先填充（通过 ``missing`` 参数指定等价填充数值）。
     """
-    try:
-        major, minor = (int(p) for p in sklearn.__version__.split(".")[:2])
-    except Exception:
-        return False
-    return (major, minor) >= (1, 3)
+    return Version(sklearn.__version__) >= Version("1.3")
 
 
 # 当前 sklearn 是否支持决策树原生缺失值（模块加载时计算一次）
@@ -1341,17 +1338,21 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
 
         :type datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]
-        :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target`` ）
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时沿用拟合时的 ``self.target``。
         :type target: Optional[TargetInput]
-        :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本
-            支持多标签多DPD联合分析），参考  :meth:`Rule.report`
-
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
         :type overdue: Optional[Union[str, List[str]]]
-        :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），默认为0；
-            传入列表时支持多DPD联合分析，参考  :meth:`Rule.report`
-
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, List[int]]]
-        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :type del_grey: bool
         :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
         :type leaf_only: bool
@@ -1510,13 +1511,21 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
         :type datasets: Optional[pd.DataFrame]
-        :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target`` ）
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时沿用拟合时的 ``self.target``。
         :type target: Optional[TargetInput]
-        :param overdue: 默认值为 ``None`` 。逾期天数字段名，参考  :meth:`Rule.report`
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
         :type overdue: Optional[Union[str, List[str]]]
-        :param dpds: 默认值为 ``None`` 。逾期定义方式，参考  :meth:`Rule.report`
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, List[int]]]
-        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :type del_grey: bool
         :param leaf_only: 是否仅返回叶子节点，默认 False
         :type leaf_only: bool
@@ -2432,13 +2441,21 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
         :type datasets: Optional[pd.DataFrame]
-        :param target: 目标变量列名，默认 None（使用拟合时的 ``self.target`` ）
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时沿用拟合时的 ``self.target``。
         :type target: Optional[TargetInput]
-        :param overdue: 默认值为 ``None`` 。逾期天数字段名，参考  :meth:`Rule.report`
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
         :type overdue: Optional[Union[str, List[str]]]
-        :param dpds: 默认值为 ``None`` 。逾期定义方式，参考  :meth:`Rule.report`
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, List[int]]]
-        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :type del_grey: bool
         :param leaf_only: 是否仅返回叶子节点，默认 False
         :type leaf_only: bool
@@ -2530,31 +2547,25 @@ class ManualTreeExtractor(ParallelizableMixin):
         >>> ext.display()   # 在 Jupyter 中展示树图和规则表
         >>> ext.manual_split(df, 'income', 5000, node=1).display()
         """
+        from IPython.display import display as ipy_display
+        import matplotlib.pyplot as plt
+
+        from ...core.viz.tree_plots import plot_tree_matplotlib
+
+        self._check_fitted()
+
+        # 展示失败必须暴露真实异常，并在失败时同样释放 Figure。
+        fig = plot_tree_matplotlib(self)
         try:
-            from IPython.display import display as ipy_display
-            import matplotlib.pyplot as plt
-
-            from ...core.viz.tree_plots import plot_tree_matplotlib
-
-            self._check_fitted()
-
-            # 用 plot_tree_matplotlib 绘制当前树结构（反映最新的人工分裂结果）
-            fig = plot_tree_matplotlib(self)
             ipy_display(fig)
+        finally:
             plt.close(fig)
 
-            # 渲染美化后的规则表
-            rule_table = self.get_rule_table()
-            if rule_table is not None and len(rule_table) > 0:
-                styler = style_rule_table(rule_table, overall_badrate=self._overall_badrate)
-                ipy_display(styler)
-
-        except ImportError:
-            # IPython / matplotlib 未安装
-            pass
-        except Exception:
-            # 非 Jupyter 环境或其他错误：静默跳过
-            pass
+        # 渲染美化后的规则表。
+        rule_table = self.get_rule_table()
+        if rule_table is not None and len(rule_table) > 0:
+            styler = style_rule_table(rule_table, overall_badrate=self._overall_badrate)
+            ipy_display(styler)
 
         return self
 
@@ -2583,17 +2594,21 @@ class ManualTreeExtractor(ParallelizableMixin):
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
 
         :type datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]
-        :param target: 目标变量列名，默认为None（使用拟合时的 ``self.target`` ）
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时沿用拟合时的 ``self.target``。
         :type target: Optional[TargetInput]
-        :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本
-            支持多标签多DPD联合分析），参考  :meth:`Rule.report`
-
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
         :type overdue: Optional[Union[str, List[str]]]
-        :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），默认为0；
-            传入列表时支持多DPD联合分析，参考  :meth:`Rule.report`
-
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, List[int]]]
-        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :type del_grey: bool
         :param leaf_only: 是否仅评估叶子节点，默认 False（评估所有节点）
         :type leaf_only: bool

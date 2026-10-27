@@ -26,6 +26,11 @@ class CartBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
         与显式参数重名或不存在的参数会被构造函数拒绝。
 
@@ -203,6 +208,7 @@ class CartBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
         **kwargs,
     ):
         super().__init__(
@@ -226,6 +232,7 @@ class CartBinning(BaseBinning):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             **kwargs,
+            constraint_policy=constraint_policy,
         )
         self.min_event_rate_diff = min_event_rate_diff
         self.max_pvalue = max_pvalue
@@ -319,7 +326,7 @@ class CartBinning(BaseBinning):
         if self.min_bin_size is None:
             min_samples_leaf = 1
         elif self.min_bin_size < 1:
-            min_samples_leaf = max(int(n_samples * self.min_bin_size), 1)
+            min_samples_leaf = max(int(np.ceil(n_samples * self.min_bin_size)), 1)
         else:
             min_samples_leaf = int(self.min_bin_size)
 
@@ -426,7 +433,7 @@ class CartBinning(BaseBinning):
         if self.min_bin_size is None:
             min_samples = 1
         elif self.min_bin_size < 1:
-            min_samples = max(int(n_samples * self.min_bin_size), 1)
+            min_samples = max(int(np.ceil(n_samples * self.min_bin_size)), 1)
         else:
             min_samples = int(self.min_bin_size)
 
@@ -650,78 +657,16 @@ class CartBinning(BaseBinning):
 
         return np.array(splits)
 
-    def _apply_bin_size_constraint(self, x: np.ndarray, y: np.ndarray, splits: np.ndarray) -> np.ndarray:
-        """应用样本数约束.
-
-        :param x: 特征数据
-        :param y: 目标变量
-        :param splits: 初始切分点
-        :return: 调整后的切分点
-        """
-        if len(splits) == 0:
-            return splits
-
-        n_samples = len(x)
-
-        # 计算样本数约束
-        if self.min_bin_size is None:
-            min_samples = 1
-        elif self.min_bin_size < 1:
-            min_samples = max(int(n_samples * self.min_bin_size), 1)
-        else:
-            min_samples = int(self.min_bin_size)
-
-        if self.max_bin_size is None:
-            max_samples = n_samples
-        elif self.max_bin_size < 1:
-            max_samples = int(n_samples * self.max_bin_size)
-        else:
-            max_samples = int(self.max_bin_size)
-
-        splits = list(splits)
-        max_iter = len(splits)
-
-        for _ in range(max_iter):
-            if len(splits) < self.min_n_bins - 1:
-                break
-
-            # 计算每箱的样本数
-            bins = np.searchsorted(splits, x, side="right")
-            bin_counts = np.bincount(bins, minlength=len(splits) + 1)
-
-            # 检查是否有违反约束的箱
-            violations = []
-            for i, count in enumerate(bin_counts):
-                if count < min_samples or count > max_samples:
-                    violations.append((i, count))
-
-            if not violations:
-                break
-
-            # 找到违反约束最严重的箱
-            # 优先合并样本数过少的箱
-            min_count_idx = min(violations, key=lambda x: x[1])
-            merge_idx = min_count_idx[0]
-
-            # 合并到相邻箱
-            if merge_idx == 0 and len(splits) > 0:
-                splits.pop(0)
-            elif merge_idx >= len(splits) and len(splits) > 0:
-                splits.pop()
-            elif len(splits) > 0:
-                # 选择相邻箱中样本数较少的进行合并
-                if merge_idx < len(bin_counts) - 1:
-                    if bin_counts[merge_idx] < bin_counts[merge_idx + 1]:
-                        if merge_idx < len(splits):
-                            splits.pop(merge_idx)
-                    else:
-                        if merge_idx > 0:
-                            splits.pop(merge_idx - 1)
-                else:
-                    if merge_idx > 0:
-                        splits.pop(merge_idx - 1)
-
-        return np.array(splits)
+    def _apply_bin_size_constraint(self, x, y, splits):
+        """小箱合并、大箱拆分；最终统一验证全部约束。"""
+        return self._adjust_splits_for_bin_size_constraints(
+            pd.Series(x),
+            pd.Series(y),
+            splits,
+            self._get_min_samples(len(x)),
+            self._get_max_samples(len(x)),
+            allow_empty_splits=True,
+        )
 
     def _assign_bins(self, X: pd.Series, feature: str) -> np.ndarray:
         """为数据分配分箱索引.

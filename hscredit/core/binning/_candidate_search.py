@@ -10,24 +10,33 @@ import warnings
 from typing import List, Optional, Sequence, Union
 
 import numpy as np
+from ..metrics._binning import woe_iv_vectorized
+from ._partition_solver import prepare_candidates
+from ._contracts import BinningConstraintViolation
 
 
 def _is_monotonic(rates: np.ndarray, mode: Optional[Union[bool, str]], correlation: float) -> bool:
     if mode in (None, False, "none") or len(rates) < 2:
         return True
-    if mode in (True, "auto", "auto_asc_desc", "auto_heuristic"):
-        mode = "ascending" if correlation >= 0 else "descending"
+    if mode in (True, "auto", "auto_heuristic"):
+        return _is_monotonic(rates, "peak", correlation) or _is_monotonic(rates, "valley", correlation)
+    if mode == "auto_asc_desc":
+        return _is_monotonic(rates, "ascending", correlation) or _is_monotonic(rates, "descending", correlation)
     differences = np.diff(rates)
     if mode == "ascending":
         return bool(np.all(differences >= -1e-12))
     if mode == "descending":
         return bool(np.all(differences <= 1e-12))
-    if mode in ("peak", "peak_heuristic", "concave"):
+    if mode == "convex":
+        return bool(np.all(np.diff(rates, n=2) >= -1e-12))
+    if mode == "concave":
+        return bool(np.all(np.diff(rates, n=2) <= 1e-12))
+    if mode in ("peak", "peak_heuristic"):
         return any(
             np.all(np.diff(rates[: pivot + 1]) >= -1e-12) and np.all(np.diff(rates[pivot:]) <= 1e-12)
             for pivot in range(len(rates))
         )
-    if mode in ("valley", "valley_heuristic", "convex"):
+    if mode in ("valley", "valley_heuristic"):
         return any(
             np.all(np.diff(rates[: pivot + 1]) <= 1e-12) and np.all(np.diff(rates[pivot:]) >= -1e-12)
             for pivot in range(len(rates))
@@ -42,9 +51,7 @@ def _score_partition(bad: np.ndarray, good: np.ndarray, objective: str) -> float
     if total_bad <= 0 or total_good <= 0 or total <= 0:
         return -np.inf
     if objective == "iv":
-        bad_dist = np.maximum(bad / total_bad, 1e-12)
-        good_dist = np.maximum(good / total_good, 1e-12)
-        return float(np.sum((bad_dist - good_dist) * np.log(bad_dist / good_dist)))
+        return float(woe_iv_vectorized(good, bad)[2])
     if objective == "ks":
         return float(np.max(np.abs(np.cumsum(good) / total_good - np.cumsum(bad) / total_bad)))
     if objective == "gini":
@@ -52,6 +59,14 @@ def _score_partition(bad: np.ndarray, good: np.ndarray, objective: str) -> float
         rates = bad / np.maximum(counts, 1.0)
         impurity = np.sum((counts / total) * rates * (1.0 - rates))
         return float(1.0 - impurity)
+    if objective == "entropy":
+        counts = bad + good
+        rates = bad / counts
+        return float(sum(n / total * sum(p * np.log(p) for p in (r, 1 - r) if p > 0) for n, r in zip(counts, rates)))
+    if objective == "chi2":
+        counts = bad + good
+        expected_bad, expected_good = counts * total_bad / total, counts * total_good / total
+        return float(np.sum((bad - expected_bad) ** 2 / expected_bad + (good - expected_good) ** 2 / expected_good))
     raise ValueError(f"候选搜索不支持目标: {objective}")
 
 
@@ -95,8 +110,8 @@ def _search_additive_iv(
                     continue
                 bad = float(prefix_bad[boundaries[end_index]] - prefix_bad[boundaries[start_index]])
                 good = float(prefix_good[boundaries[end_index]] - prefix_good[boundaries[start_index]])
-                bad_dist = max(bad / total_bad, 1e-12)
-                good_dist = max(good / total_good, 1e-12)
+                bad_dist = max(bad, 1e-10) / total_bad
+                good_dist = max(good, 1e-10) / total_good
                 contribution = (bad_dist - good_dist) * np.log(bad_dist / good_dist)
                 selected = previous[1] + (() if start_index == 0 else (start_index - 1,))
                 candidate = (previous[0] + float(contribution), selected)
@@ -123,7 +138,9 @@ def _search_additive_iv(
         if best is None:
             raise TimeoutError("候选 IV 搜索达到 time_limit，尚未找到满足最小箱数的可行解")
         warnings.warn("候选 IV 搜索达到 time_limit，返回当前可行解，未证明全局最优", RuntimeWarning, stacklevel=2)
-    return [] if best is None else best[1]
+    if best is None:
+        raise BinningConstraintViolation("候选边界上不存在满足箱数和样本数约束的可行分箱")
+    return best[1]
 
 
 def search_candidate_splits(
@@ -138,31 +155,21 @@ def search_candidate_splits(
     max_samples: Optional[int] = None,
     monotonic: Optional[Union[bool, str]] = None,
     time_limit: float = 30.0,
+    min_bad_rate: float = 0.0,
+    score_callback=None,
 ) -> List[float]:
     """在候选边界子集中搜索满足硬约束的最优分箱。"""
     if isinstance(time_limit, (bool, np.bool_)) or not np.isfinite(time_limit) or time_limit <= 0:
         raise ValueError("time_limit 必须为有限正数")
     deadline = perf_counter() + float(time_limit)
-    x_values = np.asarray(x_sorted, dtype=float)
-    y_values = np.asarray(y_sorted, dtype=int)
-    candidate_values = np.unique(np.sort(np.asarray(candidates, dtype=float)))
-    if len(candidate_values) == 0:
-        return []
-
-    positions = np.searchsorted(x_values, candidate_values, side="right")
-    valid = (positions > 0) & (positions < len(x_values))
-    candidate_values = candidate_values[valid]
-    positions = positions[valid]
-    if len(candidate_values) == 0:
-        return []
+    x_values, y_values, candidate_values, positions = prepare_candidates(x_sorted, y_sorted, candidates)
 
     prefix_bad = np.concatenate(([0], np.cumsum(y_values == 1, dtype=int)))
     prefix_good = np.concatenate(([0], np.cumsum(y_values == 0, dtype=int)))
-    correlation = float(np.corrcoef(x_values, y_values)[0, 1]) if len(x_values) > 1 else 0.0
-    if not np.isfinite(correlation):
-        correlation = 0.0
+    # 当前形状约束直接检查候选箱坏率，不需要对单类标签计算未定义的相关系数。
+    correlation = 0.0
 
-    if objective == "iv" and monotonic in (None, False, "none"):
+    if objective == "iv" and score_callback is None and monotonic in (None, False, "none") and min_bad_rate == 0:
         return _search_additive_iv(
             candidate_values,
             positions,
@@ -200,12 +207,16 @@ def search_candidate_splits(
                 dtype=float,
             )
             rates = bad / np.maximum(bad + good, 1.0)
+            if np.any(rates < min_bad_rate - 1e-12):
+                continue
             if not _is_monotonic(rates, monotonic, correlation):
                 continue
-            score = _score_partition(bad, good, objective)
             values = [float(candidate_values[index]) for index in selected]
+            score = score_callback(values) if score_callback is not None else _score_partition(bad, good, objective)
             key = (score, -len(values), tuple(-value for value in values))
             if best_key is None or key > best_key:
                 best_key = key
                 best_values = values
+    if best_key is None:
+        raise BinningConstraintViolation("候选边界上不存在同时满足箱数、样本数、坏率和单调约束的可行分箱")
     return best_values

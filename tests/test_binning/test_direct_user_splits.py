@@ -138,7 +138,7 @@ def test_direct_user_splits_match_serial_threading_and_loky(numeric_data):
             pd.testing.assert_frame_equal(models[0].bin_tables_[feature], model.bin_tables_[feature])
 
 
-def test_non_strict_rules_filter_round_and_user_splits_take_priority(numeric_data):
+def test_non_strict_rules_filter_preserve_precision_and_user_splits_take_priority(numeric_data):
     X, y = numeric_data
     binner = QuantileBinning(
         user_splits={"fixed": [-99.0, 20.123456, 999.0]},
@@ -147,7 +147,7 @@ def test_non_strict_rules_filter_round_and_user_splits_take_priority(numeric_dat
         n_jobs=2,
     ).fit(X, y)
 
-    np.testing.assert_array_equal(binner.splits_["fixed"], np.array([20.123]))
+    np.testing.assert_array_equal(binner.splits_["fixed"], np.array([20.123456]))
     assert "ordinary" in binner.splits_
 
 

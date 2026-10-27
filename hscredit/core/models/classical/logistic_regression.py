@@ -1123,14 +1123,22 @@ class LogisticRegression(
         :param y_train: 默认值为 ``None`` 。训练标签
         :param X_test: 默认值为 ``None`` 。测试特征，可选
         :param y_test: 默认值为 ``None`` 。测试标签，可选
-        :param overdue: 默认值为 ``None`` 。逾期天数字段名（多标签分析时使用），可选
-        :param dpds: 默认值为 ``None`` 。逾期定义 DPD（如 ``[7, 3]`` ），可选
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :param excel_path: 默认值为 ``None`` 。报告导出的 Excel 路径，提供则落盘，可选
         :param verbose: 是否打印进度，默认 ``True``
         :param kwargs: 透传给报告生成器的其他参数
-        :param target: 默认值为 ``None`` 。目标列名或报告多标签配置；None 使用模型配置。显式标签优先；与 overdue/dpds 互斥
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时沿用模型的目标配置。
         :type target: Optional[TargetInput]
-        :param del_grey: 是否按逾期标签口径剔除灰样本，默认 False；仅作用于报告标签分析，不重新训练模型。
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :type del_grey: bool
         :param metrics: 默认值为 ``None`` 。统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置
         :param sample_weight: 默认值为 ``None`` 。样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重

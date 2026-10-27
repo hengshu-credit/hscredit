@@ -71,7 +71,7 @@ pip install hscredit
 |:---|:---|
 | `pip install "hscredit[boost]"` | XGBoost、LightGBM、CatBoost、NGBoost |
 | `pip install "hscredit[tune]"` | Optuna 调参、搜索空间与调参看板 |
-| `pip install "hscredit[net]"` | PyTorch、TabNet |
+| `pip install "hscredit[net]"` | ResNet、FTTransformer、TabM、TabPFN 全部 net 模型依赖及既有 TabNet 依赖 |
 | `pip install "hscredit[pmml]"` | PMML 导出与加载 |
 | `pip install "hscredit[database-all]"` | 全部数据库与 NoSQL 适配器 |
 | `pip install "hscredit[all]"` | 上述所有依赖安装 |

@@ -730,11 +730,16 @@ def rule_group_compare(
     :type freq: str
     :param group: 默认值为 ``None`` 。分组字段列名，按其取值分组（与 ``date`` 二选一）
     :type group: Optional[str]
-    :param target: 目标变量列名，默认 ``"target"`` ，0=好样本，1=坏样本
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+        None 且未指定逾期模式时使用数据中的 ``target`` 列。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），可传入列表支持多DPD联合分析
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param rule_name: 展示用规则名称，默认使用规则自身名称或报告中的指标名称
     :type rule_name: Optional[str]
@@ -746,7 +751,10 @@ def rule_group_compare(
     :type prior_rules: Optional[Rule]
     :param amount: 默认值为 ``None`` 。金额字段名（可选），传入时以金额口径而非样本数口径统计
     :type amount: Optional[str]
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
     :param dropna: 是否丢弃分组依据缺失的样本，默认为True；为False时缺失样本归入“缺失”分组
     :type dropna: bool
@@ -1494,11 +1502,16 @@ def swap_out_report(
     :type rule_summary: Optional[Union[str, List[str]]]
     :param impact: 默认值为 ``None`` 。业务影响情况说明文本， ``str`` 或 ``list[str]``
     :type impact: Optional[Union[str, List[str]]]
-    :param target: 目标变量列名，默认 ``"target"`` ，0=好样本，1=坏样本
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+        None 且未指定逾期模式时使用数据中的 ``target`` 列。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本，支持多标签）
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），可传入列表支持多DPD联合分析
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param save: 默认值为 ``None`` 。报告保存路径（ ``.xlsx`` ）；为 None 时不落盘，仅返回 ExcelWriter
     :type save: Optional[str]
@@ -1522,7 +1535,10 @@ def swap_out_report(
     :type current_pass_rate: float
     :param prior_rules: 默认值为 ``None`` 。先验规则（可选），评估前先排除命中先验规则的样本
     :type prior_rules: Optional['Rule']
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
     :param target_names: 默认值为 ``None`` 。逾期指标名称映射，如 ``{'MOB1 7+': 'fpd7'}``
     :type target_names: Optional[Mapping[str, str]]

@@ -31,6 +31,11 @@ class BestLiftBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
         与显式参数重名或不存在的参数会被构造函数拒绝。
 
@@ -95,13 +100,8 @@ class BestLiftBinning(BaseBinning):
     :type min_bin_size: Union[float, int]
     :param max_bin_size: 每箱最大样本数或占比，默认为0.5
     :type max_bin_size: Optional[Union[float, int]]
-    :param min_lift: 最小 Lift 阈值，默认为0（不限制）
-
-        - 设为0：不限制，允许任何 Lift 值
-
-        - 设为0.5：过滤掉 Lift > 0.5 的箱（用于识别极低风险）
-
-        - 设为1.5：只保留 Lift > 1.5 的箱（用于识别极高风险）
+    :param min_lift: 兼容参数，仅允许0。覆盖全部样本的分箱器不能丢弃其他箱；
+        非零值会明确报错。需要按 Lift 筛选客群时，在分箱表或规则分析中筛选。
 
     :type min_lift: float
     :param monotonic: 坏样本率单调性约束，默认为True
@@ -189,6 +189,7 @@ class BestLiftBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
         **kwargs,
     ):
         super().__init__(
@@ -211,8 +212,11 @@ class BestLiftBinning(BaseBinning):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             **kwargs,
+            constraint_policy=constraint_policy,
         )
         self.min_lift = min_lift
+        if min_lift != 0:
+            raise ValueError("min_lift 非零的箱过滤不适用于覆盖全部样本的分箱器；请在分箱表或规则分析中按 LIFT 筛选")
         self.n_prebins = n_prebins
         self.optimization = optimization
 
@@ -345,6 +349,7 @@ class BestLiftBinning(BaseBinning):
         n_samples = len(x_sorted)
 
         # 计算实际可用的预分箱数
+        min_samples = max(1, min_samples)
         n_prebins = min(self.n_prebins, n_samples // min_samples)
         n_prebins = max(n_prebins, self.max_n_bins)
 
@@ -664,16 +669,8 @@ class BestLiftBinning(BaseBinning):
         return [i - 0.5 for i in range(1, min(n_categories, self.max_n_bins))]
 
     def _get_min_samples(self, n_total: int) -> int:
-        """获取最小样本数.
-
-        :param n_total: 总样本数
-        :return: 最小样本数
-        """
-        if self.min_bin_size is None:
-            return 1
-        if self.min_bin_size < 1:
-            return max(int(n_total * self.min_bin_size), 1)
-        return max(int(self.min_bin_size), 1)
+        """使用统一的最小样本数取整口径。"""
+        return super()._get_min_samples(n_total)
 
     def _get_max_samples(self, n_total: int) -> int:
         """获取最大样本数.

@@ -113,6 +113,8 @@ hscredit 文档
    installation
    quickstart
    overdue_labels
+   analysis_parameters
+   parallelism
 
 .. toctree::
    :maxdepth: 1
@@ -120,6 +122,8 @@ hscredit 文档
 
    articles/losses-guide
    articles/tuning-guide
+   articles/manual_tree_rule_mining
+   articles/model-interpretability
 
 .. toctree::
    :maxdepth: 2
@@ -144,6 +148,7 @@ hscredit 文档
    :caption: 项目
 
    ROADMAP
+   project_notes
 
 索引与检索
 ----------

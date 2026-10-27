@@ -250,7 +250,7 @@ plt.show()
 
 **图 1：数据驱动基线树**
 
-![DecisionTreeAnalyzer 数据驱动基线树](../../examples/model_report/manual_tree_rule_mining/01_decision_tree_analyzer.png)
+![DecisionTreeAnalyzer 数据驱动基线树](../_static/manual_tree/01_decision_tree_analyzer.png)
 
 
 ```python
@@ -266,7 +266,7 @@ plt.show()
 
 **图 2：决策树特征重要性**
 
-![决策树特征重要性](../../examples/model_report/manual_tree_rule_mining/02_decision_tree_feature_importance.png)
+![决策树特征重要性](../_static/manual_tree/02_decision_tree_feature_importance.png)
 
 
 ## 3. 批量候选规则：把候选池先铺开
@@ -449,7 +449,7 @@ plt.show()
 
 **图 3：业务干预后的人工规则树**
 
-![ManualTreeExtractor 业务干预后的规则树](../../examples/model_report/manual_tree_rule_mining/03_manual_tree_business_split.png)
+![ManualTreeExtractor 业务干预后的规则树](../_static/manual_tree/03_manual_tree_business_split.png)
 
 
 ## 5. 把规则树画给业务看
@@ -492,13 +492,11 @@ print("图形文件已保存至：", OUTPUT_DIR)
 
 **图 4：统一 plot_tree 输出**
 
-![统一 plot_tree 输出](../../examples/model_report/manual_tree_rule_mining/04_plot_tree_unified.png)
+![统一 plot_tree 输出](../_static/manual_tree/04_plot_tree_unified.png)
 
-交互式 HTML：[05_manual_tree_interactive.html](../../examples/model_report/manual_tree_rule_mining/05_manual_tree_interactive.html)；Graphviz PDF：[06_manual_tree_graphviz.pdf](../../examples/model_report/manual_tree_rule_mining/06_manual_tree_graphviz.pdf)。
+交互式 HTML 与 Graphviz PDF/PNG 由上面的代码在本地生成，输出到 `OUTPUT_DIR`。
 
-**图 4-2：Graphviz 高质量归档版预览**
-
-![Graphviz 高质量决策树预览](../../examples/model_report/manual_tree_rule_mining/06_manual_tree_graphviz.png)
+Graphviz 预览需要本地安装 Graphviz；执行对应代码后查看 `06_manual_tree_graphviz.png`。
 
 
 ```python
@@ -516,7 +514,7 @@ plt.show()
 
 **图 5：自动树与人工树叶节点风险对比**
 
-![自动树与人工树叶节点风险对比](../../examples/model_report/manual_tree_rule_mining/07_auto_vs_manual_leaf_comparison.png)
+![自动树与人工树叶节点风险对比](../_static/manual_tree/07_auto_vs_manual_leaf_comparison.png)
 
 
 这张对比图回答的是每个数据团队向业务交代时都会被追问的一个问题：**为了让规则更好懂，我们到底牺牲了多少风险区分度？** 把数据驱动树和人工规则树的叶子并排放在一起，答案一目了然。如果人工树在可解释性大幅提升的同时，高风险叶子的 LIFT 和覆盖面并没有明显缩水，那就说明这次经验干预是“双赢”的——既没丢区分力，又换来了可沟通、可落地。这正是向管理层证明“人工调树不是拍脑袋，而是有据可依的优化”时，最有说服力的一张图。
@@ -682,7 +680,7 @@ styled_rule_table
 | 5 | 是 | 衡枢斟信分 > 600.0000(含缺失)<br>衡枢鉴真分老客版 <= 0.1649 | 329 | 48.45% | 8.51% | 0.6083 | -0.7599 |
 | 6 | 是 | 衡枢斟信分 > 600.0000(含缺失)<br>衡枢鉴真分老客版 > 0.1649(含缺失) | 22 | 3.24% | 31.82% | 2.2742 | 1.3168 |
 
-这张表的数据和第 4 节完全一致（节点 1、2 是根节点分裂出的两个客群，3-6 是最终叶子），区别只在呈现方式：颜色梯度让坏样本率和 LIFT 值的高低一眼可辨，不需要逐行读数字。网页版（带真实颜色）见 [08_styled_rule_table.html](../../examples/model_report/manual_tree_rule_mining/08_styled_rule_table.html)，可直接用浏览器整页截图保存为图片，用作公众号配图或审批材料插图。
+这张表的数据和第 4 节完全一致（节点 1、2 是根节点分裂出的两个客群，3-6 是最终叶子），区别只在呈现方式：颜色梯度让坏样本率和 LIFT 值的高低一眼可辨，不需要逐行读数字。执行上方代码后，可在 `OUTPUT_DIR/08_styled_rule_table.html` 查看带颜色的网页版，也可用浏览器整页截图保存为图片。
 
 ## 8. 从叶子到规则：挑出真正能上线的那几条
 

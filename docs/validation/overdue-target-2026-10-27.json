@@ -1,0 +1,109 @@
+{
+  "日期": "2026-10-27",
+  "解释器": "E:\\workspace\\hscredit\\.audit_tmp\\defect-repairs\\runtime\\Scripts\\python.exe",
+  "版本": {
+    "Python": "3.11.5",
+    "NumPy": "2.4.6",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.6.1",
+    "pytest": "8.3.5"
+  },
+  "范围": "tests/test_report、tests/test_rules、tests/test_visualization、tests/test_skills、tests/test_models，排除 slow/integration；包含完整真实数据参数矩阵。",
+  "公开逾期入口": 32,
+  "新增契约用例": 91,
+  "首轮": {
+    "测试数": 3623,
+    "通过": 3618,
+    "失败": [
+      "tests.test_skills.test_dependency_bootstrap::test_self_contained_launcher_exposes_help_without_importing_hscredit[hsbin]",
+      "tests.test_skills.test_dependency_bootstrap::test_self_contained_launcher_exposes_help_without_importing_hscredit[hsreport]",
+      "tests.test_skills.test_launcher_end_to_end::test_hsbin_launcher_executes_a_file_request",
+      "tests.test_skills.test_launcher_end_to_end::test_hsreport_launcher_executes_a_file_request",
+      "tests.test_skills.test_skill_installation::test_repository_installer_preserves_an_existing_directory"
+    ],
+    "跳过": []
+  },
+  "UTF8复验": {
+    "测试数": 5,
+    "通过": 5,
+    "失败": [],
+    "跳过": []
+  },
+  "最终合并结果": {
+    "通过": 3623,
+    "未解决失败": 0,
+    "排除标记用例": 1,
+    "说明": "首轮通过 3618 项；仅复验原失败 5 项，均通过，未重复计数。"
+  },
+  "真实数据参数矩阵": {
+    "用例数": 534,
+    "通过": 534,
+    "工作簿": "examples/hscredit_yyp.xlsx",
+    "行数": 970
+  },
+  "Notebook验证": {
+    "日期": "2026-10-27",
+    "解释器": "E:\\workspace\\hscredit\\.audit_tmp\\defect-repairs\\runtime\\Scripts\\python.exe",
+    "Python": "3.11.5",
+    "NumPy": "2.4.6",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.6.1",
+    "Notebook": "examples\\29_target_inputs.ipynb",
+    "已执行代码单元": [
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14,
+      16
+    ],
+    "真实数据行数": 970
+  },
+  "静态检查": {
+    "Black": "20 个本次涉及文件通过 --check",
+    "Python语法": "通过 Python 3.9 AST 语法检查；不是 Python 3.9 运行测试",
+    "Notebook": "nbformat 校验通过；未新增 .py 演示",
+    "差异": "git diff --check 通过"
+  },
+  "环境说明": [
+    "未升级或修改共享 Anaconda；继续使用仓库原有验收解释器。",
+    "首轮设置 PYTHONIOENCODING=utf-8 后，5 项子进程输出按 Windows 本地编码读取，触发读取失败；复验额外设置 PYTHONUTF8=1 后全部通过。",
+    "首轮 pytest 记录 605 条警告；PMML 的 JVM 启动还打印了 Windows access violation 诊断，测试进程最终完成，对应 PMML 测试通过。未将测试通过解释为环境无警告。"
+  ],
+  "复现": [
+    "$env:PYTHONIOENCODING='utf-8'",
+    "$env:PYTHONUTF8='1'",
+    "& .\\.audit_tmp\\defect-repairs\\runtime\\Scripts\\python.exe -m pytest tests/test_report tests/test_rules tests/test_visualization tests/test_skills tests/test_models -m 'not slow and not integration' -q --tb=short",
+    "& .\\.audit_tmp\\defect-repairs\\runtime\\Scripts\\python.exe -m pytest tests/test_skills/test_dependency_bootstrap.py::test_self_contained_launcher_exposes_help_without_importing_hscredit tests/test_skills/test_launcher_end_to_end.py tests/test_skills/test_skill_installation.py::test_repository_installer_preserves_an_existing_directory -q --tb=short"
+  ],
+  "日志": [
+    ".audit_tmp/overdue-target-regression-20261027.log",
+    ".audit_tmp/overdue-target-regression-20261027.xml",
+    ".audit_tmp/overdue-target-utf8-recheck-20261027.xml"
+  ],
+  "源码SHA256": {
+    "hscredit/core/eda/target.py": "7ebd862ccf147997c1c4bcd95b176be2ccd0bb09be7c6ca5e8ff32389eeb82c8",
+    "hscredit/core/models/_workflow.py": "0b6593f17c53c5e18d63cb7d9f0b4afee2147cd9e13d85ae3f7d41ce3f25c8eb",
+    "hscredit/core/models/base.py": "7680ad867daa3da671c0d583f948710e27d196b27cf693fd2e9f3026d9e27216",
+    "hscredit/core/models/classical/logistic_regression.py": "842c13bed442736928c3c5431844db590a5a9841411736696241c2462412c746",
+    "hscredit/core/rules/rule.py": "f237cf9902ab68a5600289abd20e84d1291c75745280620de3ef52c93125bc07",
+    "hscredit/core/viz/binning_plots.py": "24fa2cbf5f67c7a8f44ee3ad1000256ab11da872e80599b13ba15dbcea3eb7ba",
+    "hscredit/core/viz/risk_plots.py": "69bdedb725a3e35082b2af895d095b79a4585a6299e247153a53155dd652ce65",
+    "hscredit/report/feature_analyzer.py": "4c8c61f6c03ac4b79b129b07f4a51bf70f99ce5306bb32f75f4a1c4178f4734d",
+    "hscredit/report/mining/manual_tree_extractor.py": "28bb19f53ddf81d67d3790a7eed011638759b90377c357b359e4e6d1bdfd4ce3",
+    "hscredit/report/model_report.py": "f5af7b23609758aa0b8ab5b1856cc8963ee1dc2034fff1bb8e6f6dea6080f54c",
+    "hscredit/report/overdue_predictor.py": "db109f6b7a9341c6c3779e203a459df404e3164de35a654589addfcf76b445af",
+    "hscredit/report/rule_analysis.py": "61b0155d7a04e8ede0dfb00ccd74080f10e6bc2ca369186cf5805f7c1671dd6d",
+    "hscredit/report/rule_strategy.py": "a3ebcf310b5638223120c89561a461d1cfa21ea7bf370453ba758e8fcdadb689",
+    "hscredit/report/swap_analysis.py": "02e175d92a27daa41b593154d55b03a1522073a552cb5fdb0b4bbe2caefae1e0",
+    "hscredit/skills_runtime/operations/binning.py": "48f45befb537e2e21d6ad06a18e68a6496ea20b0da8b8e68f9b1ff7296c8c450",
+    "hscredit/skills_runtime/operations/reports.py": "c0af5c4a1ee9dcabfb17754a49d4f9766c59134ca7d31334391d8dee82cc12eb",
+    "hscredit/utils/targets.py": "629ad96d66e6db12574c66d0ba9661e65fb40cd0a9d63f37fe93983dd9c6e5db",
+    "hscredit/utils/overdue.py": "37e76b5ef3a3f3489e16b00f12dfd15ec3583307e5353ee7c27f790add0452a2",
+    "tests/test_report/test_overdue_entrypoint_contracts.py": "706d1efae821e800bd6d16532151adf00a56684f296897c9368581a469853159",
+    "tests/test_skills/test_target_summaries.py": "954f06e6894bb33b56729b28d38f0e16ec6d5ada1cc2d9bf48689cf39bae0894",
+    "examples/29_target_inputs.ipynb": "784d8f0e774278e840853fdce5c0c902366b04be0890f460dc11a03f7c05ad80"
+  }
+}

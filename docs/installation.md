@@ -18,7 +18,7 @@ pip install hscredit
 | 安装命令 | 适用场景 |
 |:---|:---|
 | `pip install hscredit[boost]` | XGBoost、LightGBM、CatBoost、NGBoost 等 Boosting 模型 |
-| `pip install hscredit[net]` | PyTorch 与 TabNet 深度学习模型 |
+| `pip install hscredit[net]` | ResNet、FTTransformer、TabM、TabPFN 全部 net 模型依赖及既有 TabNet 依赖 |
 | `pip install hscredit[tune]` | Optuna 参数调优和调参看板 |
 | `pip install hscredit` | 已内置 SHAP 模型解释、特征重要性和单样本分析 |
 | `pip install hscredit[pmml]` | PMML 导出相关能力 |

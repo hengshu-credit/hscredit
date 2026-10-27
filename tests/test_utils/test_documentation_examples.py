@@ -25,7 +25,13 @@ def test_examples_only_publish_notebook_demonstrations():
 def test_model_notebooks_are_self_contained_and_valid():
     import nbformat
 
-    for name in ("model_training_chain", "model_family_validation", "single_validation_workflow"):
+    for name in (
+        "model_training_chain",
+        "model_family_validation",
+        "single_validation_workflow",
+        "net_models",
+        "net_training_tuning",
+    ):
         notebook = nbformat.read(PROJECT_ROOT / "examples" / f"{name}.ipynb", as_version=4)
         nbformat.validate(notebook)
         cells = [cell.source for cell in notebook.cells if cell.cell_type == "code"]

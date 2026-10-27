@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import pandas as pd
+from .._compat import map_styler, prepare_dependency
 from .arguments import binning_options
 
 logger = logging.getLogger(__name__)
@@ -1182,11 +1183,12 @@ def style_rule_table(
     >>> styled = style_rule_table(ext.get_rule_table())
     >>> styled.show()
     """
+    prepare_dependency("matplotlib")
     df_d = df.copy()
 
     # MultiIndex（多标签 overdue/dpds）暂不做精细美化，返回基础 Styler 防止报错
     if isinstance(df_d.columns, pd.MultiIndex):
-        return df_d.style
+        return df_d.style.set_table_styles([{"selector": "thead th", "props": [("white-space", "nowrap")]}])
 
     # 兼容报告格式与旧版精简格式的列名
     badrate_col = "坏样本率" if "坏样本率" in df_d.columns else "坏账率"
@@ -1285,7 +1287,7 @@ def style_rule_table(
                 return "background-color: #fff8e1; color: #f57f17; font-weight: bold"
             return ""
 
-        styler = styler.applymap(_leaf_color, subset=["是否叶子"])
+        styler = map_styler(styler, _leaf_color, subset=["是否叶子"])
 
     # --- 基础样式 ---
     styler = styler.set_properties(
@@ -1321,6 +1323,7 @@ def style_rule_table(
                     ("font-size", "12px"),
                     ("padding", "8px 10px"),
                     ("border", "1px solid rgba(255,255,255,0.3)"),
+                    ("white-space", "nowrap"),
                 ],
             },
             {

@@ -193,3 +193,15 @@ def test_round_scorecard_consistency_for_details_and_deployment():
 
     transformed_bins = binner.transform(sample, metric="bins")[scorecard.feature_names_]
     assert transformed_bins.shape[0] == len(sample)
+
+
+def test_round_scorecard_details_keep_distinct_bins_with_equal_woe():
+    X = pd.DataFrame({"数值": [10.0] * 20 + [50.0] * 20})
+    y = pd.Series([0, 1] * 20)
+    binner = OptimalBinning(user_splits={"数值": [30.0]}, user_splits_fixed=True, n_jobs=1).fit(X, y)
+    card = RoundScoreCard(binner=binner).fit(binner.transform(X, metric="woe"), y, input_type="woe")
+    sample = X.iloc[[0, 20]]
+    detailed = card.get_detailed_score(sample, include_reason=False)
+    expected = binner.transform(sample, metric="bins")["数值"].tolist()
+    assert detailed[("数值", "分箱")].tolist() == expected
+    assert len(set(expected)) == 2

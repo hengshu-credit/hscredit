@@ -10,6 +10,7 @@
 """
 
 import logging
+import warnings
 from typing import Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
@@ -38,6 +39,11 @@ class KernelDensityBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
         当fit时只传入df且y为None时，从df中提取该列作为目标变量。
 
@@ -61,7 +67,7 @@ class KernelDensityBinning(BaseBinning):
         也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
 
     :type handle_unknown: Union[int, str]
-    :param decimal: 数值型切分点小数点保留精度，默认为4
+    :param decimal: 数值型分箱标签显示精度，默认为4；实际切点不舍入
     :type decimal: int
     :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
         正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
@@ -92,9 +98,11 @@ class KernelDensityBinning(BaseBinning):
 
     :param kernel: 核密度估计的核函数类型，默认为 ``'gaussian'`` （高斯核，最常用且平滑）
     :type kernel: str
-    :param bandwidth: 核密度估计带宽（平滑程度），默认为 ``'isj'`` 。可取以下枚举值或具体数值：
+    :param bandwidth: 核密度估计带宽，默认为 ``'adaptive_reference'`` 。可取以下枚举值或具体数值：
 
-        - ``'isj'`` ：Improved Sheather–Jones 法自适应选择（对多峰分布更稳健，推荐）
+        - ``'adaptive_reference'`` ：按离散程度、偏度和峰度修正的参考带宽
+
+        - ``'isj'`` ：上述参考带宽的历史兼容别名（已弃用），并非完整 Improved Sheather–Jones 算法
 
         - ``'scott'`` ：Scott 经验法则 ``n^(-1/5)`` ，计算快，适合近正态分布
 
@@ -124,7 +132,7 @@ class KernelDensityBinning(BaseBinning):
     :type n_grid_points: int
     :param smooth_density: 是否对密度曲线进行平滑处理，默认为True
     :type smooth_density: bool
-    :param iv_weight: IV值在切分点选择中的权重，默认为0.7
+    :param iv_weight: 候选谷多于最大箱数时，IV 与谷深之间的权重，范围 [0,1]，默认为0.7
     :type iv_weight: float
     :param fallback_to_iv: 当KDE失败时是否回退到IV策略，默认为True
     :type fallback_to_iv: bool
@@ -140,7 +148,7 @@ class KernelDensityBinning(BaseBinning):
     **参考样例**
 
     >>> from hscredit.core.binning import KernelDensityBinning
-    >>> binner = KernelDensityBinning(bandwidth='isj', max_n_bins=5)
+    >>> binner = KernelDensityBinning(bandwidth='adaptive_reference', max_n_bins=5)
     >>> binner.fit(X, y)
     >>> X_binned = binner.transform(X)
 
@@ -162,7 +170,7 @@ class KernelDensityBinning(BaseBinning):
         self,
         target: str = "target",
         kernel: str = "gaussian",
-        bandwidth: Union[str, float] = "isj",
+        bandwidth: Union[str, float] = "adaptive_reference",
         min_peak_height: float = 0.05,
         min_peak_distance: float = 0.05,
         max_n_bins: int = 5,
@@ -189,6 +197,7 @@ class KernelDensityBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
     ):
         super().__init__(
             target=target,
@@ -211,6 +220,7 @@ class KernelDensityBinning(BaseBinning):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            constraint_policy=constraint_policy,
         )
         self.kernel = kernel
         self.bandwidth = bandwidth
@@ -220,6 +230,8 @@ class KernelDensityBinning(BaseBinning):
         self.n_grid_points = n_grid_points
         self.smooth_density = smooth_density
         self.iv_weight = iv_weight
+        if not np.isfinite(iv_weight) or not 0 <= iv_weight <= 1:
+            raise ValueError("iv_weight 必须位于 [0, 1]")
         self.fallback_to_iv = fallback_to_iv
 
     def fit(
@@ -347,7 +359,13 @@ class KernelDensityBinning(BaseBinning):
             return 1.06 * dispersion * n ** (-1 / 5)
         elif self.bandwidth == "silverman":
             return 0.9 * dispersion * n ** (-1 / 5)
-        elif self.bandwidth == "isj":
+        elif self.bandwidth in ("isj", "adaptive_reference"):
+            if self.bandwidth == "isj":
+                warnings.warn(
+                    "bandwidth='isj' 是历史自适应参考带宽的兼容别名，并非完整 ISJ 算法；请使用 'adaptive_reference'",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
             return self._isj_bandwidth_v3(x, dispersion)
         elif self.bandwidth == "normal_reference":
             return 1.059 * dispersion * n ** (-1 / 5)
@@ -464,7 +482,9 @@ class KernelDensityBinning(BaseBinning):
 
         # 在数据范围内等间距采样候选点
         n_candidates_search = min(200, n // 20)  # 增加搜索点
-        candidate_positions = np.linspace(min_samples, n - min_samples, n_candidates_search, dtype=int)
+        candidate_positions = np.linspace(
+            max(1, min_samples), min(n - 1, n - min_samples), n_candidates_search, dtype=int
+        )
 
         for idx in candidate_positions:
             left_y = y_sorted[:idx]
@@ -539,7 +559,7 @@ class KernelDensityBinning(BaseBinning):
         x_min, x_max = x.min(), x.max()
 
         if len(valleys) == 0:
-            if self.use_target and y is not None:
+            if self.use_target and y is not None and self.fallback_to_iv:
                 return self._get_iv_based_splits(x, y)
             else:
                 n_splits = min(self.max_n_bins - 1, self.min_n_bins - 1)
@@ -567,7 +587,7 @@ class KernelDensityBinning(BaseBinning):
 
         # 如果过滤后没有足够的有效谷，使用IV策略
         if len(valley_positions) < self.min_n_bins - 1:
-            if self.use_target and y is not None:
+            if self.use_target and y is not None and self.fallback_to_iv:
                 if self.verbose:
                     logger.info(f"  有效谷不足({len(valley_positions)}个)，切换到IV策略")
                 return self._get_iv_based_splits(x, y)
@@ -587,46 +607,35 @@ class KernelDensityBinning(BaseBinning):
         valley_positions = self._validate_and_adjust_splits_v3(valley_positions, x, y, min_samples)
 
         # 再次检查分箱数
-        if len(valley_positions) < self.min_n_bins - 1 and self.use_target and y is not None:
+        if len(valley_positions) < self.min_n_bins - 1 and self.use_target and y is not None and self.fallback_to_iv:
             if self.verbose:
                 logger.info(f"  验证后谷不足，使用IV策略补充")
             return self._get_iv_based_splits(x, y)
 
         return np.sort(valley_positions)
 
-    def _select_best_valleys_by_iv_v3(self, valley_positions: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """根据IV值选择最优的谷值组合 - V3版本."""
+    def _select_best_valleys_by_iv_v3(self, valley_positions, x, y):
+        """在合法谷值中按 IV 与谷深的显式权重选择边界。"""
+        if not np.isfinite(self.iv_weight) or not 0 <= self.iv_weight <= 1:
+            raise ValueError("iv_weight 必须位于 [0, 1]")
         n_select = min(self.max_n_bins - 1, len(valley_positions))
-
-        if n_select == len(valley_positions):
-            return valley_positions
-
-        selected = []
-        remaining = list(range(len(valley_positions)))
-
-        total_bad = y.sum()
-        total_good = len(y) - total_bad
-
+        grid, density = self._compute_kde_v3(x)
+        depths = density.max() - np.interp(valley_positions, grid, density)
+        spread = np.ptp(depths)
+        depth_scores = (depths - depths.min()) / spread if spread > 0 else np.zeros_like(depths)
+        selected, remaining = [], list(range(len(valley_positions)))
         while len(selected) < n_select and remaining:
-            best_gain = -np.inf
-            best_idx = None
-
-            for idx in remaining:
-                test_splits = sorted([valley_positions[i] for i in selected] + [valley_positions[idx]])
-                bins = np.digitize(x, test_splits)
-                iv = self._calculate_total_iv(bins, y, total_bad, total_good)
-
-                if iv > best_gain:
-                    best_gain = iv
-                    best_idx = idx
-
-            if best_idx is not None:
-                selected.append(best_idx)
-                remaining.remove(best_idx)
-            else:
-                break
-
-        return valley_positions[sorted(selected)]
+            ivs = []
+            for index in remaining:
+                trial = np.sort(valley_positions[selected + [index]])
+                ivs.append(self._calculate_total_iv(np.searchsorted(trial, x, side="right"), y))
+            ivs = np.asarray(ivs)
+            span = np.ptp(ivs)
+            iv_scores = (ivs - ivs.min()) / span if span > 0 else np.zeros_like(ivs)
+            scores = self.iv_weight * iv_scores + (1 - self.iv_weight) * depth_scores[remaining]
+            best = int(np.argmax(scores))
+            selected.append(remaining.pop(best))
+        return np.sort(valley_positions[selected])
 
     def _calculate_total_iv(
         self, bins: np.ndarray, y: np.ndarray, total_bad: Optional[int] = None, total_good: Optional[int] = None
@@ -778,12 +787,8 @@ class KernelDensityBinning(BaseBinning):
         return np.array(additional)
 
     def _get_min_samples(self, n_total: int) -> int:
-        """获取最小样本数."""
-        if self.min_bin_size is None:
-            return 1
-        if self.min_bin_size < 1:
-            return int(n_total * self.min_bin_size)
-        return int(self.min_bin_size)
+        """使用统一的最小样本数取整口径。"""
+        return super()._get_min_samples(n_total)
 
     def _fit_categorical(self, x: pd.Series, y: pd.Series) -> List:
         """对类别型特征进行分箱."""

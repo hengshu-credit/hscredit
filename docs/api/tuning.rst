@@ -15,6 +15,9 @@
 ``loss`` 指定训练目标，``metric`` 指定搜索评价；普通函数可用
 ``make_metric(fn, name="业务误差", greater_is_better=False)`` 声明名称与方向。
 
+net 网络的自定义损失、优化器配置、条件搜索、回归指标及全量重训见 :doc:`net`。
+回归自定义指标直接使用连续预测函数并指定 direction，分类概率 BaseMetric 不用于回归。
+
 .. rubric:: 训练后的完整搜索过程
 
 两种入口都保留原始 Optuna Study 和完整绘图能力::

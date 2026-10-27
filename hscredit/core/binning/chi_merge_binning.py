@@ -33,6 +33,11 @@ class ChiMergeBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param cat_cutoff: 数值字段转为类别字段的识别阈值，默认 ``None`` （数值字段保持数值型）。
         ``0 < cat_cutoff < 1`` 时，非缺失唯一值数 / 非缺失样本数不超过该比例即按类别处理；
         ``cat_cutoff >= 1`` 时，唯一值数不超过 ``int(cat_cutoff)`` 即按类别处理。
@@ -160,6 +165,7 @@ class ChiMergeBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
     ):
         super().__init__(
             target=target,
@@ -182,6 +188,7 @@ class ChiMergeBinning(BaseBinning):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            constraint_policy=constraint_policy,
         )
         self.min_chi2_threshold = min_chi2_threshold
         self.significance_level = significance_level
@@ -263,7 +270,7 @@ class ChiMergeBinning(BaseBinning):
 
         if len(unique_values) <= self.min_n_bins:
             # 如果唯一值数量小于等于最小分箱数，直接使用唯一值作为切分点
-            return unique_values[:-1].astype(float)
+            return unique_values[:-1] / 2.0 + unique_values[1:] / 2.0
 
         # 限制初始分箱数量，避免过多的唯一值导致性能问题
         max_initial_bins = min(len(unique_values) - 1, 100)
@@ -276,7 +283,7 @@ class ChiMergeBinning(BaseBinning):
             splits = splits[(splits > x_min) & (splits < x_max)].astype(float)
         else:
             # 初始分箱：每个唯一值作为一个箱
-            splits = unique_values[:-1].astype(float)
+            splits = unique_values[:-1] / 2.0 + unique_values[1:] / 2.0
 
         # 迭代合并
         splits = self._chi_merge(x_valid, y_valid, splits)
@@ -500,7 +507,7 @@ class ChiMergeBinning(BaseBinning):
         if len(splits) == 0:
             return splits
 
-        bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
+        bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False, right=False)
 
         bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
 
@@ -540,7 +547,7 @@ class ChiMergeBinning(BaseBinning):
 
         max_iter = len(splits)
         for _ in range(max_iter):
-            bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
+            bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False, right=False)
 
             bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
 
@@ -651,11 +658,12 @@ class ChiMergeBinning(BaseBinning):
 
         n_bins = len(splits) + 1
         if n_bins > self.max_n_bins:
-            n_remove = n_bins - self.max_n_bins
-            # 确保至少保留 min_n_bins - 1 个切分点
-            n_remove = min(n_remove, len(splits) - (self.min_n_bins - 1))
-            if n_remove > 0:
-                splits = splits[n_remove:]
+            while len(splits) + 1 > self.max_n_bins:
+                bins = np.searchsorted(splits, x_vals, side="right")
+                counts = np.bincount(bins, minlength=len(splits) + 1)
+                bad = np.bincount(bins, weights=np.asarray(y), minlength=len(splits) + 1)
+                chi2 = self._compute_chi2_vectorized(np.column_stack([counts - bad, bad]))
+                splits = np.delete(splits, int(np.argmin(chi2)))
         elif n_bins < self.min_n_bins:
             quantiles = np.linspace(0, 1, self.min_n_bins + 1)
             splits = np.percentile(x_vals, quantiles[1:-1] * 100)
@@ -677,16 +685,8 @@ class ChiMergeBinning(BaseBinning):
         return bin_stats.sort_index()
 
     def _get_min_samples(self, n_total: int) -> int:
-        """获取最小样本数.
-
-        :param n_total: 总样本数
-        :return: 最小样本数
-        """
-        if self.min_bin_size is None:
-            return 1
-        if self.min_bin_size < 1:
-            return int(n_total * self.min_bin_size)
-        return int(self.min_bin_size)
+        """使用统一的最小样本数取整口径。"""
+        return super()._get_min_samples(n_total)
 
     def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱.

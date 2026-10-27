@@ -31,6 +31,7 @@ def test_accepts_complete_docs_artifacts(tmp_path):
         '<li class="toctree-l3"><a href="../articles/models-design-review.html">models 模块设计复盘</a></li>'
         '<li class="toctree-l3"><a href="classical_models.html">经典模型</a></li>'
         '<li class="toctree-l3"><a href="boosting.html">Boosting</a></li>'
+        '<li class="toctree-l3"><a href="net.html">表格神经网络</a></li>'
         '<li class="toctree-l3"><a href="model_rules.html">规则器</a></li>'
         '<li class="toctree-l3"><a href="scorecard.html">评分卡</a></li>'
         '<li class="toctree-l3"><a href="calibration.html">概率校准</a></li>'
@@ -86,7 +87,7 @@ def test_accepts_complete_docs_artifacts(tmp_path):
 
 
 def test_rejects_nested_or_reordered_model_menu(tmp_path):
-    """模型菜单必须按顺序直接生成两篇指南和九个 API 入口。"""
+    """模型菜单必须按顺序直接生成两篇指南和十个 API 入口。"""
     _write(
         tmp_path / "api" / "modeling.html",
         '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
@@ -103,7 +104,7 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
 
     assert any(
         "模型菜单" in error
-        and "经典模型、Boosting、规则器、评分卡、概率校准、模型可解释性、损失函数与评估指标、评估指标、超参数调优"
+        and "经典模型、Boosting、表格神经网络、规则器、评分卡、概率校准、模型可解释性、损失函数与评估指标、评估指标、超参数调优"
         in error
         for error in errors
     )

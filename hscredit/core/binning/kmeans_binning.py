@@ -24,6 +24,11 @@ class KMeansBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
         当fit时只传入df且y为None时，从df中提取该列作为目标变量。
 
@@ -43,7 +48,7 @@ class KMeansBinning(BaseBinning):
         也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
 
     :type handle_unknown: Union[int, str]
-    :param decimal: 数值型切分点小数点保留精度，默认为4
+    :param decimal: 数值型分箱标签显示精度，默认为4；实际切点不舍入
     :type decimal: int
     :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
         正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
@@ -160,6 +165,7 @@ class KMeansBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
     ):
         super().__init__(
             target=target,
@@ -182,6 +188,7 @@ class KMeansBinning(BaseBinning):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            constraint_policy=constraint_policy,
         )
         self.n_init = n_init
         self.max_iter = max_iter
@@ -276,7 +283,7 @@ class KMeansBinning(BaseBinning):
 
         # 如果唯一值数量小于等于最小分箱数，直接使用唯一值作为切分点
         if n_unique <= self.min_n_bins:
-            return unique_values[:-1] if n_unique > 1 else np.array([])
+            return unique_values[:-1] / 2.0 + unique_values[1:] / 2.0 if n_unique > 1 else np.array([])
 
         # 确定目标分箱数
         target_n_bins = min(self.max_n_bins, n_unique)
@@ -303,8 +310,7 @@ class KMeansBinning(BaseBinning):
 
         # 使用 scipy 的 kmeans2 进行聚类
         # 设置 random_state 为可复现性
-        if self.random_state is not None:
-            np.random.seed(self.random_state)
+        rng = np.random.RandomState(self.random_state)
 
         # 执行多次聚类取最佳结果
         best_centers = None
@@ -313,7 +319,7 @@ class KMeansBinning(BaseBinning):
         for _ in range(self.n_init):
             try:
                 centers, labels = kmeans2(
-                    X_reshaped, n_bins, iter=self.max_iter, minit="points", missing="warn"  # 从数据点中选择初始中心
+                    X_reshaped, n_bins, iter=self.max_iter, minit="points", missing="warn", seed=rng
                 )
 
                 # 计算惯性（簇内平方和）
@@ -395,7 +401,7 @@ class KMeansBinning(BaseBinning):
         # 迭代调整直到满足约束
         max_iter = 20
         for iteration in range(max_iter):
-            bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
+            bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False, right=False)
 
             # 检查每箱样本数
             bin_counts = bins.value_counts().sort_index()
@@ -451,16 +457,8 @@ class KMeansBinning(BaseBinning):
         return splits
 
     def _get_min_samples(self, n_total: int) -> int:
-        """获取最小样本数.
-
-        :param n_total: 总样本数
-        :return: 最小样本数
-        """
-        if self.min_bin_size is None:
-            return 1
-        if self.min_bin_size < 1:
-            return int(n_total * self.min_bin_size)
-        return int(self.min_bin_size)
+        """使用统一的最小样本数取整口径。"""
+        return super()._get_min_samples(n_total)
 
     def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱.

@@ -161,11 +161,6 @@ def _auto_feature_analysis(context) -> dict:
         "feature_summary": summarize_dataframe(feature_summary),
     }
     summary.update(_overdue_summary(params))
-    if summary["label_combinations"]:
-        overdue_operator = params.get("overdue_operator")
-        if overdue_operator is None:
-            overdue_operator = (params.get("bin_params") or {}).get("overdue_operator", ">")
-        summary["overdue_operator"] = overdue_operator
     return {"summary": summary}
 
 
@@ -230,7 +225,14 @@ def _auto_model_report(context) -> dict:
         if generated_datasets:
             overdue, dpds = report._overdue_dpds()
             summary.update(
-                _overdue_summary({"overdue": overdue, "dpds": dpds, "overdue_operator": report.overdue_operator})
+                _overdue_summary(
+                    {
+                        "overdue": overdue,
+                        "dpds": dpds,
+                        "overdue_operator": report.overdue_operator,
+                        "del_grey": report.del_grey,
+                    }
+                )
             )
             summary["label_datasets"] = generated_datasets
     if not report._is_overdue_cfg():

@@ -1276,7 +1276,7 @@ def iv_for_splits(x: np.ndarray, y: np.ndarray, splits: List[float], epsilon: fl
     :param epsilon: 平滑参数
     :return: IV值
     """
-    bins = np.digitize(x, bins=splits, right=True)
+    bins = np.digitize(x, bins=splits, right=False)
 
     unique_bins = np.unique(bins)
     good_counts = np.array([((y == 0) & (bins == b)).sum() for b in unique_bins])
@@ -1294,7 +1294,7 @@ def ks_for_splits(x: np.ndarray, y: np.ndarray, splits: List[float]) -> float:
     :param splits: 分割点列表
     :return: KS值
     """
-    bins = np.digitize(x, bins=splits, right=True)
+    bins = np.digitize(x, bins=splits, right=False)
     max_ks, _ = _ks_by_bin(bins, y)
     return max_ks
 

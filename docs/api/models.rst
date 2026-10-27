@@ -7,6 +7,7 @@
 
 * :doc:`classical_models`
 * :doc:`boosting`
+* :doc:`net`
 * :doc:`model_rules`
 * :doc:`scorecard`
 * :doc:`calibration`

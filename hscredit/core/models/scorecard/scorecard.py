@@ -5331,10 +5331,11 @@ class RoundScoreCard(ScoreCard):
 
             for j, col in enumerate(feature_names):
                 raw_value = row[col] if col in row.index else np.nan
-                if X_woe is not None and col in X_woe.columns:
-                    bin_label = self._find_bin_label_from_woe(col, X_woe.iloc[i][col])
-                elif X_bins is not None and col in X_bins.columns:
+                # 不同区间可以具有相同 WOE；原始输入必须优先使用真实箱标签。
+                if X_bins is not None and col in X_bins.columns:
                     bin_label = self._format_bin_display(X_bins.iloc[i][col])
+                elif X_woe is not None and col in X_woe.columns:
+                    bin_label = self._find_bin_label_from_woe(col, X_woe.iloc[i][col])
                 else:
                     bin_label = "未知"
 

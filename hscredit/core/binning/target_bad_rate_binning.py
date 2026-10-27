@@ -24,6 +24,11 @@ class TargetBadRateBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
         与显式参数重名或不存在的参数会被构造函数拒绝。
 
@@ -79,7 +84,7 @@ class TargetBadRateBinning(BaseBinning):
 
     :param target_bad_rates: 默认值为 ``None`` 。目标坏样本率边界列表，例如 [0.05, 0.10, 0.20]
 
-        - 会产生 len(target_bad_rates)+1 个分箱
+        - 定义 len(target_bad_rates)+1 个坏率档位；merge_empty_bins=True 时允许省略空档
 
         - 第0箱：坏样本率 <= target_bad_rates[0]
 
@@ -102,9 +107,9 @@ class TargetBadRateBinning(BaseBinning):
     :type max_bin_size: Optional[Union[float, int]]
     :param strict_mode: 是否严格模式（严格限制边界），默认为True
 
-        - True: 严格按照目标坏样本率边界划分，可能产生空箱
+        - True: 每个已占用坏率档位只对应一个箱；无法满足公共约束时明确报错
 
-        - False: 在满足约束下尽量接近目标坏样本率
+        - False: 在满足公共约束下优先覆盖更多目标档位，允许同一档位中存在多个箱
 
     :type strict_mode: bool
     :param merge_empty_bins: 是否合并空箱，默认为True
@@ -115,7 +120,7 @@ class TargetBadRateBinning(BaseBinning):
     :type missing_separate: bool
     :param special_codes: 特殊值列表，默认为None
     :type special_codes: Optional[List]
-    :param decimal: 切分点小数点保留精度，默认为4
+    :param decimal: 分箱标签显示精度，默认为4；实际切点不舍入
     :type decimal: int
 
     **参考样例**
@@ -166,6 +171,7 @@ class TargetBadRateBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
         **kwargs,
     ):
         super().__init__(
@@ -189,8 +195,9 @@ class TargetBadRateBinning(BaseBinning):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             **kwargs,
+            constraint_policy=constraint_policy,
         )
-        self.target_bad_rates = sorted(target_bad_rates) if target_bad_rates else None
+        self.target_bad_rates = target_bad_rates
         self.strict_mode = strict_mode
         self.merge_empty_bins = merge_empty_bins
         self._actual_rates: Dict[str, List[float]] = {}
@@ -276,86 +283,43 @@ class TargetBadRateBinning(BaseBinning):
             return self._fit_auto(X, y)
 
     def _fit_with_target_rates(self, X: pd.Series, y: pd.Series) -> List[float]:
-        """按目标坏样本率边界严格划分.
+        """按最终区间的坏率匹配目标档位，禁止用累计前缀坏率替代。"""
+        from ._partition_solver import solve_partition
 
-        算法思路：
-
-        1. 将数据按特征值排序
-
-        2. 计算每个可能切割点的累积坏样本率
-
-        3. 找到累积坏样本率最接近目标边界的切割点
-        """
-        x_vals = X.values
-        y_vals = y.values
-        n_samples = len(x_vals)
-
-        # 计算样本数约束
-        min_samples = self._get_min_samples(n_samples)
-
-        # 排序
-        sorted_idx = np.argsort(x_vals)
-        x_sorted = x_vals[sorted_idx]
-        y_sorted = y_vals[sorted_idx]
-
-        # 计算累积坏样本数和累积样本数
-        cum_bad = np.cumsum(y_sorted)
-        cum_total = np.arange(1, n_samples + 1)
-
-        # 计算每个位置的累积坏样本率
-        cum_rate = cum_bad / cum_total
-
-        # 计算全局坏样本率
-        global_bad_rate = y_sorted.mean()
-
-        # 确定目标边界（考虑全局坏样本率）
-        target_rates = self.target_bad_rates.copy()
-
-        # 如果全局坏样本率不在目标范围内，添加到边界
-        if global_bad_rate < target_rates[0]:
-            target_rates = [global_bad_rate] + target_rates
-        if global_bad_rate > target_rates[-1]:
-            target_rates = target_rates + [global_bad_rate]
-        target_rates = sorted(set(target_rates))
-
-        splits = []
-
-        # 对每个目标边界，找到最佳切割点
-        for target in target_rates:
-            if target >= global_bad_rate:
-                # 目标坏样本率高于全局，需要在数据后半部分找
-                # 找到累积坏样本率最接近目标的位置
-                diff = np.abs(cum_rate - target)
-            else:
-                # 目标坏样本率低于全局，需要在数据前半部分找
-                diff = np.abs(cum_rate - target)
-
-            # 在满足最小样本数的范围内搜索
-            valid_start = min_samples
-            valid_end = n_samples - min_samples
-
-            if valid_start >= valid_end:
-                continue
-
-            # 在有效范围内找最接近目标的位置
-            valid_diff = diff[valid_start:valid_end]
-            if len(valid_diff) == 0:
-                continue
-
-            best_pos = valid_start + np.argmin(valid_diff)
-
-            # 确定切割点
-            split_val = (x_sorted[best_pos] + x_sorted[best_pos + 1]) / 2
-
-            # 避免重复切割点
-            if split_val not in splits:
-                splits.append(split_val)
-
-        # 合并空箱或样本数过少的箱
-        if self.merge_empty_bins:
-            splits = self._merge_small_bins(x_sorted, y_sorted, splits, min_samples)
-
-        return sorted(splits)
+        thresholds = np.asarray(self.target_bad_rates, dtype=float)
+        if thresholds.ndim != 1 or not len(thresholds) or not np.isfinite(thresholds).all():
+            raise ValueError("target_bad_rates 必须是非空的一维有限数值列表")
+        if np.any((thresholds < 0) | (thresholds > 1)) or len(np.unique(thresholds)) != len(thresholds):
+            raise ValueError("target_bad_rates 必须是 [0, 1] 内互不重复的坏样本率边界")
+        thresholds = np.sort(thresholds)
+        values = np.unique(np.asarray(X, dtype=float))
+        candidates = getattr(self, "_candidate_splits_", {}).get(X.name)
+        if candidates is None:
+            candidates = (
+                values[:-1] / 2.0 + values[1:] / 2.0
+                if len(values) <= 101
+                else np.unique(np.quantile(X, np.linspace(0, 1, 101)[1:-1]))
+            )
+        info = {}
+        result = solve_partition(
+            X,
+            y,
+            candidates,
+            min_n_bins=min(self.min_n_bins, len(values)),
+            max_n_bins=self.max_n_bins,
+            min_samples=self._get_min_samples(len(X)),
+            max_samples=self._get_max_samples(len(X)),
+            min_bad_rate=self.min_bad_rate,
+            monotonic=self.monotonic,
+            random_state=self.random_state,
+            target_bad_rates=thresholds,
+            strict_target=self.strict_mode,
+            merge_empty_bins=self.merge_empty_bins,
+            info=info,
+        )
+        self.solver_info_ = getattr(self, "solver_info_", {})
+        self.solver_info_[X.name] = info
+        return result
 
     def _fit_auto(self, X: pd.Series, y: pd.Series) -> List[float]:
         """自动模式：寻找使每箱间坏样本率差异最大的划分.
@@ -437,7 +401,7 @@ class TargetBadRateBinning(BaseBinning):
         n_samples = len(x_sorted)
         positions = []
         for split in splits:
-            pos = np.searchsorted(x_sorted, split, side="right")
+            pos = np.searchsorted(x_sorted, split, side="left")
             positions.append(pos)
 
         positions = sorted(positions)
@@ -468,7 +432,7 @@ class TargetBadRateBinning(BaseBinning):
             return splits
 
         n_samples = len(x_sorted)
-        positions = [np.searchsorted(x_sorted, s, side="right") for s in sorted(splits)]
+        positions = [np.searchsorted(x_sorted, s, side="left") for s in sorted(splits)]
 
         # 计算每个箱的样本数
         boundaries = [0] + positions + [n_samples]

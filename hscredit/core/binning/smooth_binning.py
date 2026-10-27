@@ -36,6 +36,11 @@ class SmoothBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
         当fit时只传入df且y为None时，从df中提取该列作为目标变量。
 
@@ -55,7 +60,7 @@ class SmoothBinning(BaseBinning):
         也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
 
     :type handle_unknown: Union[int, str]
-    :param decimal: 数值型切分点小数点保留精度，默认为4
+    :param decimal: 数值型分箱标签显示精度，默认为4；实际切点不舍入
     :type decimal: int
     :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
         正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
@@ -186,6 +191,7 @@ class SmoothBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
     ):
         super().__init__(
             target=target,
@@ -208,12 +214,15 @@ class SmoothBinning(BaseBinning):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            constraint_policy=constraint_policy,
         )
         self.method = method
         self.smoothing_param = smoothing_param
         self.prior_bad_rate = prior_bad_rate
         self.n_prebins = n_prebins
         self.merge_criterion = merge_criterion
+        if merge_criterion not in {"iv", "chi2", "iv_chi2"}:
+            raise ValueError("merge_criterion 必须是 'iv'、'chi2' 或 'iv_chi2'")
         self.chi2_threshold = chi2_threshold
         self.min_iv_improvement = min_iv_improvement
 
@@ -511,68 +520,28 @@ class SmoothBinning(BaseBinning):
 
         return stats
 
-    def _find_merge_candidate_conservative(
-        self, bins: np.ndarray, y: np.ndarray, bin_stats: pd.DataFrame, min_samples: int, force: bool = False
-    ) -> Optional[int]:
-        """保守的合并候选选择."""
-        n_bins = len(bin_stats)
-        if n_bins <= 2:  # 至少保留2箱
+    def _find_merge_candidate_conservative(self, bins, y, bin_stats, min_samples, force=False):
+        """按用户选择的 IV、卡方或联合准则选择相邻合并，不替换成坏率差。"""
+        if self.merge_criterion not in {"iv", "chi2", "iv_chi2"}:
+            raise ValueError("merge_criterion 必须是 'iv'、'chi2' 或 'iv_chi2'")
+        if len(bin_stats) <= max(1, self.min_n_bins):
             return None
-
-        counts = bin_stats["count"].values
-        rates = bin_stats["smoothed_rate"].values
-
-        # 优先处理样本数不足的箱
-        for i in range(n_bins - 1):
-            if counts[i] < min_samples or counts[i + 1] < min_samples:
-                return i
-
-        if force:
-            # 强制合并：选择差异最小的
-            min_diff = float("inf")
-            merge_idx = 0
-            for i in range(n_bins - 1):
-                diff = abs(rates[i] - rates[i + 1])
-                if diff < min_diff:
-                    min_diff = diff
-                    merge_idx = i
-            return merge_idx
-
-        # 保守策略：基于IV损失和卡方检验
+        counts = bin_stats["count"].to_numpy()
         candidates = []
-        for i in range(n_bins - 1):
-            iv_loss = self._calculate_merge_iv_loss(bins, y, i)
-            chi2 = self._calculate_chi2(bins, y, i, i + 1)
-
-            # 检查单调性
-            monotonic_violation = False
-            if self.monotonic:
-                merged_rate = (bin_stats.iloc[i]["bad"] + bin_stats.iloc[i + 1]["bad"]) / (
-                    bin_stats.iloc[i]["count"] + bin_stats.iloc[i + 1]["count"]
-                )
-                new_rates = np.concatenate([rates[:i], [merged_rate], rates[i + 2 :]])
-                if not self._check_monotonicity(new_rates):
-                    monotonic_violation = True
-
-            # 评分：IV损失越小越好，卡方越小越好
-            score = iv_loss
-            if chi2 < self.chi2_threshold:
-                score *= 0.7  # 卡方检验通过的给予优惠
-            if monotonic_violation:
-                score += 10  # 违反单调性的给予大惩罚
-
-            candidates.append((i, score, iv_loss, chi2))
-
-        # 选择评分最低的候选
-        candidates.sort(key=lambda x: x[1])
-
-        # 检查最优候选的IV损失是否可接受
-        for idx, score, iv_loss, chi2 in candidates:
-            if iv_loss < self.min_iv_improvement * 5:  # 放宽阈值
-                return idx
-
-        # 如果没有好的候选，返回None（停止合并）
-        return None
+        for index in range(len(counts) - 1):
+            iv_loss = self._calculate_merge_iv_loss(bins, y, index)
+            chi2 = self._calculate_chi2(bins, y, index, index + 1)
+            small = counts[index] < min_samples or counts[index + 1] < min_samples
+            if self.merge_criterion == "chi2":
+                score, acceptable = chi2, chi2 < self.chi2_threshold
+            elif self.merge_criterion == "iv":
+                score, acceptable = iv_loss, iv_loss < self.min_iv_improvement * 5
+            else:
+                score = iv_loss * (0.7 if chi2 < self.chi2_threshold else 1.0)
+                acceptable = iv_loss < self.min_iv_improvement * 5
+            if force or small or acceptable:
+                candidates.append((not small, score, index))
+        return min(candidates)[-1] if candidates else None
 
     def _calculate_chi2(self, bins: np.ndarray, y: np.ndarray, bin1: int, bin2: int) -> float:
         """计算两个箱的卡方统计量."""
@@ -805,12 +774,8 @@ class SmoothBinning(BaseBinning):
         return categories
 
     def _get_min_samples(self, n_total: int) -> int:
-        """获取最小样本数."""
-        if self.min_bin_size is None:
-            return 1
-        if self.min_bin_size < 1:
-            return int(n_total * self.min_bin_size)
-        return int(self.min_bin_size)
+        """使用统一的最小样本数取整口径。"""
+        return super()._get_min_samples(n_total)
 
     def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List], feature_type: str) -> np.ndarray:
         """应用分箱."""

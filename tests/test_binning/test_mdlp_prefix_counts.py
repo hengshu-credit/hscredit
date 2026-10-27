@@ -1,4 +1,4 @@
-"""MDLP前缀计数与旧逐候选扫描的独立差分基线。"""
+"""MDLP 前缀计数与逐候选原始行扫描的独立差分基线。"""
 
 import numpy as np
 import pandas as pd
@@ -8,7 +8,7 @@ from hscredit.core.binning import MDLPBinning
 
 
 class LegacyScanMDLP(MDLPBinning):
-    """仅用于差分/基准，冻结优化前的候选评分顺序。"""
+    """仅用于差分/基准，保留独立逐行评分，补箱目标遵循 min_n_bins。"""
 
     def _find_best_split_v3(self, x, y, candidates):
         best_split, best_idx, best_score = None, None, -np.inf
@@ -35,7 +35,7 @@ class LegacyScanMDLP(MDLPBinning):
             score = self._calculate_iv_gain_v3(y[:index], y[index:], total_bad, total_good)
             candidates.append(((x[index - 1] + x[index]) / 2, score))
         candidates.sort(key=lambda item: item[1], reverse=True)
-        while len(splits) < self.max_n_bins - 1:
+        while len(splits) < self.min_n_bins - 1:
             best_split, best_iv = None, -np.inf
             for split, _ in candidates:
                 if split in splits:
@@ -54,7 +54,7 @@ class LegacyScanMDLP(MDLPBinning):
                 for split in np.linspace(x.min(), x.max(), self.max_n_bins + 1)[1:-1]:
                     if split not in splits:
                         splits.append(split)
-                        if len(splits) >= self.max_n_bins - 1:
+                        if len(splits) >= self.min_n_bins - 1:
                             break
                 break
             splits.append(best_split)

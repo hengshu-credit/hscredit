@@ -9,6 +9,23 @@
 原 `target_col` 已移除；效率分析的原 `dpd` 改为 `dpds`。阈值支持标量或非空序列。
 显式进入逾期模式时，`overdue` 与 `dpds` 必须同时提供。
 
+## 适用入口
+
+以下 32 个公开入口统一提供 `target`、`overdue_operator` 和 `del_grey`；类配置适用于后续拟合或报告。
+
+| 范围 | 入口 |
+| --- | --- |
+| 特征分析 | `feature_bin_stats`、`feature_bin_stats_2d`、`feature_binning_summary`、`feature_group_binning_summary`、`benchmark_binning_methods`、`feature_efficiency_analysis`、`auto_feature_analysis` |
+| 规则与策略 | `Rule.report`、`ruleset_analysis`、`rule_group_compare`、`swap_out_report`、`rule_swap_analysis` |
+| 逾期预测与置换 | `OverduePredictor`、`overdue_prediction_report`、`swap_analysis` |
+| 模型报告 | `ModelReport`、`auto_model_report`、`BaseRiskModel.report`、`LogisticRegression.report`、`ModelWorkflowMixin.model_report`、`ModelWorkflowMixin.report` |
+| 树规则报告 | `DecisionTreeAnalyzer.report/get_rule_table`、`ManualTreeExtractor.report/get_rule_table` |
+| EDA | `bad_rate_overall`、`bad_rate_by_dimension`、`bad_rate_trend`、`bad_rate_by_bins` |
+| 绘图 | `distribution_plot`、`bin_overdues_plot`、`bad_rate_trend_plot` |
+
+继承统一模型工作流的组件可在 `model.model_report(...)` 中直接传入上述参数，IDE 与 `help()` 可查看完整签名。
+`ProbabilityScoreCard` 和 `ProbabilityCalibrator` 的专用 `report()` 保持其原有用途，完整模型报告使用 `model_report()`。
+
 ## target 模式
 
 ```python
@@ -71,6 +88,10 @@ target = lambda df: df["MOB1"].gt(7).astype(float).where(df["MOB1"].notna())
 置换分析的参考集和分析集分别生成标签。跨数据集建议使用 callable；静态数组必须确实与各自作用数据逐行对应。
 `ModelReport` 的显式外部 `y` 保留原有优先级。
 
+`rule_swap_analysis` 未指定参考集时，直接复用分析集已经生成的标签；callable 只执行一次，
+重复业务索引归一化前先完成标签绑定。参考坏率逐标签排除未表现行，不会因为首个标签缺失而删除其它标签的有效样本。
+分析集中的未表现样本仍遵循置换规则：关闭剔灰时，仅 OUT-IN 样本可由参考坏率估计表现。
+
 ## overdue + dpds 模式
 
 ```python
@@ -109,7 +130,16 @@ table = feature_bin_stats(data, "评分", margins=True, **params)
 字典值中用 `{"input": "输入名称"}` 引用数组、Series 或 callable。
 JSON 不执行 lambda 字符串；Python callable 通过 `object_ref` 在 `environment.mode=current` 下传入。
 显式标签摘要记录 `target_mode/target_names`；逾期模式记录 `overdue_operator/label_combinations`。
+两种模式均记录 `del_grey`，沿用与执行入口一致的显式参数与 `bin_params` 优先级；重复标签组合只记录一次。
 
 旧的 `target={"overdue": "MOB1", "dpds": [7, 30]}` 需拆成独立参数；删除同时指定的 `target`。
 将 `target_col`、`dpd` 关键字改为 `target`、`dpds`，省略的阈值改为显式 `dpds=0`。
 可执行示例见 `examples/29_target_inputs.ipynb`。
+
+## 验证记录（2026-10-27）
+
+使用仓库验收解释器 `.audit_tmp/defect-repairs/runtime/Scripts/python.exe`（Python 3.11.5），
+对报告、规则、绘图、技能和模型范围执行回归，排除 slow/integration：首轮 3,618 项通过，
+5 项子进程编码用例在统一 UTF-8 后复验通过，合计 3,623 项完成验证，无未解决失败。
+完整真实数据参数矩阵及 Notebook 均使用 `examples/hscredit_yyp.xlsx` 的 970 行数据。
+运行命令、版本、环境诊断与源码 SHA256 见 [验证记录](validation/overdue-target-2026-10-27.json)。

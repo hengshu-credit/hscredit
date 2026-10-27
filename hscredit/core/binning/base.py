@@ -13,7 +13,7 @@
 from abc import ABC, abstractmethod
 from collections import deque
 from copy import copy, deepcopy
-from functools import wraps
+from functools import wraps, partial
 from inspect import signature
 from typing import Union, List, Dict, Optional, Any, Tuple, Callable
 import numpy as np
@@ -21,7 +21,6 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from ...exceptions import FeatureNotFoundError, NotFittedError, ParallelExecutionError
-from ...utils.misc import round_float
 from ...utils.parallel import ParallelizableMixin, ParallelWorkload
 from ...utils.data_contracts import prepare_xy
 from ...utils.serialization import ArtifactSerializableMixin
@@ -33,6 +32,8 @@ from ._categorical import (
     normalize_user_groups,
     resolve_category_order,
     restore_category_groups,
+    typed_equal,
+    _typed_mask,
 )
 from ._contracts import (
     HandleUnknown,
@@ -43,6 +44,9 @@ from ._contracts import (
     parse_numerical_user_splits,
     resolve_user_splits_fixed,
     validate_handle_unknown,
+    BinningConstraintViolation,
+    validate_constraint_policy,
+    record_constraint_violation,
 )
 
 from ..metrics._binning import (
@@ -58,6 +62,11 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     具体算法由子类实现；统一工厂  :class:`OptimalBinning`  提供 17 种方法。
 
     **参数**
+
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
 
     :param handle_unknown: 预测期未知类别策略，默认 ``-3`` ； ``"value"`` 等价于 ``-3`` ，
         返回未知箱（标签 ``"unknown"`` ，WOE 为 ``0.0`` ）； ``"raise"`` 抛出错误。
@@ -153,7 +162,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     :type parallel_config: Optional[Dict[str, Any]]
     :param verbose: 是否输出详细信息，默认为False
     :type verbose: Union[bool, int]
-    :param decimal: 数值型切分点小数点保留精度，默认为4
+    :param decimal: 数值型分箱标签显示精度，默认为4；实际切点不舍入
     :type decimal: int
     :param woe_clip: WOE值截断阈值，默认为None
         当某个分箱无坏样本或无好样本时，WOE可能变得极大（如±10以上），
@@ -284,7 +293,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
        - 计算最优分箱切分点
 
-       - 对数值型切分点进行四舍五入(精度由decimal参数控制)
+       - 保留数值切点的完整精度，标签显示精度由 decimal 控制
 
        - 生成分箱统计表
 
@@ -298,6 +307,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     artifact_kind = "分箱器"
 
     _FEATURE_DICT_STATE = (
+        "constraint_violations_",
+        "solver_info_",
         "splits_",
         "n_bins_",
         "bin_tables_",
@@ -384,6 +395,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             candidate.kwargs = clone(self.kwargs, safe=False)
         if hasattr(self, "_fit_control_options"):
             candidate._fit_control_options = clone(self._fit_control_options, safe=False)
+        if hasattr(self, "_candidate_splits_"):
+            candidate._candidate_splits_ = deepcopy(self._candidate_splits_)
         self._restore_imported_rule_snapshot(candidate, fit_args, fit_kwargs or {})
         return candidate
 
@@ -461,6 +474,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         woe_clip: Optional[float] = None,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
+        constraint_policy: str = "raise",
     ):
         self.target = target
         self.missing_separate = missing_separate
@@ -485,6 +499,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             raise ValueError("decimal 必须是大于等于 0 的整数")
         self.decimal = int(decimal)
         self.woe_clip = woe_clip
+        self.constraint_policy = validate_constraint_policy(constraint_policy)
+        self.constraint_violations_ = {}
         self._validate_common_parameters()
 
         # 拟合后的属性
@@ -506,6 +522,27 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self._reserved_bins_finalized_ = set()
         self._is_fitted = False
 
+    def __getstate__(self):
+        """让具名目标和本地自定义回调均可经现有 joblib artifact 入口保存。"""
+        from ._objectives import pickle_callback_state
+
+        return pickle_callback_state(super().__getstate__())
+
+    def get_params(self, deep: bool = True) -> Dict[str, Any]:
+        """保留通过 ``**kwargs`` 接收的基类参数，保证 sklearn 克隆不改变配置。"""
+        constructor = signature(type(self).__init__).parameters
+        # 旧版本持久化实例仍可 clone/refit；补充新参数默认值，不改已有规则。
+        for name in ("constraint_policy", "objective", "objective_params", "custom_objective"):
+            if name in constructor and not hasattr(self, name):
+                value = getattr(self, "kwargs", {}).get(name, constructor[name].default)
+                setattr(self, name, value)
+        params = super().get_params(deep=deep)
+        if any(parameter.kind == parameter.VAR_KEYWORD for parameter in constructor.values()):
+            for name in signature(BaseBinning.__init__).parameters:
+                if name != "self" and hasattr(self, name):
+                    params.setdefault(name, getattr(self, name))
+        return params
+
     def set_params(self, **params) -> "BaseBinning":
         """设置 sklearn 参数，并立即规范化未知类别策略。"""
         if "handle_unknown" in params:
@@ -515,6 +552,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     def _validate_common_parameters(self) -> None:
         """统一校验所有分箱器共享的公共参数。"""
+        validate_constraint_policy(self.constraint_policy)
         for name, value in (("min_n_bins", self.min_n_bins), ("max_n_bins", self.max_n_bins)):
             if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or int(value) < 1:
                 raise ValueError(f"{name} 必须是大于等于 1 的整数")
@@ -668,7 +706,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             numeric_splits = self._ensure_categorical_minimum_bins(feature, original, y, numeric_splits)
             order = self._category_orders_.get(feature, [])
             encoded = encode_ordered_categories(original, order, self.special_codes)
-            numeric_splits = self._adjust_splits_for_bin_size_constraints(
+            numeric_worker = copy(self)
+            numeric_worker.special_codes = None
+            numeric_splits = numeric_worker._adjust_splits_for_bin_size_constraints(
                 encoded,
                 y,
                 numeric_splits,
@@ -751,48 +791,60 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         available_categories = len(self._category_orders_.get(feature, []))
         required_min_bins = min(self.min_n_bins, available_categories) if available_categories else 1
         if n_bins < required_min_bins:
-            raise ValueError(
+            record_constraint_violation(
+                self,
+                feature,
                 f"特征 '{feature}' 的类别分箱无法满足 min_n_bins={self.min_n_bins}；"
-                f"最终普通箱数为 {n_bins}，可用类别数为 {available_categories}"
+                f"最终普通箱数为 {n_bins}，可用类别数为 {available_categories}",
             )
         if n_bins > self.max_n_bins:
-            raise ValueError(
-                f"特征 '{feature}' 的类别分箱无法满足 max_n_bins={self.max_n_bins}；" f"最终普通箱数为 {n_bins}"
+            record_constraint_violation(
+                self,
+                feature,
+                f"特征 '{feature}' 的类别分箱无法满足 max_n_bins={self.max_n_bins}；" f"最终普通箱数为 {n_bins}",
             )
 
         counts = ordinary["样本总数"].to_numpy(dtype=int)
         min_samples = BaseBinning._get_min_samples(self, len(y))
         if np.any(counts < min_samples):
             observed = int(counts.min())
-            raise ValueError(
+            record_constraint_violation(
+                self,
+                feature,
                 f"特征 '{feature}' 的类别分箱无法满足 min_bin_size={self.min_bin_size}；"
-                f"最小箱样本数为 {observed}，要求至少 {min_samples}"
+                f"最小箱样本数为 {observed}，要求至少 {min_samples}",
             )
 
         max_samples = BaseBinning._get_max_samples(self, len(y))
         if max_samples is not None and np.any(counts > max_samples):
             observed = int(counts.max())
-            raise ValueError(
+            record_constraint_violation(
+                self,
+                feature,
                 f"特征 '{feature}' 的类别分箱无法满足 max_bin_size={self.max_bin_size}；"
                 f"最大箱样本数为 {observed}，要求至多 {max_samples}；"
-                "单个类别或用户类别组是不可拆分的原子单位"
+                "单个类别或用户类别组是不可拆分的原子单位",
             )
 
         bad_rates = ordinary["坏样本率"].to_numpy(dtype=float)
         if self.min_bad_rate > 0 and np.any(bad_rates < self.min_bad_rate - 1e-12):
             observed = float(bad_rates.min())
-            raise ValueError(
+            record_constraint_violation(
+                self,
+                feature,
                 f"特征 '{feature}' 的类别分箱无法满足 min_bad_rate={self.min_bad_rate}；"
-                f"最小坏样本率为 {observed:.6f}"
+                f"最小坏样本率为 {observed:.6f}",
             )
 
         if self.monotonic in {"ascending", "descending"} and len(bad_rates) > 1:
             differences = np.diff(bad_rates)
             valid = np.all(differences >= -1e-12) if self.monotonic == "ascending" else np.all(differences <= 1e-12)
             if not valid:
-                raise ValueError(
+                record_constraint_violation(
+                    self,
+                    feature,
                     f"特征 '{feature}' 的类别分箱无法满足 monotonic={self.monotonic}；"
-                    f"最终坏样本率为 {bad_rates.tolist()}"
+                    f"最终坏样本率为 {bad_rates.tolist()}",
                 )
 
     def _set_input_feature_attributes(self, X: pd.DataFrame) -> None:
@@ -1116,6 +1168,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             >>> X_processed, y_processed = binner._check_input(X, y)
         """
         # 保存原始索引，用于后续对齐
+        self._validate_common_parameters()
         original_index = None
 
         # 转换为DataFrame
@@ -1170,9 +1223,33 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             # 这是 worker 的输入元数据，用于让内部数值编码继续走数值算法；
             # 容器仍与主对象隔离，并会作为该特征状态随快照返回。
             worker._categorical_encoded_features_.add(feature)
+            # 原始特殊值已在类别编码阶段变为 NaN，不能再次匹配内部 0/1/... 编码。
+            worker.special_codes = None
 
-        fit_one = getattr(worker, method_name)
-        fit_one(feature, x, y)
+        fit_one = partial(worker._fit_feature_with_constraint_policy, method_name)
+        candidates = getattr(self, "_candidate_splits_", {}).get(feature)
+        if candidates is not None and method_name == "_fit_feature" and self._detect_feature_type(x) == "numerical":
+            # 在不可拆分的预箱原子上拟合，再按原子编号还原边界。
+            # 这不是先拟合原始数值再选择最近切点，目标搜索中的分区与输出完全相同。
+            from ._partition_solver import prepare_candidates
+
+            valid = x.notna().to_numpy() & ~self._special_mask(x)
+            _, _, candidates, _ = prepare_candidates(x[valid], y[valid], candidates)
+            encoded = pd.Series(np.searchsorted(candidates, x[valid], side="right"), index=x[valid].index, name=feature)
+            worker._candidate_splits_ = {feature: np.arange(1, len(candidates) + 1, dtype=float)}
+            worker.special_codes = None
+            worker.cat_cutoff = None
+            fit_one(feature, encoded, y[valid])
+            indices = np.ceil(np.asarray(worker.splits_[feature], dtype=float)).astype(int)
+            indices = np.unique(indices[(indices > 0) & (indices <= len(candidates))])
+            worker.splits_[feature] = candidates[indices - 1]
+            worker.n_bins_[feature] = len(indices) + 1
+            worker.special_codes = self.special_codes
+            worker.bin_tables_[feature] = worker._compute_bin_stats(
+                feature, x, y, worker._get_feature_bins(feature, x, worker.splits_[feature])
+            )
+        else:
+            fit_one(feature, x, y)
 
         state = {}
         for state_name in self._FEATURE_DICT_STATE:
@@ -1186,6 +1263,29 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 raise TypeError(f"特征状态 {state_name} 必须为集合")
             state[state_name] = {feature} if feature in values else set()
         return feature, state
+
+    def _fit_feature_with_constraint_policy(self, method_name, feature, x, y):
+        """仅对已确认的约束不可行启用旧单箱回退，不吞掉输入或目标回调错误。"""
+        try:
+            return getattr(self, method_name)(feature, x, y)
+        except BinningConstraintViolation as exc:
+            if self.constraint_policy == "raise" or method_name != "_fit_feature":
+                raise
+            if getattr(self, "target_bad_rates", None) is not None and getattr(self, "strict_mode", False):
+                raise
+            if self.feature_types_.get(feature) == "categorical":
+                mask = x.notna().to_numpy() & ~self._special_mask(x)
+                groups = [x[mask].drop_duplicates().tolist()]
+                self._cat_bins_[feature] = groups
+                self.splits_[feature] = groups
+            else:
+                self.splits_[feature] = np.array([], dtype=float)
+            self.n_bins_[feature] = 1
+            bins = self._get_feature_bins(feature, x, self.splits_[feature])
+            self.bin_tables_[feature] = self._compute_bin_stats(feature, x, y, bins)
+            self.solver_info_ = getattr(self, "solver_info_", {})
+            self.solver_info_[feature] = {"后端": "legacy", "求解状态": "LEGACY"}
+            record_constraint_violation(self, feature, exc)
 
     def _has_explicit_user_rule(self, feature: str) -> bool:
         """判断字段是否有显式用户分箱规则。"""
@@ -1248,7 +1348,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 fixed_mask = retained_fixed
             self._user_splits_fixed_masks_[feature] = list(fixed_mask)
             if sum(bool(value) for value in fixed_mask) + 1 > self.max_n_bins:
-                raise ValueError(f"特征 '{feature}' 的固定切分点数量无法满足 max_n_bins={self.max_n_bins}")
+                record_constraint_violation(
+                    self, feature, f"特征 '{feature}' 的固定切分点数量无法满足 max_n_bins={self.max_n_bins}"
+                )
             if missing_bin is not None:
                 self._user_missing_bin_targets_[feature] = int(missing_bin)
             self.splits_[feature] = splits
@@ -1339,7 +1441,10 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 if violating_pairs:
                     candidates = violating_pairs
             if not candidates:
-                raise ValueError(f"特征 '{feature}' 的 user_splits_fixed 无法同时满足 max_n_bins/箱样本约束")
+                record_constraint_violation(
+                    self, feature, f"特征 '{feature}' 的 user_splits_fixed 无法同时满足 max_n_bins/箱样本约束"
+                )
+                break
 
             merge_index = min(
                 candidates,
@@ -1605,17 +1710,17 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             return 0
         if self.min_bin_size < 1:
             # 比例值，如0.05表示5%
-            return max(1, int(n_samples * self.min_bin_size))
+            return max(1, int(np.ceil(n_samples * self.min_bin_size)))
         else:
             # 绝对数量
-            return max(1, int(self.min_bin_size))
+            return max(1, int(np.ceil(self.min_bin_size)))
 
     def _get_max_samples(self, n_samples: int) -> Optional[int]:
         """计算最大样本数。"""
         if self.max_bin_size is None:
             return None
         if self.max_bin_size < 1:
-            return max(1, int(np.ceil(n_samples * self.max_bin_size)))
+            return int(np.floor(n_samples * self.max_bin_size))
         return max(1, int(self.max_bin_size))
 
     def _choose_merge_split_index(
@@ -2004,6 +2109,22 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         :param enforce_bad_rate: 是否合并退化分箱/坏样本率不达标分箱，默认 True。
             等宽(uniform)/等频(quantile)等机械分箱以"精确切分结构"为契约，应传 False。
         """
+        # 类别内部编码与原始数值字段的特殊码属于不同空间。只在类别子集的
+        # 浅拷贝上关闭特殊码过滤；各状态字典共享，原始配置不被临时改写。
+        encoded = [feature for feature in X.columns if feature in self._categorical_encoded_features_]
+        if self.special_codes and encoded:
+            numeric_worker = copy(self)
+            numeric_worker.special_codes = None
+            numeric_worker._apply_post_fit_constraints(
+                X[encoded], y, enforce_monotonic=enforce_monotonic, enforce_bad_rate=enforce_bad_rate
+            )
+            X = X.drop(columns=encoded)
+            if X.shape[1] == 0:
+                return
+        # 优化求解器和预分箱已在候选空间处理硬约束，不再叠加其他目标或增加候选外边界。
+        if getattr(self, "solver_info_", {}) or getattr(self, "_candidate_splits_", {}):
+            self._restore_fixed_user_splits(X, y)
+            return
         # 严格用户规则是固定分箱，后处理不得移动或合并其边界。
         # 非严格规则仍走各具体分箱器原有的约束收口逻辑。
         if any(self._is_user_rule_fully_fixed(feature) for feature in X.columns):
@@ -2051,7 +2172,10 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                     if not any(np.isclose(value, fixed, rtol=0, atol=1e-12) for fixed in protected)
                 ]
                 if not removable:
-                    raise ValueError(f"特征 '{feature}' 的固定切分点数量无法满足 max_n_bins={self.max_n_bins}")
+                    record_constraint_violation(
+                        self, feature, f"特征 '{feature}' 的固定切分点数量无法满足 max_n_bins={self.max_n_bins}"
+                    )
+                    break
                 bins = np.digitize(pd.to_numeric(X[feature], errors="coerce"), current)
                 table = self._compute_bin_stats(feature, X[feature], y, bins)
                 rates = table[table["分箱"] >= 0].sort_values("分箱")["坏样本率"].to_numpy(dtype=float)
@@ -2102,9 +2226,12 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def _special_mask(self, x: pd.Series) -> np.ndarray:
         """返回特殊值掩码，并正确识别特殊配置中的缺失标记。"""
         mask = np.zeros(len(x), dtype=bool)
+        categorical = self.feature_types_.get(x.name, self._detect_feature_type(x)) == "categorical"
         for code in self.special_codes or []:
             if is_missing_marker(code):
                 mask |= x.isna().to_numpy(dtype=bool)
+            elif categorical:
+                mask |= _typed_mask(x, code).to_numpy(dtype=bool)
             else:
                 mask |= x.eq(code).fillna(False).to_numpy(dtype=bool)
         return mask
@@ -2157,18 +2284,14 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             for code in self.special_codes:
                 claimed_target = self._categorical_group_target(
                     feature,
-                    lambda value, expected=code: (
-                        is_missing_marker(value)
-                        if is_missing_marker(expected)
-                        else (not is_missing_marker(value) and type(value) is type(expected) and value == expected)
-                    ),
+                    lambda value, expected=code: typed_equal(value, expected),
                 )
                 if claimed_target is None:
                     continue
                 code_mask = (
                     x.isna().to_numpy(dtype=bool)
                     if is_missing_marker(code)
-                    else x.eq(code).fillna(False).to_numpy(dtype=bool)
+                    else _typed_mask(x, code).to_numpy(dtype=bool)
                 )
                 result[code_mask] = claimed_target
         if self.handle_unknown == "raise":
@@ -2225,6 +2348,124 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self._recorded_bins_[feature] = recorded
         return table
 
+    def _finalize_numerical_constraints(self, feature: str, x: pd.Series, y: pd.Series) -> None:
+        """先尝试满足全部约束；legacy 在不可行时保留原生规则。"""
+        original = deepcopy(self.splits_.get(feature))
+        original_n_bins = self.n_bins_.get(feature)
+        try:
+            self._finalize_numerical_constraints_strict(feature, x, y)
+        except BinningConstraintViolation as exc:
+            if self.constraint_policy == "raise":
+                raise
+            self.splits_[feature] = original
+            self.n_bins_[feature] = original_n_bins
+            record_constraint_violation(self, feature, exc)
+
+    def _finalize_numerical_constraints_strict(self, feature: str, x: pd.Series, y: pd.Series) -> None:
+        """对最终数值规则统一验收；不可能满足的硬约束不得静默放宽。"""
+        from ._candidate_search import _is_monotonic
+        from ._partition_solver import solve_partition
+
+        if self.feature_types_.get(feature) != "numerical":
+            return
+        if self._is_user_rule_fully_fixed(feature) or feature in getattr(self, "_imported_rule_features_", ()):
+            return
+        numeric = pd.to_numeric(x, errors="coerce")
+        valid = numeric.notna().to_numpy() & ~self._special_mask(x)
+        xv, yv = numeric[valid], y[valid]
+        values = np.unique(xv.to_numpy(dtype=float))
+        if not len(values):
+            self.splits_[feature] = np.array([])
+            self.n_bins_[feature] = 1
+            return
+        cuts = np.unique(np.asarray(self.splits_[feature], dtype=float))
+        cuts = cuts[np.isfinite(cuts) & (cuts > values[0]) & (cuts <= values[-1])]
+        fixed_mask = self._user_splits_fixed_masks_.get(feature, [])
+        protected = []
+        if any(fixed_mask):
+            original, _ = parse_numerical_user_splits(feature, list(self._get_explicit_user_rule(feature, x)))
+            protected = [float(cut) for cut, fixed in zip(original, fixed_mask) if fixed]
+            cuts = np.unique(np.r_[cuts, protected])
+        minimum_bins = min(self.min_n_bins, len(values))
+        if getattr(self, "force_min_bins", True) is False:
+            minimum_bins = 1
+        minimum = BaseBinning._get_min_samples(self, len(y))
+        maximum = BaseBinning._get_max_samples(self, len(y))
+        mode = self.monotonic
+        fixed_positions = np.searchsorted(np.sort(xv), protected, side="left")
+        internal_fixed = {}
+        for cut, position in zip(protected, fixed_positions):
+            if 0 < position < len(xv):
+                internal_fixed.setdefault(int(position), cut)
+        empty_fixed_bins = len(protected) - len(internal_fixed)
+        if empty_fixed_bins and minimum > 0:
+            raise BinningConstraintViolation(
+                f"特征 '{feature}' 的固定切点产生空箱，无法满足 min_bin_size={self.min_bin_size}"
+            )
+
+        def feasible(proposed):
+            bins = np.searchsorted(proposed, xv, side="right")
+            counts = np.bincount(bins, minlength=len(proposed) + 1)
+            bad = np.bincount(bins, weights=yv, minlength=len(counts))
+            rates = bad / np.maximum(counts, 1)
+            occupied = counts > 0
+            return (
+                minimum_bins <= len(counts) <= self.max_n_bins
+                and (self.min_bin_size is None or np.all(occupied))
+                and np.all(counts >= minimum)
+                and (maximum is None or np.all(counts <= maximum))
+                and np.all(rates[occupied] >= self.min_bad_rate - 1e-12)
+                and _is_monotonic(rates[occupied], mode, 0.0)
+                and np.isin(protected, proposed).all()
+            )
+
+        if not feasible(cuts):
+            preset = getattr(self, "_candidate_splits_", {}).get(feature)
+            if preset is None and not mode and not self.min_bad_rate and not protected:
+                cuts = self._adjust_splits_for_bin_size_constraints(
+                    xv, yv, cuts, minimum, maximum, allow_empty_splits=True
+                )
+                if not feasible(cuts):
+                    repaired = self._find_feasible_categorical_size_splits(xv, cuts, minimum, maximum)
+                    if repaired is not None:
+                        cuts = repaired
+            if not feasible(cuts):
+                if preset is not None:
+                    candidates = np.asarray(preset, dtype=float)
+                elif len(values) <= 81:
+                    candidates = values[:-1] / 2.0 + values[1:] / 2.0
+                else:
+                    candidates = np.unique(np.r_[cuts, np.quantile(xv, np.linspace(0, 1, 65)[1:-1])])
+                candidates = np.unique(np.r_[candidates, protected])
+                try:
+                    cuts = np.asarray(
+                        solve_partition(
+                            xv,
+                            yv,
+                            candidates,
+                            min_n_bins=max(1, minimum_bins - empty_fixed_bins),
+                            max_n_bins=self.max_n_bins - empty_fixed_bins,
+                            min_samples=minimum,
+                            max_samples=maximum,
+                            min_bad_rate=self.min_bad_rate,
+                            monotonic=mode,
+                            fixed_splits=list(internal_fixed.values()),
+                            random_state=self.random_state,
+                            time_limit=getattr(self, "time_limit", 30),
+                        )
+                    )
+                    cuts = np.unique(np.r_[cuts, protected])
+                except BinningConstraintViolation as exc:
+                    raise BinningConstraintViolation(
+                        f"特征 '{feature}' 的约束 min_n_bins={self.min_n_bins}, max_n_bins={self.max_n_bins}, "
+                        f"min_bin_size={self.min_bin_size}, max_bin_size={self.max_bin_size}, "
+                        f"monotonic={mode} 无法满足: {exc}"
+                    ) from exc
+            if not feasible(cuts):
+                raise BinningConstraintViolation(f"特征 '{feature}' 的最终分箱无法同时满足箱数、样本数、坏率及单调约束")
+        self.splits_[feature] = np.asarray(cuts, dtype=float)
+        self.n_bins_[feature] = len(cuts) + 1
+
     def _finalize_reserved_bins(self, X: pd.DataFrame, y: pd.Series) -> None:
         """统一学习缺失归属、重算训练统计并验证未知箱配置。"""
         self._missing_bin_targets_ = {}
@@ -2233,6 +2474,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             if feature not in X.columns:
                 continue
             x = self._categorical_fit_context_.get(feature, X[feature])
+            self._finalize_numerical_constraints(feature, x, y)
             bins = self._assign_base_feature_bins(feature, x)
             bins = self._apply_reserved_bin_policy(feature, x, bins)
             bins = self._learn_missing_bin_target(feature, x, y, bins)
@@ -2476,7 +2718,6 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                     feature, X[feature], y, splits, target_mode
                 )
 
-            adjusted_splits = self._expand_splits_with_monotonicity(feature, X[feature], y, adjusted_splits, final_mode)
             adjusted_splits = self._merge_adjacent_zero_bad_rate_bins(feature, X[feature], y, adjusted_splits)
             self.splits_[feature] = self._round_splits(adjusted_splits)
             self.n_bins_[feature] = len(self.splits_[feature]) + 1
@@ -2613,12 +2854,12 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         return current
 
     def _round_splits(self, splits: Union[np.ndarray, list]) -> np.ndarray:
-        """对数值型切分点进行四舍五入.
+        """规范数值型切分点并保留完整精度。
 
-        使用 round_float 函数保留指定位数的小数进行四舍五入。
+        保留实际边界的完整精度并去重；decimal 仅作用于显示标签。
 
         :param splits: 切分点数组
-        :return: 四舍五入后的切分点数组
+        :return: 排序去重后的切分点数组
         """
         if splits is None or len(splits) == 0:
             return np.array([]) if not isinstance(splits, np.ndarray) else splits
@@ -2627,9 +2868,8 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         if not isinstance(splits, np.ndarray):
             splits = np.array(splits)
 
-        # 对每个切分点进行四舍五入，使用 self.decimal 指定精度
-        rounded_splits = np.array([round_float(s, decimal=self.decimal) for s in splits], dtype=float)
-        return rounded_splits
+        # 实际规则保持完整精度；decimal 仅用于标签显示。重复切点不能形成有效箱。
+        return np.unique(np.asarray(splits, dtype=float))
 
     def _detect_feature_type(self, data: Union[pd.Series, np.ndarray]) -> str:
         """检测特征类型.
@@ -2746,7 +2986,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 bin_labels = self._get_bin_labels(splits, bins)
 
         # 使用 metrics 模块的向量化计算，传入分箱标签和WOE截断参数
-        bin_stats = compute_bin_stats(bins, y.values, bin_labels=bin_labels, woe_clip=self.woe_clip)
+        bin_stats = compute_bin_stats(bins, y.values, bin_labels=bin_labels, woe_clip=self.woe_clip, round_digits=False)
 
         # 如果没有分箱标签，生成默认标签
         if "分箱标签" not in bin_stats.columns:
@@ -2812,7 +3052,12 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 max_decimals = max(max_decimals, decimals)
 
         # 智能截断：如果小数位超过4位，统一保留4位；否则保留实际位数
-        return min(max_decimals, 4)
+        precision = min(max_decimals, self.decimal)
+        while precision < 17 and len(np.unique(np.round(valid_values, precision))) < len(np.unique(valid_values)):
+            precision += 1
+        if np.any((valid_values != 0) & (np.round(valid_values, precision) == 0)):
+            precision = max(precision, min(max_decimals, 17))
+        return precision
 
     def _get_bin_labels(self, splits: np.ndarray, bins: Optional[np.ndarray] = None) -> List[str]:
         """根据切分点生成分箱标签（左闭右开 [a, b) 风格，与 toad/scorecardpipeline 一致）.
@@ -3143,6 +3388,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
         self._rules_imported_ = True
         self._capture_imported_rule_snapshot(rules.keys())
+        # 这里仅导入切点；中性 WOE 是即时 transform 的占位值，fit 必须重新学习。
+        # load() 显式携带 WOE 时会在写回真实映射后重新捕获快照。
+        self._imported_rule_snapshot_["_woe_maps_"] = {}
         self._is_fitted = True
         return self
 

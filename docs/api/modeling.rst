@@ -10,6 +10,7 @@
    ../articles/models-design-review
    classical_models
    boosting
+   net
    model_rules
    scorecard
    calibration

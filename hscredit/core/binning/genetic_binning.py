@@ -5,12 +5,14 @@
 """
 
 import logging
-from typing import Union, List, Dict, Optional, Any, Tuple
+from typing import Callable, Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 from ...exceptions import NotFittedError
 from ...utils.parallel import ParallelWorkload
 from .base import BaseBinning
+from ._objectives import resolve_objective, evaluate_callback
+from ._contracts import BinningConstraintViolation
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,24 @@ class GeneticBinning(BaseBinning):
     通过交叉、变异、选择等遗传操作，逐步逼近全局最优解。
 
     **参数**
+
+    :param custom_objective: 兼容回调入口，仅与 objective='custom' 配合；也可直接传 objective=函数。
+    :type custom_objective: Optional[Callable]
+    :param woe_clip: 可选的正数 WOE 截断阈值；统计表和自定义目标统计使用相同截断，默认 None 不截断。
+    :type woe_clip: Optional[float]
+
+    :param objective_params: 预定义目标的权重，或传给自定义目标函数的附加关键字参数，默认 None。
+    :type objective_params: Optional[Dict]
+
+    ``objective`` 可为原生目标名称、``CustomObjectives.names()`` 中的复合目标名称，
+    或 ``callable(bin_stats, total_good, total_bad, **objective_params)``。回调须返回有限实数，越大越好。
+    回调统计复用 ``compute_bin_stats``，``iv`` 为分档 IV，``woe`` 为 log(坏分布/好分布)。
+    原 ``objective="custom", custom_objective=函数`` 写法继续可用。
+
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
 
     :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
         当fit时只传入df且y为None时，从df中提取该列作为目标变量。
@@ -42,7 +62,7 @@ class GeneticBinning(BaseBinning):
         也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
 
     :type handle_unknown: Union[int, str]
-    :param decimal: 数值型切分点小数点保留精度，默认为4
+    :param decimal: 数值型分箱标签显示精度，默认为4；实际切点不舍入
     :type decimal: int
     :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
         正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
@@ -89,7 +109,7 @@ class GeneticBinning(BaseBinning):
 
         - ``'gini'`` ：最大化 Gini 系数（≈ 2×AUC−1），衡量排序区分能力
 
-    :type objective: str
+    :type objective: Union[str, Callable]
 
     :param max_n_bins: 最大分箱数，默认为5
     :type max_n_bins: int
@@ -138,7 +158,7 @@ class GeneticBinning(BaseBinning):
         mutation_rate: float = 0.1,
         crossover_rate: float = 0.8,
         elitism_rate: float = 0.1,
-        objective: str = "iv",
+        objective: Union[str, Callable] = "iv",
         max_n_bins: int = 5,
         min_n_bins: int = 2,
         min_bin_size: Union[float, int] = 0.01,
@@ -158,6 +178,10 @@ class GeneticBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        objective_params: Optional[Dict[str, Any]] = None,
+        custom_objective: Optional[Callable] = None,
+        woe_clip: Optional[float] = None,
+        constraint_policy: str = "raise",
     ):
         super().__init__(
             target=target,
@@ -180,6 +204,8 @@ class GeneticBinning(BaseBinning):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            constraint_policy=constraint_policy,
+            woe_clip=woe_clip,
         )
         self.population_size = population_size
         self.generations = generations
@@ -187,9 +213,11 @@ class GeneticBinning(BaseBinning):
         self.crossover_rate = crossover_rate
         self.elitism_rate = elitism_rate
         self.objective = objective
-
-        if objective not in ["iv", "ks", "gini"]:
-            raise ValueError("objective必须是'iv', 'ks'或'gini'")
+        self.objective_params = objective_params
+        self.custom_objective = custom_objective
+        self._objective_name, self._objective_callback = resolve_objective(
+            objective, objective_params, custom_objective, native_names=("iv", "ks", "gini")
+        )
 
     def fit(
         self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
@@ -208,6 +236,7 @@ class GeneticBinning(BaseBinning):
         :return: 拟合后的分箱器自身（便于链式调用）
         """
         X, y = self._check_input(X, y)
+        self._n_total_samples = len(X)
 
         self._fit_features(X, y, "_fit_feature")
 
@@ -231,6 +260,21 @@ class GeneticBinning(BaseBinning):
         self.n_bins_[feature] = len(splits) + 1
         bins = self._apply_bins(X, splits)
         self.bin_tables_[feature] = self._compute_bin_stats(feature, X, y, bins)
+        if self._objective_callback is not None:
+            valid = np.asarray(bins) >= 0
+            self.solver_info_ = getattr(self, "solver_info_", {})
+            self.solver_info_[feature] = {
+                "后端": "genetic",
+                "求解状态": "HEURISTIC",
+                "目标函数": self._objective_name,
+                "目标值": (
+                    evaluate_callback(
+                        self._objective_callback, np.asarray(bins)[valid], np.asarray(y)[valid], woe_clip=self.woe_clip
+                    )
+                    if valid.any()
+                    else None
+                ),
+            }
 
     def _fit_numerical(self, x: pd.Series, y: pd.Series) -> np.ndarray:
         """对数值型特征进行遗传算法分箱."""
@@ -245,6 +289,13 @@ class GeneticBinning(BaseBinning):
         y_valid = y[mask]
 
         if len(x_valid) == 0:
+            return np.array([])
+
+        if x_valid.nunique() == 1:
+            if self._objective_callback is not None and self._check_constraints(x_valid, y_valid, []):
+                evaluate_callback(
+                    self._objective_callback, np.zeros(len(x_valid), dtype=int), y_valid, woe_clip=self.woe_clip
+                )
             return np.array([])
 
         # 生成候选切分点（分位数）
@@ -335,6 +386,8 @@ class GeneticBinning(BaseBinning):
             population = self._elitism(offspring, best_individual, fitness_scores)
 
         if best_individual is None:
+            if self._objective_callback is not None:
+                raise BinningConstraintViolation("遗传搜索未找到满足约束且具有有效自定义目标评分的候选")
             return np.array([])
 
         # 解码最优个体
@@ -353,7 +406,7 @@ class GeneticBinning(BaseBinning):
 
         for _ in range(self.population_size):
             # 随机选择切分点数量
-            n_splits = rng.randint(self.min_n_bins - 1, min(self.max_n_bins, n_candidates) + 1)
+            n_splits = rng.randint(self.min_n_bins - 1, min(self.max_n_bins - 1, n_candidates) + 1)
             # 随机选择切分点
             individual = np.zeros(n_candidates, dtype=bool)
             selected = rng.choice(n_candidates, n_splits, replace=False)
@@ -362,127 +415,63 @@ class GeneticBinning(BaseBinning):
 
         return population
 
-    def _evaluate_fitness(self, individual: np.ndarray, x: pd.Series, y: pd.Series, candidates: np.ndarray) -> float:
-        """评估适应度."""
-        selected_indices = np.where(individual)[0]
-
+    def _evaluate_fitness(self, individual, x, y, candidates):
+        selected_indices = np.flatnonzero(individual)
         if len(selected_indices) < self.min_n_bins - 1 or len(selected_indices) > self.max_n_bins - 1:
             return -np.inf
-
         splits = candidates[selected_indices]
-
-        # 检查约束
         if not self._check_constraints(x, y, splits):
             return -np.inf
+        bins = np.searchsorted(splits, x, side="right")
+        if self._objective_callback is not None:
+            return evaluate_callback(self._objective_callback, bins, y, woe_clip=self.woe_clip)
+        if self._objective_name == "iv":
+            return self._calculate_iv(bins, y)
+        if self._objective_name == "ks":
+            return self._calculate_ks(bins, y)
+        return self._calculate_gini(bins, y)
 
-        # 计算目标函数
-        bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
+    def _check_constraints(self, x, y, splits):
+        """在适应度评估前使用最终区间语义检查全部公共硬约束。"""
+        from ._candidate_search import _is_monotonic
 
-        try:
-            if self.objective == "iv":
-                return self._calculate_iv(bins, y)
-            elif self.objective == "ks":
-                return self._calculate_ks(bins, y)
-            elif self.objective == "gini":
-                return self._calculate_gini(bins, y)
-        except Exception:
-            return -np.inf
-
-    def _check_constraints(self, x: pd.Series, y: pd.Series, splits: np.ndarray) -> bool:
-        """检查约束条件."""
-        if len(splits) == 0:
+        bins = np.searchsorted(splits, x, side="right")
+        counts = np.bincount(bins, minlength=len(splits) + 1)
+        bad = np.bincount(bins, weights=y, minlength=len(counts))
+        n_total = getattr(self, "_n_total_samples", len(x)) if self._objective_callback is not None else len(x)
+        maximum = self._get_max_samples(n_total)
+        if np.any(counts == 0) or np.any(counts < self._get_min_samples(n_total)):
             return False
-
-        bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
-
-        # 检查最小样本数
-        min_samples = self._get_min_samples(len(x))
-        bin_counts = pd.Series(bins).value_counts()
-        if any(count < min_samples for count in bin_counts):
+        if maximum is not None and np.any(counts > maximum):
             return False
-
-        # 检查单调性
-        if self.monotonic:
-            bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
-            bad_rates = bin_stats.values
-            if self.monotonic == "ascending":
-                if not all(bad_rates[i] <= bad_rates[i + 1] + 1e-10 for i in range(len(bad_rates) - 1)):
-                    return False
-            elif self.monotonic == "descending":
-                if not all(bad_rates[i] >= bad_rates[i + 1] - 1e-10 for i in range(len(bad_rates) - 1)):
-                    return False
-
-        return True
+        rates = bad / counts
+        return bool(np.all(rates >= self.min_bad_rate - 1e-12) and _is_monotonic(rates, self.monotonic, 0.0))
 
     def _calculate_iv(self, bins: pd.Series, y: pd.Series) -> float:
-        """计算IV值."""
-        temp_df = pd.DataFrame({"bin": bins, "target": y})
-        bin_stats = temp_df.groupby("bin")["target"].agg(["sum", "count"])
-        bin_stats.columns = ["bad", "total"]
-        bin_stats["good"] = bin_stats["total"] - bin_stats["bad"]
+        """使用共享统计内核的计数平滑口径计算原始 IV。"""
+        from ..metrics import compute_bin_stats
 
-        total_bad = bin_stats["bad"].sum()
-        total_good = bin_stats["good"].sum()
-
-        if total_bad == 0 or total_good == 0:
-            return 0
-
-        # 计算分布
-        bin_stats["bad_rate"] = bin_stats["bad"] / total_bad
-        bin_stats["good_rate"] = bin_stats["good"] / total_good
-
-        # 平滑处理：将0替换为epsilon，避免log(0)和除零错误
-        epsilon = 1e-10
-        bad_rate_smooth = bin_stats["bad_rate"].replace(0, epsilon)
-        good_rate_smooth = bin_stats["good_rate"].replace(0, epsilon)
-
-        # IV公式：(bad_rate - good_rate) * log(bad_rate / good_rate)
-        # 该公式理论上总是非负的
-        iv = ((bad_rate_smooth - good_rate_smooth) * np.log(bad_rate_smooth / good_rate_smooth)).sum()
-
-        return iv
+        table = compute_bin_stats(np.asarray(bins), np.asarray(y), round_digits=False)
+        return float(table["分档IV值"].sum())
 
     def _calculate_ks(self, bins: pd.Series, y: pd.Series) -> float:
-        """计算KS值."""
-        temp_df = pd.DataFrame({"bin": bins, "target": y}).sort_values("bin")
-        cumsum_bad = temp_df[temp_df["target"] == 1].groupby("bin").size().cumsum()
-        cumsum_good = temp_df[temp_df["target"] == 0].groupby("bin").size().cumsum()
+        """在完整分箱序列上计算好坏累计分布差，纯箱也参与累计。"""
+        from ..metrics import compute_bin_stats
 
-        total_bad = (y == 1).sum()
-        total_good = (y == 0).sum()
-
-        if total_bad == 0 or total_good == 0:
-            return 0
-
-        cumsum_bad_rate = cumsum_bad / total_bad
-        cumsum_good_rate = cumsum_good / total_good
-
-        ks = abs(cumsum_bad_rate - cumsum_good_rate).max()
-        return ks
+        table = compute_bin_stats(np.asarray(bins), np.asarray(y), round_digits=False)
+        return float(table["分档KS值"].max())
 
     def _calculate_gini(self, bins: pd.Series, y: pd.Series) -> float:
-        """计算Gini系数."""
-        temp_df = pd.DataFrame({"bin": bins, "target": y})
-        bin_bad_rate = temp_df.groupby("bin")["target"].mean()
-        bin_count = temp_df.groupby("bin").size()
+        """以箱内坏率作为风险分数，按 2 * AUC - 1 计算排序 Gini。"""
+        from ..metrics import compute_bin_stats, gini
 
-        # 按坏样本率排序
-        sorted_indices = bin_bad_rate.argsort()
-        cumsum_count = bin_count.iloc[sorted_indices].cumsum()
-        cumsum_bad = (bin_bad_rate * bin_count).iloc[sorted_indices].cumsum()
-
-        total = len(y)
-        total_bad = y.sum()
-
-        if total == 0 or total_bad == 0:
-            return 0
-
-        # Lorentz曲线面积（梯形法则，跨 NumPy 版本兼容）
-        from ...utils.misc import trapz
-
-        area = trapz(cumsum_count / total, cumsum_bad / total_bad)
-        gini = 2 * (0.5 - area)
-        return gini
+        labels = np.asarray(y)
+        if len(np.unique(labels)) < 2:
+            return 0.0
+        table = compute_bin_stats(np.asarray(bins), labels, round_digits=False)
+        rates = table.set_index("分箱")["坏样本率"]
+        scores = rates.reindex(np.asarray(bins)).to_numpy(dtype=float)
+        return float(gini(labels, scores, score_direction="higher_risk"))
 
     def _selection(
         self, population: List[np.ndarray], fitness_scores: List[float], rng: np.random.RandomState
@@ -609,12 +598,8 @@ class GeneticBinning(BaseBinning):
         return categories
 
     def _get_min_samples(self, n_total: int) -> int:
-        """获取最小样本数."""
-        if self.min_bin_size is None:
-            return 1
-        if self.min_bin_size < 1:
-            return int(n_total * self.min_bin_size)
-        return int(self.min_bin_size)
+        """使用统一的最小样本数取整口径。"""
+        return super()._get_min_samples(n_total)
 
     def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱."""

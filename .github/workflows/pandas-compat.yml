@@ -1,19 +1,33 @@
-name: pandas apply 版本兼容验证
+name: pandas 并行与规则表版本兼容验证
 
 on:
   push:
     branches: [main, master]
     paths:
       - "hscredit/_compat.py"
+      - "hscredit/core/binning/_categorical.py"
+      - "hscredit/core/binning/base.py"
+      - "tests/test_binning/test_categorical_audit_repairs.py"
       - "hscredit/utils/pandas_parallel.py"
+      - "hscredit/utils/pandas_extensions.py"
+      - "hscredit/report/mining/manual_tree_extractor.py"
       - "tests/test_utils/test_pandas*.py"
+      - "tests/test_rules/test_manual_tree_compat.py"
+      - "examples/21_manual_tree.ipynb"
       - ".github/workflows/pandas-compat.yml"
       - "pyproject.toml"
   pull_request:
     paths:
       - "hscredit/_compat.py"
+      - "hscredit/core/binning/_categorical.py"
+      - "hscredit/core/binning/base.py"
+      - "tests/test_binning/test_categorical_audit_repairs.py"
       - "hscredit/utils/pandas_parallel.py"
+      - "hscredit/utils/pandas_extensions.py"
+      - "hscredit/report/mining/manual_tree_extractor.py"
       - "tests/test_utils/test_pandas*.py"
+      - "tests/test_rules/test_manual_tree_compat.py"
+      - "examples/21_manual_tree.ipynb"
       - ".github/workflows/pandas-compat.yml"
       - "pyproject.toml"
   workflow_dispatch:
@@ -28,21 +42,27 @@ jobs:
           - python: "3.10"
             pandas: "2.0.3"
             numpy: "1.26.4"
+            matplotlib: "3.5.3"
           - python: "3.10"
             pandas: "2.1.4"
             numpy: "1.26.4"
+            matplotlib: "3.6.0"
           - python: "3.11"
             pandas: "2.2.3"
             numpy: "2.2.6"
+            matplotlib: "3.10.1"
           - python: "3.11"
             pandas: "2.3.3"
             numpy: "2.2.6"
+            matplotlib: "3.10.1"
           - python: "3.11"
             pandas: "3.0.6"
             numpy: "2.4.6"
+            matplotlib: "3.10.1"
           - python: "3.11"
             pandas: "3.1.0"
             numpy: "2.4.6"
+            matplotlib: "3.10.1"
     env:
       MPLBACKEND: Agg
       PYTHONUTF8: "1"
@@ -56,7 +76,12 @@ jobs:
         run: >-
           python -m pip install -e ".[dev]"
           "pandas==${{ matrix.pandas }}" "numpy==${{ matrix.numpy }}"
-      - name: 验证原生参数、缺失值、分组和单次执行语义
+          "matplotlib==${{ matrix.matplotlib }}"
+      - name: 验证并行语义、规则表 HTML 和手工树展示
         run: >-
           python -m pytest tests/test_utils/test_pandas_parallel_apply.py
-          tests/test_utils/test_pandas_version_compat.py -q --tb=short
+          tests/test_utils/test_pandas_version_compat.py
+          tests/test_utils/test_pandas_style_compat.py
+          tests/test_rules/test_manual_tree_compat.py
+          tests/test_binning/test_categorical_audit_repairs.py
+          tests/test_visualization/test_tree_plots.py -q --tb=short

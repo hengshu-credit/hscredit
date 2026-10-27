@@ -24,6 +24,11 @@ class TreeBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
         当fit时只传入df且y为None时，从df中提取该列作为目标变量。
 
@@ -43,7 +48,7 @@ class TreeBinning(BaseBinning):
         也可传入已记录的整数箱号，将未知类别归入该箱；不接受布尔值。
 
     :type handle_unknown: Union[int, str]
-    :param decimal: 数值型切分点小数点保留精度，默认为4
+    :param decimal: 数值型分箱标签显示精度，默认为4；实际切点不舍入
     :type decimal: int
     :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
         正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
@@ -151,6 +156,7 @@ class TreeBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
     ):
         super().__init__(
             target=target,
@@ -173,6 +179,7 @@ class TreeBinning(BaseBinning):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            constraint_policy=constraint_policy,
         )
         self.max_depth = max_depth
         self.max_leaf_nodes = max_leaf_nodes
@@ -242,7 +249,7 @@ class TreeBinning(BaseBinning):
 
         # 计算最小样本数
         if self.min_samples_leaf < 1:
-            min_samples_leaf = max(1, int(len(x_valid) * self.min_samples_leaf))
+            min_samples_leaf = max(1, int(np.ceil(len(x_valid) * self.min_samples_leaf)))
         else:
             min_samples_leaf = int(self.min_samples_leaf)
 
@@ -320,7 +327,7 @@ class TreeBinning(BaseBinning):
             return splits
 
         # 计算每个箱的坏样本率
-        bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
+        bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False, right=False)
 
         bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
 
@@ -365,7 +372,7 @@ class TreeBinning(BaseBinning):
 
         max_iter = len(splits)
         for _ in range(max_iter):
-            bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
+            bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False, right=False)
 
             bin_stats = pd.DataFrame({"bin": bins, "target": y}).groupby("bin")["target"].mean()
 
@@ -442,7 +449,7 @@ class TreeBinning(BaseBinning):
         # 迭代调整直到满足约束
         max_iter = 20
         for _ in range(max_iter):
-            bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False)
+            bins = pd.cut(x, bins=[-np.inf] + splits.tolist() + [np.inf], labels=False, right=False)
 
             # 检查每箱样本数
             bin_counts = bins.value_counts().sort_index()
@@ -502,16 +509,8 @@ class TreeBinning(BaseBinning):
         return bin_stats.sort_index()
 
     def _get_min_samples(self, n_total: int) -> int:
-        """获取最小样本数.
-
-        :param n_total: 总样本数
-        :return: 最小样本数
-        """
-        if self.min_bin_size is None:
-            return 1
-        if self.min_bin_size < 1:
-            return int(n_total * self.min_bin_size)
-        return int(self.min_bin_size)
+        """使用统一的最小样本数取整口径。"""
+        return super()._get_min_samples(n_total)
 
     def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱.

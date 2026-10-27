@@ -55,6 +55,7 @@ from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from ._contracts import UNKNOWN_BIN, parse_numerical_user_splits
 from .optimal_binning import OptimalBinning
+from ._contracts import validate_constraint_policy, record_constraint_violation
 from ..metrics._binning import compute_bin_stats
 from ...exceptions import HSCreditError, NotFittedError, ParallelExecutionError
 from ..._lazy import LazyModule
@@ -77,6 +78,11 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     **参数**
 
     目标与分箱控制
+        :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+            保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+            实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+        :type constraint_policy: str
+
         :param target: 目标变量列名，默认为 'target'
         :param max_n_bins: 两个特征的最大分箱数，默认 5
         :param min_bin_size: 二维普通分箱的最小样本量；(0, 1) 浮点数表示占比，
@@ -254,6 +260,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         user_splits_fixed_x: Optional[Union[bool, List[bool]]] = None,
         user_splits_fixed_y: Optional[Union[bool, List[bool]]] = None,
         retain_training_data: bool = False,
+        constraint_policy: str = "raise",
     ):
         # 目标变量
         self.target = target
@@ -302,6 +309,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         self.user_splits_fixed_x = user_splits_fixed_x
         self.user_splits_fixed_y = user_splits_fixed_y
         self.retain_training_data = retain_training_data
+        self.constraint_policy = validate_constraint_policy(constraint_policy)
 
         # 内部属性
         self._is_fitted: bool = False
@@ -402,6 +410,10 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 raise exc.__cause__
             raise
         self.splits_x_ = self.binner_x_.splits_.get(self.feature_x_, np.array([]))
+        self.constraint_violations_ = {
+            **getattr(self.binner_x_, "constraint_violations_", {}),
+            **getattr(self.binner_y_, "constraint_violations_", {}),
+        }
         self.n_bins_x_ = self.binner_x_.n_bins_.get(self.feature_x_, 0)
 
         self.splits_y_ = self.binner_y_.splits_.get(self.feature_y_, np.array([]))
@@ -428,15 +440,23 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             self._y = None
         return self
 
+    def get_params(self, deep=True):
+        """兼容新增约束策略之前持久化的二维分箱器。"""
+        if not hasattr(self, "constraint_policy"):
+            self.constraint_policy = "raise"
+        return super().get_params(deep=deep)
+
     def __getstate__(self) -> Dict[str, Any]:
         """序列化时始终剥离训练原始数据。"""
+        from ._objectives import pickle_callback_state
+
         state = self.__dict__.copy()
         # loky 会在拟合过程中序列化尚未拟合的候选对象来执行轴任务，此时 _X/_y
         # 是任务输入，不能剥离；完整拟合后的对象（artifact/pickle）始终剥离。
         if state.get("_is_fitted", False):
             state["_X"] = None
             state["_y"] = None
-        return state
+        return pickle_callback_state(state)
 
     def transform(
         self, X: Union[pd.DataFrame, np.ndarray], metric: Literal["indices", "bins", "woe", "event_rate"] = "indices"
@@ -1083,6 +1103,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         """按显式轴向参数、轴向 params、全局参数的顺序解析有效配置."""
         params = {
             "target": self.target,
+            "constraint_policy": self.constraint_policy,
             "max_n_bins": self.max_n_bins,
             "min_bin_size": self.min_bin_size,
             "method": self.method,
@@ -1098,6 +1119,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         }
         extra_params = self.x_params if is_x else self.y_params
         valid_names = set(OptimalBinning().get_params(deep=False))
+        valid_names.update(OptimalBinning._method_parameter_names())
         for key, value in dict(extra_params or {}).items():
             if key not in valid_names:
                 axis_name = "x_params" if is_x else "y_params"
@@ -1141,6 +1163,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
     def _validate_2d_parameters(self) -> None:
         """校验二维分箱器自身参数。"""
+        validate_constraint_policy(self.constraint_policy)
         valid_dtypes = {None, "numerical", "categorical"}
         for name, value in (("dtype_x", self.dtype_x), ("dtype_y", self.dtype_y)):
             if value not in valid_dtypes:
@@ -1481,15 +1504,21 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
         represented_groups = observed_groups
         if max_bins < len(represented_groups):
-            raise ValueError(
+            record_constraint_violation(
+                self,
+                "二维分箱",
                 f"max_n_bins_2d={max_bins} 小于缺失值语义组数量 {len(represented_groups)}，"
-                "在保持缺失值独立语义时无法满足约束"
+                "在保持缺失值独立语义时无法满足约束",
             )
+            max_bins = len(represented_groups)
         if total > 0 and min_count > total:
-            raise ValueError(
+            record_constraint_violation(
+                self,
+                "二维分箱",
                 f"min_bin_size 要求每个普通二维分箱至少 {min_count} 个样本，"
-                f"但普通样本总数仅为 {int(total)}，无法满足约束"
+                f"但普通样本总数仅为 {int(total)}，无法满足约束",
             )
+            min_count = int(total)
 
         # ---------------- 阶段一：样本量与全部非特殊分箱数约束 ----------------
         while True:
@@ -1503,7 +1532,10 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             candidates = adjacent_pairs(solution)
             if not candidates:
                 reason = "最大分箱数" if must_reduce else "最小样本量"
-                raise ValueError(f"二维分箱在保持网格连通和缺失值语义时无法满足{reason}约束")
+                record_constraint_violation(
+                    self, "二维分箱", f"二维分箱在保持网格连通和缺失值语义时无法满足{reason}约束"
+                )
+                break
 
             ranked = []
             for left, right in candidates:
@@ -1533,7 +1565,10 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 counts = region_counts(solution)
                 remaining_small = {k for k in normal_ids(solution) if total > 0 and sum(counts[k]) < min_count}
                 if len(active_ids(solution)) > max_bins or remaining_small:
-                    raise ValueError("二维分箱在保持缺失值独立语义时无法同时满足最大分箱数和最小样本量约束")
+                    record_constraint_violation(
+                        self, "二维分箱", "二维分箱在保持缺失值独立语义时无法同时满足最大分箱数和最小样本量约束"
+                    )
+                    break
 
         # ---------------- 阶段二：单调性硬约束（合并违例相邻分箱至零违例） ----------------
         if trend_x is not None or trend_y is not None:
@@ -1575,10 +1610,14 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
         final_counts = region_counts(solution)
         if len(final_counts) > max_bins:
-            raise ValueError(f"二维分箱结果为 {len(final_counts)} 箱，超过 max_n_bins_2d={max_bins}")
+            record_constraint_violation(
+                self, "二维分箱", f"二维分箱结果为 {len(final_counts)} 箱，超过 max_n_bins_2d={max_bins}"
+            )
         remaining_small = {k for k in normal_ids(solution) if total > 0 and sum(final_counts[k]) < min_count}
         if remaining_small:
-            raise ValueError(f"二维分箱无法满足 min_bin_size，仍有 {len(remaining_small)} 个普通分箱样本量不足")
+            record_constraint_violation(
+                self, "二维分箱", f"二维分箱无法满足 min_bin_size，仍有 {len(remaining_small)} 个普通分箱样本量不足"
+            )
 
         def order_key(bin_id: int) -> Tuple[int, int, int]:
             cells = np.argwhere(solution == bin_id)

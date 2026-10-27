@@ -766,12 +766,13 @@ def feature_binning_summary(
 
     :param data: 数据集
     :param feature: 默认值为 ``None`` 。特征名称或特征名称列表
-    :param target: 目标变量列名，默认为'target'
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
-    :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
-
-        - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
-
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :param desc: 默认值为 ``None`` 。特征描述，支持 str（单个特征）或 dict（多个特征）
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
@@ -806,12 +807,10 @@ def feature_binning_summary(
         这会导致评分卡中对应分箱的分数异常。
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
 
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
-
-        - True: 剔除灰样本，不同目标下样本数不同，样本数相关列按目标单独显示
-
-        - False: 保留灰样本，不同目标下样本数相同，样本数相关列作为公共列
-
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :param margins: 是否在分箱表最后添加合计行，默认 False
 
         - True: 在最后一行显示合计，缺失值和特殊值放在正常分箱之后、合计之前
@@ -1116,12 +1115,13 @@ def feature_group_binning_summary(
     :param features: 字段集合入口，支持字符串或一维字段序列；默认 ``None`` ，不可与 ``feature`` 同时指定。
     :param kwargs: 传递给分箱统计的扩展关键字参数；分箱算法参数优先放入 ``bin_params`` 。
 
-    :param target: 目标变量列名，默认为'target'
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
-    :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
-
-        - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
-
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :param desc: 默认值为 ``None`` 。特征描述，支持 str（单个特征）或 dict（多个特征）
     :param max_n_bins: 最大分箱数，默认为5
     :param min_n_bins: 最小分箱数，默认为2
@@ -1156,12 +1156,10 @@ def feature_group_binning_summary(
         这会导致评分卡中对应分箱的分数异常。
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
 
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
-
-        - True: 剔除灰样本，不同目标下样本数不同，样本数相关列按目标单独显示
-
-        - False: 保留灰样本，不同目标下样本数相同，样本数相关列作为公共列
-
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :param margins: 是否在分箱表最后添加合计行，默认 False
 
         - True: 在最后一行显示合计，缺失值和特殊值放在正常分箱之后、合计之前
@@ -1674,14 +1672,15 @@ def feature_bin_stats(
     :type data: pd.DataFrame
     :param feature: 默认值为 ``None`` 。特征名称或特征名称列表
     :type feature: Union[str, List[str]]
-    :param target: 目标变量名称，默认 None
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名称或列表，如 'MOB1' 或 ['MOB1', 'MOB3']
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 逾期定义天数或列表，如 7 或 [0, 7, 30]
-
-        - 默认逾期天数 > dpds 为坏样本(1)，可通过 overdue_operator 修改比较符
-
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param rules: 默认值为 ``None`` 。自定义分箱规则，支持 list（所有特征统一规则）或 dict（按特征名映射规则）
         对 rules 中未包含的特征，按 method 参数重新训练分箱器。
@@ -1746,12 +1745,10 @@ def feature_bin_stats(
         与return_rules同时启用时返回 (统计表, 规则字典, 分箱器字典)
 
     :type return_binner: bool
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
-
-        - True: 剔除灰样本，不同目标下样本数不同，样本数相关列按目标单独显示
-
-        - False: 保留灰样本，不同目标下样本数相同，样本数相关列作为公共列
-
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
     :param margins: 是否在分箱表最后添加合计行，默认 False
 
@@ -2234,11 +2231,15 @@ def feature_bin_stats_2d(
     :type data: pd.DataFrame
     :param features: 默认值为 ``None`` 。恰好两个特征名，顺序对应二维分箱的两个轴
     :type features: List[str]
-    :param target: 默认值为 ``None`` 。二分类目标列名，与 ``overdue`` 二选一
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名或列表
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: DPD 阈值或列表，默认逾期天数大于阈值记为坏样本，可通过 overdue_operator 调整
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param binner: 默认值为 ``None`` 。可选的已拟合或未拟合  :class:`OptimalBinning2D`
     :type binner: Optional[OptimalBinning2D]
@@ -2250,7 +2251,10 @@ def feature_bin_stats_2d(
     :type max_n_bins: int
     :param min_bin_size: 默认值为 ``0.02`` 。二维普通分箱最小样本数或占比
     :type min_bin_size: Union[float, int]
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
     :param margins: 默认值为 ``False`` 。是否为每个目标追加合计行
     :type margins: bool
@@ -2449,9 +2453,14 @@ def benchmark_binning_methods(
     :type data: pd.DataFrame
     :param feature: 待比较的特征字段名
     :type feature: str
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名列表
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 逾期阈值或阈值列表，默认 ``[3, 0]``
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param max_n_bins: 最大分箱数，默认 5
     :type max_n_bins: int
@@ -2492,6 +2501,10 @@ def benchmark_binning_methods(
     :param kwargs: 透传给 ``OptimalBinning`` 的方法专属参数
     :return: 使用中文指标列名的分箱方法对比表
 
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
         ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
@@ -2857,11 +2870,16 @@ def feature_efficiency_analysis(
     :type feature: str
     :param rules: 手工分箱边界，支持 list 或 {feature: list}。默认 None，表示自动使用 quantiles 生成分箱边界
     :type rules: Optional[Union[List, Tuple, np.ndarray, Dict[str, List]]]
-    :param target: 目标变量列名，默认 target
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+        None 且未指定逾期模式时使用数据中的 ``target`` 列。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期列名。传入后会基于 overdue_operator 与 dpds 自动构造二分类目标
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[Union[str, List[str]]]
-    :param dpds: 逾期阈值，支持整数或小数，仅在 overdue 模式下使用，默认 0
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :param method: 自动分箱方法，默认 mdlp
     :type method: str
     :param desc: 特征中文描述，默认使用 feature
@@ -2882,7 +2900,10 @@ def feature_efficiency_analysis(
     :type prebinning: Optional[Union[str, BaseBinning, Dict]]
     :param prebinning_params: 预分箱参数，默认 None
     :type prebinning_params: Optional[Dict[str, Any]]
-    :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
     :param margins: 是否追加合计行，默认 False
     :type margins: bool
@@ -3264,10 +3285,15 @@ def auto_feature_analysis(
     :param data: 需要评估的数据集，需要包含目标变量
     :type data: pd.DataFrame
     :param features: 默认值为 ``None`` 。需要进行分析的特征名称，支持单个字符串或列表
-    :param target: 默认值为 ``None`` 。目标变量名称
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+        None 且未指定逾期模式时使用数据中的 ``target`` 列。
     :type target: Optional[TargetInput]
-    :param overdue: 默认值为 ``None`` 。逾期天数字段名称，与 target 参数互斥
-    :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整）
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :param date: 默认值为 ``None`` 。日期列，用于时间维度分布分析
     :param freq: 日期统计粒度，默认按月 "M"
     :param data_summary_comment: 默认值为 ``''`` 。数据备注信息
@@ -3287,11 +3313,10 @@ def auto_feature_analysis(
     :param amount: 默认值为 ``None`` 。放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
     :param image_table_gap_rows: 默认值为 ``None`` 。图片区与分箱表之间的额外空行数
     :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"`` ；支持颜色字符串、色阶列表或按列配置的字典
-    :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
-        显式传入时优先于 ``bin_params['del_grey']`` ；默认 None 表示沿用 ``bin_params`` 配置。
-        启用后，样本总体分布、样本时间分布及时间分布图也会按各逾期口径剔除灰样本
-        变量综合统计和单标签图形使用首个标签剔灰后的样本，包含样本数及 IV/KS。
-
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 None 表示沿用 ``bin_params`` 配置，未配置时为 False；显式值优先。
     :type del_grey: Optional[bool]
     :param show_progress: 是否实时显示特征处理进度和当前字段，默认 True
     :type show_progress: bool

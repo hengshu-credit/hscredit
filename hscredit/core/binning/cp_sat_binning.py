@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Union, List, Dict, Optional, Any, Tuple
+from typing import Callable, Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 import warnings
@@ -32,7 +32,10 @@ except ImportError:
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+from ._objectives import resolve_objective, make_objective_scorer
 from ._candidate_search import search_candidate_splits
+from ._partition_solver import solve_partition
+from ...utils.parallel import resolve_native_workers
 
 
 class CPSATBinning(BaseBinning):
@@ -42,6 +45,22 @@ class CPSATBinning(BaseBinning):
     将分箱问题建模为约束规划问题，通过 CP-SAT 求解器找到全局最优分箱方案。
 
     **参数**
+
+    :param custom_objective: 兼容回调入口，仅与 objective='custom' 配合；也可直接传 objective=函数。
+    :type custom_objective: Optional[Callable]
+
+    :param objective_params: 预定义目标的权重，或传给自定义目标函数的附加关键字参数，默认 None。
+    :type objective_params: Optional[Dict]
+
+    ``objective`` 可为原生目标名称、``CustomObjectives.names()`` 中的复合目标名称，
+    或 ``callable(bin_stats, total_good, total_bad, **objective_params)``。回调须返回有限实数，越大越好。
+    回调统计复用 ``compute_bin_stats``，``iv`` 为分档 IV，``woe`` 为 log(坏分布/好分布)。
+    原 ``objective="custom", custom_objective=函数`` 写法继续可用。
+
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
 
     :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
         与显式参数重名或不存在的参数会被构造函数拒绝。
@@ -124,9 +143,9 @@ class CPSATBinning(BaseBinning):
 
         - 'ks': 最大化 KS 统计量
 
-        - 'gini': 最大化 Gini 系数
+        - 'gini': 最大化箱纯度评分 ``1 - sum(箱占比 * 坏率 * 好率)``，不等同于排序 Gini
 
-    :type objective: str
+    :type objective: Union[str, Callable]
     :param n_prebins: 预分箱数量（候选分割点数），默认为50
 
         - 候选点越多，求解越精确，但计算时间越长
@@ -203,7 +222,7 @@ class CPSATBinning(BaseBinning):
         max_bin_size: Optional[Union[float, int]] = None,
         min_bad_rate: float = 0.0,
         monotonic: Union[bool, str] = "auto",
-        objective: str = "iv",
+        objective: Union[str, Callable] = "iv",
         n_prebins: int = 50,
         max_candidates: int = 100,
         time_limit: int = 30,
@@ -219,6 +238,9 @@ class CPSATBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        objective_params: Optional[Dict[str, Any]] = None,
+        custom_objective: Optional[Callable] = None,
+        constraint_policy: str = "raise",
         **kwargs,
     ):
         if not ORTOOLS_AVAILABLE:
@@ -244,14 +266,15 @@ class CPSATBinning(BaseBinning):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             **kwargs,
+            constraint_policy=constraint_policy,
         )
 
-        # 验证优化目标
-        valid_objectives = ["iv", "ks", "gini"]
-        if objective not in valid_objectives:
-            raise ValueError(f"不支持的优化目标: {objective}，可选: {valid_objectives}")
-
         self.objective = objective
+        self.objective_params = objective_params
+        self.custom_objective = custom_objective
+        self._objective_name, self._objective_callback = resolve_objective(
+            objective, objective_params, custom_objective, native_names=("iv", "ks", "gini")
+        )
         self.n_prebins = n_prebins
         self.max_candidates = max_candidates
         self.time_limit = time_limit
@@ -339,24 +362,27 @@ class CPSATBinning(BaseBinning):
         # 获取候选分割点
         unique_values = np.unique(x_sorted)
 
-        if len(unique_values) <= self.max_n_bins:
+        if len(unique_values) <= 1:
             return np.array([]), np.array([]), (prefix_bad, prefix_good)
 
         # 使用分位数生成候选点
-        if len(unique_values) > self.max_candidates:
-            quantiles = np.linspace(0, 1, self.n_prebins + 1)
+        preset = getattr(self, "_candidate_splits_", {}).get(X.name)
+        if preset is not None:
+            candidates = np.asarray(preset, dtype=float)
+        elif len(unique_values) > min(self.max_candidates, self.n_prebins):
+            quantiles = np.linspace(0, 1, min(self.n_prebins, self.max_candidates + 1) + 1)
             candidates = np.percentile(x_sorted, quantiles[1:-1] * 100)
         else:
             # 使用相邻唯一值的中点
-            candidates = (unique_values[:-1] + unique_values[1:]) / 2
+            candidates = unique_values[:-1] / 2.0 + unique_values[1:] / 2.0
 
         # 去重并过滤边界
         x_min, x_max = np.min(x_sorted), np.max(x_sorted)
         candidates = np.unique(candidates)
-        candidates = candidates[(candidates > x_min) & (candidates < x_max)]
+        candidates = candidates[(candidates > x_min) & (candidates <= x_max)]
 
         # 位置映射 - 构建包含边界的位置数组
-        inner_positions = np.searchsorted(x_sorted, candidates, side="right")
+        inner_positions = np.searchsorted(x_sorted, candidates, side="left")
         positions = np.concatenate([[0], inner_positions, [n_samples]])
 
         return candidates, positions, (prefix_bad, prefix_good)
@@ -378,33 +404,76 @@ class CPSATBinning(BaseBinning):
         total_good = int(np.sum(y_vals == 0))
         total_bad = int(np.sum(y_vals == 1))
 
-        if total_good == 0 or total_bad == 0:
+        if (total_good == 0 or total_bad == 0) and self._objective_callback is None:
             return []
 
         # 获取候选点和前缀和
         candidates, positions, (prefix_bad, prefix_good) = self._get_candidate_splits(X, y)
         n_candidates = len(candidates)
 
-        if n_candidates == 0:
+        if n_candidates == 0 and self._objective_callback is None:
             return []
 
         n_total = getattr(self, "_n_total_samples", n_samples)
         min_samples = self._get_min_samples(n_total)
 
+        if self._objective_callback is not None:
+            # 任意 Python 回调不能直接写入 CP 整数目标，使用同一候选空间的有时限枚举。
+            from time import perf_counter
+
+            started = perf_counter()
+            callback = make_objective_scorer(self._objective_callback, x_vals, y_vals, woe_clip=self.woe_clip)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", RuntimeWarning)
+                result = search_candidate_splits(
+                    x_vals,
+                    y_vals,
+                    candidates,
+                    objective="custom",
+                    score_callback=callback,
+                    min_n_bins=min(self.min_n_bins, X.nunique()),
+                    max_n_bins=self.max_n_bins,
+                    min_samples=min_samples,
+                    max_samples=self._get_max_samples(n_total),
+                    min_bad_rate=self.min_bad_rate,
+                    monotonic=self.monotonic,
+                    time_limit=self.time_limit,
+                )
+            limited = any("time_limit" in str(item.message) for item in caught)
+            for item in caught:
+                warnings.warn(str(item.message), item.category, stacklevel=2)
+            self.solver_info_ = getattr(self, "solver_info_", {})
+            self.solver_info_[X.name] = {
+                "后端": "enumeration",
+                "求解状态": "FEASIBLE" if limited else "OPTIMAL",
+                "目标函数": self._objective_name,
+                "目标值": callback(result),
+                "耗时秒": perf_counter() - started,
+            }
+            return result
+
         # 所有目标都从任意候选边界组合中求解；IV 使用动态规划，KS/Gini 与
         # 单调约束使用有时限的确定性候选搜索。
-        return search_candidate_splits(
+        info = {}
+        result = solve_partition(
             x_vals,
             y_vals,
             candidates,
-            objective=self.objective,
+            objective=self._objective_name,
             min_n_bins=self.min_n_bins,
             max_n_bins=self.max_n_bins,
             min_samples=min_samples,
             max_samples=self._get_max_samples(n_total),
             monotonic=self.monotonic,
             time_limit=self.time_limit,
+            min_bad_rate=self.min_bad_rate,
+            num_workers=resolve_native_workers(self.n_jobs, native_workers=self.num_workers),
+            random_state=self.random_state,
+            info=info,
         )
+        self.solver_info_ = getattr(self, "solver_info_", {})
+        self.solver_info_[X.name] = info
+        return result
 
     def _add_iv_objective_cp_sat(
         self,

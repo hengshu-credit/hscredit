@@ -4,10 +4,38 @@ from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple,
 
 import numpy as np
 import pandas as pd
+from ...exceptions import ValidationError
 
 MISSING_BIN = -1
 SPECIAL_BIN = -2
 UNKNOWN_BIN = -3
+
+
+class BinningConstraintViolation(ValidationError):
+    """内部约束不可行信号；与参数错误、回调错误及求解超时区分。"""
+
+
+def validate_constraint_policy(policy):
+    """校验约束冲突时的处理策略。"""
+    if not isinstance(policy, str) or policy not in {"raise", "legacy"}:
+        raise ValueError("constraint_policy 必须是 'raise' 或 'legacy'")
+    return policy
+
+
+def record_constraint_violation(owner, feature, message):
+    """报错或记录兼容策略；不向业务统计表添加状态、原因列。"""
+    if owner.constraint_policy == "raise":
+        raise BinningConstraintViolation(str(message))
+    if not hasattr(owner, "constraint_violations_"):
+        owner.constraint_violations_ = {}
+    messages = owner.constraint_violations_.setdefault(feature, [])
+    if str(message) not in messages:
+        messages.append(str(message))
+    info = getattr(owner, "solver_info_", {}).get(feature)
+    if info is not None:
+        info["求解状态"] = "LEGACY"
+        info["约束策略"] = "legacy"
+
 
 FixedFeatureValue = Union[bool, Sequence[bool]]
 UserSplitsFixed = Optional[Union[bool, Mapping[str, FixedFeatureValue]]]

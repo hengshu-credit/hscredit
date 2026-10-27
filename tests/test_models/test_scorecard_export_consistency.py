@@ -348,7 +348,8 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     assert numeric_steps["prepare"].function == "min"
     assert isinstance(numeric_steps["score"], FakeAlias)
     assert isinstance(numeric_steps["score"].transformer, FakeExpressionTransformer)
-    assert "X[0] < 6.5" in numeric_steps["score"].transformer.expression
+    first_cut = float(scorecard.binner.splits_["duration_in_month"][0])
+    assert f"X[0] < {first_cut!r}" in numeric_steps["score"].transformer.expression
 
 
 def test_scorecard_pmml_export_tolerates_sklearn2pmml_none_len_bug(tmp_path, monkeypatch):

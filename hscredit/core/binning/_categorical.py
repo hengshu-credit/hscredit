@@ -57,7 +57,10 @@ def unique_non_missing_typed(values: pd.Series, special_codes: Optional[Sequence
 
 
 def _typed_mask(values: pd.Series, category: Any) -> pd.Series:
-    return values.map(lambda value: typed_equal(value, category)).astype(bool)
+    # pandas 2.x 的 nullable 整数 Series.map 会把含缺失的整数转成 float；
+    # 从扩展数组的原生标量构造掩码，保留类型以及重复索引的行位置。
+    mask = np.fromiter((typed_equal(value, category) for value in values.tolist()), dtype=bool, count=len(values))
+    return pd.Series(mask, index=values.index)
 
 
 def _validate_supplied_order(feature: str, supplied: Sequence[Any], observed: Sequence[Any]) -> List[Any]:

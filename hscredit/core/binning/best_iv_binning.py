@@ -25,6 +25,11 @@ class BestIVBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
         与显式参数重名或不存在的参数会被构造函数拒绝。
 
@@ -159,6 +164,7 @@ class BestIVBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
         **kwargs,
     ):
         super().__init__(
@@ -181,6 +187,7 @@ class BestIVBinning(BaseBinning):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             **kwargs,
+            constraint_policy=constraint_policy,
         )
 
     def fit(
@@ -270,7 +277,7 @@ class BestIVBinning(BaseBinning):
 
         if len(unique_values) <= self.max_n_bins:
             # 唯一值较少时，直接使用唯一值边界（避免退化为单箱）
-            return unique_values[:-1].tolist()
+            return (unique_values[:-1] / 2.0 + unique_values[1:] / 2.0).tolist()
 
         # 限制候选分割点数量
         max_candidates = min(len(unique_values) - 1, 100)
@@ -283,7 +290,7 @@ class BestIVBinning(BaseBinning):
             candidates = np.unique(candidates)
             candidates = candidates[(candidates > x_min) & (candidates < x_max)]
         else:
-            candidates = (unique_values[:-1] + unique_values[1:]) / 2
+            candidates = unique_values[:-1] / 2.0 + unique_values[1:] / 2.0
 
         # 预计算排序后的数据
         sorted_indices = np.argsort(x_vals)
@@ -398,7 +405,7 @@ class BestIVBinning(BaseBinning):
             return 0.0
 
         # 找到所有分割点的位置
-        split_positions = [np.searchsorted(x_sorted, s, side="right") for s in sorted(splits)]
+        split_positions = [np.searchsorted(x_sorted, s, side="left") for s in sorted(splits)]
         split_positions = [0] + split_positions + [len(x_sorted)]
 
         iv = 0.0
@@ -428,7 +435,14 @@ class BestIVBinning(BaseBinning):
             if good_dist > eps and bad_dist > eps:
                 iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
 
-        return iv
+        from ..metrics._binning import woe_iv_vectorized
+
+        bounds = np.asarray(split_positions, dtype=int)
+        prefix_bad = np.r_[0, cum_bad]
+        prefix_good = np.r_[0, cum_good]
+        bad_counts = np.diff(prefix_bad[bounds])
+        good_counts = np.diff(prefix_good[bounds])
+        return float(woe_iv_vectorized(good_counts, bad_counts)[2])
 
     def _calc_bad_rates_fast(
         self, x_sorted: np.ndarray, cum_good: np.ndarray, cum_bad: np.ndarray, splits: List[float]
@@ -437,7 +451,7 @@ class BestIVBinning(BaseBinning):
         if not splits:
             return np.array([], dtype=float)
 
-        split_positions = [np.searchsorted(x_sorted, s, side="right") for s in sorted(splits)]
+        split_positions = [np.searchsorted(x_sorted, s, side="left") for s in sorted(splits)]
         split_positions = [0] + split_positions + [len(x_sorted)]
 
         bad_rates: List[float] = []

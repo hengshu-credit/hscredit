@@ -57,7 +57,7 @@ def test_uniform_min_bin_size_merges_after_initial_equal_width_split():
         n_jobs=1,
     ).fit(data[["特征"]], target)
 
-    np.testing.assert_array_equal(direct.splits_["特征"], [4.0, 8.0, 12.0, 16.0])
+    np.testing.assert_array_equal(direct.splits_["特征"], [4.0, 16.0])
     np.testing.assert_array_equal(wrapped.splits_["特征"], [4.0, 16.0])
     assert wrapped.transform(data[["特征"]], metric="indices")["特征"].value_counts(sort=False).to_dict() == {
         0: 83,

@@ -218,7 +218,7 @@ print("BaseMetric 自动采用方向：", class_tuner.directions)
 
 ## 6. 自定义 loss 训练，固定 metric 选择模型
 
-`loss=...` 便捷参数支持 HSCredit `LightGBM` / `XGBoost` / `CatBoost` 包装器。设 `metric=None` 会使用 `loss.metric()`；设 `metric="auc"` 则训练优化该 loss、搜索最大化 AUC。
+`loss=...` 便捷参数支持 HSCredit `LightGBM` / `XGBoost` / `CatBoost` / `NGBoost`，以及可训练的 `ResNet` / `FTTransformer` / `TabM`。传入 `BaseLoss` 且 `metric=None` 时使用 `loss.metric()`；设 `metric="auc"` 则训练优化该 loss、搜索最大化 AUC。net 还支持 PyTorch 损失及回归调参，详见 [net 模型配置](../api/net.rst)。TabPFN 当前只搜索预训练推理参数。
 
 `ModelTuner(objective=...)` 是历史上的**搜索评分目标**别名，不是模型训练 loss。原生 sklearn estimator 请在模型构造器或 `fixed_params` 中按该框架签名配置训练目标。
 

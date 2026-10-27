@@ -740,11 +740,16 @@ class BaseRiskModel(
         :param y_test: 默认值为 ``None`` 。测试集标签（兼容旧API）
         :param features: 默认值为 ``None`` 。特征名称列表
         :type features: Optional[List[str]]
-        :param target: 默认值为 ``None`` 。目标列配置
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时沿用模型的目标配置。
         :type target: Optional[TargetInput]
-        :param overdue: 默认值为 ``None`` 。逾期列名
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
         :type overdue: Optional[Union[str, List[str]]]
-        :param dpds: 默认值为 ``None`` 。逾期天数阈值
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
         :param excel_path: 默认值为 ``None`` 。Excel 报告输出路径
         :type excel_path: Optional[str]
@@ -759,7 +764,10 @@ class BaseRiskModel(
         :param group: 默认值为 ``None`` 。分组字段
         :type group: Optional[str]
         :param kwargs: 传递给 auto_model_report 的其他参数
-        :param del_grey: 是否按逾期标签口径剔除灰样本，默认 False；仅作用于报告标签分析，不重新训练模型。
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :type del_grey: bool
         :param metrics: 默认值为 ``None`` 。统一指标名称、BaseMetric 对象或列表；可传 get_loss(...).metric(kind='business')，与选模和报告复用同一配置
         :param sample_weight: 默认值为 ``None`` 。样本权重，一维、非负、有限且与当前数据等长；None 表示等权。评估权重不自动继承训练权重
@@ -1031,7 +1039,8 @@ class BaseRiskModel(
         :type sample_weight: Optional[np.ndarray]
         :param show_progress_bar: 是否显示进度条；默认跟随 verbose，可显式覆盖
         :type show_progress_bar: Optional[bool]
-        :param loss: 默认值为 ``None`` 。可选BaseLoss训练损失，便利入口支持HSCredit XGBoost/LightGBM/CatBoost/NGBoost
+        :param loss: 默认 None。提升树使用 BaseLoss；ResNet/FTTransformer/TabM 还支持 PyTorch 逐行损失。
+            TabPFN 当前使用预训练推理，不支持此训练参数。
         :param eval_set: 默认值为 ``None`` 。评估集列表 [(X_valid, y_valid)]；最后一个数据集用于搜索评分
             同 ModelReport.datasets 支持具名字典、DataFrame列表及混合形式；显式y优先。
             支持多评估集的提升器同时记录各集曲线；也支持单个 (X_valid, y_valid) 或含 target 的 DataFrame。

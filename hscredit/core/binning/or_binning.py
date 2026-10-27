@@ -16,7 +16,7 @@ from __future__ import annotations
     pip install ortools
 """
 
-from typing import Union, List, Dict, Optional, Any, Tuple
+from typing import Callable, Union, List, Dict, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 import warnings
@@ -31,6 +31,13 @@ except ImportError:
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
+from ._objectives import (
+    resolve_objective,
+    evaluate_callback,
+    predefined_iv_total,
+    objective_stats_from_counts,
+    make_objective_scorer,
+)
 from ._candidate_search import search_candidate_splits
 from ...utils.parallel import resolve_native_workers
 from hscredit.core.metrics import composite_binning_quality
@@ -45,6 +52,19 @@ class ORBinning(BaseBinning):
     支持自定义目标函数，可实现复合指标优化。
 
     **参数**
+
+    :param objective_params: 预定义目标的权重，或传给自定义目标函数的附加关键字参数，默认 None。
+    :type objective_params: Optional[Dict]
+
+    ``objective`` 可为原生目标名称、``CustomObjectives.names()`` 中的复合目标名称，
+    或 ``callable(bin_stats, total_good, total_bad, **objective_params)``。回调须返回有限实数，越大越好。
+    回调统计复用 ``compute_bin_stats``，``iv`` 为分档 IV，``woe`` 为 log(坏分布/好分布)。
+    原 ``objective="custom", custom_objective=函数`` 写法继续可用。
+
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
 
     :param kwargs: 传递给 BaseBinning 的附加构造参数，例如 ``decimal``、``woe_clip``；
         与显式参数重名或不存在的参数会被构造函数拒绝。
@@ -127,7 +147,7 @@ class ORBinning(BaseBinning):
 
         - 'ks': 最大化 KS 统计量
 
-        - 'gini': 最大化 Gini 系数
+        - 'gini': 最大化箱纯度评分 ``1 - sum(箱占比 * 坏率 * 好率)``，不等同于排序 Gini
 
         - 'entropy': 最小化熵（信息增益最大）
 
@@ -135,7 +155,7 @@ class ORBinning(BaseBinning):
 
         - 'custom': 使用自定义目标函数（通过 custom_objective 参数传入）
 
-    :type objective: str
+    :type objective: Union[str, Callable]
     :param custom_objective: 默认值为 ``None`` 。自定义目标函数，当 objective='custom' 时使用
 
         - 类型: Callable[[List[Dict], int, int], float]
@@ -290,7 +310,7 @@ class ORBinning(BaseBinning):
         max_bin_size: Optional[Union[float, int]] = None,
         min_bad_rate: float = 0.0,
         monotonic: Union[bool, str] = "auto",
-        objective: str = "iv",
+        objective: Union[str, Callable] = "iv",
         custom_objective: Optional[callable] = None,
         n_prebins: int = 20,
         max_candidates: int = 100,
@@ -308,6 +328,8 @@ class ORBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        objective_params: Optional[Dict[str, Any]] = None,
+        constraint_policy: str = "raise",
         **kwargs,
     ):
         if not ORTOOLS_AVAILABLE:
@@ -333,18 +355,15 @@ class ORBinning(BaseBinning):
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
             **kwargs,
+            constraint_policy=constraint_policy,
         )
 
-        # 验证优化目标
-        valid_objectives = ["iv", "ks", "gini", "entropy", "chi2", "custom"]
-        if objective not in valid_objectives:
-            raise ValueError(f"不支持的优化目标: {objective}，可选: {valid_objectives}")
-
-        if objective == "custom" and custom_objective is None:
-            raise ValueError("当 objective='custom' 时，必须提供 custom_objective 参数")
-
         self.objective = objective
+        self.objective_params = objective_params
         self.custom_objective = custom_objective
+        self._objective_name, self._objective_callback = resolve_objective(
+            objective, objective_params, custom_objective, native_names=("iv", "ks", "gini", "entropy", "chi2")
+        )
         self.n_prebins = n_prebins
         self.max_candidates = max_candidates
         self.time_limit = time_limit
@@ -438,162 +457,75 @@ class ORBinning(BaseBinning):
         self.bin_tables_[feature] = bin_table
 
     def _get_candidate_splits(self, X: pd.Series, y: pd.Series) -> List[float]:
-        """获取候选分割点.
-
-        :param X: 特征数据
-        :param y: 目标变量
-        :return: 候选分割点列表
-        """
-        x_vals = X.values
-
-        # 获取唯一值
-        unique_values = np.unique(x_vals)
-
-        if len(unique_values) <= self.max_n_bins:
+        """使用显式预箱或按样本分布生成受 n_prebins 控制的候选。"""
+        preset = getattr(self, "_candidate_splits_", {}).get(X.name)
+        if preset is not None:
+            return np.asarray(preset, dtype=float).tolist()
+        values = np.unique(np.asarray(X, dtype=float))
+        if len(values) <= 1:
             return []
-
-        # 限制候选点数量
-        if len(unique_values) > self.max_candidates + 1:
-            # 使用分位数选择候选点
-            quantiles = np.linspace(0, 1, self.max_candidates + 1)
-            candidates = np.percentile(unique_values, quantiles[1:-1] * 100)
-        else:
-            # 使用相邻唯一值的中点
-            candidates = (unique_values[:-1] + unique_values[1:]) / 2
-
-        return sorted(candidates.tolist())
+        limit = max(1, min(int(self.max_candidates), int(self.n_prebins) - 1))
+        if len(values) - 1 <= limit:
+            return (values[:-1] / 2.0 + values[1:] / 2.0).tolist()
+        candidates = np.unique(np.quantile(X, np.linspace(0, 1, limit + 2)[1:-1]))
+        return candidates[(candidates > values[0]) & (candidates <= values[-1])].tolist()
 
     def _or_numerical(self, X: pd.Series, y: pd.Series) -> List[float]:
-        """对数值型变量使用 OR-Tools 优化分箱.
+        """在合法候选分区上优化明确的目标，不叠加隐式 Lift 奖励。"""
+        from ._partition_solver import solve_partition
+        from time import perf_counter
 
-        如果 use_cp_sat=True，使用真正的 CP-SAT 求解器寻找全局最优解。
-        否则使用前缀和预计算 + 多策略搜索 + 复合评分精化，
-        在保证速度的同时获得高质量分箱结果。
-
-        :param X: 特征数据
-        :param y: 目标变量
-        :return: 最优分割点列表
-        """
-        x_vals = X.values
-        y_vals = y.values
-        n_samples = len(x_vals)
-
-        if n_samples == 0:
+        if len(X) == 0 or (X.nunique() <= 1 and self._objective_callback is None):
             return []
-
-        # 获取候选分割点
         candidates = self._get_candidate_splits(X, y)
-        n_candidates = len(candidates)
-
-        if n_candidates == 0:
-            return []
-
-        if n_candidates < self.min_n_bins - 1:
-            return candidates[: max(0, self.max_n_bins - 1)]
-
-        # 排序数据
-        sorted_indices = np.argsort(x_vals)
-        x_sorted = x_vals[sorted_indices]
-        y_sorted = y_vals[sorted_indices]
-
-        total_good = int(np.sum(y_vals == 0))
-        total_bad = int(np.sum(y_vals == 1))
-
-        if total_good == 0 or total_bad == 0:
-            return []
-
-        min_samples = self._get_min_samples(getattr(self, "_n_total_samples", n_samples))
-
-        # ====== 如果启用 CP-SAT，使用真正的约束规划求解器 ======
-        if self.use_cp_sat and ORTOOLS_AVAILABLE:
-            if self.objective in {"iv", "ks", "gini"}:
-                return search_candidate_splits(
-                    x_sorted,
-                    y_sorted,
-                    candidates,
-                    objective=self.objective,
-                    min_n_bins=self.min_n_bins,
-                    max_n_bins=self.max_n_bins,
-                    min_samples=min_samples,
-                    max_samples=self._get_max_samples(len(x_sorted)),
-                    monotonic=self.monotonic,
-                    time_limit=self.time_limit,
-                )
-            if self.objective != "iv":
-                # entropy/chi2/custom 走现有目标感知搜索，不能静默退化为 IV。
-                return self._greedy_fallback(x_sorted, y_sorted, candidates)
-            return self._cp_sat_solve(
-                x_sorted,
-                y_sorted,
-                candidates.tolist() if hasattr(candidates, "tolist") else list(candidates),
-                total_good,
-                total_bad,
-                min_samples,
-            )
-
-        # ====== 前缀和预计算（O(n)，只执行一次）======
-        is_bad = (y_sorted == 1).astype(np.int64)
-        prefix_bad = np.empty(n_samples + 1, dtype=np.int64)
-        prefix_bad[0] = 0
-        np.cumsum(is_bad, out=prefix_bad[1:])
-        prefix_good = np.arange(n_samples + 1, dtype=np.int64) - prefix_bad
-
-        cand_pos = np.searchsorted(x_sorted, candidates, side="right")
-        positions = np.empty(n_candidates + 2, dtype=np.int64)
-        positions[0] = 0
-        positions[1:-1] = cand_pos
-        positions[-1] = n_samples
-
-        cum_bad = prefix_bad[positions]
-        cum_good = prefix_good[positions]
-
-        # ====== 策略1: DP 最优 IV 分割 ======
-        dp_splits = self._dp_optimal_splits(candidates, cum_bad, cum_good, total_good, total_bad, min_samples)
-
-        # ====== 策略2: 单调性感知 DP ======
-        mono_dp_splits = self._dp_monotonic_splits(candidates, cum_bad, cum_good, total_good, total_bad, min_samples)
-
-        # ====== 策略3: 快速贪心 ======
-        greedy_splits = self._greedy_splits_fast(
-            candidates, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+        n_total = getattr(self, "_n_total_samples", len(X))
+        options = dict(
+            objective="custom" if self._objective_callback is not None else self._objective_name,
+            min_n_bins=min(self.min_n_bins, X.nunique()),
+            max_n_bins=self.max_n_bins,
+            min_samples=self._get_min_samples(n_total),
+            max_samples=self._get_max_samples(n_total),
+            min_bad_rate=self.min_bad_rate,
+            monotonic=self.monotonic,
+            time_limit=self.time_limit,
         )
-
-        # ====== 策略4: DP top-K 候选 + 复合评分筛选 ======
-        topk_splits = self._dp_topk_with_composite(
-            candidates, cum_bad, cum_good, total_good, total_bad, min_samples, x_sorted, y_sorted
-        )
-
-        # ====== 从所有策略中选出最优 ======
-        best_score = -np.inf
-        best_splits = []
-
-        for splits in [dp_splits, mono_dp_splits, greedy_splits, topk_splits]:
-            if not splits:
-                continue
-            # 评估原始策略输出（保护 composite 友好的分割点）
-            score_raw = self._score_splits(x_sorted, y_sorted, total_good, total_bad, splits)
-            if score_raw > best_score:
-                best_score = score_raw
-                best_splits = list(splits)
-            # 也尝试 IV 精化版本（可能进一步提升）
-            refined = self._local_refine_fast(
-                splits, candidates, cum_bad, cum_good, total_good, total_bad, n_samples, min_samples
+        info = {}
+        if self.use_cp_sat and self._objective_callback is None:
+            result = solve_partition(
+                X,
+                y,
+                candidates,
+                **options,
+                num_workers=resolve_native_workers(self.n_jobs, native_workers=self.num_workers),
+                random_state=self.random_state,
+                info=info,
             )
-            score_refined = self._score_splits(x_sorted, y_sorted, total_good, total_bad, refined)
-            if score_refined > best_score:
-                best_score = score_refined
-                best_splits = refined
-
-        # 对最优候选做复合评分精化（仅一次，避免重复计算）
-        if best_splits:
-            best_splits = self._local_refine_composite(
-                best_splits, candidates, x_sorted, y_sorted, total_good, total_bad
-            )
-
-        if not best_splits:
-            best_splits = dp_splits or greedy_splits or []
-
-        return sorted(best_splits)
+        else:
+            started = perf_counter()
+            if self._objective_callback is not None:
+                objective_scorer = make_objective_scorer(self._objective_callback, X, y, woe_clip=self.woe_clip)
+                options["score_callback"] = objective_scorer
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", RuntimeWarning)
+                result = search_candidate_splits(X, y, candidates, **options)
+            limited = any("time_limit" in str(item.message) for item in caught)
+            for item in caught:
+                warnings.warn(str(item.message), item.category, stacklevel=2)
+            info = {
+                "后端": (
+                    "dynamic_programming"
+                    if options["objective"] == "iv" and not self.monotonic and not self.min_bad_rate
+                    else "enumeration"
+                ),
+                "求解状态": "FEASIBLE" if limited else "OPTIMAL",
+                "目标函数": self._objective_name,
+                "耗时秒": perf_counter() - started,
+            }
+        self.solver_info_ = getattr(self, "solver_info_", {})
+        if self._objective_callback is not None:
+            info["目标值"] = objective_scorer(result)
+        self.solver_info_[X.name] = info
+        return result
 
     # ------------------------------------------------------------------
     # CP-SAT 求解器实现（真正的全局最优解）
@@ -638,7 +570,7 @@ class ORBinning(BaseBinning):
         prefix_good = np.arange(n_samples + 1, dtype=np.int64) - prefix_bad
 
         # 候选点位置
-        positions = [int(np.searchsorted(x_sorted, c, side="right")) for c in candidates]
+        positions = [int(np.searchsorted(x_sorted, c, side="left")) for c in candidates]
         positions = [0] + positions + [n_samples]
 
         # ====== 构建 CP-SAT 模型 ======
@@ -1447,13 +1379,13 @@ class ORBinning(BaseBinning):
             # 确定第 i 个箱的范围
             if i == 0:
                 start_idx = 0
-                end_idx = np.searchsorted(x_sorted, candidates[0], side="right")
+                end_idx = np.searchsorted(x_sorted, candidates[0], side="left")
             elif i == n_candidates:
-                start_idx = np.searchsorted(x_sorted, candidates[-1], side="right")
+                start_idx = np.searchsorted(x_sorted, candidates[-1], side="left")
                 end_idx = len(x_sorted)
             else:
-                start_idx = np.searchsorted(x_sorted, candidates[i - 1], side="right")
-                end_idx = np.searchsorted(x_sorted, candidates[i], side="right")
+                start_idx = np.searchsorted(x_sorted, candidates[i - 1], side="left")
+                end_idx = np.searchsorted(x_sorted, candidates[i], side="left")
 
             # 计算统计
             y_bin = y_sorted[start_idx:end_idx]
@@ -1543,60 +1475,9 @@ class ORBinning(BaseBinning):
             custom_value = model.NewIntVar(-1000000, 1000000, "custom")
             return custom_value
 
-    def _compute_derived_stats(self, bin_stats: List[Dict], total_good: int, total_bad: int) -> List[Dict]:
-        """计算衍生统计指标.
-
-        为每个箱计算 LIFT、WOE、bad_rate、good_rate 等指标.
-
-        :param bin_stats: 原始箱统计
-        :param total_good: 总好样本数
-        :param total_bad: 总坏样本数
-        :return: 包含衍生指标的箱统计列表
-        """
-        eps = 1e-10
-        total_samples = total_good + total_bad
-        overall_bad_rate = total_bad / total_samples if total_samples > 0 else 0
-
-        processed_stats = []
-        for stat in bin_stats:
-            count = stat["count"]
-            good = stat["good"]
-            bad = stat["bad"]
-
-            if count == 0:
-                processed_stats.append(
-                    {
-                        **stat,
-                        "bad_rate": 0,
-                        "good_rate": 0,
-                        "lift": 1.0,
-                        "woe": 0,
-                    }
-                )
-                continue
-
-            bad_rate = bad / count
-            good_rate = good / count
-
-            # LIFT = 箱内坏样本率 / 总体坏样本率
-            lift = bad_rate / overall_bad_rate if overall_bad_rate > eps else 1.0
-
-            # WOE = ln(好样本分布 / 坏样本分布)
-            good_dist = good / total_good if total_good > 0 else eps
-            bad_dist = bad / total_bad if total_bad > 0 else eps
-            woe = np.log(good_dist / bad_dist) if good_dist > eps and bad_dist > eps else 0
-
-            processed_stats.append(
-                {
-                    **stat,
-                    "bad_rate": bad_rate,
-                    "good_rate": good_rate,
-                    "lift": lift,
-                    "woe": woe,
-                }
-            )
-
-        return processed_stats
+    def _compute_derived_stats(self, bin_stats, total_good, total_bad):
+        """保留既有入口，统计和 WOE/IV 口径统一到共享指标内核。"""
+        return objective_stats_from_counts(bin_stats, total_good, total_bad)
 
     def _lift_quality_bonus(self, bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
         """通过统一 metrics 复合指标评估分箱质量。"""
@@ -1651,37 +1532,15 @@ class ORBinning(BaseBinning):
             - comp.get("zero_pairs_penalty", 0.0) * 0.50
         )
 
-    def _score_splits(
-        self, x_sorted: np.ndarray, y_sorted: np.ndarray, total_good: int, total_bad: int, splits: List[float]
-    ) -> float:
-        if not splits:
-            return -1e18
-        # 验证所有箱的样本数 >= min_samples，避免后处理合并
-        # 使用全量样本数计算（与 _apply_post_fit_constraints 一致）
-        n_samples = len(x_sorted)
-        n_total = getattr(self, "_n_total_samples", n_samples)
-        min_samples = self._get_min_samples(n_total)
-        split_pos = [0] + [int(np.searchsorted(x_sorted, s, side="right")) for s in sorted(splits)] + [n_samples]
-        for i in range(len(split_pos) - 1):
-            if split_pos[i + 1] - split_pos[i] < min_samples:
-                return -1e18
-        # 计算纯目标值（IV/KS/gini等），不含 lift bonus
-        raw_objective = self._raw_objective_score(x_sorted, y_sorted, total_good, total_bad, splits)
-        bins = self._build_bins_from_splits(x_sorted, splits)
-        monotonic = self.monotonic if self.monotonic in ["ascending", "descending", "peak", "valley"] else "descending"
-        composite_score = composite_binning_quality(
-            bins=bins,
-            y=y_sorted,
-            metric="lift",
-            monotonic=monotonic,
-        )
-        focus_score = self._lift_profile_focus_score(bins, y_sorted)
-        # 箱数利用率奖励：强力鼓励充分利用用户允许的分箱数
-        n_splits = len(splits)
-        target_splits = max(self.max_n_bins - 1, 1)
-        bin_utilization_bonus = (n_splits / target_splits) ** 2 * 2.0
-        # 综合评分：IV为基础 + composite为质量指标 + 箱数利用率
-        return float(raw_objective + composite_score * 0.40 + focus_score * 0.30 + bin_utilization_bonus)
+    def _score_splits(self, x_sorted, y_sorted, total_good, total_bad, splits):
+        """评价所声明的目标；需要复合目标时由 custom_objective 显式提供。"""
+        bins = np.searchsorted(splits, x_sorted, side="right")
+        counts = np.bincount(bins, minlength=len(splits) + 1)
+        n_total = getattr(self, "_n_total_samples", len(x_sorted))
+        maximum = self._get_max_samples(n_total)
+        if np.any(counts < self._get_min_samples(n_total)) or (maximum is not None and np.any(counts > maximum)):
+            return -np.inf
+        return self._calculate_objective_score(x_sorted, y_sorted, total_good, total_bad, splits)
 
     def _raw_objective_score(
         self, x_sorted: np.ndarray, y_sorted: np.ndarray, total_good: int, total_bad: int, splits: List[float]
@@ -1691,7 +1550,7 @@ class ORBinning(BaseBinning):
             return 0.0
         eps = 1e-10
         split_positions = (
-            [0] + [int(np.searchsorted(x_sorted, s, side="right")) for s in sorted(splits)] + [len(x_sorted)]
+            [0] + [int(np.searchsorted(x_sorted, s, side="left")) for s in sorted(splits)] + [len(x_sorted)]
         )
 
         if self.objective in ("iv", "custom"):
@@ -1761,7 +1620,7 @@ class ORBinning(BaseBinning):
         if len(candidate_pool) == 0:
             return []
 
-        positions = [int(np.searchsorted(x_sorted, value, side="right")) for value in candidate_pool]
+        positions = [int(np.searchsorted(x_sorted, value, side="left")) for value in candidate_pool]
         prefix_bad = np.concatenate([[0], np.cumsum(y_sorted == 1)])
         overall_bad_rate = total_bad / max(n_samples, 1)
         eps = 1e-12
@@ -2029,147 +1888,16 @@ class ORBinning(BaseBinning):
 
         return current
 
-    def _calculate_objective_score(
-        self, x_sorted: np.ndarray, y_sorted: np.ndarray, total_good: int, total_bad: int, splits: List[float]
-    ) -> float:
-        """计算目标函数分数.
+    def _calculate_objective_score(self, x_sorted, y_sorted, total_good, total_bad, splits):
+        """单箱和多箱都使用同一目标，不附加隐藏奖励。"""
+        from ._candidate_search import _score_partition
 
-        :param x_sorted: 排序后的特征值
-        :param y_sorted: 排序后的目标变量
-        :param total_good: 总好样本数
-        :param total_bad: 总坏样本数
-        :param splits: 分割点列表
-        :return: 目标函数值
-        """
-        if not splits:
-            return 0.0
-
-        eps = 1e-10
-
-        # 找到分割点位置
-        split_positions = [np.searchsorted(x_sorted, s, side="right") for s in sorted(splits)]
-        split_positions = [0] + split_positions + [len(x_sorted)]
-
-        # 构建箱统计
-        bin_stats = []
-        for i in range(len(split_positions) - 1):
-            start = split_positions[i]
-            end = split_positions[i + 1]
-
-            if start >= end:
-                bin_stats.append({"count": 0, "good": 0, "bad": 0})
-                continue
-
-            good_in_bin = np.sum(y_sorted[start:end] == 0)
-            bad_in_bin = np.sum(y_sorted[start:end] == 1)
-
-            bin_stats.append(
-                {
-                    "count": end - start,
-                    "good": good_in_bin,
-                    "bad": bad_in_bin,
-                }
-            )
-
-        # 处理自定义目标函数
-        if self.objective == "custom":
-            processed_stats = self._compute_derived_stats(bin_stats, total_good, total_bad)
-            return self.custom_objective(processed_stats, total_good, total_bad)
-
-        if self.objective == "iv":
-            iv = 0.0
-            for i in range(len(split_positions) - 1):
-                start = split_positions[i]
-                end = split_positions[i + 1]
-
-                if start >= end:
-                    continue
-
-                good_in_bin = np.sum(y_sorted[start:end] == 0)
-                bad_in_bin = np.sum(y_sorted[start:end] == 1)
-
-                good_dist = good_in_bin / total_good
-                bad_dist = bad_in_bin / total_bad
-
-                if good_dist > eps and bad_dist > eps:
-                    iv += (bad_dist - good_dist) * np.log(bad_dist / good_dist)
-            return iv + self._lift_quality_bonus(bin_stats, total_good, total_bad)
-
-        elif self.objective == "ks":
-            max_ks = 0
-            cum_good = 0
-            cum_bad = 0
-
-            for i in range(len(split_positions) - 1):
-                start = split_positions[i]
-                end = split_positions[i + 1]
-
-                if start >= end:
-                    continue
-
-                good_in_bin = np.sum(y_sorted[start:end] == 0)
-                bad_in_bin = np.sum(y_sorted[start:end] == 1)
-
-                cum_good += good_in_bin
-                cum_bad += bad_in_bin
-
-                ks = abs(cum_good / total_good - cum_bad / total_bad)
-                max_ks = max(max_ks, ks)
-
-            return max_ks
-
-        elif self.objective == "gini":
-            # Gini 系数近似
-            gini = 0.0
-            for i in range(len(split_positions) - 1):
-                start = split_positions[i]
-                end = split_positions[i + 1]
-
-                if start >= end:
-                    continue
-
-                n_bin = end - start
-                p = np.sum(y_sorted[start:end] == 1) / n_bin if n_bin > 0 else 0
-                gini += (n_bin / len(x_sorted)) * p * (1 - p)
-
-            return 1 - gini  # 返回 1-Gini 以最大化
-
-        elif self.objective == "entropy":
-            # 信息熵（需要最小化，返回负值）
-            entropy = 0.0
-            for i in range(len(split_positions) - 1):
-                start = split_positions[i]
-                end = split_positions[i + 1]
-
-                if start >= end:
-                    continue
-
-                n_bin = end - start
-                p = np.sum(y_sorted[start:end] == 1) / n_bin if n_bin > 0 else 0
-
-                if 0 < p < 1:
-                    entropy -= (n_bin / len(x_sorted)) * (p * np.log2(p) + (1 - p) * np.log2(1 - p))
-
-            return -entropy  # 返回负值以最大化
-
-        else:  # chi2
-            # 卡方统计量
-            expected_bad = total_bad / len(splits)
-            chi2 = 0.0
-
-            for i in range(len(split_positions) - 1):
-                start = split_positions[i]
-                end = split_positions[i + 1]
-
-                if start >= end:
-                    continue
-
-                observed_bad = np.sum(y_sorted[start:end] == 1)
-
-                if expected_bad > 0:
-                    chi2 += (observed_bad - expected_bad) ** 2 / expected_bad
-
-            return chi2
+        bins = np.searchsorted(splits, x_sorted, side="right")
+        if self._objective_callback is not None:
+            return evaluate_callback(self._objective_callback, bins, y_sorted, woe_clip=self.woe_clip)
+        counts = np.bincount(bins, minlength=len(splits) + 1)
+        bad = np.bincount(bins, weights=y_sorted, minlength=len(counts))
+        return _score_partition(bad, counts - bad, self._objective_name)
 
     def _or_categorical(self, X: pd.Series, y: pd.Series) -> List[float]:
         """对类别型变量使用 OR-Tools 优化分箱.
@@ -2302,7 +2030,9 @@ class ORBinning(BaseBinning):
 class CustomObjectives:
     """常用自定义目标函数集合.
 
-    提供预定义的复合指标目标函数，可与 ORBinning 的 custom_objective 参数配合使用.
+    提供 8 个复合指标，可通过 ORBinning、CPSATBinning、GeneticBinning 的
+    ``objective="指标名"`` 或 ``objective=函数`` 使用，并支持 ``objective_params`` 配置权重。
+    ``names()`` 列出名称，``get(name, **params)`` 返回可复用的回调。
 
     **使用示例**
 
@@ -2324,6 +2054,20 @@ class CustomObjectives:
     ...     )
     ... )
     """
+
+    @staticmethod
+    def names():
+        """返回可直接传给 objective 的预定义复合指标名称。"""
+        from ._objectives import COMPOSITE_OBJECTIVES
+
+        return list(COMPOSITE_OBJECTIVES)
+
+    @staticmethod
+    def get(name, **params):
+        """按名称创建预定义目标函数，便于 Notebook 配置和复用。"""
+        if name not in CustomObjectives.names():
+            raise ValueError(f"未知的预定义分箱目标: {name!r}；可选 {CustomObjectives.names()}")
+        return resolve_objective(name, params)[1]
 
     @staticmethod
     def max_lift_iv(lift_weight: float = 0.1, iv_weight: float = 1.0):
@@ -2349,19 +2093,12 @@ class CustomObjectives:
         """
 
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            total_iv = 0.0
+            total_iv = predefined_iv_total(bin_stats)
             lift_values = []
 
             for stat in bin_stats:
                 if stat["count"] == 0:
                     continue
-
-                # IV 贡献
-                if "woe" in stat:
-                    woe = stat["woe"]
-                    bad_rate = stat.get("bad_rate", 0)
-                    good_rate = stat.get("good_rate", 0)
-                    total_iv += woe * (bad_rate - good_rate)
 
                 # 收集LIFT值
                 if "lift" in stat:
@@ -2392,19 +2129,12 @@ class CustomObjectives:
         """
 
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            total_iv = 0.0
+            total_iv = predefined_iv_total(bin_stats)
             lift_values = []
 
             for stat in bin_stats:
                 if stat["count"] == 0:
                     continue
-
-                # IV 贡献
-                if "woe" in stat:
-                    woe = stat["woe"]
-                    bad_rate = stat.get("bad_rate", 0)
-                    good_rate = stat.get("good_rate", 0)
-                    total_iv += woe * (bad_rate - good_rate)
 
                 # 收集LIFT值
                 if "lift" in stat:
@@ -2435,19 +2165,12 @@ class CustomObjectives:
         """
 
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            total_iv = 0.0
+            total_iv = predefined_iv_total(bin_stats)
             lift_values = []
 
             for stat in bin_stats:
                 if stat["count"] == 0:
                     continue
-
-                # IV 贡献
-                if "woe" in stat:
-                    woe = stat["woe"]
-                    bad_rate = stat.get("bad_rate", 0)
-                    good_rate = stat.get("good_rate", 0)
-                    total_iv += woe * (bad_rate - good_rate)
 
                 # 收集LIFT值
                 if "lift" in stat:
@@ -2483,19 +2206,12 @@ class CustomObjectives:
         """
 
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            total_iv = 0.0
+            total_iv = predefined_iv_total(bin_stats)
             lift_values = []
 
             for stat in bin_stats:
                 if stat["count"] == 0:
                     continue
-
-                # IV 贡献
-                if "woe" in stat:
-                    woe = stat["woe"]
-                    bad_rate = stat.get("bad_rate", 0)
-                    good_rate = stat.get("good_rate", 0)
-                    total_iv += woe * (bad_rate - good_rate)
 
                 # 收集LIFT值
                 if "lift" in stat:
@@ -2529,19 +2245,12 @@ class CustomObjectives:
         """
 
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            total_iv = 0.0
+            total_iv = predefined_iv_total(bin_stats)
             lift_values = []
 
             for stat in bin_stats:
                 if stat["count"] == 0:
                     continue
-
-                # IV 贡献
-                if "woe" in stat:
-                    woe = stat["woe"]
-                    bad_rate = stat.get("bad_rate", 0)
-                    good_rate = stat.get("good_rate", 0)
-                    total_iv += woe * (bad_rate - good_rate)
 
                 # 收集LIFT值
                 if "lift" in stat:
@@ -2575,19 +2284,12 @@ class CustomObjectives:
         """
 
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
-            total_iv = 0.0
+            total_iv = predefined_iv_total(bin_stats)
             lift_values = []
 
             for stat in bin_stats:
                 if stat["count"] == 0:
                     continue
-
-                # IV 贡献
-                if "woe" in stat:
-                    woe = stat["woe"]
-                    bad_rate = stat.get("bad_rate", 0)
-                    good_rate = stat.get("good_rate", 0)
-                    total_iv += woe * (bad_rate - good_rate)
 
                 # 收集LIFT值
                 if "lift" in stat:
@@ -2621,7 +2323,7 @@ class CustomObjectives:
             if total_good == 0 or total_bad == 0:
                 return 0.0
 
-            total_iv = 0.0
+            total_iv = predefined_iv_total(bin_stats)
             cum_good = 0
             cum_bad = 0
             max_ks = 0.0
@@ -2632,13 +2334,6 @@ class CustomObjectives:
 
                 good = stat["good"]
                 bad = stat["bad"]
-
-                # IV 贡献
-                if "woe" in stat:
-                    woe = stat["woe"]
-                    bad_rate = stat.get("bad_rate", 0)
-                    good_rate = stat.get("good_rate", 0)
-                    total_iv += woe * (bad_rate - good_rate)
 
                 # KS 计算
                 cum_good += good
@@ -2665,7 +2360,7 @@ class CustomObjectives:
 
         def objective(bin_stats: List[Dict], total_good: int, total_bad: int) -> float:
             woe_values = []
-            total_iv = 0.0
+            total_iv = predefined_iv_total(bin_stats)
 
             for stat in bin_stats:
                 if stat["count"] == 0:
@@ -2675,9 +2370,6 @@ class CustomObjectives:
                 if "woe" in stat:
                     woe = stat["woe"]
                     woe_values.append(woe)
-                    bad_rate = stat.get("bad_rate", 0)
-                    good_rate = stat.get("good_rate", 0)
-                    total_iv += woe * (bad_rate - good_rate)
 
             # WOE 方差
             if len(woe_values) > 1:

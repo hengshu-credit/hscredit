@@ -265,24 +265,26 @@ class TestOptimalBinning(unittest.TestCase):
         self.assertTrue(binner._is_fitted)
 
     def test_uniform_method_default_decimal_precision(self):
-        """测试默认切分点精度为4位小数."""
+        """默认展示精度不改变实际等宽切点。"""
         X = pd.DataFrame({"feature_1": [0.123456, 0.223456, 0.323456, 0.423456, 0.523456, 0.623456]})
         y = pd.Series([0, 1, 0, 1, 0, 1])
 
         binner = OptimalBinning(method="uniform", max_n_bins=4)
         binner.fit(X, y)
 
-        np.testing.assert_allclose(binner.splits_["feature_1"], np.array([0.2485, 0.3735, 0.4985]))
+        np.testing.assert_allclose(binner.splits_["feature_1"], np.array([0.248456, 0.373456, 0.498456]))
+        self.assertIn("0.2485", binner.get_bin_table("feature_1")["分箱标签"].iloc[0])
 
     def test_uniform_method_custom_decimal_precision(self):
-        """测试可通过 decimal 调整切分点精度."""
+        """decimal 调整标签显示，实际分箱边界保持完整精度。"""
         X = pd.DataFrame({"feature_1": [0.123456, 0.223456, 0.323456, 0.423456, 0.523456, 0.623456]})
         y = pd.Series([0, 1, 0, 1, 0, 1])
 
         binner = OptimalBinning(method="uniform", max_n_bins=4, decimal=2)
         binner.fit(X, y)
 
-        np.testing.assert_allclose(binner.splits_["feature_1"], np.array([0.25, 0.37, 0.5]))
+        np.testing.assert_allclose(binner.splits_["feature_1"], np.array([0.248456, 0.373456, 0.498456]))
+        self.assertIn("0.25", binner.get_bin_table("feature_1")["分箱标签"].iloc[0])
 
     def test_tree_method(self):
         """测试 tree 方法."""
@@ -328,11 +330,11 @@ class TestOptimalBinning(unittest.TestCase):
         self.assertIn("分箱标签", bin_table.columns)
 
     def test_import_rules_respects_decimal_precision(self):
-        """测试 import_rules 也遵循 decimal 精度设置."""
+        """导入规则不能被显示精度悄悄改变。"""
         binner = OptimalBinning(decimal=2)
         binner.import_rules({"feature_1": [np.float64(0.123456), np.float64(0.987654), np.nan]})
 
-        np.testing.assert_allclose(binner.splits_["feature_1"], np.array([0.12, 0.99]))
+        np.testing.assert_allclose(binner.splits_["feature_1"], np.array([0.123456, 0.987654]))
 
     def test_check_input_rejects_implicit_common_index_filtering(self):
         """W01契约迁移：异长标签拒绝隐式交集，避免静默改变建模总体。"""

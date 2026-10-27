@@ -18,6 +18,56 @@ def installed_version(import_name: str, distribution_name: Optional[str] = None)
     return Version(metadata.version(distribution_name or import_name))
 
 
+def pandas_styler_map_api(pandas_version: Version) -> str:
+    """pandas 2.1 起使用 Styler.map；2.0 使用 applymap（3.0 已移除）。"""
+    if pandas_version < Version("2.0"):
+        raise ValueError("规则表样式要求 pandas>=2.0")
+    return "applymap" if pandas_version < Version("2.1") else "map"
+
+
+def map_styler(styler, func, subset=None, **kwargs):
+    """按 pandas 版本应用逐单元格样式，原样传递参数和用户函数异常。"""
+    import pandas as pd
+
+    method = pandas_styler_map_api(Version(pd.__version__))
+    return getattr(styler, method)(func, subset=subset, **kwargs)
+
+
+class _LegacyColormapRegistry:
+    """为 Matplotlib 3.3/3.4 提供 pandas 使用的只读色图查询接口。"""
+
+    def __init__(self, get_cmap):
+        self.get_cmap = get_cmap
+
+    def __getitem__(self, name):
+        return self.get_cmap(name)
+
+
+def install_matplotlib_colormap_compat(matplotlib_module, matplotlib_version: Version) -> None:
+    """为旧 Matplotlib 补齐 pandas 2/3 的 Styler 色图查询接口。
+
+    3.5 引入 colormaps 注册表，3.6.1 才引入注册表的 get_cmap。
+    只适配声明支持的 3.3 <= version < 3.6.1，不改动现代版本。
+    此适配在请求规则表样式时安装，不在包初始化时提前导入绘图库。
+    """
+    if not Version("3.3") <= matplotlib_version < Version("3.6.1"):
+        return
+    if getattr(matplotlib_module, "_hscredit_colormap_compat", False):
+        return
+
+    from copy import copy
+
+    def get_cmap(cmap=None):
+        # 旧版 cm.get_cmap 也接受 Colormap 和 None；返回副本以免改变全局色图。
+        return copy(matplotlib_module.cm.get_cmap(cmap))
+
+    if matplotlib_version < Version("3.5"):
+        matplotlib_module.colormaps = _LegacyColormapRegistry(get_cmap)
+    else:
+        matplotlib_module.colormaps.get_cmap = get_cmap
+    matplotlib_module._hscredit_colormap_compat = True
+
+
 def pandas_apply_api(pandas_version: Version) -> str:
     """按明确版本边界选择 pandas apply 内部接口。
 
@@ -182,6 +232,15 @@ def _install_pandas_inf_option_alias() -> None:
 def prepare_dependency(name: str) -> None:
     """根据依赖名和已安装版本，安装命中的兼容适配。"""
     import_name = name.split(".", 1)[0]
+
+    if import_name == "matplotlib":
+        matplotlib_version = installed_version("matplotlib")
+        if matplotlib_version is not None and Version("3.3") <= matplotlib_version < Version("3.6.1"):
+            import matplotlib
+            import matplotlib.cm
+
+            install_matplotlib_colormap_compat(matplotlib, matplotlib_version)
+        return
 
     if import_name == "lightgbm":
         lightgbm_version = installed_version("lightgbm")

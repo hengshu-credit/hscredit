@@ -475,8 +475,8 @@ def test_category_max_bin_size_splits_empty_initial_rule_when_feasible():
     assert ordinary["样本总数"].tolist() == [50, 50]
 
 
-def test_categorical_repair_does_not_expand_empty_numeric_splits():
-    """类别约束修复不能改变数值算法保留单箱的既有行为。"""
+def test_numeric_empty_splits_are_repaired_when_maximum_size_is_feasible():
+    """数值单箱也必须遵守明确设置的最大占比。"""
     X = pd.DataFrame({"value": [0.0] * 50 + [1.0] * 50})
     y = pd.Series(([0, 1] * 25) + ([0, 1] * 25), name="target")
 
@@ -489,11 +489,11 @@ def test_categorical_repair_does_not_expand_empty_numeric_splits():
     ).fit(X, y)
     ordinary = binner.get_bin_table("value").query("分箱 >= 0")
 
-    assert ordinary["样本总数"].tolist() == [100]
+    assert ordinary["样本总数"].tolist() == [50, 50]
 
 
-def test_categorical_repair_does_not_relocate_numeric_boundary():
-    """类别边界重定位不能改写数值算法在 min_n_bins 下的既有边界。"""
+def test_numeric_boundary_is_relocated_to_satisfy_minimum_size():
+    """达到最少箱数后仍须满足样本量要求，不能保留 1/99 的违规结果。"""
     X = pd.DataFrame({"value": [0.0] + [1.0] * 49 + [2.0] * 50})
     y = pd.Series([0] * 50 + [1] * 50, name="target")
 
@@ -506,4 +506,4 @@ def test_categorical_repair_does_not_relocate_numeric_boundary():
     ).fit(X, y)
     ordinary = binner.get_bin_table("value").query("分箱 >= 0")
 
-    assert ordinary["样本总数"].tolist() == [1, 99]
+    assert ordinary["样本总数"].tolist() == [50, 50]

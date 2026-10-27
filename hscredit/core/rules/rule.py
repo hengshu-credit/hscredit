@@ -521,17 +521,21 @@ class Rule(ParallelizableMixin):
 
         :param datasets: 数据集 DataFrame，需要包含目标变量列或逾期天数列
         :type datasets: pd.DataFrame
-        :param target: 目标变量列名，默认为"target"，0=好样本，1=坏样本
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时使用数据中的 ``target`` 列。
         :type target: Optional[TargetInput]
-        :param overdue: 默认值为 ``None`` 。逾期天数字段名（可选，传入时以逾期天数>DPD定义坏样本
-            支持多标签多DPD联合分析）
-
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
         :type overdue: Optional[Union[str, List[str]]]
-        :param dpds: 逾期定义方式，默认逾期天数 > DPD 为坏样本（可通过 overdue_operator 调整），默认为0；
-            传入列表时支持多DPD联合分析
-
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-        :param del_grey: 默认值为 ``False`` 。是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :type del_grey: bool
         :param desc: 规则描述，用于报告的"指标含义"列，默认为空字符串
         :type desc: str

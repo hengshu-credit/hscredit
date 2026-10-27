@@ -249,13 +249,37 @@ class ModelWorkflowMixin(TrainingProcessMixin):
             predict_params=predict_params,
         )
 
-    def model_report(self, datasets=None, *, target=None, metrics=None, sample_weight=None, **kwargs):
+    def model_report(
+        self,
+        datasets=None,
+        *,
+        target=None,
+        overdue=None,
+        dpds=None,
+        overdue_operator=None,
+        del_grey=False,
+        metrics=None,
+        sample_weight=None,
+        **kwargs,
+    ):
         """生成当前模型的完整报告，衔接搜索模型、效果评估及 Excel 输出。
 
         :param datasets: 与 eval_set 相同的具名字典/列表，元素为 (X, y) 或含目标列的 DataFrame。
             例如 {'训练': train_df, '验证': valid_df, '独立测试': test_df}；传完整数据时模型仅预测入模字段。
 
-        :param target: 目标列名或报告多标签配置；None 继承模型目标列。overdue/dpds 模式不继承目标列。
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时沿用模型的目标配置。
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
+        :param overdue_operator: 逾期比较符，支持 ``>``、``>=``、``<``、``<=``；None 使用 ``>``。
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :param metrics: 统一指标名称/对象/列表；需与 evaluate 使用同一对象和参数。
             None 只输出报告默认指标，不自动把调参目标当作报告指标。
 
@@ -280,16 +304,40 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         """
         from ...report import auto_model_report
 
-        if target is None and kwargs.get("overdue") is None:
+        if target is None and overdue is None and dpds is None:
             target = getattr(self, "target_", getattr(self, "target", None))
         return auto_model_report(
-            model=self, datasets=datasets, target=target, metrics=metrics, sample_weight=sample_weight, **kwargs
+            model=self,
+            datasets=datasets,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            overdue_operator=overdue_operator,
+            del_grey=del_grey,
+            metrics=metrics,
+            sample_weight=sample_weight,
+            **kwargs,
         )
 
-    def report(self, datasets=None, **kwargs):
+    def report(
+        self, datasets=None, *, target=None, overdue=None, dpds=None, overdue_operator=None, del_grey=False, **kwargs
+    ):
         """兼容的完整模型报告入口。
 
         :param datasets: 具名字典或列表，元素为 (X, y) 或含目标列的 DataFrame。
+        :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+            或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+            callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+            None 且未指定逾期模式时沿用模型的目标配置。
+        :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+            与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
+        :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+            必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
+        :param overdue_operator: 逾期比较符，支持 ``>``、``>=``、``<``、``<=``；None 使用 ``>``。
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+            逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+            ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+            默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
         :param kwargs: model_report 的参数，如 metrics、target、excel_path、verbose。
         :return: 默认 ModelReport；return_result=True 返回执行状态。
 
@@ -300,7 +348,15 @@ class ModelWorkflowMixin(TrainingProcessMixin):
 
         >>> report = model.model_report(datasets={'测试': (X_test, y_test)}, verbose=False)
         """
-        return self.model_report(datasets=datasets, **kwargs)
+        return self.model_report(
+            datasets=datasets,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            overdue_operator=overdue_operator,
+            del_grey=del_grey,
+            **kwargs,
+        )
 
     def tune(
         self,

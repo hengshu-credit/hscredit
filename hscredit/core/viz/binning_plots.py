@@ -1986,7 +1986,10 @@ def distribution_plot(
 
     :param data: 数据集
     :param date: 默认值为 ``'date'`` 。日期列名
-    :param target: 默认值为 ``None`` 。目标列名（单目标模式使用）
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+        None 且未指定逾期模式时使用数据中的 ``target`` 列。
     :type target: Optional[TargetInput]
     :param save: 默认值为 ``None`` 。保存路径
     :param figsize: 默认值为 ``(10, 6)`` 。图像尺寸
@@ -1995,8 +1998,10 @@ def distribution_plot(
     :param anchor: 图例位置；默认根据实际图高自适应，显式传入时以用户值为准
     :param result: 默认值为 ``False`` 。是否返回统计表
     :param hatch: 默认值为 ``True`` 。是否显示斜线
-    :param overdue: 默认值为 ``None`` 。逾期列名列表，如 ['dpd7', 'dpd15', 'dpd30']（多逾期口径模式）
-    :param dpds: 默认值为 ``None`` 。逾期阈值列表，与 overdue 一一对应，如 [1, 1, 1]
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。字段与阈值一一对应，二者长度必须一致。
     :param title: 默认值为 ``None`` 。图表标题
     :return: matplotlib Figure or pd.DataFrame
 
@@ -2011,6 +2016,10 @@ def distribution_plot(
     ...     overdue=['dpd7', 'dpd15', 'dpd30'], dpds=[1, 1, 1]
     ... )
 
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>=`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
         ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
@@ -3375,11 +3384,14 @@ def bin_overdues_plot(
     :type data: Optional[pd.DataFrame]
     :param feature: 默认值为 ``None`` 。特征列名（原始数据模式需要）
     :type feature: Optional[str]
-    :param overdue: 默认值为 ``None`` 。逾期天数列名列表，如 ['dpd7', 'dpd15', 'dpd30']
+    :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
+        或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
+        callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
+    :param overdue: 默认值为 ``None`` 。逾期天数字段名或字段名序列；与 ``dpds`` 必须同时传入，
+        与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
     :type overdue: Optional[List[str]]
-    :param dpds: 默认值为 ``None`` 。逾期阈值列表，与 overdue 一一对应，如 [1, 1, 1]
-        表示逾期天数>=该阈值时视为坏样本
-
+    :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
+        必须与 ``overdue`` 同时传入。字段与阈值一一对应，二者长度必须一致。
     :type dpds: Optional[List[int]]
     :param bin_table: 默认值为 ``None`` 。分箱表（来自 feature_bin_stats 的多级表头 DataFrame）
         传入后将直接使用分箱表绘图，忽略 data/overdue/dpds 参数
@@ -3453,6 +3465,10 @@ def bin_overdues_plot(
     ... )
     >>> fig = bin_overdues_plot(bin_table=bin_table)
 
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
+        ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
+        默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>=`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
         ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；

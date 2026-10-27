@@ -22,6 +22,11 @@ class QuantileBinning(BaseBinning):
 
     **参数**
 
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+    :type constraint_policy: str
+
     :param target: 目标变量列名，默认为'target'。在scorecardpipeline风格中使用，
         当fit时只传入df且y为None时，从df中提取该列作为目标变量。
 
@@ -167,6 +172,7 @@ class QuantileBinning(BaseBinning):
         parallel_config: Optional[Dict[str, Any]] = None,
         user_splits: Optional[Dict[str, List]] = None,
         user_splits_fixed: Optional[Union[bool, Dict[str, Union[bool, List[bool]]]]] = None,
+        constraint_policy: str = "raise",
     ):
         super().__init__(
             target=target,
@@ -190,6 +196,7 @@ class QuantileBinning(BaseBinning):
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            constraint_policy=constraint_policy,
         )
         self.force_numerical = force_numerical
 
@@ -466,16 +473,8 @@ class QuantileBinning(BaseBinning):
         return splits
 
     def _get_min_samples(self, n_total: int) -> int:
-        """获取最小样本数.
-
-        :param n_total: 总样本数
-        :return: 最小样本数
-        """
-        if self.min_bin_size is None:
-            return 0
-        if self.min_bin_size < 1:
-            return max(1, int(n_total * self.min_bin_size))
-        return max(1, int(self.min_bin_size))
+        """使用统一的最小样本数取整口径。"""
+        return super()._get_min_samples(n_total)
 
     def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List]) -> np.ndarray:
         """应用分箱.

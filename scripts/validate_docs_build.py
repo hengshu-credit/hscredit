@@ -16,6 +16,7 @@ _EXPECTED_MODEL_MENU = (
     "models 模块设计复盘",
     "经典模型",
     "Boosting",
+    "表格神经网络",
     "规则器",
     "评分卡",
     "概率校准",
