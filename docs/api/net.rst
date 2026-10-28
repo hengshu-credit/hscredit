@@ -16,6 +16,84 @@ TabPFN 至少需要 2.0.9；pip 根据 Python 版本选择兼容版本，较新�
 首次使用 TabPFN 时，官方库可能下载预训练权重，也可通过 ``model_path`` 指定本地文件。
 默认权重由安装的 TabPFN 版本决定，使用范围及许可请查阅对应官方权重说明。
 
+预训练能力核对（2026-10-29）
+----------------------------
+
+本节按当前正式导出的四个模型核对，分类沿用信贷的 0/1 二分类。
+“官方预训练权重”指发布方已经训练好的权重；``save/load`` 是完整已拟合模型的保存与复用，
+不表示再次调用 ``fit`` 会继续训练。官方架构可以用于自行设计迁移学习，当前封装未提供这类微调入口。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 19 35 14 14 18
+
+   * - 模型
+     - 官方预训练入口
+     - 二分类
+     - 回归
+     - embedding
+   * - ResNet
+     - 官方提供从头训练架构，未提供通用表格预训练权重入口
+     - 支持
+     - 支持
+     - 预测头前的表示
+   * - FTTransformer
+     - 官方提供从头训练架构，未提供通用表格预训练权重入口
+     - 支持
+     - 支持
+     - CLS 经归一化及激活后的表示
+   * - TabM
+     - 官方提供从头训练架构，未提供通用表格预训练权重入口
+     - 支持
+     - 支持
+     - 成员表示或其均值
+   * - TabPFN
+     - 支持官方预训练权重，使用 model_path 选择
+     - 支持
+     - 支持
+     - 使用后端真实表示；后端明确不支持时可单独跳过
+
+ResNet、FTTransformer、TabM 的 ``fit`` 每次新建网络和预处理状态；加载自己保存的模型后可直接
+调用 ``predict``、``predict_proba``（仅二分类）和 ``get_embeddings``，重新 ``fit`` 会重新训练。
+这里的 ResNet 是表格架构，不加载图像 ResNet 的 ImageNet 权重。
+
+TabPFN 的 ``fit`` 在预训练基础网络上建立训练上下文，当前封装不执行梯度微调。
+可显式传入本地权重，分类和回归应选择官方对应的权重；较新多任务权重是否能共用由官方后端决定。
+
+.. code-block:: python
+
+   classifier = TabPFN(objective="binary", model_path="weights/classifier.ckpt")
+   regressor = TabPFN(objective="regression", model_path="weights/regressor.ckpt")
+   classifier.fit(X_train, y_class)
+   regressor.fit(X_train, y_amount)
+   probability = classifier.predict_proba(X_test)
+   prediction = regressor.predict(X_test)
+
+权重并不是带有训练上下文的完整 HSCredit 制品。后者使用 ``model.save("model.pkl")`` 和
+``type(model).load("model.pkl")``；恢复后可直接预测，无需再次拟合。
+``model_path="auto"`` 使用所安装版本的官方默认权重，可能下载权重；版本不同默认权重也可能不同，
+不能把“已验证 v2 权重”解读为所有未来权重版本均已验证。
+
+依赖中的 ``pytorch-tabnet`` 原生支持 ``TabNetPretrainer`` 无监督预训练与
+``from_unsupervised`` 初始化分类器/回归器，但当前 HSCredit 没有导出 TabNet 模型封装，
+因此不把安装该依赖算作已经接入的 net 模型。
+
+核对来源：`rtdl 官方架构与训练示例 <https://github.com/yandex-research/rtdl-revisiting-models/tree/main/package>`_、
+`TabM 官方训练说明 <https://github.com/yandex-research/tabm#training>`_、
+`TabPFN 权重与模型保存说明 <https://github.com/PriorLabs/TabPFN#-faq>`_、
+`TabNet 半监督预训练 <https://github.com/dreamquark-ai/tabnet#semi-supervised-pre-training>`_。
+
+本次复核使用仓库验收解释器 ``.audit_tmp/defect-repairs/runtime/Scripts/python.exe``
+（Python 3.11.5、PyTorch 2.5.1+cu124、TabPFN 2.0.9、TabM 0.0.3、rtdl 0.0.2）。
+2026-10-29 的 net 专项与 Notebook 结构检查共 88 项通过；真实数据 970 行按 776/194 划分，
+四种模型分别完成二分类与回归、可用表示提取和八个制品恢复，实际均能输出 embedding。
+TabPFN 使用明确指定的本地 v2 分类/回归预训练权重，未把其他版本视为已运行验证。
+
+全库首次执行为 7,058 通过、9 个未配置数据库服务的跳过，以及 6 个 Windows 子进程输出解码失败。
+这 6 个失败已复现为 GBK 读取 UTF-8 输出；采用仓库 CI 的 ``PYTHONUTF8=1`` 后，
+包含全部失败项的相关 23 项复核通过。格式、关键静态错误、基础设施类型检查、包构建和 Twine 校验通过，
+文档构建无警告。上述为本地结果，远程结果须以最终提交对应的 CI 检查为准。
+
 .. rubric:: 共同接口
 
 .. list-table::
@@ -93,6 +171,10 @@ TabPFN 复用官方数据处理和推理；不支持训练权重的后端会明�
 ``get_embeddings(X)`` 始终请求传入行的 test-token 表示，默认沿集成成员轴求均值，
 得到 ``(样本数, 嵌入维度)``。使用 ``aggregate=None`` 返回
 ``(成员数, 样本数, 嵌入维度)``，单行输入仍保留样本轴。
+缺少 embedding 接口或后端明确抛出 ``NotImplementedError`` 时，训练与预测继续可用，
+仅调用 ``get_embeddings/transform`` 时提示不支持。可以捕获该异常单独略过表示输出；
+字段、维度、非有限数等真实错误仍会抛出，不生成空向量或用预测值冒充 embedding。
+后端返回 bfloat16 张量时转换为 float32 NumPy 数组。
 监督训练行的表示不是折外特征；将 embedding 用于下游模型时，应在每一折内训练网络并提取验证行表示。
 
 .. rubric:: 损失、优化器和常规参数

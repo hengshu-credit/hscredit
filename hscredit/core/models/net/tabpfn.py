@@ -129,8 +129,6 @@ class TabPFN(BaseNetModel):
             self._validate_y(labels)
         classifier, regressor = _load_tabpfn()
         backend = classifier if self.objective_ == "binary" else regressor
-        if not callable(getattr(backend, "get_embeddings", None)):
-            raise DependencyError("当前 tabpfn 不支持 get_embeddings，请安装 tabpfn>=2.0.9")
         options = {}
         if weight is not None:
             if "sample_weight" not in inspect.signature(backend.fit).parameters:
@@ -164,7 +162,10 @@ class TabPFN(BaseNetModel):
     def predict_proba(self, X):
         """返回两列概率，列顺序由 classes_ 标记。"""
         self._require_binary()
-        values = np.asarray(self._model.predict_proba(self._inference_data(X)), dtype=float)
+        X = self._inference_data(X)
+        values = np.asarray(self._model.predict_proba(X), dtype=float)
+        if values.shape != (len(X), 2):
+            raise ValidationError("TabPFN 二分类概率必须是与输入等长的两列数组")
         positive_probability(values, self.classes_, 1)
         return values
 
@@ -180,13 +181,30 @@ class TabPFN(BaseNetModel):
         return values
 
     def get_embeddings(self, X, aggregate="mean"):
-        """返回 (样本数, 嵌入维度)；aggregate=None 返回 (成员数, 样本数, 嵌入维度)。"""
+        """提取预训练网络的表示，缺少该能力时不影响 fit/predict。
+
+        :param X: 与训练字段一致的特征，提取传入行的 test-token 表示。
+        :param aggregate: mean 返回 (样本数, 嵌入维度)，None 保留成员轴。
+        :return: 有限二维或三维表示数组；不使用类别或概率伪造表示。
+        :raises NotImplementedError: 所选后端/权重没有实现 embedding，可单独跳过该输出。
+        """
         if aggregate not in ("mean", None):
             raise ValidationError("aggregate 必须为 mean 或 None")
         X = self._inference_data(X)
-        values = self._model.get_embeddings(X, data_source="test")
+        extractor = getattr(self._model, "get_embeddings", None)
+        if not callable(extractor):
+            raise NotImplementedError("当前 TabPFN 后端未提供 embedding 接口；分类或回归预测仍可使用")
+        try:
+            values = extractor(X, data_source="test")
+        except NotImplementedError as exc:
+            raise NotImplementedError("当前 TabPFN 后端或权重不支持 embedding；分类或回归预测仍可使用") from exc
         if hasattr(values, "detach"):
-            values = values.detach().cpu().numpy()
+            tensor = values.detach().cpu()
+            try:
+                values = tensor.numpy()
+            except TypeError:
+                # NumPy 不能直接表示 bfloat16；保留数值并转为 float32。
+                values = tensor.float().numpy()
         values = np.asarray(values)
         # TabPFN 2.0.x 对单行调用 squeeze，会压掉样本轴。
         if values.ndim == 1 and len(X) == 1:
