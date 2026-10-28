@@ -878,6 +878,8 @@ ruleset_report.save(
 
 #### 规则置入与置出
 
+旧策略通过为 IN-IN + IN-OUT，新策略通过为 IN-IN + OUT-IN。`sample_survival_rate` 为输入样本占全量申请的前置幸存比例，剔灰不改变审批分母；固定旧策略比较方案时传入 `original_pass`。绝对通过率为 0–100，相对变化为小数。详见[计算口径](docs/rule_swap_approval.md)。
+
 衡枢鉴真分老客版在本例按高值偏高风险使用，高值规则用于拒绝，低值规则用于白名单。置入风险按历史训练样本各分箱的真实坏样本率估计，不将高风险分当作高信用分。验证样本用于策略置换。生产基础拒绝、置出与置入按方法原生流程依次分析；`sample_survival_rate=0.70` 和 `out_in_uplift=2.0` 是本例的情景输入，后者上浮置入客群的预测风险。返回字典中的两张表均完整展示。
 
 ```python
@@ -914,9 +916,9 @@ with ExcelWriter() as writer:
 ```
 
 <details>
-<summary>swap_pipeline 完整结果（12 行 × 73 列，完整返回）</summary>
+<summary>swap_pipeline 完整结果（13 行 × 75 列，完整返回）</summary>
 
-![完整原生 Excel 结果](docs/assets/readme/strategy/swap-pipeline-excel.png)
+[查看已重新执行的规则置换 Notebook](examples/20_rule_swap_analysis.ipynb)
 
 [查看完整方法返回表](docs/assets/readme/strategy/swap-pipeline.html)
 
@@ -926,7 +928,7 @@ with ExcelWriter() as writer:
 <details>
 <summary>swap_result 完整结果（12 行 × 6 列，完整返回）</summary>
 
-![完整原生 Excel 结果](docs/assets/readme/strategy/swap-result-excel.png)
+[查看通过率口径与验证矩阵](docs/rule_swap_approval.md)
 
 [查看完整方法返回表](docs/assets/readme/strategy/swap-result.html)
 

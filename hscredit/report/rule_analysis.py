@@ -210,6 +210,7 @@ def _build_swap_stages(
     n_jobs,
     parallel_backend,
     parallel_config,
+    original_pass=None,
 ):
     """按基础拒绝、置出、置入顺序构建互斥阶段样本。"""
     all_mask = pd.Series(True, index=data.index)
@@ -218,13 +219,24 @@ def _build_swap_stages(
     out_out = _expand_swap_masks(base_masks, data.index)
     s1 = all_mask & ~out_out
 
-    out_masks = _evaluate_swap_rule_masks(rules_out, data.loc[s1], mode, n_jobs, parallel_backend, parallel_config)
+    if original_pass is not None and (original_pass & out_out).any():
+        raise ValueError("original_pass 的旧策略通过样本不能命中始终拒绝的 rules_base")
+
+    out_parent = s1 if original_pass is None else original_pass
+    out_masks = _evaluate_swap_rule_masks(
+        rules_out, data.loc[out_parent], mode, n_jobs, parallel_backend, parallel_config
+    )
     in_out = _expand_swap_masks(out_masks, data.index)
     s2 = s1 & ~in_out
 
-    in_masks = _evaluate_swap_rule_masks(rules_in, data.loc[s2], mode, n_jobs, parallel_backend, parallel_config)
+    in_parent = s2 if original_pass is None else s1 & ~original_pass
+    in_masks = _evaluate_swap_rule_masks(rules_in, data.loc[in_parent], mode, n_jobs, parallel_backend, parallel_config)
     out_in = _expand_swap_masks(in_masks, data.index)
     in_in = s2 & ~out_in
+    if original_pass is not None:
+        in_in = original_pass & ~in_out
+        s2 = in_in | out_in
+        out_out = ~(in_in | in_out | out_in)
 
     return _SwapStages(
         base_masks=base_masks,
@@ -249,6 +261,8 @@ def _merge_swap_target_pipelines(
         "指标名称",
         "规则详情",
         "行类型",
+        "决策样本数",
+        "决策样本占比",
         "样本总数",
         "样本占比",
         "阶段前样本数",
@@ -263,7 +277,9 @@ def _merge_swap_target_pipelines(
         "金额占比",
     ]
     if target_specific_totals:
-        shared_columns = ["规则分类", "指标名称", "规则详情", "行类型"]
+        shared_columns = [
+            column for column in shared_columns if column not in {"样本总数", "样本占比", "样本总额", "金额占比"}
+        ]
     first = next(iter(pipelines.values())).reset_index(drop=True)
     shared = [column for column in shared_columns if column in first.columns]
     pieces = [first[shared].copy()]
@@ -442,6 +458,7 @@ def _build_swap_pipeline(
     parallel_config=None,
     del_grey=False,
     overdue_operator: str = ">",
+    original_pass=None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """按显式阶段集合构建置入置出流水线。"""
     validate_overdue_operator(overdue_operator)
@@ -484,6 +501,7 @@ def _build_swap_pipeline(
                 parallel_config=parallel_config,
                 del_grey=del_grey,
                 overdue_operator=overdue_operator,
+                original_pass=original_pass,
             )
             pipelines[target_name] = pipeline
             result = result.copy()
@@ -495,11 +513,6 @@ def _build_swap_pipeline(
         ), pd.concat(results, ignore_index=True)
 
     target_name, actual_risk = next(iter(target_series.items()))
-    if del_grey:
-        valid = pd.to_numeric(actual_risk, errors="coerce").notna()
-        data = data.loc[valid].copy()
-        actual_risk = actual_risk.loc[valid]
-
     n_total = len(data)
     all_mask = pd.Series(True, index=data.index)
 
@@ -547,11 +560,12 @@ def _build_swap_pipeline(
         n_jobs,
         parallel_backend,
         parallel_config,
+        original_pass=original_pass,
     )
 
     actual_risk = pd.to_numeric(actual_risk, errors="coerce").reindex(data.index)
     observed_mask = ~stages.out_in
-    if actual_risk.loc[observed_mask].isna().any():
+    if not del_grey and actual_risk.loc[observed_mask].isna().any():
         raise ValueError(f"目标标签 '{target_name}' 的非OUT-IN样本缺少实际表现")
     observed_values = actual_risk.loc[observed_mask].dropna()
     if not observed_values.isin([0, 1]).all():
@@ -561,6 +575,9 @@ def _build_swap_pipeline(
 
     raw_risk = actual_risk.copy()
     raw_risk.loc[stages.out_in] = full_bad_probs.loc[stages.out_in]
+    # 审批决策保留全部申请；剔灰只改变风险指标分母，置入客群始终使用预测表现。
+    risk_valid = raw_risk.notna()
+    n_risk = int(risk_valid.sum())
     resolved_uplifts = _resolve_risk_uplifts(out_in_uplift, risk_uplifts)
     adjusted_risk = raw_risk.copy()
     atomic_masks = {
@@ -598,7 +615,7 @@ def _build_swap_pipeline(
             effective_amount.loc[stages.out_in] = effective_amount.loc[stages.out_in].fillna(amount_fill)
         raw_bad_amount = effective_amount * raw_risk
         adjusted_bad_amount = effective_amount * adjusted_risk
-        full_amount = float(effective_amount.sum())
+        full_amount = float(effective_amount.loc[risk_valid].sum())
 
     def production_rate(mask):
         if n_total == 0:
@@ -621,6 +638,8 @@ def _build_swap_pipeline(
         row_type,
         rule_detail="",
     ):
+        decision_count = int(row_mask.sum())
+        row_mask = row_mask & risk_valid
         n_samples = int(row_mask.sum())
         raw_bad = float(raw_risk.loc[row_mask].sum())
         adjusted_bad = float(adjusted_risk.loc[row_mask].sum())
@@ -629,7 +648,7 @@ def _build_swap_pipeline(
             rule_name,
             n_samples,
             adjusted_bad,
-            n_total_full=n_total,
+            n_total_full=n_risk,
             n_bad_full=float(adjusted_risk.sum()),
             full_bad_rate=full_bad_rate,
             rule_detail=rule_detail,
@@ -640,6 +659,8 @@ def _build_swap_pipeline(
         row.update(
             {
                 "行类型": row_type,
+                "决策样本数": decision_count,
+                "决策样本占比": decision_count / n_total if n_total else 0.0,
                 "目标标签": target_name,
                 "风险来源": _swap_risk_source(row_mask, stages.out_in, prediction_fallback_mask),
                 "原始好样本数": n_samples - raw_bad,
@@ -656,7 +677,7 @@ def _build_swap_pipeline(
                 "通过率(绝对值)": after_rate,
                 "通过率(相对值)": _swap_relative_change(before_rate, after_rate),
                 "通过率变化": delta,
-                "样本占比": n_samples / n_total if n_total else 0.0,
+                "样本占比": n_samples / n_risk if n_risk else 0.0,
             }
         )
         if effective_amount is not None:
@@ -677,7 +698,7 @@ def _build_swap_pipeline(
 
     append_row("全量样本", "", all_mask, all_mask, all_mask, "状态")
 
-    def append_rejection_stage(rule_class, rules, masks, parent, remaining):
+    def append_rejection_stage(rule_class, rules, masks, parent, remaining, extra_mask=None):
         rolling_before = parent.copy()
         for rule, local_mask in zip(rules, masks):
             mask = expanded_mask(local_mask)
@@ -697,26 +718,32 @@ def _build_swap_pipeline(
                 "规则明细",
                 rule.expr,
             )
+        if extra_mask is not None and extra_mask.any():
+            before = rolling_before if rule_analysis_mode == "sequential" else parent
+            append_row(rule_class, "其他保留拒绝", extra_mask, before, before & ~extra_mask, "规则明细")
         hit = parent & ~remaining
         append_row(rule_class, "合计", hit, parent, remaining, "阶段合计")
 
-    if rules_base:
-        append_rejection_stage("OUT-OUT拒绝", rules_base, stages.base_masks, all_mask, stages.s1)
-        append_row("剩余样本", "", stages.s1, stages.s1, stages.s1, "状态")
+    if rules_base or stages.out_out.any():
+        other_rejected = stages.out_out & ~_expand_swap_masks(stages.base_masks, data.index)
+        append_rejection_stage(
+            "OUT-OUT拒绝", rules_base, stages.base_masks, all_mask, ~stages.out_out, extra_mask=other_rejected
+        )
+        remaining = ~stages.out_out
+        append_row("剩余样本", "", remaining, remaining, remaining, "状态")
+
+    old_pass = stages.in_in | stages.in_out
+    append_row("原策略通过", "", old_pass, old_pass, old_pass, "状态")
 
     if rules_out:
-        append_rejection_stage("IN-OUT置出", rules_out, stages.out_masks, stages.s1, stages.s2)
+        append_rejection_stage("IN-OUT置出", rules_out, stages.out_masks, old_pass, stages.in_in)
 
     if rules_out or rules_in:
-        append_row("total通过样本", "", stages.s2, stages.s2, stages.s2, "状态")
-
-    if rules_out or rules_in:
-        in_in_before = stages.s2 if rules_in else stages.in_in
         append_row(
             "IN-IN通过",
             "",
             stages.in_in,
-            in_in_before,
+            stages.in_in,
             stages.in_in,
             "状态",
         )
@@ -749,7 +776,10 @@ def _build_swap_pipeline(
             stages.s2,
             "阶段合计",
         )
-        append_row("ALL-IN置换", "", stages.s2, stages.s2, stages.s2, "状态")
+
+    if rules_out or rules_in:
+        append_row("total通过样本", "", stages.s2, stages.s2, stages.s2, "状态")
+    append_row("ALL-IN置换", "", stages.s2, old_pass, stages.s2, "策略合计")
 
     pipeline_df = pd.DataFrame(rows)
     empty_population = pipeline_df["样本总数"].eq(0)
@@ -777,7 +807,7 @@ def _build_swap_pipeline(
         "无有效人群": "坏率及风险相对变化不适用，返回空值",
     }
 
-    before_mask = stages.in_in if rules_in else stages.s2
+    before_mask = old_pass
     after_mask = stages.s2
     pass_rate_before = production_rate(before_mask)
     pass_rate_after = production_rate(after_mask)
@@ -829,6 +859,8 @@ def _build_swap_pipeline(
         "指标名称",
         "规则详情",
         "行类型",
+        "决策样本数",
+        "决策样本占比",
         "目标标签",
         "风险来源",
         "样本总数",
@@ -1304,6 +1336,7 @@ def rule_swap_analysis(
     del_grey: Optional[bool] = None,
     *,
     overdue_operator: Optional[str] = None,
+    original_pass: Optional[Union[str, pd.Series, np.ndarray, List[bool]]] = None,
 ) -> Dict[str, pd.DataFrame]:
     """规则置入置出（Swap）分析。
 
@@ -1312,19 +1345,26 @@ def rule_swap_analysis(
 
     **阶段与四象限定义**
 
-    ``rules_base`` 先从输入样本剔除 OUT-OUT； ``rules_out`` 再在剩余样本中剔除
-    IN-OUT，得到 ``total通过样本`` ； ``rules_in`` 仅在 total通过样本中拆分
-    IN-IN（不置入）和 OUT-IN（本次置入），置入后的 ALL-IN 等于二者之和。
+    旧策略通过为 IN-IN + IN-OUT，新策略通过为 IN-IN + OUT-IN。
+    指定 ``original_pass`` 时固定旧策略决策：置出规则只作用于旧通过客群，
+    置入规则只作用于旧拒绝且未命中基础拒绝规则的客群。
+    未指定时兼容原有分组方式：先基础拒绝，再置出，再将剩余样本拆成 IN-IN 和 OUT-IN；
+    此模式的旧决策是由规则反推的模拟基准，不适用于固定旧策略下比较多个置入方案。
+    全量生产通过率 = 样本集幸存比例 × 通过人数 / 输入样本数；剔灰不改变审批分母。
+    ``通过率(绝对值)`` 为阶段后生产通过率（0 到 100），``通过率变化`` 为百分点差；
+    ``通过率(相对值)`` 为阶段前后差值 / 阶段前通过率（小数）。
+    独立规则明细各自相对同一个父客群；串行明细承接上一条规则，合计按去重并集计算。
+    ALL-IN 行及 ``swap_result`` 均比较完整旧策略与新策略。
 
     ::
 
         ==========  ==========  ====================================
         象限        含义        风险说明
         ==========  ==========  ====================================
-        in_in      total通过 & 未置入     不置入时通过客群，使用实际表现
+        in_in      旧通过且新通过         保留客群，使用实际表现
         in_out     本次置出规则命中       置出客群，使用实际表现
         out_in     本次置入规则命中       置入客群，使用评分预测风险
-        out_out    生产基础规则命中       基础拒绝客群，使用实际表现
+        out_out    旧拒绝且新拒绝         保留拒绝客群，使用实际表现
         ==========  ==========  ====================================
 
 
@@ -1386,7 +1426,9 @@ def rule_swap_analysis(
     :type risk_uplifts: Optional[Dict[str, float]]
     :param amount: 默认值为 ``None`` 。金额字段（可选），传入后同时输出金额口径报告
     :type amount: Optional[str]
-    :param sample_survival_rate: 默认值为 ``1.0`` 。分析样本进入生产时的通过比例，取值 (0, 1]，用于校准生产通过率漏斗
+    :param sample_survival_rate: 默认值为 ``1.0`` 。输入样本占全量申请的前置幸存比例，取值 (0, 1]。
+        全量申请样本传 1；前置筛选样本传前置通过比例。仅旧策略通过样本时，
+        可传旧策略通过率并用 ``original_pass`` 全 True 验证置出；缺少拒绝样本不能估计置入量。
     :type sample_survival_rate: float
     :param reverse_order: 默认值为 ``False`` 。是否逆序展示；仅改变流水线行顺序，不影响置换结论
     :type reverse_order: bool
@@ -1418,9 +1460,16 @@ def rule_swap_analysis(
     :type rule_analysis_mode: str
     :return: 包含两张表的字典
 
-        - ``swap_pipeline`` ：分阶段通过率及实际/预测风险变化，支持订单/金额双口径；多目标使用多层列
+        - ``swap_pipeline`` ：分阶段通过率及实际/预测风险变化，支持订单/金额双口径；多目标使用多层列。
+          ``决策样本数`` 保留完整审批客群，``样本总数`` 为该标签的有效风险样本（含预测置入）。
 
-        - ``swap_result`` ：IN-IN 与 ALL-IN 的置换前后对比；多目标按 ``目标标签`` 输出长表
+        - ``swap_result`` ：旧通过（IN-IN + IN-OUT）与新通过（IN-IN + OUT-IN）的对比；
+          多目标按 ``目标标签`` 输出长表。
+
+    :param original_pass: 可选旧策略通过标记，支持列名、一维布尔或 0/1 Series/ndarray/list。
+        Series 按索引对齐；重复索引须与 data 完全一致，数组按行位置对应。不得缺失。
+        旧通过客群不得命中始终拒绝的 rules_base。缺省按兼容分组规则反推旧决策。
+    :type original_pass: Optional[Union[str, pd.Series, np.ndarray, List[bool]]]
 
     **参考样例**
 
@@ -1466,6 +1515,21 @@ def rule_swap_analysis(
         raise TypeError("data 必须为 pandas DataFrame")
     if data.empty:
         raise ValueError("data 不能为空")
+    if original_pass is not None:
+        if isinstance(original_pass, str):
+            if original_pass not in data:
+                raise ValueError(f"original_pass 字段不存在：{original_pass}")
+            original_pass = data[original_pass]
+        if isinstance(original_pass, pd.Series) and not original_pass.index.equals(data.index):
+            if not original_pass.index.is_unique or not data.index.is_unique:
+                raise ValueError("original_pass 的重复索引必须与 data 完全一致")
+            original_pass = original_pass.reindex(data.index)
+        decision_values = np.asarray(original_pass)
+        if decision_values.ndim != 1 or len(decision_values) != len(data):
+            raise ValueError("original_pass 必须是一维且与 data 等长")
+        if not pd.Series(decision_values).isin([True, False, 0, 1]).all():
+            raise ValueError("original_pass 必须为无缺失的布尔值或 0/1")
+        original_pass = pd.Series(decision_values.astype(bool), index=data.index)
     # 在原始作用数据上只求值一次；自动参考集复用绑定列，不能重置索引后重算外部标签。
     effective_operator = (
         (bin_params or {}).get("overdue_operator", ">") if overdue_operator is None else overdue_operator
@@ -1476,6 +1540,8 @@ def rule_swap_analysis(
     )
     if not data.index.is_unique:
         data = data.reset_index(drop=True)
+        if original_pass is not None:
+            original_pass = original_pass.reset_index(drop=True)
     try:
         sample_survival_rate = float(sample_survival_rate)
     except (TypeError, ValueError) as exc:
@@ -1598,6 +1664,7 @@ def rule_swap_analysis(
         parallel_config=parallel_config,
         del_grey=del_grey,
         overdue_operator=overdue_operator,
+        original_pass=original_pass,
     )
 
     # ── 返回结果 ────────────────────────────────────────────────────────────
@@ -1754,7 +1821,7 @@ def _validate_rules(
 
     1. 将三个规则集统一规范化为 List[Rule]
 
-    2. 要求至少有一个规则集非空
+    2. 空规则集表示不调整策略
 
     3. 从所有规则中提取所需特征列
 
@@ -1765,7 +1832,6 @@ def _validate_rules(
     :param rules_out: 置出规则集（可选）
     :param rules_base: 基准拒绝规则集（可选）
     :return: (rules_in, rules_out, rules_base) 均为 List[Rule]
-    :raises ValueError: 三个规则集均为空时
     :raises FeatureNotFoundError: data 缺少规则所需列时
     """
     from hscredit.core.rules import get_columns_from_query
@@ -1778,8 +1844,6 @@ def _validate_rules(
 
     # 收集所有规则所需特征列
     all_rules = rules_in + rules_out + rules_base
-    if not all_rules:
-        raise ValueError("rules_in、rules_out、rules_base 至少需要提供一个非空规则集")
     if all_rules:
         required_cols: set = set()
         for rule in all_rules:
