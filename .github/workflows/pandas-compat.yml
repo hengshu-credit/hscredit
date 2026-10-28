@@ -62,7 +62,8 @@ jobs:
           - python: "3.11"
             pandas: "3.1.0"
             numpy: "2.4.6"
-            matplotlib: "3.10.1"
+            # pandas 3.1 的 Styler 要求 matplotlib >= 3.10.5。
+            matplotlib: "3.10.5"
     env:
       MPLBACKEND: Agg
       PYTHONUTF8: "1"
