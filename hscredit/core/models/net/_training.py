@@ -63,7 +63,7 @@ def make_loss(model, device):
     return loss.to(device)
 
 
-def make_optimizer(model):
+def make_optimizer(model, parameters=None):
     """每次 fit 为当前网络新建优化器，拒绝已绑定其他网络的优化器实例。"""
     import torch
 
@@ -79,7 +79,12 @@ def make_optimizer(model):
     if issubclass(optimizer, torch.optim.LBFGS):
         raise ValidationError("当前小批次训练循环不支持需要闭包的 LBFGS 优化器")
     try:
-        return optimizer(model._model.parameters(), lr=model.learning_rate, weight_decay=model.weight_decay, **params)
+        return optimizer(
+            model._model.parameters() if parameters is None else parameters,
+            lr=model.learning_rate,
+            weight_decay=model.weight_decay,
+            **params,
+        )
     except (TypeError, ValueError) as exc:
         raise ValidationError(f"优化器参数无效: {exc}") from exc
 

@@ -11,6 +11,7 @@
    classical_models
    boosting
    net
+   training_lifecycle
    model_rules
    scorecard
    calibration

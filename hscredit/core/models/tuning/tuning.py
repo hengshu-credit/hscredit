@@ -3192,6 +3192,22 @@ class ModelTuner(ArtifactSerializableMixin):
             params = model.get_params(deep=False)
         runtime = self._fold_fit_params(None)
         runtime.update(fit_params)
+        prefix, terminal = "", model
+        while getattr(terminal, "steps", None):
+            step_name, terminal = terminal.steps[-1]
+            prefix += step_name + "__"
+        use_pfn_finetune = runtime.get(prefix + "finetune")
+        if use_pfn_finetune is None:
+            use_pfn_finetune = getattr(estimator, "finetune", False)
+        if full_data and type(estimator).__name__ == "TabPFN" and use_pfn_finetune:
+            config = {
+                **(getattr(estimator, "finetune_params", None) or {}),
+                **(runtime.get(prefix + "finetune_params") or {}),
+            }
+            for key in ("validation_split_ratio", "early_stopping", "early_stopping_patience"):
+                config.pop(key, None)
+            config.update(validation_fraction=0, early_stopping_rounds=None)
+            runtime[prefix + "finetune_params"] = config
         self._route_sample_weight(model, runtime, self._sample_weight)
         if full_data and boosting:
             runtime.pop("early_stopping_rounds", None)

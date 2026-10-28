@@ -7,6 +7,11 @@ from numbers import Integral
 def net_search_space(model_class, params):
     name = getattr(model_class, "_network_kind", model_class.__name__)
     if name == "TabPFN":
+        if params.get("finetune"):
+            return {
+                "finetune_params__learning_rate": {"type": "float", "low": 1e-6, "high": 3e-5, "log": True},
+                "finetune_params__weight_decay": {"type": "float", "low": 1e-4, "high": 0.1, "log": True},
+            }
         return {
             "n_estimators": {"type": "categorical", "choices": [2, 4, 8]},
             "softmax_temperature": {"type": "float", "low": 0.5, "high": 1.5},

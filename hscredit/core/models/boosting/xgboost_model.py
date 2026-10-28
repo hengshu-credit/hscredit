@@ -362,6 +362,8 @@ class XGBoost(BaseRiskModel):
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
+        init_model=None,
+        continue_training: bool = False,
         **fit_params,
     ) -> "XGBoost":
         """训练XGBoost模型.
@@ -382,6 +384,9 @@ class XGBoost(BaseRiskModel):
             同 ModelReport.datasets 的容器规则，含标签的 DataFrame 通过 target 提取标签。
 
         :type eval_set: Optional[List[Tuple]]
+        :param init_model: 已训练的同类 HSCredit/原生模型或后端支持的模型文件。
+        :param continue_training: True 基于当前已拟合模型追加训练；默认 False 重新训练。
+            n_estimators/iterations 表示本次追加轮数；不能与 init_model 同时使用。
         :param fit_params: 其他fit参数
         :return: self
 
@@ -392,6 +397,10 @@ class XGBoost(BaseRiskModel):
         >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
         >>> final_values = model.get_eval_results()
         """
+        from ._continuation import prepare_continuation
+
+        X, y, continuation = prepare_continuation(self, X, y, init_model, continue_training, fit_params, "xgb_model")
+
         eval_metric = fit_params.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
         objective = self._native_params.get("objective", self.kwargs.get("objective", self.objective))
         from ..losses._sample_params import bound_sample_params, slice_sample_loss, has_bound_sample_params
@@ -580,6 +589,11 @@ class XGBoost(BaseRiskModel):
         # 旧版在 fit 接收早停和回调，新版在构造器接收。
         from packaging.version import Version
 
+        if continuation is not None:
+            from ._continuation import reset_xgboost_early_stopping
+
+            params["callbacks"] = [reset_xgboost_early_stopping(), *list(params.get("callbacks", []) or [])]
+
         if Version(xgb.__version__) < Version("1.6"):
             for name in ("callbacks", "early_stopping_rounds", "eval_metric"):
                 if name in params and name in inspect.signature(xgb.XGBClassifier.fit).parameters:
@@ -613,6 +627,8 @@ class XGBoost(BaseRiskModel):
         fit_kwargs.setdefault("verbose", self.verbose)
 
         # 执行训练
+        if continuation is not None:
+            fit_kwargs["xgb_model"] = continuation
         self._model.fit(X_train, y_train, **fit_kwargs)
 
         # 保存结果

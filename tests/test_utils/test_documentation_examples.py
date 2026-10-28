@@ -31,6 +31,7 @@ def test_model_notebooks_are_self_contained_and_valid():
         "single_validation_workflow",
         "net_models",
         "net_training_tuning",
+        "pretraining_and_continuation",
     ):
         notebook = nbformat.read(PROJECT_ROOT / "examples" / f"{name}.ipynb", as_version=4)
         nbformat.validate(notebook)

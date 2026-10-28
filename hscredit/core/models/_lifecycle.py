@@ -22,6 +22,8 @@ def restore_model_defaults(model):
         "loss_params",
         "optimizer",
         "optimizer_params",
+        "finetune",
+        "finetune_params",
     }
     defaults = {"history_policy": "summary", "max_history": 20}
     for name, parameter in inspect.signature(type(model).__init__).parameters.items():
@@ -88,10 +90,10 @@ def atomic_save_pickle(value, path, **kwargs):
     return str(target)
 
 
-def record_training(method=None, *, transactional=False):
+def record_training(method=None, *, transactional=False, fitted=True):
     """保留每次训练配置、划分、曲线和异常；不复制原始训练数据。"""
     if method is None:
-        return lambda wrapped: record_training(wrapped, transactional=transactional)
+        return lambda wrapped: record_training(wrapped, transactional=transactional, fitted=fitted)
 
     @wraps(method)
     def fit(self, *args, **kwargs):
@@ -118,6 +120,7 @@ def record_training(method=None, *, transactional=False):
         self.training_summary_ = record
         self.fit_revision_ = getattr(self, "fit_revision_", 0) + 1
         record["训练修订"] = self.fit_revision_
+        self._fit_was_fitted_ = bool(getattr(self, "_is_fitted", False))
         self._is_fitted = False
         self._feature_importances = None
         self._best_iteration = None
@@ -139,7 +142,7 @@ def record_training(method=None, *, transactional=False):
             record["训练参数"] = {name: _fit_parameter_snapshot(value, policy=policy) for name, value in kwargs.items()}
             result = method(self, *args, **kwargs)
             record["状态"] = "完成"
-            self._is_fitted = True
+            self._is_fitted = fitted
             return result
         except BaseException as exc:
             self._is_fitted = False
@@ -156,6 +159,7 @@ def record_training(method=None, *, transactional=False):
             )
             raise
         finally:
+            self.__dict__.pop("_fit_was_fitted_", None)
             record["耗时秒"] = perf_counter() - start
             # 曲线是已计算的数值诊断，与可能很大的原始训练参数分别保留。
             restored = previous is not None and record["状态"] != "完成"

@@ -283,6 +283,8 @@ class CatBoost(BaseRiskModel):
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
         cat_features: Optional[List[int]] = None,
+        init_model=None,
+        continue_training: bool = False,
         **fit_params,
     ) -> "CatBoost":
         """训练CatBoost模型.
@@ -305,6 +307,9 @@ class CatBoost(BaseRiskModel):
         :type eval_set: Optional[List[Tuple]]
         :param cat_features: 默认值为 ``None`` 。类别特征索引列表
         :type cat_features: Optional[List[int]]
+        :param init_model: 已训练的同类 HSCredit/原生模型或后端支持的模型文件。
+        :param continue_training: True 基于当前已拟合模型追加训练；默认 False 重新训练。
+            n_estimators/iterations 表示本次追加轮数；不能与 init_model 同时使用。
         :param fit_params: 其他fit参数
         :return: self
 
@@ -315,6 +320,12 @@ class CatBoost(BaseRiskModel):
         >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
         >>> final_values = model.get_eval_results()
         """
+        from ._continuation import prepare_continuation
+
+        X, y, continuation = prepare_continuation(self, X, y, init_model, continue_training, fit_params, "init_model")
+        if continuation is not None and cat_features is None and hasattr(continuation, "get_cat_feature_indices"):
+            cat_features = continuation.get_cat_feature_indices()
+
         eval_metric = fit_params.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
         self._validate_custom_loss_options()
         # 准备数据（支持从X中提取target）
@@ -412,6 +423,8 @@ class CatBoost(BaseRiskModel):
 
         # 最后更新原生params（优先级最高）
         params.update({key: value for key, value in self._native_params.items() if key != "eval_metric"})
+        if continuation is not None and str(params.get("task_type", "CPU")).upper() != "CPU":
+            raise ValueError("CatBoost 原生 init_model 续训仅支持 CPU，请设置 task_type='CPU'")
         aliases = self._parameter_aliases
         for canonical, names in aliases.items():
             for name in names:
@@ -477,6 +490,8 @@ class CatBoost(BaseRiskModel):
             fit_kwargs["cat_features"] = cat_features
 
         # 训练
+        if continuation is not None:
+            fit_kwargs["init_model"] = continuation
         self._model.fit(X_train, y_train, **fit_kwargs)
 
         # 保存结果

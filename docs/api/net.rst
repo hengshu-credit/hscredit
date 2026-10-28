@@ -12,7 +12,8 @@
 
 ``net`` 统一安装 PyTorch、``rtdl-revisiting-models``、``tabm``、官方 TabPFN 及既有 TabNet 依赖，
 覆盖四种模型；``all`` 通过包含 ``net`` 安装这些依赖。调参额外安装 ``hscredit[net,tune]``。
-TabPFN 至少需要 2.0.9；pip 根据 Python 版本选择兼容版本，较新的 TabPFN 要求 Python 3.10+。
+TabPFN 普通推理兼容 2.0.9；微调和 X-only 预训练需要 Python 3.10+、TabPFN 9.2+。
+``net`` 在 Python 3.10+ 安装该新版后端，Python 3.9 保留普通推理能力。
 首次使用 TabPFN 时，官方库可能下载预训练权重，也可通过 ``model_path`` 指定本地文件。
 默认权重由安装的 TabPFN 版本决定，使用范围及许可请查阅对应官方权重说明。
 
@@ -21,7 +22,8 @@ TabPFN 至少需要 2.0.9；pip 根据 Python 版本选择兼容版本，较新�
 
 本节按当前正式导出的四个模型核对，分类沿用信贷的 0/1 二分类。
 “官方预训练权重”指发布方已经训练好的权重；``save/load`` 是完整已拟合模型的保存与复用，
-不表示再次调用 ``fit`` 会继续训练。官方架构可以用于自行设计迁移学习，当前封装未提供这类微调入口。
+不表示再次调用 ``fit`` 会继续训练。现已提供 ``pretrain``、``from_pretrained`` 及 TabPFN 的
+``finetune`` 开关，完整说明见 :doc:`training_lifecycle`。
 
 .. list-table::
    :header-rows: 1
@@ -53,11 +55,12 @@ TabPFN 至少需要 2.0.9；pip 根据 Python 版本选择兼容版本，较新�
      - 支持
      - 使用后端真实表示；后端明确不支持时可单独跳过
 
-ResNet、FTTransformer、TabM 的 ``fit`` 每次新建网络和预处理状态；加载自己保存的模型后可直接
-调用 ``predict``、``predict_proba``（仅二分类）和 ``get_embeddings``，重新 ``fit`` 会重新训练。
+ResNet、FTTransformer、TabM 没有预训练来源时，``fit`` 新建网络和预处理状态；
+已有 ``pretrain`` 快照时默认复制快照进行监督训练。加载已监督拟合模型后可直接
+调用 ``predict``、``predict_proba``（仅二分类）和 ``get_embeddings``。
 这里的 ResNet 是表格架构，不加载图像 ResNet 的 ImageNet 权重。
 
-TabPFN 的 ``fit`` 在预训练基础网络上建立训练上下文，当前封装不执行梯度微调。
+TabPFN 默认 ``fit`` 建立训练上下文；``finetune=True`` 调用官方梯度微调器更新预训练权重。
 可显式传入本地权重，分类和回归应选择官方对应的权重；较新多任务权重是否能共用由官方后端决定。
 
 .. code-block:: python
@@ -83,7 +86,7 @@ TabPFN 的 ``fit`` 在预训练基础网络上建立训练上下文，当前封�
 `TabPFN 权重与模型保存说明 <https://github.com/PriorLabs/TabPFN#-faq>`_、
 `TabNet 半监督预训练 <https://github.com/dreamquark-ai/tabnet#semi-supervised-pre-training>`_。
 
-本次复核使用仓库验收解释器 ``.audit_tmp/defect-repairs/runtime/Scripts/python.exe``
+初始能力核对使用仓库验收解释器 ``.audit_tmp/defect-repairs/runtime/Scripts/python.exe``
 （Python 3.11.5、PyTorch 2.5.1+cu124、TabPFN 2.0.9、TabM 0.0.3、rtdl 0.0.2）。
 2026-10-29 的 net 专项与 Notebook 结构检查共 88 项通过；真实数据 970 行按 776/194 划分，
 四种模型分别完成二分类与回归、可用表示提取和八个制品恢复，实际均能输出 embedding。
@@ -92,7 +95,8 @@ TabPFN 使用明确指定的本地 v2 分类/回归预训练权重，未把其�
 全库首次执行为 7,058 通过、9 个未配置数据库服务的跳过，以及 6 个 Windows 子进程输出解码失败。
 这 6 个失败已复现为 GBK 读取 UTF-8 输出；采用仓库 CI 的 ``PYTHONUTF8=1`` 后，
 包含全部失败项的相关 23 项复核通过。格式、关键静态错误、基础设施类型检查、包构建和 Twine 校验通过，
-文档构建无警告。上述为本地结果，远程结果须以最终提交对应的 CI 检查为准。
+文档构建无警告。上述为初始能力核对的本地结果；随后新增的预训练、微调和续训接口验收
+见 :doc:`training_lifecycle`，远程结果须以最终提交对应的 CI 检查为准。
 
 .. rubric:: 共同接口
 
@@ -285,8 +289,9 @@ FTTransformer 默认候选宽度按配置的 n_heads 对齐。TabM 官方建议�
 关闭内部早停并使用完整训练输入；不把外部验证或测试集并入训练。
 回归的折外/验证预测表使用中文列名“预测值”，不输出分类 LIFT。
 
-TabPFN 当前封装为预训练上下文推理；其调参搜索 ``n_estimators``、``softmax_temperature`` 等原生参数。
-不接收 loss、optimizer、max_epochs 等梯度训练参数；这里没有实现 TabPFN 微调训练器。
+TabPFN 默认搜索 ``n_estimators``、``softmax_temperature`` 等推理参数；启用 ``finetune`` 后，
+默认空间改为微调学习率与权重衰减。官方微调配置放在 ``finetune_params``，
+不接收普通网络的任意 ``loss`` 或优化器实例。详见 :doc:`training_lifecycle`。
 
 完整可运行演示见 :download:`net_models.ipynb <../../examples/net_models.ipynb>`，
 使用项目真实数据中的三项约定特征、商品类别、FPD 和放款金额。

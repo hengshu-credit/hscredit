@@ -64,7 +64,7 @@ class TorchTabularModel(BaseNetModel):
             raise ValidationError("early_stopping_rounds 必须为正整数或 None")
 
     @record_training
-    def fit(self, X, y=None, sample_weight=None, eval_set=None, *, eval_metric=None):
+    def fit(self, X, y=None, sample_weight=None, eval_set=None, *, eval_metric=None, from_pretrained=None):
         """训练网络；eval_set 第一项用于早停，其余只评估。
 
         无显式 eval_set 且开启早停时，按 validation_fraction 留出验证行。
@@ -76,11 +76,22 @@ class TorchTabularModel(BaseNetModel):
         :param sample_weight: 与样本等长的非负有限训练权重，总和必须大于 0。
         :param eval_set: 单个 (X, y)、列表、具名字典或含 target 的 DataFrame。
         :param eval_metric: 覆盖构造器的最终评估指标；不改变按损失早停的规则。
+        :param from_pretrained: None 自动使用本实例的预训练快照；False 从头训练；
+            True 要求本实例已 pretrain；也可传入已 pretrain 的同类模型。冻结其预处理，复制权重后监督训练。
         :return: 已拟合模型。
 
         >>> model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)})
         >>> values = model.get_eval_results()
         """
+        import copy
+        from ._pretraining import resolve_pretrained
+        from .._contracts import extract_target
+
+        pretrained = resolve_pretrained(self, from_pretrained)
+        self._pretrain_only_ = False
+        if pretrained is not None:
+            X, y = extract_target(X, y, self.target)
+            X = pretrained.schema.align(X)
         self._validate_task()
         self._validate_options()
         X, y, weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
@@ -112,7 +123,11 @@ class TorchTabularModel(BaseNetModel):
             raise ValidationError("ResNet 至少需要两个正权重训练样本")
         train_weight = np.ones(len(indices)) if weight is None else weight[indices]
         train_weight = train_weight / train_weight.mean()
-        self.preprocessor_ = TabularPreprocessor().fit(train_X, self.categorical_features)
+        self.preprocessor_ = (
+            copy.deepcopy(pretrained.preprocessor)
+            if pretrained is not None
+            else TabularPreprocessor().fit(train_X, self.categorical_features)
+        )
         numeric, categorical = self.preprocessor_.transform(train_X)
         self.target_mean_ = float(np.average(train_y, weights=train_weight)) if self.objective_ == "regression" else 0.0
         self.target_scale_ = (
@@ -121,6 +136,81 @@ class TorchTabularModel(BaseNetModel):
             else 1.0
         ) or 1.0
         target = (train_y - self.target_mean_) / self.target_scale_
+        try:
+            import torch
+        except ImportError as exc:
+            raise DependencyError('请安装 pip install "hscredit[net]"') from exc
+        # 局部种子不会覆盖调用方的 CPU/CUDA 随机数状态。
+        devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
+        with torch.random.fork_rng(devices=devices):
+            seed = self.random_state if self.random_state is not None else int(np.random.default_rng().integers(2**32))
+            torch.manual_seed(seed)
+            self._initialize_network()
+            if pretrained is not None:
+                required = {k: v for k, v in self.native_params_.items() if k != "dropout"}
+                original = {k: v for k, v in pretrained.params.items() if k != "dropout"}
+                if required != original:
+                    raise ValidationError("网络结构与预训练快照不一致，请沿用预训练的结构参数")
+                self._model.load_state_dict(pretrained.weights)
+            tensors = tuple(
+                torch.as_tensor(value)
+                for value in (numeric, categorical, target.astype(np.float32), train_weight.astype(np.float32))
+            )
+            self._train(tensors, sets or [])
+        self._model.eval()
+        self._is_fitted = True
+        if self.objective_ == "binary":
+            self._fit_probability_scorecard(X, y, sample_weight=weight)
+        self._record_net_evaluation(sets, metrics=self.eval_metric if eval_metric is None else eval_metric)
+        return self
+
+    @record_training(fitted=False)
+    def pretrain(
+        self,
+        X,
+        eval_set=None,
+        sample_weight=None,
+        *,
+        pretraining_ratio=0.5,
+        max_epochs=None,
+        batch_size=None,
+        early_stopping_rounds=None,
+        validation_fraction=None,
+    ):
+        """只用 X 做掩码重建预训练，返回可提取 embedding 的当前模型。
+
+        :param X: 无标签特征；若包含配置的 target 列，仅移除该列，完全不读取标签。
+        :param eval_set: 无标签验证矩阵、列表或具名字典；不接受 (X, y)。
+        :param sample_weight: 有限非负的样本权重。
+        :param pretraining_ratio: (0, 1] 内随机遮盖比例，仅对真实观测单元格计算重建损失。
+        :param max_epochs: 本次预训练轮数，None 沿用构造器配置。
+        :param batch_size: 本次预训练批量，None 沿用构造器配置。
+        :param early_stopping_rounds: 早停轮数，None 沿用构造器；以验证重建损失选优。
+        :param validation_fraction: 内部验证比例，None 沿用构造器；0 禁用自动划分。
+        :return: self。pretrain 后只可提取表示；fit 后才可进行业务预测。
+
+        >>> model.pretrain(X_unlabeled, max_epochs=20)
+        >>> representation = model.get_embeddings(X_test)
+        >>> model.fit(X_train, y_train)  # 自动复制预训练权重并监督训练
+        """
+        from ._pretraining import pretrain_torch
+
+        return pretrain_torch(
+            self,
+            X,
+            eval_set,
+            sample_weight,
+            pretraining_ratio,
+            dict(
+                max_epochs=max_epochs,
+                batch_size=batch_size,
+                early_stopping_rounds=early_stopping_rounds,
+                validation_fraction=validation_fraction,
+            ),
+        )
+
+    def _initialize_network(self):
+        """按已拟合预处理器构建网络，不在这里改动随机种子。"""
         try:
             import torch
 
@@ -146,7 +236,7 @@ class TorchTabularModel(BaseNetModel):
         self.n_members_ = self.k if self._network_kind == "TabM" else 1
         self.native_params_ = {
             "kind": self._network_kind,
-            "n_numeric": numeric.shape[1],
+            "n_numeric": len(self.preprocessor_.num_indices_),
             "cardinalities": self.preprocessor_.cardinalities_,
             "d_block": self.d_block,
             "n_blocks": self.n_blocks,
@@ -163,23 +253,7 @@ class TorchTabularModel(BaseNetModel):
                 num_embeddings=self.num_embeddings,
                 num_embedding_params=self.num_embedding_params,
             )
-        # 局部种子不会覆盖调用方的 CPU/CUDA 随机数状态。
-        devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
-        with torch.random.fork_rng(devices=devices):
-            seed = self.random_state if self.random_state is not None else int(np.random.default_rng().integers(2**32))
-            torch.manual_seed(seed)
-            self._model = Network(**self.native_params_).to(self.device_)
-            tensors = tuple(
-                torch.as_tensor(value)
-                for value in (numeric, categorical, target.astype(np.float32), train_weight.astype(np.float32))
-            )
-            self._train(tensors, sets or [])
-        self._model.eval()
-        self._is_fitted = True
-        if self.objective_ == "binary":
-            self._fit_probability_scorecard(X, y, sample_weight=weight)
-        self._record_net_evaluation(sets, metrics=self.eval_metric if eval_metric is None else eval_metric)
-        return self
+        self._model = Network(**self.native_params_).to(self.device_)
 
     def _train(self, tensors, eval_set):
         import torch
@@ -275,7 +349,7 @@ class TorchTabularModel(BaseNetModel):
         return values
 
     def _inference(self, X, *, embeddings=False):
-        self._require_fitted()
+        self._require_representation_fitted() if embeddings else self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)
         return self._infer_arrays(*self.preprocessor_.transform(X), embeddings=embeddings)
 
