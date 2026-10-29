@@ -30,17 +30,17 @@ def test_configuration_retains_long_deep_and_object_parameters_without_training_
     assert rows["层.层.层.层.层.learning_rate"] == 1e-8
     assert rows["列表[39]"] == rows["数组[39]"] == 39
     assert rows["字典.299"] == 299
-    assert rows["规则.配置.expr"] == "余额 > 100"
-    assert rows["规则.配置.weight"] == 0.25
-    assert rows["规则.配置.description"] == '""'
-    assert rows["模型.配置.n_estimators"] == 7
-    assert rows["模型.配置.max_depth"] == 3
+    assert rows["规则.expr"] == "余额 > 100"
+    assert rows["规则.weight"] == 0.25
+    assert rows["规则.description"] == '""'
+    assert rows["模型.n_estimators"] == 7
+    assert rows["模型.max_depth"] == 3
     assert rows["空参数"] == "None"
-    assert rows["循环"] == "循环引用"
+    assert rows["循环"] == "<recursive>"
     assert "不得导出的训练权重" not in str(snapshot)
     assert "已截断" not in str(snapshot) and "未保留逐项明细" not in str(snapshot)
     nested.set_params(n_estimators=10)
-    assert snapshot["模型"]["配置"]["n_estimators"] == 7
+    assert snapshot["模型"]["n_estimators"] == 7
 
 
 @pytest.mark.parametrize("fit_supplied", [False, True])
@@ -61,14 +61,17 @@ def test_calibrated_pipeline_parameters_reach_excel_and_status_stays_in_result(t
     assert "报告执行状态" not in book.sheetnames
     assert not any(cell.value == "报告执行状态" for row in book["目录"] for cell in row)
     values = {row[1].value: row[2].value for row in book["5-模型参数"] if len(row) > 2}
-    assert values["base_model.配置.C"] == pytest.approx(0.123456789)
+    assert values["base_model.C"] == pytest.approx(0.123456789)
     if not fit_supplied:
-        assert values["calibrator.配置.model.配置.C"] == pytest.approx(0.123456789)
+        assert values["calibrator.model.C"] == pytest.approx(0.123456789)
     else:
-        assert values["calibrator.配置.已拟合组件.model_.配置.C"] == pytest.approx(0.123456789)
+        assert values["calibrator.model_.C"] == pytest.approx(0.123456789)
     child = _model_parameter_snapshot(calibrator)
     if fit_supplied:
-        assert child["已拟合组件"]["model_"]["配置"]["C"] == pytest.approx(0.123456789)
+        assert child["model_"]["C"] == pytest.approx(0.123456789)
+    assert not any(
+        any("\u4e00" <= char <= "\u9fff" for char in key) for key in values if isinstance(key, str) and "." in key
+    )
     assert "工作表：目录" in result.sections
     assert book["7-训练与调参过程"]["B2"].value == "七、训练与调参过程"
     assert book["7-训练与调参过程"]["B5"].value == "1、训练概览"
@@ -81,4 +84,4 @@ def test_native_effective_parameters_are_preserved_separately_from_public_defaul
     snapshot = _model_parameter_snapshot(model)
     assert snapshot["n_estimators"] == 7
     assert snapshot["class_weight"] is None
-    assert snapshot["实际训练参数"]["class_weight"] == {"0": 0.25, "1": 0.75}
+    assert snapshot["native_params_"]["class_weight"] == {"0": 0.25, "1": 0.75}

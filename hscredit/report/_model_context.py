@@ -43,34 +43,43 @@ def _configuration_snapshot(value, _active=None):
 
     if isinstance(value, Enum):
         return _configuration_snapshot(value.value, _active)
+    if isinstance(value, np.generic):
+        return _configuration_snapshot(value.item(), _active)
     if value is None or isinstance(value, (str, bool, int, float, np.number)):
-        return value.item() if isinstance(value, np.generic) else value
+        return value
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, type) or inspect.isroutine(value):
         return f"{value.__module__}.{value.__qualname__}"
     active = set() if _active is None else _active
     if id(value) in active:
-        return "循环引用"
+        return "<recursive>"
     active.add(id(value))
     try:
         if isinstance(value, dict):
             return {str(key): _configuration_snapshot(item, active) for key, item in value.items()}
-        if isinstance(value, (list, tuple, np.ndarray)):
-            items = value.tolist() if isinstance(value, np.ndarray) else value
+        if isinstance(value, (list, tuple, np.ndarray, pd.Index)):
+            items = value.tolist() if isinstance(value, (np.ndarray, pd.Index)) else value
             if not isinstance(items, (list, tuple)):
                 return _configuration_snapshot(items, active)
             return [_configuration_snapshot(item, active) for item in items]
         # 数据容器只保留元信息；构造配置不能隐式导出训练样本。
         if isinstance(value, (pd.DataFrame, pd.Series)) or hasattr(value, "tocsr"):
-            return _fit_parameter_snapshot(value)
+            summary = {"__class__": type(value).__name__, "shape": list(value.shape)}
+            if isinstance(value, pd.DataFrame):
+                summary.update(columns=list(map(str, value.columns)), dtypes=list(map(str, value.dtypes)))
+            else:
+                summary["dtype"] = str(value.dtype)
+            return summary
         params = _constructor_params(value)
         if params:
             return {
-                "对象类型": f"{type(value).__module__}.{type(value).__qualname__}",
-                "配置": _model_parameter_snapshot(value, active),
+                "__class__": f"{type(value).__module__}.{type(value).__qualname__}",
+                **_model_parameter_snapshot(value, active),
             }
-        return _fit_parameter_snapshot(value)
+        if type(value).__module__ == "torch" and type(value).__name__ == "dtype":
+            return str(value)
+        return f"{type(value).__module__}.{type(value).__qualname__}"
     finally:
         active.remove(id(value))
 
@@ -79,22 +88,19 @@ def _model_parameter_snapshot(model, _active=None):
     """记录公开构造配置、实际原生参数及包装器训练后采用的组件配置。"""
     active = {id(model)} if _active is None else _active
     params = dict(_constructor_params(model))
-    for key, value in getattr(model, "kwargs", {}).items():
+    for key, value in (getattr(model, "kwargs", None) or {}).items():
         params.setdefault(key, value)
     result = _configuration_snapshot(params, active)
     native = getattr(model, "native_params_", None)
     if native:
-        result["实际训练参数"] = _configuration_snapshot(native, active)
-    children = {}
+        result["native_params_"] = _configuration_snapshot(native, active)
     for name in ("model_", "lr_model_", "binner_", "encoder_", "calibrator_", "transformer_", "score_transformer_"):
         child = getattr(model, name, None)
         if child is None or child is model or not _constructor_params(child):
             continue
         snapshot = _configuration_snapshot(child, active)
         if snapshot != result.get(name[:-1]):
-            children[name] = snapshot
-    if children:
-        result["已拟合组件"] = children
+            result[name] = snapshot
     return result
 
 
