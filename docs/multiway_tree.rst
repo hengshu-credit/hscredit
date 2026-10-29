@@ -12,6 +12,7 @@
 
 .. code-block:: python
 
+   import numpy as np
    from hscredit import MultiwayTreeExtractor, plot_tree
 
    tree = MultiwayTreeExtractor(
@@ -32,17 +33,62 @@
    restored = MultiwayTreeExtractor.load("多叉树.pkl")
 
 数值分支为 ``(-inf, t1]``、``(t1, t2]``、……、``(tk, +inf)``，因此等于阈值时走左侧区间。
-``thresholds`` 必须严格递增。类别用 ``category_groups`` 指定互不重复、完整覆盖节点训练类别的分组。
-``missing_branch`` 是从 0 开始的分支序号；自动搜索会比较缺失值归属，没有缺失时选择样本最多的分支。
-新类别与缺失走同一条已保存的分支，规则表达式也包含该兜底条件。
+``thresholds`` 中的有限切点必须严格递增。类别用 ``category_groups`` 指定互不重复、完整覆盖节点训练类别的分组。
+``missing_branch`` 是从 0 开始的分支序号；未声明缺失策略时，自动比较合并方向，没有缺失时选择样本最多的分支。
+
+缺失值声明与 binner 一致
+----------------------------------------
+
+数值规则复用 binner 的解析器：``np.nan``、``None``、``pd.NA`` 都可以作为缺失标记，最多出现一次。
+标记的位置表示合并目标普通分支，不能把它当作一个数值阈值或独立分支：
+
+.. code-block:: python
+
+   # 合并进普通分支 0：(-inf, 0.12]
+   tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[np.nan, 0.12, 0.18, 0.25])
+   # 合并进普通分支 1：(0.12, 0.18]
+   tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[0.12, np.nan, 0.18, 0.25])
+   # 显式 missing_branch 优先，因此此处仍是四叉，缺失走 0 号分支
+   tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[0.12, 0.18, 0.25, np.nan], missing_branch=0)
+
+独立缺失分支由 ``missing_separate=True`` 指定，数值型追加在普通分支之后：
+
+.. code-block:: python
+
+   # 三个阈值对应四个普通分支，另加缺失分支，共五叉
+   tree.set_params(max_branches=5)
+   tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[0.12, 0.18, 0.25], missing_separate=True)
+   # 没有普通切点时，可以只分成“非缺失”和“缺失”两支
+   tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[], missing_separate=True)
+
+类别规则中 ``[np.nan]`` 表示独立缺失分支，``[类别, np.nan]`` 表示合并。
+独立组可位于任意位置，分支顺序保持声明顺序；若没有缺失标记，``missing_separate=True`` 追加独立组。
+
+.. code-block:: python
+
+   # 假设训练类别为 A、B、C
+   tree.manual_split(feature="商品类别", category_groups=[["A"], [np.nan], ["B", "C"]])
+   tree.manual_split(feature="商品类别", category_groups=[["A", np.nan], ["B", "C"]])
+
+优先级为：显式 ``missing_branch`` > 规则中的合并标记 > ``missing_separate`` 配置。
+独立类别组 ``[np.nan]`` 与指向其他分支的 ``missing_branch`` 冲突时会报错，避免留下语义不明的空组。
+构造参数 ``missing_separate=False`` 保持原来的自动合并行为；设为 True 可在自动训练、``grow`` 中使用独立分支。
+方法参数 ``missing_separate=None`` 沿用构造配置。
+
+缺失分支计入 ``max_branches``，独立缺失分支不受普通分支 ``min_samples_leaf`` 限制。
+在实际分裂节点上，即使训练时没有缺失也会保留该分支，计数为 0，未来缺失样本使用最近非空祖先的概率。
+类别的未知值在合并模式下与缺失同路，在独立模式下走样本最多的普通类别分支，不会进入纯缺失分支。
+``apply``、``predict_proba``、``Rule``、节点统计及三个绘图后端共用这套分支定义。
 
 调整阈值或调用 ``manual_split`` 会替换所选节点的后代。节点自身和其他子树编号不变，
 新后代取得新编号；``grow=True`` 可在替换后继续自动生长。``prune`` 和 ``delete_node``
 将所选节点变为叶子，``grow`` 从现有叶子继续训练。失败的编辑不会改变原模型。
+``set_thresholds`` 未显式声明新缺失策略或缺失标记时保留原节点的路由方式。
+若减少普通分支后原来的合并序号越界，需明确提供新的 ``missing_branch``。
 编辑使用拟合时保存的数据；若需要改训练样本，请重新 ``fit``。
 
 人工阈值允许产生空分支，其样本计数仍为 0，预测概率继承最近的非空祖先。
-自动分裂始终执行 ``min_samples_split``、``min_samples_leaf``、``max_depth`` 和 ``max_branches`` 约束。
+自动分裂执行 ``min_samples_split``、普通叶节点的 ``min_samples_leaf``、``max_depth`` 和 ``max_branches`` 约束。
 ``get_rules()`` 返回互斥且完整覆盖输入的叶子规则；``to_ruleset(nodes=[...])`` 可把选定节点合成
 风险策略。默认全叶 OR 规则集会命中所有样本，不能直接当作拒绝策略。
 

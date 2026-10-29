@@ -14,6 +14,8 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 
 from ...core.binning import QuantileBinning
+from ...core.binning._contracts import is_missing_marker, parse_numerical_user_splits
+from ...core.binning._categorical import normalize_user_groups
 from ...core.binning.spec import BinSpec, field_expression, value_expression
 from ...core.metrics import ks
 from ...core.models._contracts import extract_target
@@ -39,6 +41,8 @@ class MultiwayNode:
     thresholds: tuple = ()
     category_groups: tuple = ()
     missing_branch: int = 0
+    missing_separate: bool = False
+    unknown_branch: object = None
     children: list = field(default_factory=list)
     branches: tuple = ()
     gain: float = 0.0
@@ -99,9 +103,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     :param target: 标签列名，默认 ``'target'``；fit(X, y) 中 y 优先。
     :param features: 特征列名或列表；默认使用除标签外的全部列。
     :param max_depth: 最大深度，根节点深度为 0，默认 3。
-    :param max_branches: 每次分裂最多分支数，默认 4。
+    :param max_branches: 每次分裂最多分支数（含独立缺失分支），默认 4。
     :param min_samples_split: 自动分裂的最小节点样本数，默认 20。
-    :param min_samples_leaf: 自动分裂的最小叶节点样本数，默认 10。
+    :param min_samples_leaf: 自动分裂的最小普通叶节点样本数，默认 10；独立缺失分支不受此限制。
     :param criterion: ``'chi2'``、``'gini'`` 或 ``'entropy'``，默认 chi2。
         卡方准则按调整后 P 值的 -log10 排序，参考 SAS 的 LogWorth。
     :param alpha: 卡方分裂的显著性上限，默认 0.05。
@@ -114,6 +118,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     :param n_jobs: 节点规则报告的并行预算，默认 -1 自动调度；树搜索按确定顺序串行执行。
     :param parallel_backend: 规则报告的 joblib 后端。
     :param parallel_config: 规则报告的并行配置。
+    :param missing_separate: 默认 False，自动学习缺失值合并方向；True 时保留独立缺失分支。
+        显式 missing_branch 或规则中的缺失标记优先于此默认配置。
 
     **属性**
 
@@ -131,6 +137,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     >>> rules = tree.get_rules()
     >>> effects = tree.evaluate({'测试集': df_test})
     """
+
+    # 旧版持久化对象没有此参数时，继续沿用原有的缺失合并策略。
+    missing_separate = False
 
     def __init__(
         self,
@@ -150,6 +159,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         n_jobs=-1,
         parallel_backend=None,
         parallel_config=None,
+        missing_separate=False,
     ):
         self.target = target
         self.features = features
@@ -167,8 +177,12 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         self.n_jobs = n_jobs
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
+        self.missing_separate = missing_separate
 
     def _validate_parameters(self):
+        self._validate_missing_options(getattr(self, "missing_separate", False), None)
+        if getattr(self, "missing_separate", False) is None:
+            raise InputValidationError("构造参数 missing_separate 必须是布尔值")
         for name, minimum in (
             ("max_depth", 0),
             ("max_branches", 2),
@@ -269,17 +283,59 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         cuts = binner._fit_numerical(values, pd.Series(np.zeros(len(values))))
         return tuple(float(v) for v in cuts if finite.min() < v < finite.max())
 
-    def _candidate(self, values, labels, feature, thresholds=(), groups=(), missing_branch=None, enforce=True):
+    @staticmethod
+    def _validate_missing_options(missing_separate, missing_branch):
+        """缺失配置使用明确布尔值和从 0 开始的分支序号。"""
+        if missing_separate is not None and not isinstance(missing_separate, (bool, np.bool_)):
+            raise InputValidationError("missing_separate 必须是布尔值或 None")
+        if missing_branch is not None and (
+            isinstance(missing_branch, (bool, np.bool_))
+            or not isinstance(missing_branch, Integral)
+            or missing_branch < 0
+        ):
+            raise InputValidationError("missing_branch 必须是非负整数分支序号")
+
+    @staticmethod
+    def _parse_thresholds(feature, thresholds):
+        """与 binner 共用数值规则解析；缺失标记的位置表示合并目标分支。"""
+        try:
+            cuts, missing = parse_numerical_user_splits(feature, thresholds)
+        except ValueError as exc:
+            raise InputValidationError(str(exc)) from exc
+        if cuts.ndim != 1:
+            raise InputValidationError("thresholds 必须是一维数值切点列表，可包含一个缺失标记")
+        return cuts, missing
+
+    def _candidate(
+        self,
+        values,
+        labels,
+        feature,
+        thresholds=(),
+        groups=(),
+        missing_branch=None,
+        enforce=True,
+        missing_separate=False,
+    ):
         missing = pd.isna(values)
         if self._numeric[feature]:
             branches = np.searchsorted(thresholds, np.asarray(values, dtype=float), side="left")
             count = len(thresholds) + 1
+            if missing_separate:
+                missing_branch = count
+                count += 1
         else:
             branches = np.full(len(values), -1, dtype=int)
             for i, group in enumerate(groups):
                 branches[pd.Series(values).isin(group).to_numpy()] = i
             count = len(groups)
             missing = missing | (branches < 0)
+            if missing_separate and missing_branch is None:
+                missing_branch = count
+                groups = tuple(groups) + ((),)
+                count += 1
+        if missing_branch is not None and missing_branch >= count:
+            return None
         choices = range(count) if missing_branch is None and missing.any() else [missing_branch]
         if not missing.any() and missing_branch is None:
             choices = [int(np.argmax(np.bincount(branches, minlength=count)))]
@@ -289,7 +345,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             routed[missing] = destination
             counts = np.bincount(routed * len(self.classes_) + labels, minlength=count * len(self.classes_))
             counts = counts.reshape(count, len(self.classes_))
-            if enforce and np.any(counts.sum(axis=1) < self.min_samples_leaf):
+            ordinary = np.arange(count) != destination if missing_separate else np.ones(count, dtype=bool)
+            if enforce and np.any(counts.sum(axis=1)[ordinary] < self.min_samples_leaf):
                 continue
             statistic, pvalue, gain = _split_statistics(counts, self.criterion)
             degrees = (np.count_nonzero(counts.sum(axis=0)) - 1) * (np.count_nonzero(counts.sum(axis=1)) - 1)
@@ -299,6 +356,16 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 thresholds=tuple(thresholds),
                 groups=tuple(groups),
                 missing_branch=int(destination),
+                missing_separate=bool(missing_separate),
+                unknown_branch=(
+                    None
+                    if self._numeric[feature]
+                    else (
+                        int(np.argmax(np.where(ordinary, counts.sum(axis=1), -1)))
+                        if missing_separate
+                        else int(destination)
+                    )
+                ),
                 statistic=statistic,
                 pvalue=pvalue,
                 gain=gain,
@@ -309,7 +376,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 best = candidate
         return best
 
-    def _search(self, node):
+    def _search(self, node, missing_separate=None, missing_branch=None):
+        separate = getattr(self, "missing_separate", False) if missing_separate is None else missing_separate
+        separate = bool(separate and missing_branch is None)
         positions = self._positions(node)
         if len(positions) < self.min_samples_split or np.unique(self._y[positions]).size < 2:
             return []
@@ -323,15 +392,26 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
 
             def consider(thresholds=(), groups=()):
                 nonlocal trials
-                trials += (len(thresholds) + 1 if thresholds else len(groups)) if series.isna().any() else 1
-                result = self._candidate(values, labels, feature, thresholds, groups)
+                normal_count = len(thresholds) + 1 if self._numeric[feature] else len(groups)
+                trials += normal_count if series.isna().any() and not separate and missing_branch is None else 1
+                result = self._candidate(
+                    values,
+                    labels,
+                    feature,
+                    thresholds,
+                    groups,
+                    missing_branch,
+                    missing_separate=separate,
+                )
                 if result is not None:
                     feature_candidates.append(result)
                 return result
 
             if self._numeric[feature]:
                 pool = self._numeric_pool(values)
-                limit = min(self.max_branches - 1, len(pool))
+                limit = min(self.max_branches - 1 - int(separate), len(pool))
+                if separate:
+                    consider()
                 if sum(comb(len(pool), k) for k in range(1, limit + 1)) <= self.max_candidates:
                     for k in range(1, limit + 1):
                         for cuts in combinations(pool, k):
@@ -349,10 +429,10 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 groups = [(value,) for value in pd.unique(series.dropna())]
                 for group in groups:
                     value_expression(group[0])
-                while len(groups) >= 2:
-                    if len(groups) <= self.max_branches:
+                while len(groups) >= (1 if separate else 2):
+                    if len(groups) + int(separate) <= self.max_branches:
                         consider(groups=tuple(groups))
-                    if len(groups) == 2:
+                    if len(groups) == (1 if separate else 2):
                         break
                     counts = [
                         np.bincount(labels[series.isin(group).to_numpy()], minlength=len(self.classes_))
@@ -384,6 +464,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             "类别分组",
             "分支数",
             "缺失分支",
+            "缺失独立分支",
             "卡方值",
             "P值",
             "调整后P值",
@@ -398,6 +479,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                     [list(g) for g in c["groups"]],
                     c["branches"],
                     c["missing_branch"],
+                    "是" if c["missing_separate"] else "否",
                     c["statistic"],
                     c["pvalue"],
                     c["adjusted_pvalue"],
@@ -435,13 +517,17 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         current.thresholds = candidate["thresholds"]
         current.category_groups = candidate["groups"]
         current.missing_branch = candidate["missing_branch"]
+        current.missing_separate = candidate.get("missing_separate", False)
+        current.unknown_branch = candidate.get("unknown_branch", current.missing_branch)
         current.gain = candidate["gain"]
         current.manual = manual
         specs = []
         known = tuple(v for group in current.category_groups for v in group)
         for i in range(candidate["branches"]):
             kwargs = dict(include_missing=i == current.missing_branch)
-            if self._numeric[current.feature]:
+            if current.missing_separate and i == current.missing_branch:
+                spec = BinSpec(current.feature, i, kind="missing")
+            elif self._numeric[current.feature]:
                 spec = BinSpec(
                     current.feature,
                     i,
@@ -458,7 +544,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                     kind="categories",
                     values=current.category_groups[i],
                     known_values=known,
-                    unknown=i == current.missing_branch,
+                    unknown=i == current.unknown_branch,
                     **kwargs,
                 )
             specs.append(spec)
@@ -478,6 +564,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         current.feature = None
         current.thresholds = ()
         current.category_groups = ()
+        current.missing_branch = 0
+        current.missing_separate = False
+        current.unknown_branch = None
         current.gain = 0.0
 
     def _edit(self, operation):
@@ -492,16 +581,34 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         return self
 
     def manual_split(
-        self, data=None, feature=None, thresholds=None, node=0, *, category_groups=None, missing_branch=None, grow=False
+        self,
+        data=None,
+        feature=None,
+        thresholds=None,
+        node=0,
+        *,
+        category_groups=None,
+        missing_branch=None,
+        missing_separate=None,
+        grow=False,
     ):
         """替换一个节点的子树；数值用 thresholds，类别用 category_groups。
 
         未提供规则时自动选择候选（feature 可限制字段）。默认不继续生长。
         手工分裂允许空分支，其预测概率继承最近的非空祖先；其他子树编号保持不变。
-        missing_branch 是从 0 开始的分支序号，默认选择分裂价值最大的缺失归属。
-        未知类别与缺失走同一分支。data 若传入，必须与拟合数据一致。
+        数值 thresholds 与 binner 共用规则：np.nan/None/pd.NA 的位置表示缺失合并的普通分支。
+        类别 category_groups 中 [np.nan] 表示独立分支，[类别, np.nan] 表示合并。
+        显式 missing_branch 优先于合并标记，缺失规则标记优先于 missing_separate 默认配置。
+        未知类别在缺失合并模式下同路；独立缺失模式下走样本最多的普通类别分支。
+        data 若传入，必须与拟合数据一致。
+
+        :param missing_branch: 从 0 开始的缺失合并分支序号；默认学习最优方向。
+        :param missing_separate: None 沿用构造配置，True 保留独立缺失分支（数值型追加在末尾）。
+            独立分支计入 max_branches；显式分组中的 [np.nan] 保持声明位置。
         """
         self._validate_parameters()
+        self._validate_missing_options(missing_separate, missing_branch)
+        separate = getattr(self, "missing_separate", False) if missing_separate is None else missing_separate
         current = self._node(node)
         if current.depth >= self.max_depth:
             raise InputValidationError("该节点已达到 max_depth，请提高深度上限后再分裂")
@@ -512,15 +619,14 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         if feature is not None and feature not in self.features_:
             raise InputValidationError(f"特征 {feature} 不在拟合字段中")
         if thresholds is None and category_groups is None:
-            candidates = [c for c in self._search(node) if feature is None or c["feature"] == feature]
+            if missing_branch is not None and missing_branch >= self.max_branches:
+                raise InputValidationError("missing_branch 超出 max_branches 允许的分支范围")
+            candidates = [
+                c for c in self._search(node, separate, missing_branch) if feature is None or c["feature"] == feature
+            ]
             if not candidates:
                 raise InputValidationError("该节点没有满足样本约束的可用分裂")
-            candidate = candidates[0]
-            if missing_branch is not None:
-                thresholds, category_groups = candidate["thresholds"] or None, candidate["groups"] or None
-                feature = candidate["feature"]
-            else:
-                return self._edit(lambda tree: tree._split_and_grow(node, candidate, grow))
+            return self._edit(lambda tree: tree._split_and_grow(node, candidates[0], grow))
         if feature is None:
             raise InputValidationError("手工分裂必须指定 feature")
         positions = self._positions(node)
@@ -530,33 +636,45 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         if self._numeric[feature]:
             if category_groups is not None or thresholds is None:
                 raise InputValidationError("数值特征请提供 thresholds，不能提供 category_groups")
-            cuts = np.asarray(thresholds, dtype=float)
-            if cuts.ndim != 1 or not len(cuts) or not np.isfinite(cuts).all() or not np.all(np.diff(cuts) > 0):
-                raise InputValidationError("thresholds 必须是严格递增的有限切点列表")
+            cuts, marker = self._parse_thresholds(feature, thresholds)
+            if missing_branch is None:
+                missing_branch = marker
+            separate = bool(separate and missing_branch is None)
             groups = ()
-            count = len(cuts) + 1
+            count = len(cuts) + 1 + int(separate)
             values = series.to_numpy(dtype=float, na_value=np.nan)
         else:
             if thresholds is not None or category_groups is None:
                 raise InputValidationError("类别特征请提供 category_groups，不能提供 thresholds")
-            groups = tuple(tuple(group) for group in category_groups)
+            try:
+                normalized = normalize_user_groups(feature, category_groups, observed=series)
+            except ValueError as exc:
+                raise InputValidationError(f"类别分组必须非空、互不重复且完整覆盖训练类别：{exc}") from exc
+            marker = next((i for i, group in enumerate(normalized) if any(is_missing_marker(v) for v in group)), None)
+            groups = tuple(tuple(value for value in group if not is_missing_marker(value)) for group in normalized)
             flat = [value for group in groups for value in group]
-            if (
-                len(groups) < 2
-                or any(not group for group in groups)
-                or pd.isna(flat).any()
-                or len(set(flat)) != len(flat)
-            ):
-                raise InputValidationError("类别分组必须非空、互不重复且不含缺失值")
-            if set(flat) != set(series.dropna().unique()):
-                raise InputValidationError("类别分组必须完整覆盖该节点的训练类别")
+            if len(set(flat)) != len(flat):
+                raise InputValidationError("类别分组不能包含相等或重复的类别")
             for value in flat:
                 value_expression(value)
+            if marker is not None and not groups[marker]:
+                if missing_branch is not None and missing_branch != marker:
+                    raise InputValidationError("独立缺失分组与 missing_branch 冲突；合并时请将缺失标记放入普通组")
+                separate = True
+                missing_branch = marker
+            elif missing_branch is not None or marker is not None:
+                separate = False
+                missing_branch = marker if missing_branch is None else missing_branch
+            elif separate:
+                missing_branch = len(groups)
+                groups += ((),)
             cuts = ()
             count = len(groups)
             values = series.to_numpy()
         if count > self.max_branches:
-            raise InputValidationError("分支数超过 max_branches")
+            raise InputValidationError("总分支数（含独立缺失分支）超过 max_branches，请增加上限或减少普通切分点")
+        if count < 2:
+            raise InputValidationError("分裂至少需要两个分支；仅区分缺失与非缺失可指定 missing_separate=True")
         if missing_branch is not None and (
             isinstance(missing_branch, bool)
             or not isinstance(missing_branch, Integral)
@@ -564,7 +682,14 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         ):
             raise InputValidationError("missing_branch 必须是有效的分支序号")
         candidate = self._candidate(
-            values, self._y[positions], feature, tuple(cuts), groups, missing_branch, enforce=False
+            values,
+            self._y[positions],
+            feature,
+            tuple(cuts),
+            groups,
+            missing_branch,
+            enforce=False,
+            missing_separate=separate,
         )
         return self._edit(lambda tree: tree._split_and_grow(node, candidate, grow))
 
@@ -573,13 +698,25 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         if grow:
             self._grow(node)
 
-    def set_thresholds(self, node, thresholds, *, missing_branch=None, grow=False):
-        """重设数值节点阈值，替换其后代；保持其他子树和当前节点编号。"""
+    def set_thresholds(self, node, thresholds, *, missing_branch=None, missing_separate=None, grow=False):
+        """重设数值节点阈值，替换其后代；未指定缺失配置/标记时保留当前路由方式。"""
         current = self._node(node)
         if current.feature is None or not self._numeric[current.feature]:
             raise InputValidationError("set_thresholds 仅适用于已有数值分裂节点")
+        cuts, marker = self._parse_thresholds(current.feature, thresholds)
+        if missing_branch is None:
+            missing_branch = marker
+        if missing_branch is None and missing_separate is None:
+            missing_separate = getattr(current, "missing_separate", False)
+            if not missing_separate:
+                missing_branch = current.missing_branch
         return self.manual_split(
-            feature=current.feature, thresholds=thresholds, node=node, missing_branch=missing_branch, grow=grow
+            feature=current.feature,
+            thresholds=cuts,
+            node=node,
+            missing_branch=missing_branch,
+            missing_separate=missing_separate,
+            grow=grow,
         )
 
     def prune(self, node=0):
@@ -792,6 +929,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 "类别分组": [list(g) for g in current.category_groups],
                 "子节点": list(current.children),
                 "缺失分支": current.missing_branch,
+                "缺失独立分支": "是" if getattr(current, "missing_separate", False) else "否",
                 "样本总数": int(current.counts.sum()),
                 "规则表达式": self._format_rule(current.path).expr,
             }

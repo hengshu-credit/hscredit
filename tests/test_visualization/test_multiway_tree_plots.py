@@ -37,3 +37,22 @@ def test_all_backends_keep_every_branch_and_class_label(multiclass):
     assert '\\"' in source
     if multiclass:
         assert all(label in source for label in labels)
+
+
+@pytest.mark.parametrize("categorical", [False, True])
+def test_separate_missing_has_its_own_edge_in_every_backend(categorical):
+    values = ["A", "B", None] if categorical else [0.5, 1.5, np.nan]
+    data = pd.DataFrame({"特征": values * 10, "target": [0, 1, 1] * 10})
+    tree = MultiwayTreeExtractor(max_depth=1).fit(data)
+    kwargs = {"category_groups": [["A"], [np.nan], ["B"]]} if categorical else {"thresholds": [1.0]}
+    tree.manual_split(feature="特征", missing_separate=True, **kwargs)
+    adapted = _extract_tree_data(tree)
+    assert len(adapted["edges"]) == 3
+    assert sum(edge["label"] == "缺失" for edge in adapted["edges"]) == 1
+    figure = plot_tree(tree)
+    assert "缺失" in [text.get_text() for ax in figure.axes for text in ax.texts]
+    plt.close(figure)
+    options = json.loads(plot_tree(tree, backend="pyecharts").dump_options())
+    assert len(options["series"][0]["links"]) == 3
+    source = plot_tree(tree, backend="graphviz").source
+    assert source.count(" -> ") == 3 and "缺失" in source
