@@ -31,6 +31,8 @@ def test_model_notebooks_are_self_contained_and_valid():
         "single_validation_workflow",
         "net_models",
         "net_training_tuning",
+        "pretraining_and_continuation",
+        "all_model_workflow_validation",
     ):
         notebook = nbformat.read(PROJECT_ROOT / "examples" / f"{name}.ipynb", as_version=4)
         nbformat.validate(notebook)
@@ -39,6 +41,23 @@ def test_model_notebooks_are_self_contained_and_valid():
         assert all("argparse" not in source and "__file__" not in source for source in cells)
         for index, source in enumerate(cells):
             compile(source, f"{name}.ipynb:代码单元格{index + 1}", "exec")
+
+
+def test_full_chain_notebook_covers_public_model_families():
+    import ast
+    import nbformat
+    from hscredit.core.models import _LAZY_BOOSTING_MODELS, _LAZY_NET_MODELS
+    from hscredit.core.models.classical import __all__ as classical_models
+
+    book = nbformat.read(PROJECT_ROOT / "examples/all_model_workflow_validation.ipynb", as_version=4)
+    source = next(
+        cell.source for cell in book.cells if cell.cell_type == "code" and cell.source.startswith("BASE_NAMES")
+    )
+    declared = ast.literal_eval(ast.parse(source).body[0].value)
+    expected = set(classical_models) | set(_LAZY_BOOSTING_MODELS) | set(_LAZY_NET_MODELS)
+    expected |= {"ScoreCard", "RoundScoreCard", "ProbabilityScoreCard", "RulesClassifier"}
+    assert set(declared) == expected
+    assert not any(cell.get("outputs") for cell in book.cells if cell.cell_type == "code")
 
 
 def test_quickstart_markdown_python_blocks_execute(tmp_path):

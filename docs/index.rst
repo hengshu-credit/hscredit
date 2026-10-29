@@ -113,6 +113,7 @@ hscredit 文档
    installation
    quickstart
    overdue_labels
+   rule_swap_approval
    analysis_parameters
    parallelism
 

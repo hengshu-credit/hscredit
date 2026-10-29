@@ -304,6 +304,55 @@ def test_tabpfn_rejects_unsupported_weights_and_bad_embeddings(frame, fake_tabpf
         model.get_embeddings(X)
 
 
+@pytest.mark.parametrize("objective", ["binary", "regression"])
+@pytest.mark.parametrize("mode", ["missing", "unimplemented"])
+def test_tabpfn_prediction_does_not_require_embedding(objective, mode, frame, monkeypatch):
+    class ClassifierWithoutEmbedding(FakeClassifier):
+        get_embeddings = None
+
+    class RegressorWithoutEmbedding(FakeRegressor):
+        get_embeddings = None
+
+    if mode == "unimplemented":
+
+        def unsupported(self, X, data_source):
+            raise NotImplementedError("backend embedding is unavailable")
+
+        ClassifierWithoutEmbedding.get_embeddings = unsupported
+        RegressorWithoutEmbedding.get_embeddings = unsupported
+    module = importlib.import_module("hscredit.core.models.net.tabpfn")
+    monkeypatch.setattr(module, "_load_tabpfn", lambda: (ClassifierWithoutEmbedding, RegressorWithoutEmbedding))
+    X, y = frame
+    target = y if objective == "binary" else X["金额"] * 5 + 100
+    model = TabPFN(objective=objective).fit(X, target)
+    assert model.predict(X).shape == (len(X),)
+    if objective == "binary":
+        assert model.predict_proba(X).shape == (len(X), 2)
+    assert model.evaluate(X, target)
+    for extraction in (model.get_embeddings, model.transform):
+        with pytest.raises(NotImplementedError, match="embedding"):
+            extraction(X)
+    assert model._is_fitted
+    assert model.predict(X[:1]).shape == (1,)
+
+
+def test_tabpfn_supports_bfloat16_embedding(frame, fake_tabpfn, monkeypatch, torch_runtime):
+    X, y = frame
+    model = TabPFN().fit(X, y)
+    expected = torch_runtime.arange(2 * len(X) * 4).reshape(2, len(X), 4).to(torch_runtime.bfloat16)
+    monkeypatch.setattr(model._model, "get_embeddings", lambda X, data_source: expected)
+    assert_allclose(model.get_embeddings(X, aggregate=None), expected.float().numpy())
+    assert_allclose(model.get_embeddings(X), expected.float().numpy().mean(axis=0))
+
+
+def test_tabpfn_rejects_wrong_probability_row_count(frame, fake_tabpfn, monkeypatch):
+    X, y = frame
+    model = TabPFN().fit(X, y)
+    monkeypatch.setattr(model._model, "predict_proba", lambda X: np.tile([0.4, 0.6], (len(X) + 1, 1)))
+    with pytest.raises(ValueError, match="输入等长"):
+        model.predict_proba(X)
+
+
 def test_tabpfn_new_preprocessing_parameter_replaces_deprecated_jobs(frame, monkeypatch):
     class NewClassifier(FakeClassifier):
         def __init__(self, *, n_preprocessing_jobs=1, **kwargs):

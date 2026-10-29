@@ -107,7 +107,10 @@ def test_implicit_swap_reference_keeps_original_label_rows(swap_frame, duplicate
     total = tables[0].iloc[-1]
     assert total["样本总数"] == int(valid.sum())
     assert total["坏样本数"] == int(data["标签"].eq(1).sum())
-    assert result["swap_pipeline"].iloc[0]["样本总数"] == (int(valid.sum()) if grey else len(data))
+    # OUT-IN 的缺失实际标签使用预测表现，不能随剔灰丢失；审批分母始终为输入全量。
+    risk_valid = valid | data["评分"].eq(5)
+    assert result["swap_pipeline"].iloc[0]["样本总数"] == (int(risk_valid.sum()) if grey else len(data))
+    assert result["swap_pipeline"].iloc[0]["决策样本数"] == len(data)
     if kind in {"callable", "dict"}:
         assert len(calls) == 1
         assert_frame_equal(calls[0], original)

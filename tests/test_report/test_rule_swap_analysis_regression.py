@@ -99,8 +99,8 @@ def test_non_out_in_uses_actual_y_and_out_in_uses_predicted_uplift():
     assert _row(pipeline, "OUT-IN置入", "合计")["调整后坏样本数"] == pytest.approx(0.5)
 
 
-def test_swap_result_compares_in_in_with_all_in_and_ignores_display_order():
-    """置换汇总比较 IN-IN 与 ALL-IN，且不依赖报告展示顺序。"""
+def test_swap_result_compares_old_with_new_pass_and_ignores_display_order():
+    """原始行中置入和置出各一人，净通过率不变，且不依赖展示顺序。"""
     _, _, kwargs = _swap_case()
 
     normal = rule_swap_analysis(reverse_order=False, **kwargs)["swap_result"]
@@ -108,7 +108,10 @@ def test_swap_result_compares_in_in_with_all_in_and_ignores_display_order():
 
     pd.testing.assert_frame_equal(normal, reverse)
     pass_row = normal.set_index("指标").loc["通过率"]
-    assert pass_row["变化后"] > pass_row["变化前"]
+    assert pass_row["变化前"] == pytest.approx(4 / 6 * 100)
+    assert pass_row["变化后"] == pytest.approx(4 / 6 * 100)
+    assert pass_row["绝对变化"] == 0
+    assert pass_row["相对变化"] == 0
 
 
 def test_risk_uplifts_can_adjust_other_atomic_groups():
@@ -441,6 +444,7 @@ def test_relative_change_is_undefined_when_zero_baseline_becomes_nonzero():
     """零基线增长不能报告为相对变化 0，应显式输出未定义。"""
     _, _, kwargs = _swap_case()
     kwargs["rules_in"] = [Rule("x >= 0", name="全部置入")]
+    kwargs["rules_out"] = []  # 没有旧通过置出客群，旧策略通过人数确实为零。
 
     result = rule_swap_analysis(**kwargs)
     out_in = _row(result["swap_pipeline"], "OUT-IN置入", "合计")

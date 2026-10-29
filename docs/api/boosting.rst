@@ -6,6 +6,8 @@ Boosting
 （``pip install hscredit[boost]``）。可直接从顶层 ``hscredit`` 懒加载导入，例如
 ``from hscredit import XGBoost``。
 
+基于已有模型追加训练的 init_model / continue_training 用法见 :doc:`training_lifecycle`。
+
 .. note::
 
    ``NGBoost`` 依赖 ``ngboost``；构建本文档时若未安装该依赖，相关签名以

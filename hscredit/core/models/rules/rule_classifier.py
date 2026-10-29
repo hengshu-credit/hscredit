@@ -613,6 +613,15 @@ class RulesClassifier(
         >>> model = RulesClassifier(rules=[Rule('评分 < 0')], n_jobs=1)
         >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=['auc', 'ks'])
         """
+        # set_params/超参数搜索会直接写入字符串；fit 与构造器使用同一逻辑语义。
+        try:
+            logic = LogicOperator(self.logic.lower()) if isinstance(self.logic, str) else self.logic
+        except ValueError as exc:
+            raise ValueError(f"不支持的规则组合逻辑: {self.logic}") from exc
+        if not isinstance(logic, LogicOperator):
+            raise ValueError("logic 必须为规则组合逻辑名称或 LogicOperator")
+        if self.output_mode not in {"final", "individual", "both", "reason"}:
+            raise ValueError(f"不支持的output_mode: {self.output_mode}")
         # 处理输入数据
         X, y = _check_input_data(X, y, self.target)
         if kwargs:
@@ -630,6 +639,7 @@ class RulesClassifier(
         self.feature_names_in_ = list(X.columns)
         self.classes_ = np.array([0, 1])
         self.weights_ = weights
+        self.logic = logic
         self._is_fitted = True
         self.transformation_summary_ = {
             "概率口径": "规则命中权重占总权重的比例",

@@ -257,6 +257,8 @@ class NGBoost(BaseRiskModel):
         y: Optional[Union[np.ndarray, pd.Series]] = None,
         sample_weight: Optional[np.ndarray] = None,
         eval_set: Optional[List[Tuple]] = None,
+        init_model=None,
+        continue_training: bool = False,
         **fit_params,
     ) -> "NGBoost":
         """训练NGBoost模型.
@@ -277,6 +279,9 @@ class NGBoost(BaseRiskModel):
             含标签的 DataFrame 通过 target 提取标签。原生早停使用最后一集，所有集合均记录评估。
 
         :type eval_set: Optional[List[Tuple]]
+        :param init_model: 已训练的同类 HSCredit/原生模型或后端支持的模型文件。
+        :param continue_training: True 基于当前已拟合模型追加训练；默认 False 重新训练。
+            n_estimators/iterations 表示本次追加轮数；不能与 init_model 同时使用。
         :param fit_params: 其他fit参数
         :return: self
 
@@ -287,6 +292,10 @@ class NGBoost(BaseRiskModel):
         >>> _ = model.fit(X_train, y_train, eval_set={'验证': (X_valid, y_valid)}, eval_metric=metric)
         >>> final_values = model.get_eval_results()
         """
+        from ._continuation import prepare_continuation
+
+        X, y, continuation = prepare_continuation(self, X, y, init_model, continue_training, fit_params, "partial_fit")
+
         from sklearn.tree import DecisionTreeRegressor
 
         from ..losses import BaseLoss, get_metric
@@ -410,7 +419,13 @@ class NGBoost(BaseRiskModel):
 
         # 创建模型
         self.native_params_ = dict(ngb_params)
-        self._model = NGBClassifier(**ngb_params)
+        from ._continuation import continue_ngboost, fit_ngboost, validate_ngboost_objective
+
+        if continuation is not None:
+            validate_ngboost_objective(self, objective)
+        self._model = (
+            NGBClassifier(**ngb_params) if continuation is None else continue_ngboost(continuation, ngb_params)
+        )
 
         # 训练
         weight_routing = {}
@@ -455,7 +470,7 @@ class NGBoost(BaseRiskModel):
         # 约束原生线程池，也防止调参或报告外层并行时发生线程超订阅。
         try:
             with threadpool_limits(limits=max(1, int(self.n_jobs or 1))):
-                self._model.fit(X_train, y_train, **fit_kwargs)
+                fit_ngboost(self._model, X_train, y_train, fit_kwargs, continuation is not None)
         except np.linalg.LinAlgError as exc:
             if not self.natural_gradient or "singular" not in str(exc).lower():
                 raise
@@ -471,6 +486,7 @@ class NGBoost(BaseRiskModel):
         if monitor_metric is not None and "val" in self._evals_result:
             values = next(iter(self._evals_result["val"].values()))
             self._evals_result["val"] = {monitor_metric.name: [sign * value for value in values]}
+        self._boost_objective_ = deepcopy(objective)
         self._is_fitted = True
         self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
 

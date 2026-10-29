@@ -15,7 +15,8 @@ class BaseNetModel(BaseRiskModel):
     """复用风控模型生命周期，并按 objective 选择分类或回归语义。"""
 
     _preserve_dataframe = True
-    _parameter_dicts = ("loss_params", "optimizer_params", "num_embedding_params")
+    _supports_native_feature_importance = False
+    _parameter_dicts = ("loss_params", "optimizer_params", "num_embedding_params", "finetune_params")
 
     def get_params(self, deep=True):
         """为配置字典暴露 sklearn 风格的双下划线参数，供 tune 与 GridSearchCV 使用。"""
@@ -94,6 +95,28 @@ class BaseNetModel(BaseRiskModel):
     def transform(self, X):
         """提取每行的二维 embedding，等价于 get_embeddings(X)。"""
         return self.get_embeddings(X)
+
+    def _require_representation_fitted(self):
+        """仅预训练的编码器可输出表示，但不能冒充已拟合的监督预测器。"""
+        if getattr(self, "_pretrain_only_", False) and hasattr(self, "_pretrained_state_"):
+            return
+        self._require_fitted()
+
+    def get_native_model(self):
+        """返回已预训练或已监督拟合的底层模型；仅预训练时预测接口仍不可用。"""
+        self._require_representation_fitted()
+        return self._model
+
+    def save(self, path, engine="auto", **kwargs):
+        """保存监督模型或仅完成 pretrain 的编码器及其预处理状态。"""
+        if getattr(self, "_pretrain_only_", False):
+            self._require_representation_fitted()
+            if str(path).lower().endswith(".json"):
+                self._save_json(path)
+            from .._lifecycle import atomic_save_pickle
+
+            return atomic_save_pickle(self, path, engine="cloudpickle" if engine == "auto" else engine, **kwargs)
+        return super().save(path, engine=engine, **kwargs)
 
     def fit_transform(self, X, y=None, **fit_params):
         """拟合后提取输入行的表示；监督训练表示不等同于折外特征。"""
@@ -175,10 +198,14 @@ class BaseNetModel(BaseRiskModel):
 
     def get_model_info(self):
         """返回当前任务与已拟合模型的中文元信息。"""
-        self._require_fitted()
+        self._require_representation_fitted()
         return {
             "模型类型": type(self).__name__,
-            "任务类型": "二分类" if self.objective_ == "binary" else "回归",
+            "任务类型": (
+                "特征重建预训练"
+                if getattr(self, "_pretrain_only_", False)
+                else "二分类" if self.objective_ == "binary" else "回归"
+            ),
             "特征数量": self.n_features_in_,
             "嵌入维度": getattr(self, "embedding_dim_", None),
             "最佳迭代": self.best_iteration_,
