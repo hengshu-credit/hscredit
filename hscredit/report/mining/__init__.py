@@ -30,6 +30,7 @@ from .multi_feature import MultiFeatureRuleMiner
 from .multi_label import MultiLabelRuleMiner
 from .tree_extractor import TreeRuleExtractor
 from .manual_tree_extractor import DecisionTreeAnalyzer, ManualTreeExtractor
+from .multiway_tree import MultiwayTreeExtractor
 from .metrics import RuleMetrics, calculate_rule_metrics
 
 __all__ = [
@@ -39,6 +40,7 @@ __all__ = [
     "TreeRuleExtractor",
     "DecisionTreeAnalyzer",
     "ManualTreeExtractor",
+    "MultiwayTreeExtractor",
     "RuleMetrics",
     "calculate_rule_metrics",
 ]

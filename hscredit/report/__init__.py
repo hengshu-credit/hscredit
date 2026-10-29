@@ -47,6 +47,7 @@ from .mining import (
     MultiFeatureRuleMiner,
     MultiLabelRuleMiner,
     TreeRuleExtractor,
+    MultiwayTreeExtractor,
     RuleMetrics,
     calculate_rule_metrics,
 )
@@ -96,6 +97,7 @@ __all__ = [
     "MultiFeatureRuleMiner",
     "MultiLabelRuleMiner",
     "TreeRuleExtractor",
+    "MultiwayTreeExtractor",
     "RuleMetrics",
     "calculate_rule_metrics",
     # 模型报告
