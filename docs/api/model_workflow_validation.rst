@@ -76,7 +76,8 @@ prediction_method 默认 None：分类使用 predict_proba，回归使用 predic
 残差定义为预测值减实际值。评估权重只作用于误差指标；分箱表使用明确的件数口径。
 等频切点由训练数据确定，连续目标统计使用 compute_bin_stats，不计算二分类坏率或 WOE/IV。
 
-回归分箱当前支持 quantile；不支持逾期二分类标签、剔灰或 explain_config 的二分类解释流程。
+回归分箱当前支持 quantile；不支持逾期二分类标签、剔灰或完整的二分类解释流程。
+SHAP 全局重要性使用 explain_config 的 scope='importance'，解释连续预测值。
 没有原生逐字段重要性的模型保留变量描述与分箱，重要性不编造为零。
 ProbabilityScoreCard 保留概率转换公式和刻度；没有逐变量加分能力时不生成空的分值表。
 
@@ -134,6 +135,25 @@ ProbabilityScoreCard 保留概率转换公式和刻度；没有逐变量加分�
 实际解释器为仓库验收 Python 3.11.5；TabPFN 权重验收使用独立目录中的 9.2.0 和官方 v2 分类/回归权重。
 本地全库回归为 7112 通过、9 个未配置数据库服务的跳过；后续报告排版和决策指标改动另做专项复验。
 远程交付以最终提交 SHA 的全部 CI 工作流和矩阵为准。
+
+SHAP 与训练页复核（2026-10-29）
+--------------------------------
+
+在相同日期划分上重新导出 34 份报告，使用选参验证集中的 32 行解释、训练集中的 16 行背景，
+随机种子 42，每行预算为 ``2 * 特征数 + 1``。本次原始字段经 Pipeline 或通用模型预测，
+采用排列式 SHAP；预算较小，适用于链路验收，不能据此声称重要性排名已稳定。
+逐份核对贡献加总、平均绝对贡献和报告表，并保留可用原生重要性。
+输出在 ``artifacts/shap_training_report_20261029``，每个模型包括工作簿和重要性 CSV。
+
+TabPFN 类别输入的原混合精度模型未通过严格加总校验（最大残差约 0.0003775）。
+对单独副本显式设置 ``inference_precision=torch.float32``，以相同训练行重新 fit 建立上下文后，
+残差降为约 0.000000313；相对原模型的最大概率差约 0.01336。原制品保留，
+新报告和解释均对应明确标注的全精度副本；其他模型沿用原制品，不放宽加总校验阈值。
+
+训练页按实际章节默认编号 7，标题从 B 列开始，主标题为“七、训练与调参过程”，小节使用“1、”“2、”等独立序号。
+标题合并范围在最终列宽确定后计算，覆盖本节表格、合并表头及图片。
+原始训练记录与逐轮曲线由 ``get_training_process()`` 保留，Excel 展示摘要、试验对比及曲线。
+专项检查覆盖自定义编号、目录链接、真实 SHAP 加性公式、类别类型和图表之后的连续标题序号。
 
 指标定义参考 `scikit-learn 回归指标 <https://scikit-learn.org/stable/modules/model_evaluation.html#regression-metrics>`_
 及 `ROC AUC <https://scikit-learn.org/stable/modules/generated/sklearn.metrics.roc_auc_score.html>`_。
