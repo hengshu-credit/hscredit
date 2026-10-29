@@ -4137,13 +4137,18 @@ class ModelReport(ModelContextMixin):
                     parallel_config=self.parallel_config,
                     target_specific_totals=target_specific_totals,
                 )
+                # 分组值逐行保留，尤其不能将不同数据集交界处的同月值合并。
+                if not isinstance(dist_df.columns, pd.MultiIndex):
+                    dist_df = dist_df.reset_index()
                 result = dataframe2excel(
                     dist_df,
                     writer,
                     sheet_name=ws,
                     title=title,
                     start_row=end_row + 1,
-                    index=not isinstance(dist_df.columns, pd.MultiIndex),
+                    index=False,
+                    merge=True,
+                    merge_column=["数据集"],
                     percent_cols=pct,
                 )
                 return result
