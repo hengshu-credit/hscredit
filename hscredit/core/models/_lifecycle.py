@@ -189,6 +189,8 @@ def record_training(method=None, *, transactional=False, fitted=True):
 
 def _fit_parameter_snapshot(value, *, policy="summary", _depth=0):
     """默认仅记录有界元数据；只有显式 full 才复制逐行数据及任意对象。"""
+    if type(value).__module__ == "torch" and type(value).__name__ == "dtype":
+        return str(value)
     if type(value).__module__.startswith("catboost") and type(value).__name__ == "Pool":
         summary = {
             "容器类型": "CatBoost.Pool",

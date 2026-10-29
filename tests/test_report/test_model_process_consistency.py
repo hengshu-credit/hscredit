@@ -98,7 +98,7 @@ def test_long_curves_survive_repeated_fit_and_report_export(tmp_path):
     from openpyxl import load_workbook
 
     book = load_workbook(tmp_path / "process.xlsx", read_only=True)
-    assert "8-训练与调参过程" in book.sheetnames
+    assert "7-训练与调参过程" in book.sheetnames
     assert any(cell.value == "概率均方误差" for row in book["2-模型性能"] for cell in row)
     book.close()
 

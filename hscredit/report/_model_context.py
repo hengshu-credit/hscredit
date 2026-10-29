@@ -18,12 +18,90 @@ def _constructor_params(model):
     """兼容原生 sklearn 和只实现无参 get_params 的自定义预测对象。"""
     method = getattr(model, "get_params", None)
     if not callable(method):
-        return {}
+        try:
+            parameters = inspect.signature(type(model).__init__).parameters
+        except (TypeError, ValueError):
+            return {}
+        return {
+            name: getattr(model, name)
+            for name, parameter in parameters.items()
+            if name != "self"
+            and parameter.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+            and hasattr(model, name)
+        }
     try:
         parameters = inspect.signature(method).parameters
     except (TypeError, ValueError):
         return method()
     return method(deep=False) if "deep" in parameters else method()
+
+
+def _configuration_snapshot(value, _active=None):
+    """报告配置逐项保留；不复用有长度/深度上限的训练日志摘要，也不遍历已学习权重。"""
+    from enum import Enum
+    from pathlib import Path
+
+    if isinstance(value, Enum):
+        return _configuration_snapshot(value.value, _active)
+    if isinstance(value, np.generic):
+        return _configuration_snapshot(value.item(), _active)
+    if value is None or isinstance(value, (str, bool, int, float, np.number)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, type) or inspect.isroutine(value):
+        return f"{value.__module__}.{value.__qualname__}"
+    active = set() if _active is None else _active
+    if id(value) in active:
+        return "<recursive>"
+    active.add(id(value))
+    try:
+        if isinstance(value, dict):
+            return {str(key): _configuration_snapshot(item, active) for key, item in value.items()}
+        if isinstance(value, (list, tuple, np.ndarray, pd.Index)):
+            items = value.tolist() if isinstance(value, (np.ndarray, pd.Index)) else value
+            if not isinstance(items, (list, tuple)):
+                return _configuration_snapshot(items, active)
+            return [_configuration_snapshot(item, active) for item in items]
+        # 数据容器只保留元信息；构造配置不能隐式导出训练样本。
+        if isinstance(value, (pd.DataFrame, pd.Series)) or hasattr(value, "tocsr"):
+            summary = {"__class__": type(value).__name__, "shape": list(value.shape)}
+            if isinstance(value, pd.DataFrame):
+                summary.update(columns=list(map(str, value.columns)), dtypes=list(map(str, value.dtypes)))
+            else:
+                summary["dtype"] = str(value.dtype)
+            return summary
+        params = _constructor_params(value)
+        if params:
+            return {
+                "__class__": f"{type(value).__module__}.{type(value).__qualname__}",
+                **_model_parameter_snapshot(value, active),
+            }
+        if type(value).__module__ == "torch" and type(value).__name__ == "dtype":
+            return str(value)
+        return f"{type(value).__module__}.{type(value).__qualname__}"
+    finally:
+        active.remove(id(value))
+
+
+def _model_parameter_snapshot(model, _active=None):
+    """记录公开构造配置、实际原生参数及包装器训练后采用的组件配置。"""
+    active = {id(model)} if _active is None else _active
+    params = dict(_constructor_params(model))
+    for key, value in (getattr(model, "kwargs", None) or {}).items():
+        params.setdefault(key, value)
+    result = _configuration_snapshot(params, active)
+    native = getattr(model, "native_params_", None)
+    if native:
+        result["native_params_"] = _configuration_snapshot(native, active)
+    for name in ("model_", "lr_model_", "binner_", "encoder_", "calibrator_", "transformer_", "score_transformer_"):
+        child = getattr(model, name, None)
+        if child is None or child is model or not _constructor_params(child):
+            continue
+        snapshot = _configuration_snapshot(child, active)
+        if snapshot != result.get(name[:-1]):
+            result[name] = snapshot
+    return result
 
 
 def _model_stamp(model, _seen=None):
@@ -117,7 +195,7 @@ class ModelContextMixin:
         self.model_context_["指标配置"].extend(
             {"指标": name, "输入": "模型决策类别"} for name in getattr(self, "label_metrics_", [])
         )
-        self.model_context_["最终模型参数"] = _fit_parameter_snapshot(_constructor_params(model))
+        self.model_context_["最终模型参数"] = _model_parameter_snapshot(model)
         self.model_context_["任务类型"] = "回归" if getattr(self, "task_type_", "binary") == "regression" else "二分类"
         if getattr(self, "task_type_", "binary") == "regression":
             self.model_context_.pop("风险方向")
@@ -328,6 +406,25 @@ class ModelContextMixin:
             fold_rows = []
             selected_curves = []
             selected_number = getattr(getattr(tuner, "best_trial_", None), "number", None)
+            result["搜索指标"] = pd.DataFrame(
+                [{"指标": metric.name, "方向": metric.direction} for metric in tuner.metrics]
+            )
+            validation = getattr(tuner, "validation_summary_", {})
+            result["搜索设置"] = pd.DataFrame(
+                [
+                    {"配置项": "搜索指标", "配置值": "、".join(metric.name for metric in tuner.metrics)},
+                    {
+                        "配置项": "优化方向",
+                        "配置值": "、".join(
+                            f"{metric.name}：{'越大越好' if metric.direction=='maximize' else '越小越好'}"
+                            for metric in tuner.metrics
+                        ),
+                    },
+                    {"配置项": "验证方式", "配置值": validation.get("验证方式")},
+                    {"配置项": "搜索评分数据集", "配置值": validation.get("搜索评分数据集", "交叉验证留出")},
+                    {"配置项": "搜索选中试验", "配置值": selected_number},
+                ]
+            )
             relation = (
                 "本报告模型是调参后重训模型"
                 if getattr(tuner, "best_model_", None) is self.model
@@ -347,6 +444,7 @@ class ModelContextMixin:
                 rows.append(
                     {
                         "试验编号": trial.number,
+                        "搜索选中": trial.number == selected_number,
                         "状态": states.get(trial.state.name, trial.state.name),
                         "各目标得分": trial.values,
                         "采样参数": trial.params,

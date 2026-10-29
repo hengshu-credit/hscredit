@@ -56,7 +56,7 @@ def test_long_feature_names_and_parameters_do_not_clip_or_resize_unused_columns(
     )
     assert result.complete
     workbook = load_workbook(output)
-    for name in ("5-模型参数", "6-模型部署需求", "8-训练与调参过程"):
+    for name in ("5-模型参数", "6-模型部署需求", "7-训练与调参过程"):
         sheet = workbook[name]
         assert sheet.sheet_view.showGridLines is False
         assert not any(d.min <= sheet.max_column < d.max for d in sheet.column_dimensions.values())

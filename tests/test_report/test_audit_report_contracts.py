@@ -356,8 +356,9 @@ def test_model_report_swallowed_plot_failure_blocks_strict_publication(tmp_path,
     assert not result.complete
     assert result.artifacts and result.artifacts[0]["完整"] is False
     workbook = load_workbook(output)
-    assert workbook.sheetnames[0] == "报告执行状态"
-    assert "不完整" in workbook.worksheets[0]["B2"].value
+    assert workbook.sheetnames[0] == "目录"
+    assert "报告执行状态" not in workbook.sheetnames
+    assert any("KS" in s.reason for s in result.sections.values())
     workbook.close()
 
 

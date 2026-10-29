@@ -8,6 +8,71 @@ import pandas as pd
 import numpy as np
 from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.cell import coordinate_to_tuple
+import re
+
+
+def chapter_number(number):
+    """章节主标题采用中文序号，小节从 1 独立编号。"""
+    digits = "零一二三四五六七八九"
+    number = int(number)
+    if number < 10:
+        return digits[number]
+    if number < 20:
+        return "十" + (digits[number % 10] if number % 10 else "")
+    if number < 100:
+        return digits[number // 10] + "十" + (digits[number % 10] if number % 10 else "")
+    return str(number)
+
+
+def fit_report_titles(worksheet):
+    """标题固定在 B 列，按层级覆盖本节真实表格和图片宽度。"""
+    headings = []
+    for row in worksheet.iter_rows(min_col=2, max_col=2):
+        cell = row[0]
+        match = re.match(r"^([一二三四五六七八九十]+|\d+(?:\.\d+)*)、", str(cell.value or ""))
+        if match:
+            headings.append((cell.row, 0 if cell.row == 2 else match[1].count(".") + 1))
+    for index, (start, level) in enumerate(headings):
+        stop = next((row for row, depth in headings[index + 1 :] if depth <= level), None)
+        last = max(
+            (
+                cell.column
+                for row in worksheet.iter_rows(min_row=start + 1, max_row=(stop - 1 if stop else worksheet.max_row))
+                for cell in row
+                if cell.value is not None
+            ),
+            default=4,
+        )
+        for area in worksheet.merged_cells.ranges:
+            if (
+                area.min_row > start
+                and (stop is None or area.max_row < stop)
+                and area.min_row not in {r for r, _ in headings}
+            ):
+                last = max(last, area.max_col)
+        for picture in worksheet._images:
+            if isinstance(picture.anchor, str):
+                pic_row, column = coordinate_to_tuple(picture.anchor)
+                width = picture.width
+            else:
+                pic_row, column = picture.anchor._from.row + 1, picture.anchor._from.col + 1
+                width = picture.anchor.ext.cx / 9525
+            if pic_row <= start or (stop and pic_row >= stop):
+                continue
+            while width > 0:
+                dimensions = [d for d in worksheet.column_dimensions.values() if (d.min or 0) <= column <= (d.max or 0)]
+                dim = worksheet.column_dimensions.get(get_column_letter(column))
+                if dim is None and dimensions:
+                    dim = max(dimensions, key=lambda d: d.min or 0)
+                width -= (dim.width if dim else worksheet.sheet_format.defaultColWidth or 13) * 7 + 5
+                column += 1
+            last = max(last, column - 1)
+        for area in list(worksheet.merged_cells.ranges):
+            if area.min_row == area.max_row == start and area.min_col == 2:
+                worksheet.unmerge_cells(str(area))
+        if last > 2:
+            worksheet.merge_cells(start_row=start, start_column=2, end_row=start, end_column=last)
 
 
 def record_identifier(value):
@@ -31,27 +96,18 @@ def configuration_table(mapping):
             for index, item in enumerate(value):
                 append(f"{name}[{index}]", item)
         else:
-            rows.append({"配置项": name, "配置值": str(value) if isinstance(value, (dict, list, tuple)) else value})
+            if isinstance(value, str) and not value:
+                value = '""'
+            rows.append(
+                {
+                    "配置项": name,
+                    "配置值": str(value) if value is None or isinstance(value, (dict, list, tuple)) else value,
+                }
+            )
 
     for name, value in mapping.items():
         append(str(name), value)
     return pd.DataFrame(rows, columns=["配置项", "配置值"])
-
-
-def process_display_table(report, title, table):
-    """公共过程表保持原结构，Excel 对宽记录采用逐条配置展示。"""
-    if title == "模型口径":
-        return configuration_table(report.model_context_)
-    if title.endswith("训练记录"):
-        rows = []
-        for index, record in enumerate(table.to_dict(orient="records")):
-            detail = configuration_table(record)
-            detail.insert(0, "记录序号", index + 1)
-            rows.append(detail)
-        return pd.concat(rows, ignore_index=True) if rows else table
-    return table.apply(
-        lambda column: column.map(lambda value: str(value) if isinstance(value, (dict, list, tuple)) else value)
-    )
 
 
 def fit_metadata_sheet(worksheet, default_column_width=None):

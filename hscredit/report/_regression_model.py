@@ -199,8 +199,9 @@ def export_excel(report, filepath, options):
     """沿用 ExcelWriter 主题及原子保存，单独组织连续目标报告章节。"""
     import matplotlib.pyplot as plt
     from ..excel import ExcelWriter, dataframe2excel
-    from ..core.viz.style import get_palette
-    from ._model_layout import configuration_table, fit_metadata_sheet, process_display_table, record_identifier
+    from ..core.viz.style import get_palette, get_font_sizes, get_defaults
+    from ..core.viz.utils import _create_subplots, setup_axis_style, save_figure
+    from ._model_layout import configuration_table, fit_metadata_sheet, record_identifier
 
     result = report._execution_result
     for column in (options["date"], options["group"], options["amount"]):
@@ -218,6 +219,9 @@ def export_excel(report, filepath, options):
     result.success("核心数据计算")
     result.current_section = "工作簿渲染"
     writer = ExcelWriter()
+    from ._training_process_report import process_sheet_name
+
+    training_name = process_sheet_name(report, options.get("training_sheet_index"))
     sheet_names = [
         "1-基本信息",
         "2-模型性能",
@@ -225,14 +229,22 @@ def export_excel(report, filepath, options):
         "4-稳定性分析",
         "5-模型参数",
         "6-模型部署需求",
-        "8-训练与调参过程",
+        training_name,
     ]
-    positions = {}
+    positions, section_counts = {}, {}
+    from ._model_layout import chapter_number
 
     def section(sheet_name, title, table, **kwargs):
         ws = writer.get_sheet_by_name(sheet_name)
         ws.sheet_view.showGridLines = False
         row = positions.get(sheet_name, 2)
+        if "-" in sheet_name and sheet_name.split("-")[0].isdigit():
+            number, caption = sheet_name.split("-", 1)
+            if row == 2:
+                writer.insert_value2sheet(ws, "B2", f"{chapter_number(number)}、{caption}", style="header_middle")
+                row = 5
+            section_counts[sheet_name] = section_counts.get(sheet_name, 0) + 1
+            title = f"{section_counts[sheet_name]}、{title}"
         writer.insert_value2sheet(
             ws, (row, 2), value=title, style="header", end_space=(row, max(4, len(table.columns) + 1))
         )
@@ -304,12 +316,13 @@ def export_excel(report, filepath, options):
         folder = Path(filepath).parent / f"{Path(filepath).stem}_assets"
         folder.mkdir(parents=True, exist_ok=True)
         colors = get_palette()
+        fonts, defaults = get_font_sizes(), get_defaults()
         plotted = 0
         for i, (key, dataset) in enumerate(report._datasets.items()):
             y, p = report._get_valid_target_arrays(key)
             if not len(y):
                 continue
-            figure, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+            figure, axes = _create_subplots(1, 2, figsize=(10, 4), constrained_layout=True)
             try:
                 axes[0].scatter(y, p, alpha=0.55, s=14, color=colors[0])
                 bounds = [float(min(y.min(), p.min())), float(max(y.max(), p.max()))]
@@ -318,8 +331,17 @@ def export_excel(report, filepath, options):
                 axes[1].scatter(p, p - y, alpha=0.55, s=14, color=colors[0])
                 axes[1].axhline(0, color=colors[1], linestyle="--")
                 axes[1].set(xlabel="预测值", ylabel="预测值减实际值", title="残差分布")
+                for axis in axes:
+                    setup_axis_style(axis, hide_top_right=True)
+                    axis.title.set_fontsize(fonts["title"])
+                    axis.title.set_fontweight(defaults["fontweight_title"])
+                    for label in (axis.xaxis.label, axis.yaxis.label):
+                        label.set_fontsize(fonts["axis_label"])
+                        label.set_fontweight(defaults["fontweight_label"])
+                    axis.tick_params(labelsize=fonts["tick"])
+                    axis.grid(True, alpha=defaults["grid_alpha"], linestyle="--")
                 image = folder / f"regression_{i}.png"
-                figure.savefig(image, dpi=150)
+                save_figure(figure, image, dpi=defaults["dpi"])
             finally:
                 plt.close(figure)
             ws = writer.get_sheet_by_name("2-模型性能")
@@ -331,6 +353,15 @@ def export_excel(report, filepath, options):
             result.success("图形生成")
         else:
             result.skip("图形生成", "没有带有效连续目标的样本")
+    if options["show_importance"] and report.explain_config["enabled"]:
+        from ._shap_importance_report import write_importance
+
+        sheet = writer.get_sheet_by_name("3-入模变量分析")
+        writer.insert_value2sheet(sheet, "B2", "3、入模变量分析", style="header")
+        section_counts[sheet.title] = 1
+        positions[sheet.title] = write_importance(
+            report, writer, sheet, 5, filepath, options["with_plots"], title="3.1、SHAP 特征重要性"
+        )
     train = report._datasets[report._train_key]
     described = train.X[report.feature_names].describe(include="all").T.reset_index()
     described = described.rename(
@@ -392,6 +423,7 @@ def export_excel(report, filepath, options):
         "5-模型参数",
         "模型配置",
         configuration_table(report.model_context_["最终模型参数"]),
+        decimal=None,
     )
     section(
         "6-模型部署需求",
@@ -415,18 +447,21 @@ def export_excel(report, filepath, options):
             sample_tables.append(selected)
         section("6-模型部署需求", "预测样例（各数据集前十行）", pd.concat(sample_tables, ignore_index=True))
         result.success("生产订单测试用例")
-    for title, table in report.get_training_process().items():
-        if not table.empty:
-            section("8-训练与调参过程", title, process_display_table(report, title, table))
-    for name in ("5-模型参数", "6-模型部署需求", "8-训练与调参过程"):
+    from ._training_process_report import write_process
+
+    write_process(report, writer, filepath, options["with_plots"], training_name)
+    for name in ("5-模型参数", "6-模型部署需求", training_name):
         fit_metadata_sheet(writer.get_sheet_by_name(name), writer.style_sheet.column_dimensions["C"].width)
     for name in sheet_names:
         writer.insert_hyperlink2sheet(writer.get_sheet_by_name(name), "B2", hyperlink="#'目录'!B2")
         result.success(f"工作表：{name}")
+    from ._model_layout import fit_report_titles
+
+    for sheet in writer.workbook:
+        if sheet.title not in {"初始化", "目录"}:
+            fit_report_titles(sheet)
     result.success("工作表：目录")
     result.current_section = "工作簿发布"
     result.ensure_publishable()
-    section("报告执行状态", "报告完整" if result.complete else "报告不完整", result.status_table())
-    writer.move_sheet(writer.get_sheet_by_name("报告执行状态"), index=0)
     writer.save(filepath)
     return filepath

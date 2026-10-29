@@ -57,8 +57,8 @@ class ModelExplainer:
         random_state: int = 42,
         explainer_type: Optional[str] = None,
     ):
-        if model_output not in {"probability", "raw", "score"}:
-            raise ValidationError("model_output 必须是 probability、raw 或 score")
+        if model_output not in {"probability", "raw", "score", "prediction"}:
+            raise ValidationError("model_output 必须是 probability、raw、score 或 prediction")
         if not isinstance(max_background, int) or max_background <= 0:
             raise ValidationError("max_background 必须是正整数")
         self.model = model
@@ -100,6 +100,8 @@ class ModelExplainer:
         return hasattr(native, "coef_") and not self._is_tree_model()
 
     def _resolve_target_class(self):
+        if self.model_output == "prediction":
+            return None, None
         classes = getattr(self.model, "classes_", getattr(self._native_model(), "classes_", None))
         if classes is None:
             if self.model_output == "probability":
@@ -131,6 +133,8 @@ class ModelExplainer:
         return self._sample(source, self.max_background)
 
     def _predict_selected(self, frame, class_index):
+        if self.model_output == "prediction":
+            return np.asarray(self.model.predict(frame), dtype=float).reshape(-1)
         if self.model_output == "score":
             predictor = getattr(self.model, "predict_score", getattr(self.model, "predict", None))
             return np.asarray(predictor(frame), dtype=float).reshape(-1)
@@ -164,7 +168,9 @@ class ModelExplainer:
     def _choose_algorithm(self):
         if self.algorithm != "auto":
             return self.algorithm
-        if self.model_output == "score":
+        if self.model_output in {"score", "prediction"}:
+            return "permutation"
+        if type(self._native_model()).__module__.split(".")[0] == "ngboost":
             return "permutation"
         if self._is_tree_model():
             return "tree"
@@ -172,16 +178,23 @@ class ModelExplainer:
             return "linear"
         return "permutation"
 
-    def _build_explainer(self, background: pd.DataFrame, class_index: Optional[int]):
+    def _build_explainer(self, background: pd.DataFrame, class_index: Optional[int], *, decoder=None, algorithm=None):
         shap = _load_shap()
-        algorithm = self._choose_algorithm()
+        algorithm = algorithm or self._choose_algorithm()
         native = self._native_model()
         model_version = (
             id(native),
             getattr(self.model, "fit_revision_", None),
             tuple(id(getattr(native, name, None)) for name in ("_Booster", "tree_", "estimators_", "coef_")),
         )
-        signature = (algorithm, fingerprint_frame(background), self.model_output, class_index, model_version)
+        signature = (
+            algorithm,
+            fingerprint_frame(background),
+            self.model_output,
+            class_index,
+            model_version,
+            getattr(self, "_encoding_key", None) if decoder else None,
+        )
         if self._explainer is not None and self._explainer_signature == signature:
             return self._explainer, algorithm
         if self._explainer_signature is not None:
@@ -205,12 +218,12 @@ class ModelExplainer:
             backend = shap.LinearExplainer(explained_model, background)
         elif algorithm == "permutation":
             predictor = lambda values: self._predict_selected(
-                pd.DataFrame(values, columns=background.columns), class_index
+                decoder(values) if decoder else pd.DataFrame(values, columns=background.columns), class_index
             )  # noqa: E731
-            backend = shap.Explainer(predictor, background, algorithm="permutation")
+            backend = shap.Explainer(predictor, background, algorithm="permutation", seed=self.random_state)
         elif algorithm == "kernel":
             predictor = lambda values: self._predict_selected(
-                pd.DataFrame(values, columns=background.columns), class_index
+                decoder(values) if decoder else pd.DataFrame(values, columns=background.columns), class_index
             )  # noqa: E731
             backend = shap.KernelExplainer(predictor, background)
         else:
@@ -234,10 +247,45 @@ class ModelExplainer:
             self.feature_names = list(frame.columns)
         class_index, class_label = self._resolve_target_class()
         background = self._resolve_background(frame)
-        backend, algorithm = self._build_explainer(background, class_index)
+        algorithm = self._choose_algorithm()
+        categorical = [name for name in frame if not pd.api.types.is_numeric_dtype(frame[name])]
+        if categorical and self.algorithm == "auto":
+            algorithm = "permutation"
+        explained, masked_background, decoder = frame, background, None
+        if algorithm in {"permutation", "kernel"}:
+            # 掩码器只交换原字段的取值，编码不是 one-hot 或序数模型输入；预测前还原原始值和 dtype。
+            categories = {}
+            for name in categorical:
+                categories[name] = list(pd.unique(pd.concat([background[name], frame[name]]).dropna()))
+            self._encoding_key = (
+                tuple(map(str, frame.dtypes)),
+                tuple((name, tuple(map(repr, values))) for name, values in categories.items()),
+            )
+
+            def encode(source):
+                result = source.copy()
+                for name, values in categories.items():
+                    result[name] = pd.Categorical(source[name], categories=values).codes
+                return result.astype(float)
+
+            def decode(values):
+                result = pd.DataFrame(values, columns=frame.columns)
+                for name, vocabulary in categories.items():
+                    codes = result[name].to_numpy(dtype=int)
+                    result[name] = [vocabulary[code] if code >= 0 else np.nan for code in codes]
+                for name in frame:
+                    dtype = frame[name].dtype
+                    if isinstance(dtype, pd.CategoricalDtype):
+                        result[name] = pd.Categorical(result[name], dtype=dtype)
+                    else:
+                        result[name] = result[name].astype(dtype)
+                return result
+
+            explained, masked_background, decoder = encode(frame), encode(background), decode
+        backend, algorithm = self._build_explainer(masked_background, class_index, decoder=decoder, algorithm=algorithm)
         shap = _load_shap()
         if algorithm == "kernel":
-            raw = backend.shap_values(frame, silent=True)
+            raw = backend.shap_values(explained, silent=True)
             explanation = shap.Explanation(
                 values=raw,
                 base_values=backend.expected_value,
@@ -251,7 +299,7 @@ class ModelExplainer:
                 kwargs["check_additivity"] = check_additivity
             if algorithm == "permutation":
                 kwargs["max_evals"] = max_evals or max(2 * frame.shape[1] + 1, 50)
-            explanation = backend(frame, **kwargs)
+            explanation = backend(explained, **kwargs)
             output_index = class_index if np.asarray(explanation.values).ndim == 3 else None
             if algorithm in {"tree", "linear"} and output_index is None and class_index == 0:
                 # 二分类单输出后端解释的是 classes_[1]，类别 0 必须显式反转。
@@ -267,6 +315,7 @@ class ModelExplainer:
             "模型类型": self.model.__class__.__name__,
             "SHAP版本": shap.__version__,
             "解释算法": algorithm,
+            "最大解释次数": (max_evals or max(2 * frame.shape[1] + 1, 50)) if algorithm == "permutation" else None,
             "计算时间": datetime.now(timezone.utc).isoformat(),
             "随机种子": self.random_state,
             "样本数": len(frame),
@@ -295,7 +344,15 @@ class ModelExplainer:
         if check_additivity and not np.allclose(
             result.base_values + result.values.sum(axis=1), predictions, rtol=1e-4, atol=1e-5
         ):
-            raise ValidationError("SHAP 贡献加总与所选类别/输出尺度不一致，请检查模型变换或重建解释器")
+            owner = self.model
+            while getattr(owner, "steps", None):
+                owner = owner.steps[-1][1]
+            hint = (
+                "；TabPFN 可显式设置 inference_precision=torch.float32 后重新 fit，再核对解释"
+                if "tabpfn" in type(owner).__name__.lower()
+                else ""
+            )
+            raise ValidationError("SHAP 贡献加总与所选类别/输出尺度不一致，请检查模型变换或重建解释器" + hint)
         self.last_result_ = result
         self._shap_values = result.values
         self._expected_value = result.base_values
