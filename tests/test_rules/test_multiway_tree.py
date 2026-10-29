@@ -228,3 +228,14 @@ def test_real_loan_counts_amount_overdue_and_model_effects():
         report, tree.get_rule_table(overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额", leaf_only=True)
     )
     assert set(tree.evaluate({"训练集": data, "验证集": data.iloc[:100]})["数据集"]) == {"训练集", "验证集"}
+
+
+@pytest.mark.parametrize("comparison, method", [(">", "gt"), (">=", "ge"), ("<", "lt"), ("<=", "le")])
+def test_overdue_operator_is_forwarded_to_each_dataset(comparison, method):
+    data = pd.DataFrame({"评分": range(6), "target": [0, 1] * 3, "MOB1": [0, 2, 3, 7, 8, 0]})
+    tree = MultiwayTreeExtractor(features=["评分"], max_depth=0).fit(data)
+    reports = tree.report({"甲": data, "乙": data}, overdue=["MOB1"], dpds=[3], overdue_operator=comparison)
+    expected = int(getattr(data.MOB1, method)(3).sum())
+    for report in reports.values():
+        bad_column = next(c for c in report if (c[-1] if isinstance(c, tuple) else c) == "坏样本数")
+        assert report.iloc[0][bad_column] == expected

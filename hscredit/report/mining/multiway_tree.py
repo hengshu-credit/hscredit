@@ -21,6 +21,7 @@ from ...core.rules import Rule
 from ...exceptions import InputValidationError, NotFittedError
 from ...utils.parallel import ParallelizableMixin
 from ...utils.serialization import ArtifactSerializableMixin
+from ...utils.overdue import validate_overdue_operator
 from .base import format_feature_context, normalize_feature_names, resolve_feature_map
 from .manual_tree_extractor import _node_hit_report
 
@@ -693,13 +694,39 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             rules.append(rule)
         return RuleSet(name="多叉树规则集", logic="or", rules=rules, n_jobs=self.n_jobs)
 
-    def report(self, datasets, target=None, overdue=None, dpds=None, del_grey=False, leaf_only=False, **kwargs):
+    def report(
+        self,
+        datasets,
+        target=None,
+        overdue=None,
+        dpds=None,
+        del_grey=False,
+        leaf_only=False,
+        *,
+        overdue_operator=">",
+        **kwargs,
+    ):
         """用 Rule.report 输出节点效果，支持金额、多逾期标签和多数据集。
 
         多分类默认对每个类别分别计算一对其余类别的规则指标。
         显式 target/overdue 参数按 Rule.report 既有口径处理。
+
+        :param datasets: DataFrame、DataFrame 列表或名称到 DataFrame 的字典。
+        :param target: 标签列名、一维 Series/ndarray/list、callable 或标签映射；
+            callable 接收当前完整数据集。与 overdue+dpds 模式互斥；
+            未指定时沿用拟合标签，多分类按每个类别对其余类别生成标签。
+        :param overdue: 逾期天数字段或字段列表，必须与 dpds 同时提供。
+        :param dpds: 逾期阈值或阈值列表，按照 overdue × dpds 生成标签。
+        :param del_grey: 是否按标签剔除灰样本；显式标签仅保留 0/1。
+            逾期标签在 > 时剔除 (0, dpd]，>= 时剔除 (0, dpd)，< 和 <= 不额外剔灰。
+        :param leaf_only: 是否只评估叶节点，默认 False。
+        :param overdue_operator: 逾期比较符，支持 >、>=、<、<=，默认 >。
+        :param kwargs: 传给 Rule.report 的其他参数，例如 amount、round_digits。
+        :return: 节点效果表；列表/字典输入返回对应的列表/字典。
         """
         self._check_fitted()
+        validate_overdue_operator(overdue_operator)
+        kwargs["overdue_operator"] = overdue_operator
         if isinstance(datasets, dict):
             return {
                 key: self.report(value, target, overdue, dpds, del_grey, leaf_only, **kwargs)
