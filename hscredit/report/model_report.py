@@ -496,7 +496,7 @@ class ModelReport(ModelContextMixin):
     :param y_test: 默认值为 ``None`` 。测试集标签，None 时从 X_test 中通过 target / overdue+dpds 构建
     :param X_oot: 默认值为 ``None`` 。跨时间验证集特征（命名为 跨时间验证集）
     :param y_oot: 默认值为 ``None`` 。跨时间验证集标签，None 时从 X_oot 中通过 target / overdue+dpds 构建
-    :param prediction_method: 默认值为 ``'predict_proba'`` 。数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
+    :param prediction_method: 默认 None 按任务选择：分类 predict_proba，回归 predict。也支持显式方法名或 callable。
     :type prediction_method: Union[str, Callable]
     :param prediction_kwargs: 默认值为 ``None`` 。callable 同名参数的显式覆盖字典
     :type prediction_kwargs: Optional[Dict[str, Any]]
@@ -596,7 +596,7 @@ class ModelReport(ModelContextMixin):
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
         del_grey: bool = False,
-        prediction_method: Union[str, Callable] = "predict_proba",
+        prediction_method: Optional[Union[str, Callable]] = None,
         prediction_kwargs: Optional[Dict[str, Any]] = None,
         explain_config: Optional[Dict[str, Any]] = None,
         n_jobs=-1,
@@ -675,7 +675,7 @@ class ModelReport(ModelContextMixin):
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
-        :param prediction_method: 数据集唯一预测方法，支持 predict_proba/predict_prob/predict/predict_score/transform/callable
+        :param prediction_method: 默认 None 自动选择分类 predict_proba 或回归 predict；分类还支持 predict_prob/predict_score/transform/callable。
         :param prediction_kwargs: callable 同名参数的显式覆盖字典
         :param explain_config: 可选模型解释配置；None 不生成可选解释章节，由 normalize_explain_config 校验。
         :param score_direction: higher_risk/higher_safe；默认按预测方法和评分刻度确定，不按标签反转概率。
@@ -705,7 +705,18 @@ class ModelReport(ModelContextMixin):
                 raise TypeError(f"{old} 参数已移除，请使用 {new}")
         self.overdue, self.dpds = overdue, dpds
         self.model = model
+        from ._regression_model import is_regression
+
+        self.task_type_ = "regression" if is_regression(model) else "binary"
+        if self.task_type_ == "regression" and (overdue is not None or dpds is not None or del_grey):
+            raise ValidationError("回归报告不使用逾期二分类或剔灰配置，请直接提供连续目标")
+        if prediction_method is None:
+            prediction_method = "predict" if self.task_type_ == "regression" else "predict_proba"
+        if self.task_type_ == "regression" and prediction_method != "predict" and not callable(prediction_method):
+            raise ValidationError("回归报告需要连续预测值，请使用 prediction_method='predict' 或 callable")
         self.explain_config = normalize_explain_config(explain_config)
+        if self.task_type_ == "regression" and self.explain_config["enabled"]:
+            raise ValidationError("回归报告暂不支持 explain_config，请单独使用适配回归任务的解释器")
         self._feature_names = _normalize_feature_names(features)
         if not isinstance(prediction_method, str) and not callable(prediction_method):
             raise ValidationError("prediction_method 必须是方法名字符串或 callable")
@@ -780,6 +791,7 @@ class ModelReport(ModelContextMixin):
         # 所有缓存仅在完整计算成功后提交。
         self.report_warnings_ = []
         self._metrics_cache: Dict[Optional[str], pd.DataFrame] = {}
+        self._label_prediction_cache = {}
         self._summary_cache: Optional[pd.DataFrame] = None
         self._raw_importance_cache: Optional[pd.Series] = None
         self._importance_cache: Optional[pd.DataFrame] = None
@@ -842,6 +854,7 @@ class ModelReport(ModelContextMixin):
         self.report_warnings_ = []
         self.report_skips_ = []
         self._metrics_cache.clear()
+        self._label_prediction_cache.clear()
         self._summary_cache = None
         self._raw_importance_cache = None
         self._importance_cache = None
@@ -881,6 +894,7 @@ class ModelReport(ModelContextMixin):
     def _run_cache_transaction(self, function, *args, **kwargs):
         """隔离派生缓存写入；仅在整个公共输出操作成功后提交。"""
         cache_names = (
+            "_label_prediction_cache",
             "_metrics_cache",
             "_summary_cache",
             "_raw_importance_cache",
@@ -939,6 +953,13 @@ class ModelReport(ModelContextMixin):
         target_payload = state.pop("_target_payload", None)
         metrics_payload = state.pop("_metrics_payload", None)
         self.__dict__.update(state)
+        self._label_prediction_cache = {}
+        if not hasattr(self, "task_type_"):
+            from ._regression_model import is_regression
+
+            if is_regression(self.model):
+                raise SerializationError("旧版回归报告使用了二分类口径，请用原始数据重新创建 ModelReport")
+            self.task_type_ = "binary"
         self.overdue = state.get("overdue", state.get("init_params_", {}).get("overdue"))
         self.dpds = state.get("dpds", state.get("init_params_", {}).get("dpds"))
         if target_payload is not None:
@@ -962,7 +983,7 @@ class ModelReport(ModelContextMixin):
         if metrics_payload is not None:
             self.metrics = cloudpickle.loads(metrics_payload)
             self.init_params_["metrics"] = self.metrics
-        if not hasattr(self, "model_context_"):
+        if not hasattr(self, "model_context_") or "最终模型参数" not in self.model_context_:
             self._capture_model_context()
         if state.get("evaluation_protocol_", 0) < 2:
             self._invalidate_caches()
@@ -1087,6 +1108,10 @@ class ModelReport(ModelContextMixin):
 
     def _build_y(self, X: pd.DataFrame, target_cfg, *, dataset_name=None):
         """在本数据集上解析标签；显式多标签默认使用首标签作单标签视图。"""
+        if self.task_type_ == "regression":
+            from ._regression_model import target_values
+
+            return target_values(X, target_cfg, self._target_name), None
         if target_cfg is None and self.overdue is None:
             target_cfg = next((name for name in ("target", "label", "y", "flag", "overdue") if name in X), None)
         frame, targets = bind_targets(
@@ -1166,10 +1191,15 @@ class ModelReport(ModelContextMixin):
             X_df = _ensure_dataframe(X_raw, features=self._feature_names)
             if y_raw is None:
                 y_s, y_dict = self._build_y(X_df, self._target_cfg, dataset_name=name)
-                if not y_dict and y_s.notna().all():
+                if self.task_type_ != "regression" and not y_dict and y_s.notna().all():
                     y_s = y_s.astype(int)
             else:
-                y_s = _ensure_series(y_raw, name=self._target_name)
+                if self.task_type_ == "regression":
+                    from ._regression_model import target_values
+
+                    y_s = target_values(X_df, y_raw, self._target_name)
+                else:
+                    y_s = _ensure_series(y_raw, name=self._target_name)
                 y_dict = None
             if y_dict and not candidate_labels:
                 candidate_labels = list(y_dict)
@@ -1239,10 +1269,14 @@ class ModelReport(ModelContextMixin):
         # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
         if y is None:
             y, y_dict = self._build_y(X, self._target_cfg, dataset_name=key)
-            if not y_dict and y.notna().all():
+            if self.task_type_ != "regression" and not y_dict and y.notna().all():
                 y = y.astype(int)
         else:
             y_dict = None
+            if self.task_type_ == "regression":
+                from ._regression_model import target_values
+
+                y = target_values(X, y, self._target_name)
         y = _ensure_series(y, name=self._target_name)
         self._add_dataset(key, label, X, y, y_dict)
         if y_dict and not self._label_names:
@@ -1365,7 +1399,7 @@ class ModelReport(ModelContextMixin):
 
     @report_model_current
     def get_metrics(self, label: Optional[str] = None) -> pd.DataFrame:
-        """KS / AUC / PSI 等核心指标.
+        """按模型任务输出核心指标；分类为 KS/AUC/PSI，回归为 MSE/RMSE/MAE/R² 与均值基准。
 
         :param label: 默认值为 ``None`` 。多标签模式下指定标签名，None 时使用 combined y
         :type label: Optional[str]
@@ -1377,6 +1411,15 @@ class ModelReport(ModelContextMixin):
         """
         if label in self._metrics_cache:
             return self._metrics_cache[label].copy()
+
+        if self.task_type_ == "regression":
+            from ._regression_model import metric_table
+
+            if label is not None:
+                raise ValidationError("回归报告只支持单个连续目标")
+            result = metric_table(self)
+            self._metrics_cache[label] = result.copy()
+            return result
 
         # 数据集按传入顺序展示（dict 的 key / list 顺序 / 训练集→测试集→跨时间验证集）
         ds_keys = list(self._datasets)
@@ -1483,6 +1526,10 @@ class ModelReport(ModelContextMixin):
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """返回评分分箱表，并缓存同一报告调用中的确定性结果。"""
+        if self.task_type_ == "regression":
+            from ._regression_model import bin_table
+
+            return bin_table(self, dataset, method, max_n_bins, margins, amount=amount, label=label, labels=labels)
         cache_key = (dataset, method, max_n_bins, amount, margins, label, tuple(labels or ()))
         cached = self._bin_table_cache.get(cache_key)
         if cached is not None:
@@ -1590,6 +1637,8 @@ class ModelReport(ModelContextMixin):
         for candidate in candidates:
             from ..core.models.classical.sklearn_models import SklearnRiskModel
 
+            if getattr(candidate, "_supports_native_feature_importance", None) is False:
+                continue
             if isinstance(candidate, SklearnRiskModel) and not any(
                 hasattr(candidate._model, attr) for attr in ("feature_importances_", "coef_")
             ):
@@ -1808,6 +1857,11 @@ class ModelReport(ModelContextMixin):
 
     @report_model_current
     def get_feature_importance(self, top_n: Optional[int] = None) -> pd.DataFrame:
+        if self.task_type_ == "regression":
+            importances = self._get_raw_feature_importance().dropna()
+            total = importances.abs().sum()
+            values = importances.abs() / total if total else importances
+            return values.rename("特征重要性").sort_values(ascending=False).to_frame().head(top_n)
         if self._importance_cache is None:
             importances = self._get_raw_feature_importance().dropna()
             if importances.empty:
@@ -1869,21 +1923,32 @@ class ModelReport(ModelContextMixin):
             df = df.head(top_n)
         return df
 
+    @property
+    def _report_model(self):
+        """元信息读取最终估计器，预测始终经过完整 Pipeline。"""
+        model = self.model
+        while getattr(model, "steps", None):
+            model = model.steps[-1][1]
+        return model
+
     def _is_scorecard_model(self) -> bool:
         """按评分卡能力识别 hscredit、toad 与 scorecardpipeline 对象。"""
-        model_name = type(self.model).__name__.lower()
-        has_points = callable(getattr(self.model, "scorecard_points", None))
-        has_rules = isinstance(getattr(self.model, "rules", None), dict) or isinstance(
-            getattr(self.model, "rules_", None), dict
+        model_name = type(self._report_model).__name__.lower()
+        has_points = callable(getattr(self._report_model, "scorecard_points", None))
+        has_rules = isinstance(getattr(self._report_model, "rules", None), dict) or isinstance(
+            getattr(self._report_model, "rules_", None), dict
         )
-        has_export = callable(getattr(self.model, "export", None))
-        return "scorecard" in model_name and (has_points or (has_rules and has_export))
+        has_export = callable(getattr(self._report_model, "export", None))
+        probability_card = hasattr(self._report_model, "transformer_") and callable(
+            getattr(self._report_model, "score_formula", None)
+        )
+        return "scorecard" in model_name and (has_points or (has_rules and has_export) or probability_card)
 
     def _scorecard_lr_model(self):
         """解析三类评分卡实际持有的逻辑回归模型。"""
-        for attribute in ("lr_model_", "lr_model", "pretrain_lr", "model"):
-            candidate = getattr(self.model, attribute, None)
-            if candidate is not None and candidate is not self.model:
+        for attribute in ("lr_model_", "lr_model", "pretrain_lr", "model_", "model"):
+            candidate = getattr(self._report_model, attribute, None)
+            if candidate is not None and candidate is not self._report_model:
                 return candidate
         return None
 
@@ -1897,10 +1962,10 @@ class ModelReport(ModelContextMixin):
         if self.prediction_method != "predict_score" or self._is_scorecard_model():
             return None
 
-        owner = getattr(self.model, "scorecard_", None)
-        if owner is None and hasattr(self.model, "transformer_"):
-            owner = self.model
-        converter = getattr(self.model, "score_transformer_", None)
+        owner = getattr(self._report_model, "scorecard_", None)
+        if owner is None and hasattr(self._report_model, "transformer_"):
+            owner = self._report_model
+        converter = getattr(self._report_model, "score_transformer_", None)
         if converter is None and owner is not None:
             converter = getattr(owner, "transformer_", None)
         if converter is None:
@@ -1970,7 +2035,11 @@ class ModelReport(ModelContextMixin):
         lr_model = self._scorecard_lr_model()
         if lr_model is None:
             return pd.DataFrame()
-        if callable(getattr(lr_model, "summary", None)):
+        statistics = getattr(lr_model, "statistics_status_", {})
+        summary_unavailable = statistics.get("状态") in {"未执行", "不适用", "超出预算"}
+        if summary_unavailable:
+            self._report_not_applicable("评分卡LR统计诊断", f"{statistics}；保留真实模型系数")
+        if not summary_unavailable and callable(getattr(lr_model, "summary", None)):
             try:
                 summary = lr_model.summary()
                 if isinstance(summary, pd.DataFrame):
@@ -2005,25 +2074,25 @@ class ModelReport(ModelContextMixin):
 
     def _direct_lr_summary(self, feature_map: Optional[Dict[str, str]] = None) -> pd.DataFrame:
         """读取直接传入的 LR 统计摘要，并补充字段含义。"""
-        if self._is_scorecard_model() or not callable(getattr(self.model, "summary", None)):
+        if self._is_scorecard_model() or not callable(getattr(self._report_model, "summary", None)):
             return pd.DataFrame()
 
-        class_names = {base.__name__.lower().replace("_", "") for base in type(self.model).__mro__}
+        class_names = {base.__name__.lower().replace("_", "") for base in type(self._report_model).__mro__}
         if not any("logisticregression" in name or name == "lr" for name in class_names):
             return pd.DataFrame()
 
-        statistics = getattr(self.model, "statistics_status_", {})
+        statistics = getattr(self._report_model, "statistics_status_", {})
         if statistics.get("状态") in {"未执行", "不适用", "超出预算"}:
             self._report_not_applicable("逻辑回归统计诊断", f"{statistics}；保留原始模型系数与概率评估")
             return pd.DataFrame()
 
         try:
-            summary = self.model.summary()
+            summary = self._report_model.summary()
         except Exception as exc:
-            self._report_warning("读取逻辑回归统计摘要失败 [模型=%s]: %s", type(self.model).__name__, exc)
+            self._report_warning("读取逻辑回归统计摘要失败 [模型=%s]: %s", type(self._report_model).__name__, exc)
             return pd.DataFrame()
         if not isinstance(summary, pd.DataFrame):
-            self._report_warning("逻辑回归 summary() 未返回 DataFrame [模型=%s]", type(self.model).__name__)
+            self._report_warning("逻辑回归 summary() 未返回 DataFrame [模型=%s]", type(self._report_model).__name__)
             return pd.DataFrame()
 
         table = summary.copy()
@@ -2044,13 +2113,17 @@ class ModelReport(ModelContextMixin):
 
     def _scorecard_scale_table(self) -> pd.DataFrame:
         """统一评分卡基础刻度参数。"""
-        if callable(getattr(self.model, "scorecard_scale", None)):
+        if callable(getattr(self._report_model, "scorecard_scale", None)):
             try:
-                scale = self.model.scorecard_scale()
+                scale = self._report_model.scorecard_scale()
                 if isinstance(scale, pd.DataFrame):
                     return scale
             except Exception:
                 pass
+        if callable(getattr(self._report_model, "get_params_info", None)):
+            params = self._report_model.get_params_info()
+            if isinstance(params, dict):
+                return pd.DataFrame([{"刻度项": key, "刻度值": value, "备注": ""} for key, value in params.items()])
         rows = []
         descriptions = {
             "base_odds": "基础 Odds",
@@ -2061,22 +2134,22 @@ class ModelReport(ModelContextMixin):
             "offset": "评分转换截距",
         }
         for name, description in descriptions.items():
-            if hasattr(self.model, name):
-                rows.append({"刻度项": name, "刻度值": getattr(self.model, name), "备注": description})
+            if hasattr(self._report_model, name):
+                rows.append({"刻度项": name, "刻度值": getattr(self._report_model, name), "备注": description})
         return pd.DataFrame(rows)
 
     def _scorecard_formula_table(self) -> pd.DataFrame:
         """统一评分卡概率转评分公式。"""
-        if callable(getattr(self.model, "score_formula", None)):
+        if callable(getattr(self._report_model, "score_formula", None)):
             try:
-                formula = self.model.score_formula()
+                formula = self._report_model.score_formula()
                 if isinstance(formula, dict):
                     return self._mapping_table(formula, key_name="公式项", value_name="公式内容")
                 return self._mapping_table({"公式": str(formula)}, key_name="公式项", value_name="公式内容")
             except Exception:
                 pass
-        factor = getattr(self.model, "factor", getattr(self.model, "B_", None))
-        offset = getattr(self.model, "offset", getattr(self.model, "A_", None))
+        factor = getattr(self._report_model, "factor", getattr(self._report_model, "B_", None))
+        offset = getattr(self._report_model, "offset", getattr(self._report_model, "A_", None))
         if factor is None or offset is None:
             return pd.DataFrame()
         formula = {
@@ -2088,19 +2161,19 @@ class ModelReport(ModelContextMixin):
 
     def _scorecard_points_table(self, feature_map: Optional[Dict[str, str]] = None) -> pd.DataFrame:
         """统一评分卡分箱分值表。"""
-        if callable(getattr(self.model, "scorecard_points", None)):
+        if callable(getattr(self._report_model, "scorecard_points", None)):
             try:
-                points = self.model.scorecard_points(feature_map=feature_map)
+                points = self._report_model.scorecard_points(feature_map=feature_map)
             except TypeError:
-                points = self.model.scorecard_points()
+                points = self._report_model.scorecard_points()
             except Exception:
                 points = None
             if isinstance(points, pd.DataFrame):
                 return points
 
-        if callable(getattr(self.model, "export", None)):
+        if callable(getattr(self._report_model, "export", None)):
             try:
-                points = self.model.export(to_frame=True)
+                points = self._report_model.export(to_frame=True)
                 if isinstance(points, pd.DataFrame):
                     points = points.rename(columns={"name": "变量名称", "value": "变量分箱", "score": "对应分数"})
                     if feature_map:
@@ -2117,16 +2190,16 @@ class ModelReport(ModelContextMixin):
     def _scorecard_odds_reference_table(self) -> pd.DataFrame:
         """统一评分、Odds 与理论逾期率参考表。"""
         try:
-            reference = getattr(self.model, "score_odds_reference")
+            reference = getattr(self._report_model, "score_odds_reference")
         except Exception:
             reference = None
         if isinstance(reference, pd.DataFrame):
             return reference
 
-        factor = getattr(self.model, "factor", getattr(self.model, "B_", None))
-        offset = getattr(self.model, "offset", getattr(self.model, "A_", None))
-        base_score = getattr(self.model, "base_score", None)
-        pdo = getattr(self.model, "pdo", None)
+        factor = getattr(self._report_model, "factor", getattr(self._report_model, "B_", None))
+        offset = getattr(self._report_model, "offset", getattr(self._report_model, "A_", None))
+        base_score = getattr(self._report_model, "base_score", None)
+        pdo = getattr(self._report_model, "pdo", None)
         if factor is None or offset is None or base_score is None or pdo is None:
             return pd.DataFrame()
         scores = np.arange(float(base_score) + 5 * float(pdo), float(base_score) - 5 * float(pdo) - 1, -float(pdo))
@@ -2175,7 +2248,7 @@ class ModelReport(ModelContextMixin):
         features = importance.index.tolist()
         train_ds = self._datasets[self._train_key]
         train_X = train_ds.X[features] if features else train_ds.X[self.feature_names]
-        desc_stats = train_X.describe(percentiles=[0.01, 0.1, 0.5, 0.75, 0.9, 0.99]).T
+        desc_stats = train_X.describe(percentiles=[0.01, 0.1, 0.5, 0.75, 0.9, 0.99], include="all").T
         desc_stats = desc_stats.rename(
             columns={
                 "count": "样本数",
@@ -2183,6 +2256,8 @@ class ModelReport(ModelContextMixin):
                 "std": "标准差",
                 "min": "最小值",
                 "max": "最大值",
+                "top": "众数",
+                "freq": "众数样本数",
                 "1%": "1%",
                 "10%": "10%",
                 "50%": "50%",
@@ -2199,6 +2274,8 @@ class ModelReport(ModelContextMixin):
             "字段类型",
             "缺失率",
             "枚举数",
+            "众数",
+            "众数样本数",
             "平均值",
             "标准差",
             "最小值",
@@ -2211,7 +2288,7 @@ class ModelReport(ModelContextMixin):
             "最大值",
         ]
         keep_cols = [c for c in keep_cols if c in desc_stats.columns]
-        result = importance.join(desc_stats[keep_cols], how="left")
+        result = importance.join(desc_stats[keep_cols], how="right")
         result = result.drop(columns=["样本数"], errors="ignore")
         self._features_describe_cache = result
         return self._features_describe_cache.copy()
@@ -2225,7 +2302,10 @@ class ModelReport(ModelContextMixin):
         features = importance.index.tolist()
         if not features:
             features = self.feature_names
-        result = self._datasets[self._train_key].X[features].corr()
+        numeric = self._datasets[self._train_key].X[features].select_dtypes(include=[np.number, "bool"])
+        result = numeric.corr()
+        if result.empty:
+            self._report_not_applicable("数值特征相关性", "当前输入没有数值字段，类别字段保留描述和分箱统计")
         self._corr_cache = result.copy()
         return result
 
@@ -2244,6 +2324,10 @@ class ModelReport(ModelContextMixin):
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """返回特征分箱表，并缓存同一报告调用中的确定性结果。"""
+        if self.task_type_ == "regression":
+            from ._regression_model import bin_table
+
+            return bin_table(self, dataset, method, max_n_bins, margins, feature, amount, label, labels)
         cache_key = (feature, dataset, max_n_bins, method, margins, amount, label, tuple(labels or ()))
         cached = self._feature_bin_table_cache.get(cache_key)
         if cached is not None:
@@ -2700,10 +2784,11 @@ class ModelReport(ModelContextMixin):
         # --- 特征相关性图 ---
         importance = self.get_feature_importance()
         top_features = importance.index.tolist()
-        if len(top_features) >= 2:
+        correlation_features = self.get_features_corr().columns.tolist()
+        if len(correlation_features) >= 2:
             p = str(output_dir / "feature_corr.png")
             try:
-                corr_plot(plot_datasets[self._train_key].X[top_features], annot=False, save=p)
+                corr_plot(plot_datasets[self._train_key].X[correlation_features], annot=False, save=p)
                 _safe_close_figs()
                 paths["feature_corr"] = [p]
             except Exception as exc:
@@ -2971,13 +3056,14 @@ class ModelReport(ModelContextMixin):
 
         importance = self.get_feature_importance()
         top_features = importance.index.tolist()
-        if len(top_features) >= 2:
+        correlation_features = self.get_features_corr().columns.tolist()
+        if len(correlation_features) >= 2:
 
             def render_corr_group():
                 group_paths: Dict[str, List[str]] = {}
                 path = str(output_dir / "feature_corr.png")
                 try:
-                    figure = corr_plot(plot_datasets[self._train_key].X[top_features], annot=False, save=path)
+                    figure = corr_plot(plot_datasets[self._train_key].X[correlation_features], annot=False, save=path)
                     _safe_close_plot_result(figure)
                     group_paths["feature_corr"] = [path]
                 except Exception as exc:
@@ -3215,7 +3301,7 @@ class ModelReport(ModelContextMixin):
             [(metric, ds_label) for metric in self._SUMMARY_METRICS for ds_label in ds_labels],
             names=["统计指标", "数据集"],
         )
-        index = pd.Index(index_labels, name="逾期指标")
+        index = pd.Index(index_labels, name="目标变量" if self.task_type_ == "regression" else "逾期指标")
         result = pd.DataFrame(rows, index=index, columns=columns)
         self._summary_cache = result.copy()
         return result
@@ -3242,7 +3328,7 @@ class ModelReport(ModelContextMixin):
             print(importance.to_string())
 
         for ds_key, ds in self._datasets.items():
-            print(f"\n【{ds.label}评分分箱效果】")
+            print(f"\n【{ds.label}{'预测' if self.task_type_ == 'regression' else '评分'}分箱效果】")
             print(self.get_bin_table(ds_key, max_n_bins=max_n_bins, labels=labels_arg).to_string(index=False))
         print("\n" + "=" * 72)
 
@@ -3615,6 +3701,13 @@ class ModelReport(ModelContextMixin):
         :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，仅用于生产订单测试用例
         :param include_sample_records: 是否导出生产订单样例；False保留不适用说明，不写逐行数据
         """
+        if self.task_type_ == "regression":
+            from ._regression_model import export_excel
+
+            options = dict(locals())
+            options.pop("self")
+            options.pop("filepath")
+            return export_excel(self, filepath, options)
         from ..excel import ExcelWriter, dataframe2excel as _dataframe2excel
 
         def dataframe2excel(*args, **kwargs):
@@ -4879,9 +4972,15 @@ class ModelReport(ModelContextMixin):
             style="header_middle",
             align={"horizontal": "left"},
         )
-        params_str = str(self.model_context_)
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row, 2), value=params_str or "N/A", style="middle", align={"horizontal": "left"}
+        from ._model_layout import configuration_table, fit_metadata_sheet, process_display_table
+
+        end_row, _ = dataframe2excel(
+            configuration_table(self.model_context_["最终模型参数"]),
+            writer,
+            sheet_name=ws,
+            start_row=end_row + 1,
+            index=False,
+            left_cols=["配置项", "配置值"],
         )
         param_section += 1
 
@@ -5041,15 +5140,15 @@ class ModelReport(ModelContextMixin):
                 )
             param_section += 1
 
-            end_row, _ = writer.insert_value2sheet(
-                ws,
-                (end_row + 2, 2),
-                value=f"{param_section}、评分卡分值表",
-                style="header_middle",
-                align={"horizontal": "left"},
-            )
             sc_points = self._scorecard_points_table(feature_map)
             if not sc_points.empty:
+                end_row, _ = writer.insert_value2sheet(
+                    ws,
+                    (end_row + 2, 2),
+                    value=f"{param_section}、评分卡分值表",
+                    style="header_middle",
+                    align={"horizontal": "left"},
+                )
                 end_row, _ = dataframe2excel(
                     sc_points,
                     writer,
@@ -5057,7 +5156,11 @@ class ModelReport(ModelContextMixin):
                     start_row=end_row + 1,
                     right_cols=["对应分数", "变量分箱", "变量名称"],
                 )
-            param_section += 1
+                param_section += 1
+            else:
+                self._report_not_applicable(
+                    "逐变量评分卡分值", "当前概率评分卡不提供逐变量加分表；保留概率转换公式及刻度"
+                )
 
             end_row, _ = writer.insert_value2sheet(
                 ws,
@@ -5162,9 +5265,11 @@ class ModelReport(ModelContextMixin):
 
                 test_cases = sample_X.reset_index(drop=True)
                 if loc_cols:
+                    from ._model_layout import record_identifier
+
                     loc_df = train_ds.X[loc_cols].iloc[:sample_n].reset_index(drop=True)
                     for i, col in enumerate(loc_cols):
-                        test_cases.insert(i, col, loc_df[col])
+                        test_cases.insert(i, col, loc_df[col].map(record_identifier))
                 test_cases.insert(0, "序号", range(1, sample_n + 1))
                 test_cases["模型分数"] = train_ds.score[:sample_n]
                 end_row, _ = dataframe2excel(
@@ -5272,23 +5377,22 @@ class ModelReport(ModelContextMixin):
             process_sheet = writer.get_sheet_by_name("8-训练与调参过程")
             process_row = 2
             for title, table in process_tables.items():
+                printable = process_display_table(self, title, table)
                 writer.insert_value2sheet(
                     process_sheet,
                     (process_row, 2),
                     title,
                     style="header",
-                    end_space=(process_row, max(3, len(table.columns) + 1)),
-                )
-                printable = table.apply(
-                    lambda column: column.map(
-                        lambda value: str(value) if isinstance(value, (dict, list, tuple)) else value
-                    )
+                    end_space=(process_row, max(3, len(printable.columns) + 1)),
                 )
                 dataframe2excel(
                     printable, writer, sheet_name=process_sheet, start_row=process_row + 2, start_col=2, index=False
                 )
-                process_row += len(table) + 5
+                process_row += len(printable) + 5
             _insert_required_hyperlink(process_sheet, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
+        for sheet_name in ("5-模型参数", "6-模型部署需求", "8-训练与调参过程"):
+            if sheet_name in writer.workbook:
+                fit_metadata_sheet(writer.workbook[sheet_name], writer.style_sheet.column_dimensions["C"].width)
         if execution_result is not None:
             for sheet_name in writer.workbook.sheetnames:
                 if sheet_name != "初始化":
@@ -5372,7 +5476,7 @@ def auto_model_report(
     feature_contribution_label_max_features: Optional[int] = 10,
     data_source: Optional[str] = None,
     loc_cols: Optional[Union[str, List[str]]] = None,
-    prediction_method: Union[str, Callable] = "predict_proba",
+    prediction_method: Optional[Union[str, Callable]] = None,
     prediction_kwargs: Optional[Dict[str, Any]] = None,
     n_jobs=-1,
     parallel_backend: Optional[str] = None,
@@ -5507,7 +5611,7 @@ def auto_model_report(
     :type loc_cols: Optional[Union[str, List[str]]]
     :param include_sample_records: 是否输出逐行订单/模型分数测试用例，默认True；False标记该章节不适用
     :type include_sample_records: bool
-    :param prediction_method: 数据集唯一预测方法，默认 ``predict_proba`` ，也支持 callable
+    :param prediction_method: 数据集唯一预测方法，默认 None 自动选择分类 predict_proba 或回归 predict，也支持 callable
     :type prediction_method: Union[str, Callable]
     :param prediction_kwargs: 默认值为 ``None`` 。callable 同名参数的显式覆盖字典
     :type prediction_kwargs: Optional[Dict[str, Any]]

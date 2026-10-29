@@ -12,6 +12,10 @@
 
 .. rubric:: 模型报告的配置、评估与导出
 
+分类、回归及所有模型的完整链路验收见 :doc:`model_workflow_validation`。
+``prediction_method=None`` 按任务自动选择概率或连续预测。报告的
+``accuracy/precision/recall/f1`` 与模型的决策语义一致，规则模型保留 AND/OR 逻辑。
+
 .. autoclass:: hscredit.report.ModelReport
    :members:
    :show-inheritance:

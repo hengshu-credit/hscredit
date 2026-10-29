@@ -375,7 +375,20 @@ class Metric:
                 f"指标 {self.name} 暂不支持评估权重；请移除 evaluation_weight 或使用支持 sample_weight 的指标"
             )
 
-    def __call__(self, y_true, y_pred, y_train=None, y_train_pred=None, sample_weight=None, train_sample_weight=None):
+    @property
+    def uses_label_predictions(self):
+        return self._is_builtin and self.metric.lower() in {"accuracy", "precision", "recall", "f1"}
+
+    def __call__(
+        self,
+        y_true,
+        y_pred,
+        y_train=None,
+        y_train_pred=None,
+        sample_weight=None,
+        train_sample_weight=None,
+        predicted_labels=None,
+    ):
         """评价一个验证折，返回原始指标口径的有限标量。
 
         :param y_true: 验证标签，0为好样本、1为坏样本。
@@ -384,6 +397,8 @@ class Metric:
         :param y_train_pred: ks_diff 所需的训练概率。
         :param sample_weight: 显式验证权重；默认不加权。
         :param train_sample_weight: ks_diff 所需训练评估权重。
+        :param predicted_labels: 可选的 0/1 决策结果，仅用于内置 accuracy/precision/recall/f1；
+            规则模型按其组合逻辑提供，None 沿用概率 0.5 阈值。
         :return: float；优化方向只决定选优，只有显式 neg_log_loss 返回负交叉熵。
 
         >>> round(Metric("log_loss")([0, 1], [0.1, 0.9]), 3)
@@ -413,7 +428,10 @@ class Metric:
                 "f1": f1_score,
             }
             kwargs = {} if key == "accuracy" else {"zero_division": 0}
-            value = functions[key](y, p >= 0.5, sample_weight=weight, **kwargs)
+            labels = p >= 0.5 if predicted_labels is None else np.asarray(predicted_labels)
+            if labels.ndim != 1 or len(labels) != len(y) or not np.isin(labels, [0, 1]).all():
+                raise ValueError("预测类别必须是一维、与标签等长的 0/1 数组")
+            value = functions[key](y, labels, sample_weight=weight, **kwargs)
         else:
             value = self.scorer(y, p, sample_weight=weight) if weight is not None else self.scorer(y, p)
         if isinstance(value, (bool, np.bool_)) or np.ndim(value) != 0:

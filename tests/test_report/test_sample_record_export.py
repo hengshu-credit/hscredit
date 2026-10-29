@@ -78,3 +78,19 @@ def test_sample_record_switch_rejects_truthy_strings(tmp_path):
     report = ModelReport(model, X_train=data[["x"]], y_train=data.y, n_jobs=1)
     with pytest.raises(ValueError, match="必须为布尔值"):
         report.to_excel(str(tmp_path / "bad.xlsx"), include_sample_records="False")
+
+
+def test_long_numeric_identifiers_preserve_every_digit_as_text(tmp_path):
+    data, model = _data_and_model()
+    identifiers = [2**60 + index for index in (1, 13, 23, 101)]
+    data["订单标识"] = identifiers
+    report = ModelReport(model, datasets={"训练": (data, data.y)}, n_jobs=1)
+    output = tmp_path / "长订单编号.xlsx"
+    report.to_excel(output, with_plots=False, loc_cols="订单标识", mode="strict")
+    workbook = load_workbook(output)
+    cells = [cell for row in workbook["6-模型部署需求"] for cell in row]
+    for identifier in identifiers:
+        cell = next(cell for cell in cells if cell.value == str(identifier))
+        assert cell.data_type == "s"
+    assert data["订单标识"].tolist() == identifiers
+    workbook.close()

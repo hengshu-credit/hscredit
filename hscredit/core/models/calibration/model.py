@@ -521,6 +521,21 @@ class CalibratedModel(ModelWorkflowMixin, ArtifactSerializableMixin, ClassifierM
             if getattr(base_model, attribute, None) is not None:
                 setattr(self, attribute, copy.deepcopy(getattr(base_model, attribute)))
 
+    def fit(self, X, y=None, **kwargs):
+        """明确拒绝重新训练；保留 sklearn 对推理估计器的 fit 接口识别。
+
+        CalibratedModel 组合两个已拟合对象，训练和调参应使用 ProbabilityCalibrator。
+        此入口不会忽略新数据并假装完成训练。
+
+        :param X: 待训练数据；此推理组合不接受重新训练。
+        :param y: 可选标签；此入口不读取标签。
+        :param kwargs: 其他训练参数；此入口不接受训练配置。
+        :return: 不返回，始终抛出明确的 ValueError。
+
+        >>> prediction = model.predict_proba(X_test)
+        """
+        raise ValueError("CalibratedModel 是已拟合模型的推理组合；训练或调参请使用 ProbabilityCalibrator")
+
     def predict_proba(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
         """预测校准后的正类（坏样本）概率。
 

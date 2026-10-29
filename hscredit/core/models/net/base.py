@@ -15,6 +15,7 @@ class BaseNetModel(BaseRiskModel):
     """复用风控模型生命周期，并按 objective 选择分类或回归语义。"""
 
     _preserve_dataframe = True
+    _supports_native_feature_importance = False
     _parameter_dicts = ("loss_params", "optimizer_params", "num_embedding_params", "finetune_params")
 
     def get_params(self, deep=True):

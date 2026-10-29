@@ -1289,7 +1289,7 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
 
         - 'woe': WOE 转换后的数据（默认）
 
-        - 'raw': 原始数据（需要配置 binner 进行 WOE 转换）
+        - 'raw': 原始数据；未拟合的 hscredit binner 会仅在本次训练数据拟合，已拟合分箱器沿用原规则
 
         **使用 WOE 数据（推荐）** :
             >>> binner = OptimalBinning()
@@ -1317,7 +1317,7 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
 
             - 'woe': WOE 转换后的数据（默认，推荐）
 
-            - 'raw': 原始数据（需要配置 binner 进行 WOE 转换）
+            - 'raw': 原始数据；未拟合的 hscredit binner 会仅在本次训练数据拟合，已拟合分箱器沿用原规则
 
         :type input_type: str
         :param eval_set: 默认值为 ``None`` 。评估集，可传 (X, y)、[(X, y)]、具名字典、单个含 target 的 DataFrame 或 DataFrame 列表；名称与顺序保留
@@ -1359,6 +1359,15 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
 
         if not isinstance(y, pd.Series):
             y = pd.Series(y, index=X.index if len(y) == len(X) else None)
+
+        # clone 会去掉分箱器的拟合状态；raw 输入须在当前训练划分学习分箱，
+        # 不能借用原实例在其他划分上的统计，也不修改调用方传入的未拟合对象。
+        if input_type == "raw" and self.binner is not None:
+            from ...binning.base import BaseBinning
+            from sklearn.base import clone
+
+            if isinstance(self.binner, BaseBinning) and not getattr(self.binner, "_is_fitted", False):
+                self.binner = clone(self.binner).fit(X, y)
 
         # 1. 验证并提取 pipeline 组件
         self._validate_pipeline_components()

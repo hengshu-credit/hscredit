@@ -1,6 +1,7 @@
 """模型报告的预测方向、训练版本和统一指标契约。"""
 
 import copy
+import inspect
 from functools import wraps
 
 import numpy as np
@@ -11,6 +12,18 @@ from ..core.models._contracts import validate_sample_weight
 from ..core.models._lifecycle import _fit_parameter_snapshot, learning_curve_table
 from ..core.models.losses import BaseMetric, get_metric
 from ..core.models.losses._sample_params import has_bound_sample_params, slice_sample_loss
+
+
+def _constructor_params(model):
+    """兼容原生 sklearn 和只实现无参 get_params 的自定义预测对象。"""
+    method = getattr(model, "get_params", None)
+    if not callable(method):
+        return {}
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return method()
+    return method(deep=False) if "deep" in parameters else method()
 
 
 def _model_stamp(model, _seen=None):
@@ -53,6 +66,11 @@ def report_model_current(method):
 
 class ModelContextMixin:
     def _init_model_context(self, score_direction, metrics, sample_weight):
+        if getattr(self, "task_type_", "binary") == "regression":
+            from ._regression_model import configure
+
+            configure(self, metrics, sample_weight, score_direction)
+            return
         if score_direction not in (None, "higher_risk", "higher_safe"):
             raise ValueError("score_direction 必须为 higher_risk、higher_safe 或 None（按预测方法确定）")
         if score_direction is None:
@@ -65,11 +83,17 @@ class ModelContextMixin:
             score_direction = "higher_safe" if score_method and direction == "descending" else "higher_risk"
         self.score_direction = score_direction
         requested = [] if metrics is None else ([metrics] if isinstance(metrics, (str, BaseMetric)) else list(metrics))
-        self.metrics = [get_metric(item) for item in requested]
-        names = [metric.name for metric in self.metrics]
+        label_names = {"accuracy": "Accuracy", "precision": "Precision", "recall": "Recall", "f1": "F1"}
+        self.label_metrics_ = [
+            item.lower() for item in requested if isinstance(item, str) and item.lower() in label_names
+        ]
+        self.metrics = [
+            get_metric(item) for item in requested if not (isinstance(item, str) and item.lower() in label_names)
+        ]
+        names = [metric.name for metric in self.metrics] + [label_names[name] for name in self.label_metrics_]
         if len(set(names)) != len(names):
             raise ValueError("报告评估指标名称不能重复")
-        if self.metrics and self.prediction_method not in ("predict_proba", "predict_prob"):
+        if (self.metrics or self.label_metrics_) and self.prediction_method not in ("predict_proba", "predict_prob"):
             raise ValueError("统一金融指标需要坏样本概率，请使用 prediction_method='predict_proba'")
         self.sample_weight = copy.deepcopy(sample_weight)
 
@@ -89,6 +113,16 @@ class ModelContextMixin:
             "指标权重": _fit_parameter_snapshot(self.sample_weight),
             "TOP名单规则": "人数向上取整，同分边界等比例计入；权重只用于名单内统计",
         }
+        self.model_context_["最终估计器"] = type(model).__name__
+        self.model_context_["指标配置"].extend(
+            {"指标": name, "输入": "模型决策类别"} for name in getattr(self, "label_metrics_", [])
+        )
+        self.model_context_["最终模型参数"] = _fit_parameter_snapshot(_constructor_params(model))
+        self.model_context_["任务类型"] = "回归" if getattr(self, "task_type_", "binary") == "regression" else "二分类"
+        if getattr(self, "task_type_", "binary") == "regression":
+            self.model_context_.pop("风险方向")
+            self.model_context_.pop("TOP名单规则")
+            self.model_context_["残差定义"] = "预测值减实际值"
         self._training_process_snapshot = self._collect_training_process()
 
     def _assert_model_current(self):
@@ -138,6 +172,39 @@ class ModelContextMixin:
                     np.nan if not len(y) else selected.evaluate(y, p, sample_weight=self._metric_weight(key, label))
                 )
             rows.append(row)
+        if getattr(self, "label_metrics_", []):
+            from ..core.models.base import _evaluate_binary_predictions
+
+            label_rows = {}
+            for key, dataset in self._datasets.items():
+                if key not in self._label_prediction_cache:
+                    owner = self.model
+                    while getattr(owner, "steps", None):
+                        owner = owner.steps[-1][1]
+                    method = getattr(owner, "_predict_evaluation_labels", None)
+                    if callable(method):
+                        features = getattr(self.model, "feature_names_in_", self.feature_names)
+                        X, pipeline = dataset.X[list(features)], self.model
+                        while getattr(pipeline, "steps", None):
+                            X = pipeline[:-1].transform(X)
+                            pipeline = pipeline.steps[-1][1]
+                        labels = np.asarray(method(X))
+                    else:
+                        labels = (dataset.prediction >= 0.5).astype(int)
+                    self._label_prediction_cache[key] = labels
+                valid = self._get_target_valid_mask(key, label)
+                y, p = self._get_valid_target_arrays(key, label)
+                predicted = self._label_prediction_cache[key][valid]
+                if len(y):
+                    values = _evaluate_binary_predictions(
+                        y, p, predicted, metrics=self.label_metrics_, sample_weight=self._metric_weight(key, label)
+                    )
+                else:
+                    names = {"accuracy": "Accuracy", "precision": "Precision", "recall": "Recall", "f1": "F1"}
+                    values = {names[name]: np.nan for name in self.label_metrics_}
+                for name, value in values.items():
+                    label_rows.setdefault(name, {"统计项": name})[dataset.label] = value
+            rows.extend(label_rows.values())
         return rows
 
     @report_model_current
@@ -161,6 +228,56 @@ class ModelContextMixin:
                 [{"配置项": key, "配置值": str(value)} for key, value in self.model_context_.items()]
             )
         }
+        preprocessing, selections, stages, preprocessing_params = [], [], [], []
+
+        def collect_steps(pipeline, prefix=""):
+            for name, step in getattr(pipeline, "steps", [])[:-1]:
+                path = prefix + name
+                inputs = getattr(step, "feature_names_in_", None)
+                outputs = getattr(step, "selected_features_", None)
+                if outputs is None and callable(getattr(step, "get_feature_names_out", None)):
+                    try:
+                        outputs = step.get_feature_names_out()
+                    except (AttributeError, NotImplementedError):
+                        outputs = None
+                preprocessing.append(
+                    {
+                        "步骤": path,
+                        "组件": type(step).__name__,
+                        "输入字段": None if inputs is None else list(inputs),
+                        "输出字段": None if outputs is None else list(outputs),
+                    }
+                )
+                if hasattr(step, "get_params"):
+                    from ._model_layout import configuration_table
+
+                    config = configuration_table(_fit_parameter_snapshot(_constructor_params(step)))
+                    config.insert(0, "步骤", path)
+                    preprocessing_params.append(config)
+                if callable(getattr(step, "get_selection_report", None)):
+                    info = step.get_selection_report()
+                    selections.append(
+                        {
+                            "步骤": path,
+                            **{
+                                key: info.get(key)
+                                for key in ("筛选方法", "输入特征数", "选中特征数", "剔除特征数", "选中特征")
+                            },
+                        }
+                    )
+                    stages.extend({"步骤": path, **item} for item in info.get("阶段明细", []))
+                if getattr(step, "steps", None):
+                    collect_steps(step, path + "__")
+
+        collect_steps(self.model)
+        if preprocessing:
+            result["预处理步骤"] = pd.DataFrame(preprocessing)
+        if preprocessing_params:
+            result["预处理参数"] = pd.concat(preprocessing_params, ignore_index=True)
+        if selections:
+            result["特征筛选记录"] = pd.DataFrame(selections)
+        if stages:
+            result["特征筛选阶段"] = pd.DataFrame(stages)
         availability = []
         for method, label in (
             ("get_training_history", "训练记录"),

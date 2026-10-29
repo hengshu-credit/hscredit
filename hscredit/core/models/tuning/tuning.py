@@ -1858,8 +1858,26 @@ class ModelTuner(ArtifactSerializableMixin):
                 prediction_key = "预测值" if self._task == "regression" else "预测概率"
                 record.update(真实标签=y_val_arr, 训练真实标签=y_train_arr)
                 record.update({prediction_key: y_val_pred, "训练" + prediction_key: y_train_pred})
+                predicted_labels = None
+                if self._task != "regression" and any(
+                    getattr(metric, "uses_label_predictions", False) for metric in self.metrics
+                ):
+                    terminal = self._final_estimator(fold_model)
+                    method = getattr(terminal, "_predict_evaluation_labels", None)
+                    if callable(method):
+                        label_X, owner = X_val_fold, fold_model
+                        while getattr(owner, "steps", None):
+                            label_X = owner[:-1].transform(label_X)
+                            owner = owner.steps[-1][1]
+                        predicted_labels = np.asarray(method(label_X))
+                        record["预测类别"] = predicted_labels
                 scores = {}
                 for i, metric in enumerate(self.metrics):
+                    label_options = (
+                        {"predicted_labels": predicted_labels}
+                        if getattr(metric, "uses_label_predictions", False)
+                        else {}
+                    )
                     value = metric(
                         y_val_arr,
                         y_val_pred,
@@ -1867,6 +1885,7 @@ class ModelTuner(ArtifactSerializableMixin):
                         y_train_pred=y_train_pred,
                         sample_weight=validation_weight,
                         train_sample_weight=train_evaluation_weight,
+                        **label_options,
                     )
                     if not np.isfinite(value):
                         raise ValueError(f"第 {fold_index} 折的 {metric.name} 指标不是有限数")
