@@ -207,6 +207,20 @@ def test_single_class_all_missing_and_not_fitted():
         MultiwayTreeExtractor().predict(data)
 
 
+@pytest.mark.parametrize("operator", [">", ">=", "<", "<="])
+def test_report_overdue_operator_reaches_each_dataset_and_matches_raw_counts(operator):
+    import operator as comparison
+
+    data = sample().assign(MOB1=np.tile([0, 3, 7, 8], 30))
+    tree = MultiwayTreeExtractor(max_depth=1, n_jobs=1).fit(data)
+    compare = {">": comparison.gt, ">=": comparison.ge, "<": comparison.lt, "<=": comparison.le}[operator]
+    reports = tree.report({"完整": data, "子集": data.iloc[:11]}, overdue="MOB1", dpds=7, overdue_operator=operator)
+    for name, table in reports.items():
+        rows = data if name == "完整" else data.iloc[:11]
+        bad_column = next(c for c in table if (c[-1] if isinstance(c, tuple) else c) == "坏样本数")
+        assert table.iloc[0][bad_column] == compare(rows.MOB1, 7).sum()
+
+
 def test_real_loan_counts_amount_overdue_and_model_effects():
     path = Path(__file__).resolve().parents[2] / "examples/hscredit_yyp.xlsx"
     if not path.exists():

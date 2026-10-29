@@ -20,6 +20,7 @@ from ...core.models._contracts import extract_target
 from ...core.rules import Rule
 from ...exceptions import InputValidationError, NotFittedError
 from ...utils.parallel import ParallelizableMixin
+from ...utils.overdue import validate_overdue_operator
 from ...utils.serialization import ArtifactSerializableMixin
 from .base import format_feature_context, normalize_feature_names, resolve_feature_map
 from .manual_tree_extractor import _node_hit_report
@@ -693,12 +694,38 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             rules.append(rule)
         return RuleSet(name="多叉树规则集", logic="or", rules=rules, n_jobs=self.n_jobs)
 
-    def report(self, datasets, target=None, overdue=None, dpds=None, del_grey=False, leaf_only=False, **kwargs):
+    def report(
+        self,
+        datasets,
+        target=None,
+        overdue=None,
+        dpds=None,
+        del_grey=False,
+        leaf_only=False,
+        *,
+        overdue_operator=">",
+        **kwargs,
+    ):
         """用 Rule.report 输出节点效果，支持金额、多逾期标签和多数据集。
 
         多分类默认对每个类别分别计算一对其余类别的规则指标。
         显式 target/overdue 参数按 Rule.report 既有口径处理。
+
+        :param datasets: 单个 DataFrame、DataFrame 列表或名称到 DataFrame 的字典。
+        :param target: 支持列名、一维 Series/ndarray/list、callable，或标签名到标签数据的字典；
+            与 overdue+dpds 互斥。Series 按索引对齐，数组和列表按行位置对应，
+            callable 接收当前完整 DataFrame；None 且未指定逾期模式时使用拟合目标。
+        :param overdue: 逾期天数字段或字段序列，必须与 dpds 同时传入。
+        :param dpds: 逾期阈值或非空阈值序列，按 overdue × dpds 生成标签。
+        :param del_grey: 是否逐标签剔灰；target 模式剔除非 0/1 值，逾期模式的 > 剔除 (0, DPD]，
+            >= 剔除 (0, DPD)，< 和 <= 不设灰区。默认 False。
+        :param leaf_only: 是否仅输出叶节点，默认 False。
+        :param overdue_operator: 逾期比较符，支持 >、>=、<、<=；满足条件为坏样本，默认 >。
+        :param kwargs: 传给 Rule.report 的其他配置，例如 amount 和 margins。
+        :return: 各节点效果表；输入为列表或字典时返回对应结构。
         """
+        validate_overdue_operator(overdue_operator)
+        kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
         if isinstance(datasets, dict):
             return {
