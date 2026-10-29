@@ -166,3 +166,34 @@ def test_training_titles_keep_sheet_number_after_learning_curve_plots(fitted, tm
     assert titles[-2].endswith("选中试验学习曲线") and titles[-1].endswith("最终模型学习曲线")
     assert len(sheet._images) == 2
     book.close()
+
+
+@pytest.mark.parametrize("scope", ["importance", "full"])
+def test_explanation_warn_preserves_incomplete_report_without_fabricated_importance(
+    fitted, tmp_path, monkeypatch, scope
+):
+    from hscredit.report.result import ReportGenerationError
+
+    model, X, y = fitted
+
+    def fail(*args, **kwargs):
+        raise ValueError("测试解释失败")
+
+    monkeypatch.setattr(ModelExplainer, "explain", fail)
+    report = ModelReport(
+        model,
+        datasets={"训练": (X, y)},
+        n_jobs=1,
+        explain_config={"enabled": True, "scope": scope, "on_explain_error": "warn"},
+    )
+    path = tmp_path / "解释失败.xlsx"
+    with pytest.warns(RuntimeWarning, match="测试解释失败"):
+        result = report.to_excel(path, with_plots=False, mode="best_effort", return_result=True)
+    assert not result.complete
+    assert result.sections["SHAP 特征重要性"].status == "失败"
+    book = load_workbook(path)
+    values = [c.value for row in book["3-入模变量分析"] for c in row]
+    assert "测试解释失败" in values and "平均绝对SHAP值" not in values
+    book.close()
+    with pytest.raises(ReportGenerationError):
+        report.to_excel(tmp_path / "严格失败.xlsx", with_plots=False, mode="strict")

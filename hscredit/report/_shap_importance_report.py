@@ -22,8 +22,22 @@ def write_importance(report, writer, sheet, row, filepath, with_plots, title="1�
 
     if not report.explain_config["enabled"]:
         return row
+    explanation = report.get_model_explanation()
+    if "失败原因" in explanation:
+        result = getattr(report, "_execution_result", None)
+        if result is not None:
+            result.failure("SHAP 特征重要性", explanation["失败原因"])
+        writer.insert_value2sheet(sheet, (row, 2), title, style="header", end_space=(row, 3))
+        end, _ = dataframe2excel(
+            pd.DataFrame([{"失败原因": explanation["失败原因"]}]),
+            writer,
+            sheet_name=sheet,
+            start_row=row + 2,
+            index=False,
+        )
+        return end + 3
     table = importance_table(report)
-    meta = report.get_model_explanation()["元信息"]
+    meta = explanation["元信息"]
     writer.insert_value2sheet(sheet, (row, 2), title, style="header", end_space=(row, len(table.columns) + 1))
     row, _ = dataframe2excel(
         table,
