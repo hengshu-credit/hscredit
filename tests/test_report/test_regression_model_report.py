@@ -124,7 +124,6 @@ def test_regression_strict_excel_has_complete_continuous_sections(data, tmp_path
     workbook = load_workbook(output)
     assert {
         "目录",
-        "报告执行状态",
         "1-基本信息",
         "2-模型性能",
         "3-入模变量分析",

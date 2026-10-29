@@ -3908,12 +3908,6 @@ class ModelReport(ModelContextMixin):
             "内容": training_name,
             "备注": "预测口径、训练记录、曲线、参数搜索及最终重训",
         }
-        if execution_result is not None:
-            contents = pd.concat(
-                [pd.DataFrame([{"序号": 0, "内容": "报告执行状态", "备注": "完整性、失败章节和降级原因"}]), contents],
-                ignore_index=True,
-            )
-
         ws = writer.get_sheet_by_name("目录")
         end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="模型评估报告", style="header_middle")
         end_row, _ = dataframe2excel(contents, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["内容", "备注"])
@@ -5423,25 +5417,13 @@ class ModelReport(ModelContextMixin):
         from ._model_layout import fit_report_titles
 
         for sheet in writer.workbook:
-            if sheet.title not in {"初始化", "目录", "报告执行状态"}:
+            if sheet.title not in {"初始化", "目录"}:
                 fit_report_titles(sheet)
         if execution_result is not None:
             for sheet_name in writer.workbook.sheetnames:
                 if sheet_name != "初始化":
                     execution_result.success(f"工作表：{sheet_name}")
             execution_result.ensure_publishable()
-            status_sheet = writer.get_sheet_by_name("报告执行状态")
-            writer.move_sheet(status_sheet, index=0)
-            writer.insert_value2sheet(
-                status_sheet,
-                "B2",
-                "报告完整" if execution_result.complete else "报告不完整：请检查失败章节",
-                style="header",
-                end_space=(2, 9),
-            )
-            statuses = execution_result.status_table()
-            writer.insert_df2sheet(status_sheet, statuses, "B4", index=False, auto_width=True, speed="fast")
-            _insert_required_hyperlink(status_sheet, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
         if execution_result is not None:
             execution_result.current_section = "工作簿发布"
         writer.save(filepath)

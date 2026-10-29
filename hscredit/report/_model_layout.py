@@ -12,6 +12,19 @@ from openpyxl.utils.cell import coordinate_to_tuple
 import re
 
 
+def chapter_number(number):
+    """章节主标题采用中文序号，小节从 1 独立编号。"""
+    digits = "零一二三四五六七八九"
+    number = int(number)
+    if number < 10:
+        return digits[number]
+    if number < 20:
+        return "十" + (digits[number % 10] if number % 10 else "")
+    if number < 100:
+        return digits[number // 10] + "十" + (digits[number % 10] if number % 10 else "")
+    return str(number)
+
+
 def fit_report_titles(worksheet):
     """标题固定在 B 列，按层级覆盖本节真实表格和图片宽度。"""
     headings = []
@@ -83,7 +96,14 @@ def configuration_table(mapping):
             for index, item in enumerate(value):
                 append(f"{name}[{index}]", item)
         else:
-            rows.append({"配置项": name, "配置值": str(value) if isinstance(value, (dict, list, tuple)) else value})
+            if isinstance(value, str) and not value:
+                value = '""'
+            rows.append(
+                {
+                    "配置项": name,
+                    "配置值": str(value) if value is None or isinstance(value, (dict, list, tuple)) else value,
+                }
+            )
 
     for name, value in mapping.items():
         append(str(name), value)

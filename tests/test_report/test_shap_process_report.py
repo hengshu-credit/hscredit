@@ -17,8 +17,8 @@ def test_title_covers_table_merges_and_picture_using_actual_column_widths():
     from hscredit.report._model_layout import fit_report_titles
 
     sheet = Workbook().active
-    sheet["B2"] = "7、训练与调参过程"
-    sheet["B5"] = "7.1、学习曲线"
+    sheet["B2"] = "七、训练与调参过程"
+    sheet["B5"] = "1、学习曲线"
     sheet["B7"] = "迭代"
     sheet["C7"] = "指标"
     sheet.merge_cells("C7:E7")
@@ -28,7 +28,7 @@ def test_title_covers_table_merges_and_picture_using_actual_column_widths():
     fit_report_titles(sheet)
     areas = {a.min_row: a for a in sheet.merged_cells.ranges if a.min_col == 2}
     assert areas[2].max_col >= 9 and areas[5].max_col >= 9
-    assert sheet["B5"].value == "7.1、学习曲线"
+    assert sheet["B5"].value == "1、学习曲线"
 
 
 class AdditiveRegressor(RegressorMixin, BaseEstimator):
@@ -107,8 +107,8 @@ def test_compact_process_shap_and_dynamic_numbering(fitted, tmp_path):
     book = load_workbook(path)
     assert "7-训练与调参过程" in book.sheetnames and "7-模型解释" not in book.sheetnames
     assert book["7-训练与调参过程"].max_row < 100
-    assert book["7-训练与调参过程"]["B2"].value == "7、训练与调参过程"
-    assert book["7-训练与调参过程"]["B5"].value == "7.1、训练概览"
+    assert book["7-训练与调参过程"]["B2"].value == "七、训练与调参过程"
+    assert book["7-训练与调参过程"]["B5"].value == "1、训练概览"
     assert "1、SHAP 特征重要性" in [c.value for row in book["3-入模变量分析"] for c in row]
     book.close()
     report.to_excel(path, with_plots=False, training_sheet_index=10, mode="strict")
@@ -161,8 +161,8 @@ def test_training_titles_keep_sheet_number_after_learning_curve_plots(fitted, tm
         for c in row
         if isinstance(c.value, str) and "、" in c.value
     ]
-    assert titles[0] == "10、训练与调参过程"
-    assert all(title.startswith(f"10.{index}、") for index, title in enumerate(titles[1:], 1))
+    assert titles[0] == "十、训练与调参过程"
+    assert all(title.startswith(f"{index}、") for index, title in enumerate(titles[1:], 1))
     assert titles[-2].endswith("选中试验学习曲线") and titles[-1].endswith("最终模型学习曲线")
     assert len(sheet._images) == 2
     book.close()

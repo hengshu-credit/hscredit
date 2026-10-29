@@ -91,12 +91,13 @@ def process_tables(report):
 def write_process(report, writer, filepath, with_plots, sheet_name=None):
     from ..excel import dataframe2excel
     from ..core.viz.style import get_palette
+    from ._model_layout import chapter_number
     import matplotlib.pyplot as plt
 
     sheet = writer.get_sheet_by_name(sheet_name or process_sheet_name(report))
     sheet.sheet_view.showGridLines = False
     index = sheet.title.split("-")[0]
-    writer.insert_value2sheet(sheet, "B2", f"{index}、训练与调参过程", style="header")
+    writer.insert_value2sheet(sheet, "B2", f"{chapter_number(index)}、训练与调参过程", style="header_middle")
     row, section_index = 5, 0
 
     def add_table(title, table):
@@ -107,8 +108,9 @@ def write_process(report, writer, filepath, with_plots, sheet_name=None):
         writer.insert_value2sheet(
             sheet,
             (row, 2),
-            f"{index}.{section_index}、{title}",
-            style="header",
+            f"{section_index}、{title}",
+            style="header_middle",
+            align={"horizontal": "left"},
             end_space=(row, max(4, len(table.columns) + 1)),
         )
         shown = table.apply(lambda c: c.map(lambda v: str(v) if isinstance(v, (dict, list, tuple)) else v))

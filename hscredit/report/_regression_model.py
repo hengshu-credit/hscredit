@@ -231,6 +231,7 @@ def export_excel(report, filepath, options):
         training_name,
     ]
     positions, section_counts = {}, {}
+    from ._model_layout import chapter_number
 
     def section(sheet_name, title, table, **kwargs):
         ws = writer.get_sheet_by_name(sheet_name)
@@ -239,10 +240,10 @@ def export_excel(report, filepath, options):
         if "-" in sheet_name and sheet_name.split("-")[0].isdigit():
             number, caption = sheet_name.split("-", 1)
             if row == 2:
-                writer.insert_value2sheet(ws, "B2", f"{number}、{caption}", style="header")
+                writer.insert_value2sheet(ws, "B2", f"{chapter_number(number)}、{caption}", style="header_middle")
                 row = 5
             section_counts[sheet_name] = section_counts.get(sheet_name, 0) + 1
-            title = f"{number}.{section_counts[sheet_name]}、{title}"
+            title = f"{section_counts[sheet_name]}、{title}"
         writer.insert_value2sheet(
             ws, (row, 2), value=title, style="header", end_space=(row, max(4, len(table.columns) + 1))
         )
@@ -446,12 +447,10 @@ def export_excel(report, filepath, options):
     from ._model_layout import fit_report_titles
 
     for sheet in writer.workbook:
-        if sheet.title not in {"初始化", "目录", "报告执行状态"}:
+        if sheet.title not in {"初始化", "目录"}:
             fit_report_titles(sheet)
     result.success("工作表：目录")
     result.current_section = "工作簿发布"
     result.ensure_publishable()
-    section("报告执行状态", "报告完整" if result.complete else "报告不完整", result.status_table())
-    writer.move_sheet(writer.get_sheet_by_name("报告执行状态"), index=0)
     writer.save(filepath)
     return filepath

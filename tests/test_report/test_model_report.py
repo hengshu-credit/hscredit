@@ -251,7 +251,6 @@ def test_model_report_does_not_freeze_any_worksheet(tmp_path):
 
     workbook = load_workbook(output)
     assert {sheet.title: sheet.freeze_panes for sheet in workbook.worksheets} == {
-        "报告执行状态": None,
         "目录": None,
         "1-基本信息": None,
         "2-模型性能": None,
@@ -1338,7 +1337,6 @@ class TestModelReportRegression:
 
         workbook = load_workbook(output)
         assert workbook.sheetnames == [
-            "报告执行状态",
             "目录",
             "1-基本信息",
             "2-模型性能",
@@ -1766,7 +1764,6 @@ class TestModelReportRealDataContract:
 
     FEATURE_NAMES = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"]
     EXPECTED_SHEETS = [
-        "报告执行状态",
         "目录",
         "1-基本信息",
         "2-模型性能",
