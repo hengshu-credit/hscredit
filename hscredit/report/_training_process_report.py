@@ -90,9 +90,13 @@ def process_tables(report):
 
 def write_process(report, writer, filepath, with_plots, sheet_name=None):
     from ..excel import dataframe2excel
-    from ..core.viz.style import get_palette
+    from ..core.viz.style import get_font_sizes, get_defaults
+    from ..core.viz.utils import _create_subplots, setup_axis_style, save_figure, get_series_colors
     from ._model_layout import chapter_number
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
+
+    fonts, defaults = get_font_sizes(), get_defaults()
 
     sheet = writer.get_sheet_by_name(sheet_name or process_sheet_name(report))
     sheet.sheet_view.showGridLines = False
@@ -143,21 +147,34 @@ def write_process(report, writer, filepath, with_plots, sheet_name=None):
         folder = Path(filepath).parent / (Path(filepath).stem + "_assets")
         folder.mkdir(parents=True, exist_ok=True)
         for metric_index, (metric, values) in enumerate(curve.groupby("指标", sort=False)):
-            figure, axis = plt.subplots(figsize=(9, 3.6), constrained_layout=True)
+            figure, axis = _create_subplots(figsize=(9, 3.6), constrained_layout=True)
             try:
                 groups = [k for k in keys if k != "指标"]
-                for number, (group, points) in enumerate(values.groupby(groups, sort=False, dropna=False)):
+                series = list(values.groupby(groups, sort=False, dropna=False))
+                colors = get_series_colors(len(series))
+                for number, (group, points) in enumerate(series):
                     labels = group if isinstance(group, tuple) else (group,)
                     label = " / ".join(
                         str(value) if key == "数据集" else f"{key}{value}" for key, value in zip(groups, labels)
                     )
                     axis.plot(
-                        points["迭代"], points["数值"], label=label, color=get_palette()[number % len(get_palette())]
+                        points["迭代"],
+                        points["数值"],
+                        label=label,
+                        color=colors[number],
+                        linewidth=2,
+                        alpha=defaults["line_alpha"],
                     )
-                axis.set(xlabel="迭代", ylabel=str(metric), title=f"{title}：{metric}")
-                axis.legend()
+                setup_axis_style(axis, hide_top_right=True)
+                axis.set_xlabel("迭代", fontsize=fonts["axis_label"], fontweight=defaults["fontweight_label"])
+                axis.set_ylabel(str(metric), fontsize=fonts["axis_label"], fontweight=defaults["fontweight_label"])
+                axis.set_title(f"{title}：{metric}", fontsize=fonts["title"], fontweight=defaults["fontweight_title"])
+                axis.tick_params(labelsize=fonts["tick"])
+                axis.xaxis.set_major_locator(MaxNLocator(integer=True))
+                axis.grid(True, axis="y", alpha=defaults["grid_alpha"], linestyle="--")
+                axis.legend(fontsize=fonts["legend"], frameon=False)
                 path = folder / f"{title}_{metric_index}.png"
-                figure.savefig(path, dpi=140)
+                save_figure(figure, path, dpi=defaults["dpi"])
             finally:
                 plt.close(figure)
             row, _ = writer.insert_pic2sheet(sheet, str(path), (row, 2), figsize=(900, 360))

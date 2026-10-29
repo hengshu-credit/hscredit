@@ -199,7 +199,8 @@ def export_excel(report, filepath, options):
     """沿用 ExcelWriter 主题及原子保存，单独组织连续目标报告章节。"""
     import matplotlib.pyplot as plt
     from ..excel import ExcelWriter, dataframe2excel
-    from ..core.viz.style import get_palette
+    from ..core.viz.style import get_palette, get_font_sizes, get_defaults
+    from ..core.viz.utils import _create_subplots, setup_axis_style, save_figure
     from ._model_layout import configuration_table, fit_metadata_sheet, record_identifier
 
     result = report._execution_result
@@ -315,12 +316,13 @@ def export_excel(report, filepath, options):
         folder = Path(filepath).parent / f"{Path(filepath).stem}_assets"
         folder.mkdir(parents=True, exist_ok=True)
         colors = get_palette()
+        fonts, defaults = get_font_sizes(), get_defaults()
         plotted = 0
         for i, (key, dataset) in enumerate(report._datasets.items()):
             y, p = report._get_valid_target_arrays(key)
             if not len(y):
                 continue
-            figure, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+            figure, axes = _create_subplots(1, 2, figsize=(10, 4), constrained_layout=True)
             try:
                 axes[0].scatter(y, p, alpha=0.55, s=14, color=colors[0])
                 bounds = [float(min(y.min(), p.min())), float(max(y.max(), p.max()))]
@@ -329,8 +331,17 @@ def export_excel(report, filepath, options):
                 axes[1].scatter(p, p - y, alpha=0.55, s=14, color=colors[0])
                 axes[1].axhline(0, color=colors[1], linestyle="--")
                 axes[1].set(xlabel="预测值", ylabel="预测值减实际值", title="残差分布")
+                for axis in axes:
+                    setup_axis_style(axis, hide_top_right=True)
+                    axis.title.set_fontsize(fonts["title"])
+                    axis.title.set_fontweight(defaults["fontweight_title"])
+                    for label in (axis.xaxis.label, axis.yaxis.label):
+                        label.set_fontsize(fonts["axis_label"])
+                        label.set_fontweight(defaults["fontweight_label"])
+                    axis.tick_params(labelsize=fonts["tick"])
+                    axis.grid(True, alpha=defaults["grid_alpha"], linestyle="--")
                 image = folder / f"regression_{i}.png"
-                figure.savefig(image, dpi=150)
+                save_figure(figure, image, dpi=defaults["dpi"])
             finally:
                 plt.close(figure)
             ws = writer.get_sheet_by_name("2-模型性能")

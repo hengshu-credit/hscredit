@@ -448,6 +448,9 @@ def _next_image_col(ws, start_col: int, width_px: int, default_width: float = 13
     # 防御性上限，避免列宽异常时陷入死循环
     while acc < width_px and col < start_col + 60:
         dim = ws.column_dimensions.get(get_column_letter(col))
+        if dim is None:
+            covering = [d for d in ws.column_dimensions.values() if (d.min or 0) <= col <= (d.max or 0)]
+            dim = max(covering, key=lambda d: d.min or 0) if covering else None
         width = dim.width if (dim is not None and dim.width) else default_width
         acc += width * 7.0 + 5.0
         col += 1
@@ -3781,6 +3784,7 @@ class ModelReport(ModelContextMixin):
         model_name = model_name or self.model.__class__.__name__
 
         plot_paths: Dict[str, List[str]] = {}
+        image_rows = []
         psi_tables: Dict[str, pd.DataFrame] = {}
         if with_plots:
             if execution_result is not None:
@@ -4433,15 +4437,18 @@ class ModelReport(ModelContextMixin):
             img_start_row = end_row + 1
             current_col = 2
             max_img_end_row = img_start_row
+            row_images = []
             for fig in figs:
                 try:
                     img_end_row, _ = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
+                    row_images.append(ws._images[-1])
                     current_col = _next_image_col(ws, current_col, 500)
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception as exc:
                     self._report_warning("插入可选图表失败 [工作表=%s, 文件=%s]: %s", ws.title, fig, exc)
             if figs:
                 end_row = max_img_end_row
+                image_rows.append((ws, row_images))
 
             if is_multi:
                 # 多标签合并模式：所有标签合并为一个 MultiIndex 列的分箱表
@@ -4689,15 +4696,18 @@ class ModelReport(ModelContextMixin):
             img_start_row = end_row + 1
             current_col = 2
             max_img_end_row = img_start_row
+            row_images = []
             for fig in all_figs:
                 try:
                     img_end_row, _ = writer.insert_pic2sheet(ws, fig, (img_start_row, current_col), figsize=(500, 300))
+                    row_images.append(ws._images[-1])
                     current_col = _next_image_col(ws, current_col, 500)
                     max_img_end_row = max(max_img_end_row, img_end_row)
                 except Exception as exc:
                     self._report_warning("插入可选图表失败 [工作表=%s, 文件=%s]: %s", ws.title, fig, exc)
             if all_figs:
                 end_row = max_img_end_row  # 跳过图片占用的所有行，避免重叠
+                image_rows.append((ws, row_images))
 
             # 每个数据集分别输出；多标签仅改变表头，不改变数据集粒度。
             for ds_key, ds in self._datasets.items():
@@ -5421,6 +5431,21 @@ class ModelReport(ModelContextMixin):
                 fit_metadata_sheet(writer.workbook[sheet_name], writer.style_sheet.column_dimensions["C"].width)
         from ._model_layout import fit_report_titles
 
+        # 表格全部写入后列宽才稳定，所有数据集和特征的同一组图采用相同排布。
+        from openpyxl.utils import get_column_letter
+        from openpyxl.utils.cell import coordinate_to_tuple
+
+        for sheet, pictures in image_rows:
+            column = 2
+            for picture in pictures:
+                if isinstance(picture.anchor, str):
+                    image_row, _ = coordinate_to_tuple(picture.anchor)
+                    picture.anchor = f"{get_column_letter(column)}{image_row}"
+                    width = picture.width
+                else:
+                    picture.anchor._from.col = column - 1
+                    width = picture.anchor.ext.cx / 9525
+                column = _next_image_col(sheet, column, width)
         for sheet in writer.workbook:
             if sheet.title not in {"初始化", "目录"}:
                 fit_report_titles(sheet)

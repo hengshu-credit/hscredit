@@ -17,7 +17,8 @@ def importance_table(report):
 
 def write_importance(report, writer, sheet, row, filepath, with_plots, title="1、SHAP 特征重要性"):
     from ..excel import dataframe2excel
-    from ..core.viz.style import get_palette
+    from ..core.viz.style import get_palette, get_font_sizes, get_defaults
+    from ..core.viz.utils import _create_subplots, setup_axis_style, save_figure
     import matplotlib.pyplot as plt
 
     if not report.explain_config["enabled"]:
@@ -69,7 +70,8 @@ def write_importance(report, writer, sheet, row, filepath, with_plots, title="1�
     if with_plots:
         fields = [c for c in ("原生特征重要性", "平均绝对SHAP值") if c in table]
         shown = table.head(20).iloc[::-1]
-        figure, axes = plt.subplots(
+        fonts, defaults = get_font_sizes(), get_defaults()
+        figure, axes = _create_subplots(
             1,
             len(fields),
             figsize=(6 * len(fields), max(3, 0.3 * len(shown) + 1.3)),
@@ -79,13 +81,22 @@ def write_importance(report, writer, sheet, row, filepath, with_plots, title="1�
         try:
             for index, field in enumerate(fields):
                 axis = axes[0, index]
-                axis.barh(shown["特征"], shown[field], color=get_palette()[index])
-                axis.set_title("原生特征重要性" if field == "原生特征重要性" else "SHAP 特征重要性")
-                axis.set_xlabel(field)
+                color = get_palette()[index]
+                axis.barh(shown["特征"], shown[field], color=color, edgecolor=color, alpha=0.65, hatch="/")
+                setup_axis_style(axis, hide_top_right=True)
+                axis.set_title(
+                    "原生特征重要性" if field == "原生特征重要性" else "SHAP 特征重要性",
+                    fontsize=fonts["title"],
+                    fontweight=defaults["fontweight_title"],
+                )
+                axis.set_xlabel(field, fontsize=fonts["axis_label"], fontweight=defaults["fontweight_label"])
+                axis.set_ylabel("特征", fontsize=fonts["axis_label"], fontweight=defaults["fontweight_label"])
+                axis.tick_params(labelsize=fonts["tick"])
+                axis.grid(False)
             folder = Path(filepath).parent / (Path(filepath).stem + "_assets")
             folder.mkdir(parents=True, exist_ok=True)
             path = folder / "shap_importance.png"
-            figure.savefig(path, dpi=140)
+            save_figure(figure, path, dpi=defaults["dpi"])
         finally:
             plt.close(figure)
         row, _ = writer.insert_pic2sheet(
