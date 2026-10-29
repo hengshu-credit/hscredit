@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 from docutils import nodes
@@ -32,6 +33,8 @@ def test_accepts_complete_docs_artifacts(tmp_path):
         '<li class="toctree-l3"><a href="classical_models.html">经典模型</a></li>'
         '<li class="toctree-l3"><a href="boosting.html">Boosting</a></li>'
         '<li class="toctree-l3"><a href="net.html">表格神经网络</a></li>'
+        '<li class="toctree-l3"><a href="training_lifecycle.html">预训练、微调与继续训练</a></li>'
+        '<li class="toctree-l3"><a href="model_workflow_validation.html">全模型建模链路验收</a></li>'
         '<li class="toctree-l3"><a href="model_rules.html">规则器</a></li>'
         '<li class="toctree-l3"><a href="scorecard.html">评分卡</a></li>'
         '<li class="toctree-l3"><a href="calibration.html">概率校准</a></li>'
@@ -86,8 +89,24 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     assert collect_validation_errors(tmp_path) == []
 
 
+@pytest.mark.parametrize(
+    "link",
+    [
+        '<li class="toctree-l3"><a href="training_lifecycle.html">预训练、微调与继续训练</a></li>',
+        '<li class="toctree-l3"><a href="model_workflow_validation.html">全模型建模链路验收</a></li>',
+    ],
+)
+def test_rejects_missing_training_guide_menu_entry(tmp_path, link):
+    """新增训练指南也必须保留可直接访问的导航入口。"""
+    test_accepts_complete_docs_artifacts(tmp_path)
+    path = tmp_path / "api" / "modeling.html"
+    path.write_text(path.read_text(encoding="utf-8").replace(link, ""), encoding="utf-8")
+
+    assert any("模型菜单" in error for error in collect_validation_errors(tmp_path))
+
+
 def test_rejects_nested_or_reordered_model_menu(tmp_path):
-    """模型菜单必须按顺序直接生成两篇指南和十个 API 入口。"""
+    """模型菜单必须按顺序直接生成四篇指南和十个 API 入口。"""
     _write(
         tmp_path / "api" / "modeling.html",
         '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
@@ -104,7 +123,7 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
 
     assert any(
         "模型菜单" in error
-        and "经典模型、Boosting、表格神经网络、规则器、评分卡、概率校准、模型可解释性、损失函数与评估指标、评估指标、超参数调优"
+        and "经典模型、Boosting、表格神经网络、预训练、微调与继续训练、全模型建模链路验收、规则器、评分卡、概率校准、模型可解释性、损失函数与评估指标、评估指标、超参数调优"
         in error
         for error in errors
     )
