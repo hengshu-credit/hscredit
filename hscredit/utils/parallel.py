@@ -14,6 +14,7 @@ from joblib import Parallel, delayed, parallel_backend as joblib_parallel_backen
 from joblib import cpu_count as joblib_cpu_count
 
 from ..exceptions import ParallelExecutionError, ValidationError
+from .._cpu import get_hardware_cpu_count, usable_cpu_count
 
 NJobs = Optional[Union[int, float]]
 Task = TypeVar("Task")
@@ -221,24 +222,16 @@ class _WorkerExecutionError(Exception):
 
 
 def get_physical_cpu_count() -> int:
-    """返回可用的物理 CPU 数，无法识别时使用保守回退值。"""
-    try:
-        count = joblib_cpu_count(only_physical_cores=True)
-    except TypeError:
-        count = None
-    except Exception:
-        count = None
-    if count:
-        return max(1, int(count))
+    """返回硬件物理核与进程 CPU 上限的较小值，不启动 WMIC 等外部命令。
 
-    try:
-        count = joblib_cpu_count()
-    except Exception:
-        count = None
-    if count:
-        return max(1, int(count))
-
-    return max(1, int(os.cpu_count() or 1))
+    进程上限每次读取，保留容器配额、亲和性和 LOKY_MAX_CPU_COUNT。
+    拓扑未知时使用受限逻辑核数；资源上限查询失败时保守返回 1。
+    """
+    available = usable_cpu_count(joblib_cpu_count)
+    if available == 1:
+        return 1
+    physical = get_hardware_cpu_count()
+    return min(available, physical) if physical is not None else available
 
 
 def resolve_n_jobs(

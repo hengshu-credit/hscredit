@@ -18,6 +18,33 @@ def installed_version(import_name: str, distribution_name: Optional[str] = None)
     return Version(metadata.version(distribution_name or import_name))
 
 
+def needs_joblib_cpu_compat(joblib_version: Optional[Version]) -> bool:
+    """joblib 1.0–1.6 的 loky 物理核探测协议为 (核数或 'not found', 异常)。"""
+    return joblib_version is not None and Version("1.0") <= joblib_version < Version("1.7.dev0")
+
+
+def install_joblib_cpu_compat(context, joblib_version: Optional[Version]) -> None:
+    """按版本替换 loky 的物理核探测，覆盖 sklearn OpenMP 等间接调用。
+
+    保留 joblib 的公共 cpu_count 和资源限制逻辑，不改环境变量、警告过滤器
+    或第三方缓存；未知拓扑交回 loky 使用受限逻辑核数。
+    """
+    if not needs_joblib_cpu_compat(joblib_version):
+        return
+    if getattr(context._count_physical_cores, "_hscredit_cpu_compat", False):
+        return
+    from ._cpu import get_hardware_cpu_count, usable_cpu_count
+
+    def count_physical_cores():
+        physical = get_hardware_cpu_count()
+        if physical is None:
+            return "not found", None
+        return min(physical, usable_cpu_count(context.cpu_count)), None
+
+    count_physical_cores._hscredit_cpu_compat = True
+    context._count_physical_cores = count_physical_cores
+
+
 def pandas_styler_map_api(pandas_version: Version) -> str:
     """pandas 2.1 起使用 Styler.map；2.0 使用 applymap（3.0 已移除）。"""
     if pandas_version < Version("2.0"):
@@ -233,6 +260,14 @@ def prepare_dependency(name: str) -> None:
     """根据依赖名和已安装版本，安装命中的兼容适配。"""
     import_name = name.split(".", 1)[0]
 
+    if import_name == "joblib":
+        joblib_version = installed_version("joblib")
+        if needs_joblib_cpu_compat(joblib_version):
+            from joblib.externals.loky.backend import context
+
+            install_joblib_cpu_compat(context, joblib_version)
+        return
+
     if import_name == "matplotlib":
         matplotlib_version = installed_version("matplotlib")
         if matplotlib_version is not None and Version("3.3") <= matplotlib_version < Version("3.6.1"):
@@ -259,5 +294,6 @@ def prepare_dependency(name: str) -> None:
 
 def prepare_runtime_compatibility() -> None:
     """在 hscredit 公开模块加载前准备已知依赖组合。"""
+    prepare_dependency("joblib")
     prepare_dependency("lightgbm")
     prepare_dependency("seaborn")

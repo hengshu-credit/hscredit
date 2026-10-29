@@ -25,7 +25,34 @@ HSCredit 的分箱器、特征筛选器、编码器、规则执行与规则挖�
 
 ## 并行数 `n_jobs`
 
-设机器可用的物理 CPU 核数为 `P`。HSCredit 优先通过 joblib 查询物理核数；旧版 joblib 不支持该查询时依次退回逻辑核数和 `os.cpu_count()`，仍不可用时按 1 核处理。
+设机器可用的物理 CPU 核数预算为 `P`。HSCredit 使用系统接口探测物理核，并与 joblib 无参
+`cpu_count()` 返回的进程上限取较小值，因此保留容器配额、CPU 亲和性和 `LOKY_MAX_CPU_COUNT` 限制。
+
+| 环境 | 物理核探测方式 |
+| --- | --- |
+| Windows | `GetLogicalProcessorInformationEx(RelationProcessorCore)`，按变长记录计数，支持多个处理器组，不需要 WMIC 或 PowerShell。 |
+| Linux | sysfs 的插槽、裸片、簇与核心编号组合；排除离线 CPU，不把不同硬件层级的相同核心编号合并。 |
+| macOS | 系统 C 库 `sysctlbyname("hw.physicalcpu")`，不启动 `sysctl` 命令。 |
+| 原生接口不可用/其他系统 | 已安装 psutil 2.0+ 时使用其物理核接口；仍无法确定时使用受限逻辑核数。 |
+
+只缓存硬件拓扑探测结果，进程配额、亲和性和环境上限每次重新读取。系统逻辑核数变化时重新探测拓扑。
+容器配额识别能力沿用已安装的 joblib：例如 joblib 1.0 尚未读取 cgroup v2 的 `cpu.max`，
+旧依赖环境需要使用支持对应配额的 joblib，或显式配置已有的 `LOKY_MAX_CPU_COUNT` 上限。
+如果连进程上限也无法可靠读取，则保守使用 1 个 worker；无效的 `LOKY_MAX_CPU_COUNT` 会给出中文错误。
+库不会写入该环境变量，也不会关闭警告或丢弃其他业务异常。
+
+对于 `1.0 <= joblib < 1.7`，`hscredit._compat` 通过 `packaging.version.Version` 选择已验证的 loky
+物理核探测协议，用同一探测器替换低层入口，以覆盖 scikit-learn OpenMP 等间接调用。joblib 的公共
+CPU 查询和限制逻辑保持原状，无法识别拓扑时按原协议返回受限逻辑核数；不修改第三方核数缓存。
+范围外版本（含 1.7 系列的预发布版本）不改其私有接口，HSCredit 自身仍使用系统探测与公开的无参 CPU 查询。
+
+核数计算只涉及运行资源，不改变分箱、规则或指标公式。修改后需重启已有 Notebook 内核，以重新加载兼容入口。
+跨平台测试在 Windows、Linux、macOS 上分别使用 joblib 1.4.2 和 1.6.0 执行。
+
+接口依据：[joblib CPU 约束](https://joblib.readthedocs.io/en/stable/generated/joblib.cpu_count.html)、
+[Windows 处理器拓扑](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getlogicalprocessorinformationex)、
+[Linux CPU 拓扑](https://docs.kernel.org/admin-guide/cputopology.html)、
+[macOS sysctlbyname](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctlbyname.3.html)。
 
 | 配置 | 含义 |
 |---|---|

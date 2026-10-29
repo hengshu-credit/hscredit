@@ -112,7 +112,7 @@ def test_pandas_compat_installers_are_idempotent():
 
 
 def test_prepare_runtime_compatibility_prepares_supported_dependencies(monkeypatch):
-    """包初始化入口统一准备 LightGBM 和 Seaborn 兼容。"""
+    """包初始化入口先准备 CPU 探测，再准备 LightGBM 和 Seaborn 兼容。"""
     import hscredit._compat as compat
 
     prepared = []
@@ -120,7 +120,7 @@ def test_prepare_runtime_compatibility_prepares_supported_dependencies(monkeypat
 
     prepare_runtime_compatibility()
 
-    assert prepared == ["lightgbm", "seaborn"]
+    assert prepared == ["joblib", "lightgbm", "seaborn"]
 
 
 @pytest.mark.parametrize(

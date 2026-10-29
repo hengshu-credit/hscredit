@@ -107,16 +107,17 @@ def test_parallel_execute_can_preserve_keyboard_interrupt(backend, n_jobs):
 
 
 def test_physical_cpu_count_falls_back_to_joblib_without_keyword_support():
-    """旧版 joblib 不支持物理核参数时仍应使用其 CPU 查询结果。"""
+    """拓扑未知时使用旧版 joblib 的无参接口，不通过关键字失败来探测版本。"""
 
     def cpu_count(*args, **kwargs):
         if kwargs:
             raise TypeError("unexpected keyword argument")
         return 4
 
-    with patch("hscredit.utils.parallel.joblib_cpu_count", side_effect=cpu_count):
-        with patch("hscredit.utils.parallel.os.cpu_count", return_value=1):
+    with patch("hscredit.utils.parallel.joblib_cpu_count", side_effect=cpu_count) as counter:
+        with patch("hscredit.utils.parallel.get_hardware_cpu_count", return_value=None):
             assert get_physical_cpu_count() == 4
+    counter.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
