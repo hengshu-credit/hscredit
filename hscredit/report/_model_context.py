@@ -328,6 +328,25 @@ class ModelContextMixin:
             fold_rows = []
             selected_curves = []
             selected_number = getattr(getattr(tuner, "best_trial_", None), "number", None)
+            result["搜索指标"] = pd.DataFrame(
+                [{"指标": metric.name, "方向": metric.direction} for metric in tuner.metrics]
+            )
+            validation = getattr(tuner, "validation_summary_", {})
+            result["搜索设置"] = pd.DataFrame(
+                [
+                    {"配置项": "搜索指标", "配置值": "、".join(metric.name for metric in tuner.metrics)},
+                    {
+                        "配置项": "优化方向",
+                        "配置值": "、".join(
+                            f"{metric.name}：{'越大越好' if metric.direction=='maximize' else '越小越好'}"
+                            for metric in tuner.metrics
+                        ),
+                    },
+                    {"配置项": "验证方式", "配置值": validation.get("验证方式")},
+                    {"配置项": "搜索评分数据集", "配置值": validation.get("搜索评分数据集", "交叉验证留出")},
+                    {"配置项": "搜索选中试验", "配置值": selected_number},
+                ]
+            )
             relation = (
                 "本报告模型是调参后重训模型"
                 if getattr(tuner, "best_model_", None) is self.model
@@ -347,6 +366,7 @@ class ModelContextMixin:
                 rows.append(
                     {
                         "试验编号": trial.number,
+                        "搜索选中": trial.number == selected_number,
                         "状态": states.get(trial.state.name, trial.state.name),
                         "各目标得分": trial.values,
                         "采样参数": trial.params,

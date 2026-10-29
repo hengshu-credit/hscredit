@@ -259,7 +259,7 @@ def test_model_report_does_not_freeze_any_worksheet(tmp_path):
         "4-稳定性分析": None,
         "5-模型参数": None,
         "6-模型部署需求": None,
-        "8-训练与调参过程": None,
+        "7-训练与调参过程": None,
     }
 
 
@@ -1346,7 +1346,7 @@ class TestModelReportRegression:
             "4-稳定性分析",
             "5-模型参数",
             "6-模型部署需求",
-            "8-训练与调参过程",
+            "7-训练与调参过程",
         ]
         contents = [cell.value for row in workbook["目录"].iter_rows() for cell in row]
         basic_info = [cell.value for row in workbook["1-基本信息"].iter_rows() for cell in row]
@@ -1774,7 +1774,7 @@ class TestModelReportRealDataContract:
         "4-稳定性分析",
         "5-模型参数",
         "6-模型部署需求",
-        "8-训练与调参过程",
+        "7-训练与调参过程",
     ]
 
     @staticmethod

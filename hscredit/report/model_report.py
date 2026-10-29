@@ -716,7 +716,11 @@ class ModelReport(ModelContextMixin):
             raise ValidationError("回归报告需要连续预测值，请使用 prediction_method='predict' 或 callable")
         self.explain_config = normalize_explain_config(explain_config)
         if self.task_type_ == "regression" and self.explain_config["enabled"]:
-            raise ValidationError("回归报告暂不支持 explain_config，请单独使用适配回归任务的解释器")
+            if self.explain_config["scope"] != "importance":
+                raise ValidationError("回归报告请使用 explain_config 的 scope='importance'")
+            if explain_config.get("model_output", "prediction") != "prediction":
+                raise ValidationError("回归 SHAP 使用 model_output='prediction'")
+            self.explain_config["model_output"] = "prediction"
         self._feature_names = _normalize_feature_names(features)
         if not isinstance(prediction_method, str) and not callable(prediction_method):
             raise ValidationError("prediction_method 必须是方法名字符串或 callable")
@@ -953,6 +957,7 @@ class ModelReport(ModelContextMixin):
         target_payload = state.pop("_target_payload", None)
         metrics_payload = state.pop("_metrics_payload", None)
         self.__dict__.update(state)
+        self.explain_config = normalize_explain_config(state.get("explain_config"))
         self._label_prediction_cache = {}
         if not hasattr(self, "task_type_"):
             from ._regression_model import is_regression
@@ -3426,7 +3431,12 @@ class ModelReport(ModelContextMixin):
         config = dict(self.explain_config)
         train = self._datasets[self._train_key].X
         features = self.feature_names or list(train.columns)
-        if config["data"] is None:
+        if config["dataset"] is not None:
+            if config["data"] is not None:
+                raise ValidationError("解释数据请在 dataset 和 data 中选择一种")
+            selected_key = self._resolve_dataset_key(config["dataset"])
+            config["data"] = self._datasets[selected_key].X[features]
+        elif config["data"] is None:
             config["data"] = train[features]
         elif isinstance(config["data"], pd.DataFrame):
             config["data"] = config["data"][features]
@@ -3439,8 +3449,25 @@ class ModelReport(ModelContextMixin):
             config["y_train"] = self._datasets[self._train_key].y if config["y_train"] is None else config["y_train"]
             config["X_validation"] = config["data"] if config["X_validation"] is None else config["X_validation"]
         explanation = build_model_explanation(self.model, config)
+        if "元信息" in explanation:
+            explanation["元信息"]["解释数据集"] = self.explain_config["dataset"] or (
+                "显式 data" if self.explain_config["data"] is not None else self._datasets[self._train_key].label
+            )
         self._model_explanation_cache = explanation
         return explanation
+
+    @report_model_current
+    def get_shap_importance(self):
+        """返回 SHAP 全局重要性及可用的原生重要性，两者分别保留尺度。
+
+        使用 explain_config={'enabled': True, 'scope': 'importance', 'dataset': '验证集'} 启用。
+        排名依据平均绝对 SHAP 值；平均 SHAP 值保留正负方向，不是性能置换重要性。
+
+        :return: 包含特征、平均绝对SHAP值、占比及平均SHAP值的 DataFrame。
+        """
+        from ._shap_importance_report import importance_table
+
+        return importance_table(self)
 
     @report_model_current
     @report_inputs
@@ -3468,6 +3495,7 @@ class ModelReport(ModelContextMixin):
         return_result: bool = False,
         transactional: bool = False,
         include_sample_records: bool = True,
+        training_sheet_index: Optional[int] = None,
     ) -> Union[str, ReportResult]:
         """事务性生成 Excel；失败时恢复派生缓存。
 
@@ -3522,6 +3550,7 @@ class ModelReport(ModelContextMixin):
         :type transactional: bool
         :param include_sample_records: 默认 True 输出逐行订单及模型分数；False 不导出这些明细，章节记为不适用。
         :type include_sample_records: bool
+        :param training_sheet_index: 训练过程页编号；None 按启用章节自动选择 7 或 8，可指定未占用编号。
 
         **参考样例**
 
@@ -3530,11 +3559,14 @@ class ModelReport(ModelContextMixin):
         >>> assert status.complete
         >>> files = status.artifacts
         """
+        from ._training_process_report import process_sheet_name
+
+        process_sheet_name(self, training_sheet_index)
         if not isinstance(include_sample_records, (bool, np.bool_)):
             raise ValueError("include_sample_records 必须为布尔值")
         if transactional:
             options = dict(locals())
-            for key in ("self", "filepath", "transactional"):
+            for key in ("self", "filepath", "transactional", "process_sheet_name"):
                 options.pop(key)
             return self._to_excel_transactional(filepath, options)
         from .result import ReportGenerationError, ReportResult
@@ -3577,6 +3609,7 @@ class ModelReport(ModelContextMixin):
                 data_source=data_source,
                 loc_cols=loc_cols,
                 include_sample_records=include_sample_records,
+                training_sheet_index=training_sheet_index,
             )
             if result is not None:
                 result.artifacts.append({"类型": "Excel", "路径": str(path), "完整": result.complete})
@@ -3680,6 +3713,7 @@ class ModelReport(ModelContextMixin):
         data_source: Optional[str] = None,
         loc_cols: Optional[Union[str, List[str]]] = None,
         include_sample_records: bool = True,
+        training_sheet_index: Optional[int] = None,
     ) -> str:
         """生成多 Sheet 结构的 Excel 模型报告.
 
@@ -3701,6 +3735,9 @@ class ModelReport(ModelContextMixin):
         :param loc_cols: 定位字段（订单号等），支持 str 或 List[str]，仅用于生产订单测试用例
         :param include_sample_records: 是否导出生产订单样例；False保留不适用说明，不写逐行数据
         """
+        from ._training_process_report import process_sheet_name
+
+        training_name = process_sheet_name(self, training_sheet_index)
         if self.task_type_ == "regression":
             from ._regression_model import export_excel
 
@@ -3860,15 +3897,15 @@ class ModelReport(ModelContextMixin):
                 {"序号": 6, "内容": "6-模型部署需求", "备注": "入模变量信息及测试用例"},
             ]
         )
-        if self.explain_config["enabled"]:
+        if self.explain_config["enabled"] and self.explain_config["scope"] == "full":
             contents.loc[len(contents)] = {
                 "序号": 7,
                 "内容": "7-模型解释",
                 "备注": "SHAP贡献、解释稳定性、代表样本及原因码",
             }
         contents.loc[len(contents)] = {
-            "序号": 8,
-            "内容": "8-训练与调参过程",
+            "序号": int(training_name.split("-")[0]),
+            "内容": training_name,
             "备注": "预测口径、训练记录、曲线、参数搜索及最终重训",
         }
         if execution_result is not None:
@@ -4547,7 +4584,11 @@ class ModelReport(ModelContextMixin):
         end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="三、入模变量分析", style="header_middle")
         _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
-        feature_section = 1
+        if show_importance and self.explain_config["enabled"]:
+            from ._shap_importance_report import write_importance
+
+            end_row = write_importance(self, writer, ws, end_row + 2, filepath, with_plots)
+        feature_section = 2 if show_importance and self.explain_config["enabled"] else 1
         feature_name_col: Optional[int] = None
         features_summary_rows: Dict[str, int] = {}
         if show_importance:
@@ -4972,7 +5013,7 @@ class ModelReport(ModelContextMixin):
             style="header_middle",
             align={"horizontal": "left"},
         )
-        from ._model_layout import configuration_table, fit_metadata_sheet, process_display_table
+        from ._model_layout import configuration_table, fit_metadata_sheet
 
         end_row, _ = dataframe2excel(
             configuration_table(self.model_context_["最终模型参数"]),
@@ -4981,6 +5022,7 @@ class ModelReport(ModelContextMixin):
             start_row=end_row + 1,
             index=False,
             left_cols=["配置项", "配置值"],
+            decimal=None,
         )
         param_section += 1
 
@@ -5287,7 +5329,7 @@ class ModelReport(ModelContextMixin):
         # ============================================================
         # 7-模型解释 Sheet（显式启用）
         # ============================================================
-        if self.explain_config["enabled"]:
+        if self.explain_config["enabled"] and self.explain_config["scope"] == "full":
             explanation = self.get_model_explanation()
             ws = writer.get_sheet_by_name("7-模型解释")
             end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="七、模型解释", style="header_middle")
@@ -5372,27 +5414,17 @@ class ModelReport(ModelContextMixin):
         ]:
             if sheet_name in writer.workbook.sheetnames:
                 _adjust_report_title_merges(writer.workbook[sheet_name])
-        process_tables = self.get_training_process()
-        if process_tables:
-            process_sheet = writer.get_sheet_by_name("8-训练与调参过程")
-            process_row = 2
-            for title, table in process_tables.items():
-                printable = process_display_table(self, title, table)
-                writer.insert_value2sheet(
-                    process_sheet,
-                    (process_row, 2),
-                    title,
-                    style="header",
-                    end_space=(process_row, max(3, len(printable.columns) + 1)),
-                )
-                dataframe2excel(
-                    printable, writer, sheet_name=process_sheet, start_row=process_row + 2, start_col=2, index=False
-                )
-                process_row += len(printable) + 5
-            _insert_required_hyperlink(process_sheet, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
-        for sheet_name in ("5-模型参数", "6-模型部署需求", "8-训练与调参过程"):
+        from ._training_process_report import write_process
+
+        write_process(self, writer, filepath, with_plots, training_name)
+        for sheet_name in ("5-模型参数", "6-模型部署需求", training_name):
             if sheet_name in writer.workbook:
                 fit_metadata_sheet(writer.workbook[sheet_name], writer.style_sheet.column_dimensions["C"].width)
+        from ._model_layout import fit_report_titles
+
+        for sheet in writer.workbook:
+            if sheet.title not in {"初始化", "目录", "报告执行状态"}:
+                fit_report_titles(sheet)
         if execution_result is not None:
             for sheet_name in writer.workbook.sheetnames:
                 if sheet_name != "初始化":
@@ -5487,6 +5519,7 @@ def auto_model_report(
     return_result: bool = False,
     transactional: bool = False,
     include_sample_records: bool = True,
+    training_sheet_index: Optional[int] = None,
     metrics=None,
     sample_weight=None,
     score_direction=None,
@@ -5611,6 +5644,7 @@ def auto_model_report(
     :type loc_cols: Optional[Union[str, List[str]]]
     :param include_sample_records: 是否输出逐行订单/模型分数测试用例，默认True；False标记该章节不适用
     :type include_sample_records: bool
+    :param training_sheet_index: 默认 None 自动连续编号；可显式指定训练过程页的未占用编号。
     :param prediction_method: 数据集唯一预测方法，默认 None 自动选择分类 predict_proba 或回归 predict，也支持 callable
     :type prediction_method: Union[str, Callable]
     :param prediction_kwargs: 默认值为 ``None`` 。callable 同名参数的显式覆盖字典
@@ -5711,6 +5745,7 @@ def auto_model_report(
             return_result=return_result,
             transactional=transactional,
             include_sample_records=include_sample_records,
+            training_sheet_index=training_sheet_index,
         )
         if verbose:
             logger.info(f"\nExcel 报告已保存: {excel_path}")

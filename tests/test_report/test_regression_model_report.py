@@ -131,7 +131,7 @@ def test_regression_strict_excel_has_complete_continuous_sections(data, tmp_path
         "4-稳定性分析",
         "5-模型参数",
         "6-模型部署需求",
-        "8-训练与调参过程",
+        "7-训练与调参过程",
     } <= set(workbook.sheetnames)
     values = [cell.value for row in workbook["2-模型性能"] for cell in row]
     assert "均方根误差" in values and "坏样本率" not in values

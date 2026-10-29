@@ -9,12 +9,16 @@ from ..core.models.explainability import ModelExplainer
 
 DEFAULT_EXPLAIN_CONFIG = {
     "enabled": False,
+    "scope": "full",
     "data": None,
+    "dataset": None,
     "background_data": None,
     "target_class": 1,
     "model_output": "probability",
     "algorithm": "auto",
     "max_samples": 500,
+    "max_background": 200,
+    "max_evals": None,
     "representative_count": 6,
     "stability_mode": "sample",
     "n_bootstrap": 100,
@@ -40,6 +44,8 @@ def normalize_explain_config(config=None):
         merged.update(config)
     if merged["on_explain_error"] not in {"raise", "warn"}:
         raise ValueError("on_explain_error 必须是 raise 或 warn")
+    if merged["scope"] not in {"full", "importance"}:
+        raise ValueError("scope 必须是 full 或 importance")
     return merged
 
 
@@ -53,8 +59,16 @@ def build_model_explanation(model, config: Dict[str, Any]) -> Dict[str, Any]:
             model_output=config["model_output"],
             algorithm=config["algorithm"],
             random_state=config["random_state"],
+            max_background=config["max_background"],
         )
-        result = explainer.explain(config["data"], max_samples=config["max_samples"])
+        result = explainer.explain(config["data"], max_samples=config["max_samples"], max_evals=config["max_evals"])
+        if config["scope"] == "importance":
+            return {
+                "元信息": {**dict(result.metadata), "背景数据": dict(result.background_summary)},
+                "全局解释": explainer.get_global_report(result),
+                "解释结果": result,
+                "解释器": explainer,
+            }
         representatives = explainer.select_representative_samples(result).head(config["representative_count"])
         return {
             "元信息": {
