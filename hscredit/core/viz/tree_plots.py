@@ -33,6 +33,7 @@
 """
 
 import html
+import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -104,6 +105,69 @@ _NODE_STROKE_WIDTH = 1.5
 # ============================================================================
 # 树结构提取工具函数
 # ============================================================================
+
+
+def _tree_metric_rows(node):
+    """共享卡片指标，允许多分类树提供完整类别分布。"""
+    return node.get(
+        "metric_rows",
+        [
+            ("GINI指数", f"{node['gini']:.4f}"),
+            ("样本总数", str(node["n_samples"])),
+            ("样本占比", f"{node['sample_pct']:.2%}"),
+            ("坏样本率", f"{node['bad_rate']:.2%}"),
+            ("LIFT指标", f"{node['lift']:.2f}"),
+        ],
+    )
+
+
+def _extract_tree_from_multiway(tree):
+    """将多叉节点和任意数量的分支适配到已有卡片/边结构。"""
+    tree._check_fitted()
+    total = int(tree.nodes_[0].counts.sum())
+    binary = len(tree.classes_) == 2 and set(tree.classes_) == {0, 1}
+    base = float(tree._probabilities(0)[1]) if binary else 0.0
+    nodes, edges = [], []
+    for node_id, current in tree.nodes_.items():
+        n = int(current.counts.sum())
+        probability = tree._probabilities(node_id)
+        risk = float(probability[1]) if binary else float(1 - probability.max())
+        feature = (tree.feature_map or {}).get(current.feature, current.feature)
+        leaf = not current.children
+        node = dict(
+            node_id=node_id,
+            title=f"{'叶子' if leaf else '分裂'}节点 N{node_id}",
+            condition="叶子节点" if leaf else f"{feature} ({len(current.children)} 路)",
+            split_feature=feature or "",
+            threshold_text=str(list(current.thresholds)),
+            is_leaf=leaf,
+            is_manual=current.manual,
+            n_samples=n,
+            sample_pct=n / total,
+            good_count=int(current.counts[0]) if binary else 0,
+            bad_count=int(current.counts[1]) if binary else 0,
+            bad_rate=risk if n else 0.0,
+            gini=float(1 - np.sum(probability**2)),
+            lift=risk / base if base and n else 0.0,
+            class_label=str(tree.classes_[probability.argmax()]),
+            depth=current.depth,
+            fill_color=_COLOR_BG,
+        )
+        if not binary:
+            node["metric_rows"] = [("样本总数", str(n)), ("样本占比", f"{n / total:.2%}")]
+            node["metric_rows"] += [
+                (str(label), f"{int(count)} / {count / n:.2%}" if n else "0 / 0.00%")
+                for label, count in zip(tree.classes_, current.counts)
+            ]
+        nodes.append(node)
+        for child, spec in zip(current.children, current.branches):
+            label = spec.label(precision=5)
+            if spec.include_missing:
+                label += " 或缺失"
+            if spec.unknown:
+                label += " 或未知类别"
+            edges.append(dict(source=node_id, target=child, label=label, label_pos=0.72))
+    return dict(nodes=nodes, edges=edges, total_samples=total, overall_bad_rate=base)
 
 
 def _extract_tree_from_mte(mte) -> Dict[str, Any]:
@@ -627,6 +691,7 @@ def _reingold_tilford_layout(
     nodes: List[Dict[str, Any]],
     edges: List[Dict[str, Any]],
     node_width_override: Optional[float] = None,
+    node_height_override: Optional[float] = None,
 ) -> Dict[int, Tuple[float, float]]:
     """简化版 Reingold-Tilford 树布局算法，计算每个节点的 (x, y) 坐标。
 
@@ -667,7 +732,7 @@ def _reingold_tilford_layout(
             return node_width_override
         return _NODE_W_INCH
 
-    height_step = _NODE_H_INCH + _NODE_GAP_Y
+    height_step = (node_height_override or _NODE_H_INCH) + _NODE_GAP_Y
 
     # 第一步：自底向上递归计算每个节点子树所需的水平宽度
     # （子树宽度 = 自身宽度 与 「所有子节点子树宽度之和 + 子节点间间距」 取较大值）
@@ -794,7 +859,7 @@ def plot_tree_matplotlib(
     # 固定参数（内容字体与标题字体保持一致大小）
     FONT_TITLE = 10
     FONT_BODY = FONT_TITLE
-    CONTENT_LINES = 5  # 内容行数（gini/samples/pct/bad_rate/lift）
+    CONTENT_LINES = max(5, max(len(_tree_metric_rows(node)) for node in nodes))
 
     # 圆徽章参数（单位：inch）
     BADGE_R = 0.16
@@ -842,7 +907,13 @@ def plot_tree_matplotlib(
             cond_lines.append(wrapped)
 
     # Reingold-Tilford 布局（全树统一节点宽度）
-    coords = _reingold_tilford_layout(nodes, edges, node_width_override=uniform_node_w)
+    max_card_height = TITLE_H + 0.08 + CONTENT_LINES * 0.28 + max(0, max(map(len, cond_lines)) - 1) * TITLE_H
+    coords = _reingold_tilford_layout(
+        nodes,
+        edges,
+        node_width_override=uniform_node_w,
+        node_height_override=max_card_height if any("metric_rows" in node for node in nodes) else None,
+    )
     if not coords:
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.text(0.5, 0.5, "布局计算失败", ha="center", va="center", fontsize=14)
@@ -896,8 +967,9 @@ def plot_tree_matplotlib(
         )
 
         # 边标签：放在线段中点，非根节点边字号更小
-        mid_x = (x1 + x2) / 2
-        mid_y = (y1 + y2) / 2
+        fraction = edge.get("label_pos", 0.5)
+        mid_x = x1 + (x2 - x1) * fraction
+        mid_y = (y1 - src_total_node_h / 2) * (1 - fraction) + (y2 + tgt_total_node_h / 2) * fraction
         label_bg = "#FFF1F0" if manual_branch.get(src_id) else "#E8F0FF"
         is_root_edge = src_id == ROOT_ID
         label_fontsize = 9 if is_root_edge else 8
@@ -911,7 +983,7 @@ def plot_tree_matplotlib(
         ax.text(
             mid_x,
             mid_y,
-            f" {_tex_label(label_text)} ",
+            "\n".join(_wrap_condition_text(label_text, uniform_node_w * 0.9, label_fontsize)),
             ha="center",
             va="center",
             fontsize=label_fontsize,
@@ -1045,13 +1117,7 @@ def plot_tree_matplotlib(
         content_bottom = y - total_node_h / 2 + 0.08
         row_step = (content_top - content_bottom) / CONTENT_LINES
 
-        rows = [
-            ("GINI指数", f"{node['gini']:.4f}"),
-            ("样本总数", f"{node['n_samples']}"),
-            ("样本占比", f"{node['sample_pct']:.2%}"),
-            ("坏样本率", f"{node['bad_rate']:.2%}"),
-            ("LIFT指标", f"{node['lift']:.2f}"),
-        ]
+        rows = _tree_metric_rows(node)
 
         COL_GAP = 0.08  # 两列之间的间距（inch）
         label_col_x = x - COL_GAP / 2  # 第一列（指标名）右边界
@@ -1274,6 +1340,8 @@ def plot_tree_pyecharts(
             f"<b>坏样本率:</b> <span style='color:{_tip_color};font-weight:bold'>{bad_rate:.2%}</span><br/>"
             f"{_gini_line}{_manual_line}</div>"
         )
+        if "metric_rows" in node:
+            tooltip = "<br/>".join(f"{html.escape(str(k))}: {html.escape(str(v))}" for k, v in _tree_metric_rows(node))
 
         # 节点大小（叶子节点稍大）
         node_size = 60 if is_leaf else 50
@@ -1290,15 +1358,7 @@ def plot_tree_pyecharts(
                     border_width=2.5 if is_manual else 1.5,
                 ),
                 label_opts=opts.LabelOpts(
-                    formatter=(
-                        "{{b}}\n"
-                        "{" + (node["condition"] if node["condition"] else "叶子") + "|\n}\n"
-                        "GINI:" + f"{node['gini']:.4f}\n"
-                        "样本总数:" + str(n_samples) + "\n"
-                        "样本占比:" + f"{node['sample_pct']:.2%}\n"
-                        "坏样本率:" + f"{bad_rate:.2%}\n"
-                        "LIFT指标:" + f"{node['lift']:.2f}"
-                    ),
+                    formatter=node["condition"] + "\n" + "\n".join(f"{k}: {v}" for k, v in _tree_metric_rows(node)),
                     font_size=7,
                     color="#1D2129",
                 ),
@@ -1315,10 +1375,11 @@ def plot_tree_pyecharts(
 
     # 构建 pyecharts 边（贝塞尔曲线 + 主题色 + 所有边显示分支标签）
     graph_edges = []
+    manual_branch = _compute_manual_branch_flags(nodes, edges)
     ROOT_ID = "0"
     for edge in edges:
         label_text = edge["label"]
-        edge_color = _COLOR_PRIMARY if label_text == "<=" else _COLOR_SECONDARY
+        edge_color = _COLOR_SECONDARY if manual_branch.get(edge["source"]) else _COLOR_PRIMARY
         is_root_edge = str(edge["source"]) == ROOT_ID
 
         graph_edges.append(
@@ -1618,17 +1679,11 @@ def plot_tree_graphviz(
 
         # 无表头两列指标表格：第一列（指标名）右对齐，第二列（指标值）左对齐，
         # 内容、顺序与 plot_tree_matplotlib 完全一致
-        metric_rows = [
-            ("GINI指数", f'{node["gini"]:.4f}'),
-            ("样本总数", f'{node["n_samples"]:,}'),
-            ("样本占比", f'{node["sample_pct"]:.2%}'),
-            ("坏样本率", f'{node["bad_rate"]:.2%}'),
-            ("LIFT指标", f'{node["lift"]:.2f}'),
-        ]
+        metric_rows = _tree_metric_rows(node)
         rows_html = "".join(
             f"<TR>"
-            f'<TD ALIGN="RIGHT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#1D2129">{label}</FONT></TD>'
-            f'<TD ALIGN="LEFT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="Arial" COLOR="#1D2129">{value}</FONT></TD>'
+            f'<TD ALIGN="RIGHT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#1D2129">{html.escape(str(label))}</FONT></TD>'
+            f'<TD ALIGN="LEFT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="Arial" COLOR="#1D2129">{html.escape(str(value))}</FONT></TD>'
             f"</TR>"
             for label, value in metric_rows
         )
@@ -1674,7 +1729,8 @@ def plot_tree_graphviz(
             f"</TABLE>"
         )
 
-        dot_lines.append(f"    {nid} [label=<{label_html}>, " f'tooltip="{node["title"]} | {node["condition"]}"] ;')
+        tooltip = json.dumps(f"{node['title']} | {node['condition']}", ensure_ascii=False)
+        dot_lines.append(f"    {nid} [label=<{label_html}>, tooltip={tooltip}] ;")
 
     # 添加边（直线 + 无箭头 + 所有边显示分支标签；连接线统一为主题色，
     # 人工修改节点及其后续子树范围内的连接线统一换为副主题色）
@@ -1699,7 +1755,7 @@ def plot_tree_graphviz(
 
         dot_lines.append(
             f'    {edge["source"]}:s -> {edge["target"]}:n '
-            f'[label="{label_str}", fontcolor="{edge_color}", '
+            f'[label={json.dumps(label_str, ensure_ascii=False)}, fontcolor="{edge_color}", '
             f'color="{edge_color}", style=solid, fontsize={font_size}] ;'
         )
 
@@ -1877,6 +1933,10 @@ def _extract_tree_data(tree_obj: Any, feature_names: Optional[List[str]] = None)
     :param tree_obj: 树对象
     :param feature_names: 特征名列表（sklearn clf 推荐传入，避免 x[0] 占位符）
     """
+    from ...report.mining.multiway_tree import MultiwayTreeExtractor
+
+    if isinstance(tree_obj, MultiwayTreeExtractor):
+        return _extract_tree_from_multiway(tree_obj)
     if hasattr(tree_obj, "_check_fitted"):
         tree_obj._check_fitted()
     # ManualTreeExtractor 或 DecisionTreeAnalyzer（两者都有 _tree_info）
@@ -1890,7 +1950,7 @@ def _extract_tree_data(tree_obj: Any, feature_names: Optional[List[str]] = None)
     else:
         raise TypeError(
             f"不支持的树对象类型: {type(tree_obj).__name__}\n"
-            "请传入 ManualTreeExtractor / sklearn DecisionTreeClassifier / DecisionTreeAnalyzer"
+            "请传入 MultiwayTreeExtractor / ManualTreeExtractor / sklearn DecisionTreeClassifier / DecisionTreeAnalyzer"
         )
 
 

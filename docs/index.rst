@@ -124,6 +124,7 @@ hscredit 文档
    articles/losses-guide
    articles/tuning-guide
    articles/manual_tree_rule_mining
+   multiway_tree
    articles/model-interpretability
 
 .. toctree::

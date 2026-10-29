@@ -8,7 +8,7 @@
    :members:
    :imported-members:
    :show-inheritance:
-   :exclude-members: ModelReport, ExcelWriter, dataframe2excel, SingleFeatureRuleMiner, MultiFeatureRuleMiner, MultiLabelRuleMiner, TreeRuleExtractor, RuleMetrics, calculate_rule_metrics
+   :exclude-members: ModelReport, ExcelWriter, dataframe2excel, SingleFeatureRuleMiner, MultiFeatureRuleMiner, MultiLabelRuleMiner, TreeRuleExtractor, MultiwayTreeExtractor, RuleMetrics, calculate_rule_metrics
 
 .. rubric:: 模型报告的配置、评估与导出
 

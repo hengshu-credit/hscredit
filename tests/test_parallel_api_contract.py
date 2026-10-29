@@ -138,6 +138,7 @@ PUBLIC_PARALLEL_ENTRIES = {
         "TreeRuleExtractor",
         "DecisionTreeAnalyzer",
         "ManualTreeExtractor",
+        "MultiwayTreeExtractor",
         "RuleMetrics",
     },
     report: {
@@ -170,6 +171,7 @@ PUBLIC_PARALLEL_ENTRIES = {
         "RuleMetrics",
         "ModelReport",
         "QuickModelReport",
+        "MultiwayTreeExtractor",
         "auto_model_report",
         "compare_models",
         "population_drift",
