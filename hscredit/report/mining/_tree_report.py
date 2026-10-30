@@ -156,6 +156,30 @@ def format_rule_tables(result, long_format=True):
     return result[first + [c for c in result if c not in first]]
 
 
+def _tree_evaluation_worker(task):
+    """单个数据集的订单/金额评估；外层 joblib 调度，节点内部串行。"""
+    tree, frame, target, feature_map, operator, kwargs = task
+    worker = copy(tree)
+    worker.n_jobs = 1
+    worker.parallel_backend = None
+    worker.parallel_config = None
+    options = dict(
+        target=target,
+        feature_map=feature_map,
+        overdue_operator=operator,
+        leaf_only=False,
+        long_format=False,
+        apply_rule_filter=False,
+    )
+    full = worker.report(frame, **options, **kwargs)
+    orders = (
+        full
+        if kwargs.get("amount") is None
+        else worker.report(frame, **options, **{key: value for key, value in kwargs.items() if key != "amount"})
+    )
+    return orders, full
+
+
 def tree_report_excel(
     tree,
     datasets,
@@ -210,6 +234,8 @@ def tree_report_excel(
     :return: 与输入数据集结构对应的中文效果表、列表或字典。
     """
     from ...excel import ExcelWriter
+    from ...utils.parallel import parallel_execute
+    from .base import _mining_workload
     from ._rule_filter import filter_rule_tables
 
     dataframe2excel = _write_report_table
@@ -230,6 +256,7 @@ def tree_report_excel(
         raise ValueError("导出挖掘报告至少需要一个数据集")
     full_reports, order_reports, y_maps, date_values, plot_labels, contexts = {}, {}, [], [], {}, {}
     amount = kwargs.get("amount")
+    tasks = []
     for name, frame in frames.items():
         actual_target = target
         if target is None and overdue is None:
@@ -247,30 +274,37 @@ def tree_report_excel(
             if date not in frame:
                 raise ValueError(f"数据集 {name} 缺少日期字段 {date}")
             date_values.append(date_groups(frame[date], freq))
-        full_reports[name] = tree.report(
-            prepared,
-            target=bound,
-            leaf_only=False,
-            feature_map=feature_map,
-            overdue_operator=overdue_operator,
-            long_format=False,
-            apply_rule_filter=False,
-            **kwargs,
+        tasks.append((tree, prepared, bound, feature_map, overdue_operator, kwargs))
+    if tree._data is not None:
+        if amount and amount not in tree._data:
+            raise ValueError(f"模型未保留训练集金额字段 {amount}，请使用包含该字段的训练数据重新 fit")
+        training_kwargs = {"round_digits": False}
+        if amount is not None:
+            training_kwargs["amount"] = amount
+        tasks.append((tree, tree._data, None, None, ">", training_kwargs))
+    evaluated = list(
+        parallel_execute(
+            _tree_evaluation_worker,
+            tasks,
+            n_jobs=tree.n_jobs,
+            parallel_backend=tree.parallel_backend,
+            parallel_config=tree.parallel_config,
+            task_labels=[f"评估：{name}" for name in frames] + (["训练策略"] if tree._data is not None else []),
+            default_backend="loky",
+            preserve_exceptions=True,
+            workload=_mining_workload(
+                max((task[1] for task in tasks), key=len),
+                len(tasks),
+                operation="树挖掘报告数据集评估",
+                capability="process_safe",
+                cost_per_item=16.0 * len(tree.get_rules(leaf_only=False)),
+            ),
         )
-        order_reports[name] = (
-            full_reports[name]
-            if amount is None
-            else tree.report(
-                prepared,
-                target=bound,
-                leaf_only=False,
-                feature_map=feature_map,
-                overdue_operator=overdue_operator,
-                long_format=False,
-                apply_rule_filter=False,
-                **{k: v for k, v in kwargs.items() if k != "amount"},
-            )
-        )
+    )
+    for name, (orders, full) in zip(frames, evaluated):
+        order_reports[name], full_reports[name] = orders, full
+    training, training_full = evaluated[-1] if tree._data is not None else evaluated[0]
+    training_amount = training_full if amount is not None else None
     results = {}
     for name, table in full_reports.items():
         leaf_column = ("分箱详情", "是否叶子") if isinstance(table.columns, pd.MultiIndex) else "是否叶子"
@@ -344,7 +378,8 @@ def tree_report_excel(
             start_row=row + 2,
             left_cols=["统计项", "统计内容"],
         )
-        orders, amounts = _sample_tables(tree, frames, y_maps, full_reports, amount, False)
+        predictions = {}
+        orders, amounts = _sample_tables(tree, frames, y_maps, full_reports, amount, False, predictions=predictions)
         row = _write_pair(
             writer,
             sheet,
@@ -356,7 +391,17 @@ def tree_report_excel(
         )
         if date is not None or group is not None:
             grouped_orders, grouped_amounts = _distribution_tables(
-                tree, frames, contexts, date_values, amount, False, feature_map, overdue_operator, kwargs, group
+                tree,
+                frames,
+                contexts,
+                date_values,
+                amount,
+                False,
+                feature_map,
+                overdue_operator,
+                kwargs,
+                group,
+                predictions=predictions,
             )
             row = _write_pair(
                 writer,
@@ -367,23 +412,6 @@ def tree_report_excel(
                 grouped_amounts,
                 "与数据样本统计使用相同指标，按日期及指定字段分组计算。",
                 merge_columns=["数据集", "数据分组"] + ([group] if isinstance(group, str) else list(group or [])),
-            )
-        training_data = tree._data if tree._data is not None else next(iter(frames.values()))
-        if tree._data is None:
-            training = next(iter(order_reports.values()))
-            training_amount = next(iter(full_reports.values())) if amount else None
-        else:
-            training = tree.get_rule_table(
-                training_data, round_digits=False, long_format=False, apply_rule_filter=False
-            )
-            if amount and amount not in training_data:
-                raise ValueError(f"模型未保留训练集金额字段 {amount}，请使用包含该字段的训练数据重新 fit")
-            training_amount = (
-                tree.get_rule_table(
-                    training_data, amount=amount, round_digits=False, long_format=False, apply_rule_filter=False
-                )
-                if amount
-                else None
             )
         results = filter_rule_tables(tree, results, apply_rule_filter, training=training)
         selected = _select_rules(filter_rule_tables(tree, training, apply_rule_filter, training=training), leaf_only)
@@ -480,42 +508,35 @@ def _tree_score(tree, data, class_index=1):
     return values
 
 
-def _prediction_metrics(tree, frames, y_maps, amount):
-    """样本统计的 AUC/KS 直接复用 ModelReport，金额口径使用其 sample_weight。"""
-    from ..model_report import ModelReport
+def _prediction_metrics(tree, frames, y_maps, amount, predictions=None):
+    """复用 ModelReport 的指标 worker；同一次报告内按位置复用最终树预测。"""
+    from ..model_report import _binary_metric_worker
+    from ...core.models._contracts import validate_sample_weight
 
-    features = getattr(tree, "features_", None) or getattr(tree, "_feature_list", None)
+    predictions = {} if predictions is None else predictions
     result = {}
     for label_index, label in enumerate(y_maps[0]):
         class_index = label_index if str(label).startswith("类别_") else 1
-        for basis, weight in [("订单", None)] + ([("金额", amount)] if amount else []):
-            eligible = {
-                name: (frame, y_map[label])
-                for (name, frame), y_map in zip(frames.items(), y_maps)
-                if len(frame)
-                and pd.notna(y_map[label]).any()
-                and (weight is None or frame[weight].to_numpy()[np.asarray(pd.notna(y_map[label]))].sum() > 0)
-            }
-            metrics = pd.DataFrame()
-            if eligible:
-                report = ModelReport(
-                    tree,
-                    datasets=eligible,
-                    features=features,
-                    prediction_method=lambda X: _tree_score(tree, X, class_index),
-                    score_direction="higher_risk",
-                    sample_weight=weight,
-                    del_grey=True,
-                    n_jobs=1,
-                )
-                metrics = report.get_metrics().set_index("统计项")
-            for metric in ["AUC", "KS"]:
-                if metric in metrics.index or metric in {"AUC", "KS"}:
-                    values = [
-                        metrics.loc[metric, name] if metric in metrics.index and name in metrics else np.nan
-                        for name in frames
-                    ]
-                    result[(basis, label, metric)] = pd.to_numeric(pd.Series(values), errors="coerce").tolist()
+        for basis, weight_column in [("订单", None)] + ([("金额", amount)] if amount else []):
+            ks_values, auc_values = [], []
+            for (name, frame), y_map in zip(frames.items(), y_maps):
+                target = np.asarray(y_map[label], dtype=float)
+                valid = np.isin(target, [0, 1])
+                weights = None if weight_column is None else frame[weight_column].to_numpy(dtype=float)[valid]
+                ks_value, auc_value = np.nan, np.nan
+                if valid.any() and (weights is None or weights.sum() > 0):
+                    if weights is not None:
+                        weights = validate_sample_weight(frame[weight_column], len(frame))[valid]
+                    cached = predictions.setdefault(name, {})
+                    if class_index not in cached:
+                        cached[class_index] = np.array(_tree_score(tree, frame, class_index), copy=True)
+                    ks_value, auc_value, _, _ = _binary_metric_worker(
+                        (target[valid], cached[class_index][valid], "higher_risk", weights)
+                    )
+                ks_values.append(ks_value)
+                auc_values.append(auc_value)
+            result[(basis, label, "KS")] = ks_values
+            result[(basis, label, "AUC")] = auc_values
     return result
 
 
@@ -634,7 +655,9 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount, s
     return row
 
 
-def _sample_tables(tree, frames, y_maps, amount_reports, amount, long_format, target_specific_totals=None):
+def _sample_tables(
+    tree, frames, y_maps, amount_reports, amount, long_format, target_specific_totals=None, predictions=None
+):
     """整体与分组统计共用模型报告样本统计和性能入口，不混合订单/金额分母。"""
     labels = list(y_maps[0])
     filtered = any(pd.isna(values).any() for mapping in y_maps for values in mapping.values())
@@ -660,7 +683,7 @@ def _sample_tables(tree, frames, y_maps, amount_reports, amount, long_format, ta
                     (("统计详情", source) if ("统计详情", source) in amounts else (source, label)) if multi else source
                 )
                 amounts[key] = values
-    performance = _prediction_metrics(tree, frames, y_maps, amount)
+    performance = _prediction_metrics(tree, frames, y_maps, amount, predictions=predictions)
     for table, basis in [(orders, "订单"), (amounts, "金额")]:
         if table is None:
             continue
@@ -701,8 +724,26 @@ def _stats_format(table, labels, long_format, detail_group="统计详情", index
 
 
 def _distribution_tables(
-    tree, frames, contexts, date_values, amount, long_format, feature_map, operator, kwargs, group=None
+    tree,
+    frames,
+    contexts,
+    date_values,
+    amount,
+    long_format,
+    feature_map,
+    operator,
+    kwargs,
+    group=None,
+    predictions=None,
 ):
+    from ...core.rules import Rule
+
+    # 分组只用总体统计，复用 Rule.report 的命中行，无需计算整棵树的节点效果。
+    root_rule = Rule("True", n_jobs=1)
+    if predictions is None:
+        predictions = {}
+        y_maps = [bound.y_map(prepared, style="at") for prepared, bound in contexts.values()]
+        _prediction_metrics(tree, frames, y_maps, amount, predictions=predictions)
     group_columns = [group] if isinstance(group, str) else list(group or [])
     if len(set(group_columns)) != len(group_columns) or any(c in {"数据集", "数据分组"} for c in group_columns):
         raise ValueError("group 字段不能重复，也不能使用保留名称 数据集、数据分组")
@@ -727,17 +768,24 @@ def _distribution_tables(
             y_maps = [bound.y_map(subset, style="at")]
             amount_reports = {}
             if amount:
-                amount_reports[name] = tree.report(
+                table = root_rule.report(
                     subset,
                     target=bound,
-                    feature_map=feature_map,
                     overdue_operator=operator,
-                    long_format=False,
-                    apply_rule_filter=False,
                     **kwargs,
                 )
+                bin_col = ("分箱详情", "分箱") if isinstance(table.columns, pd.MultiIndex) else "分箱"
+                amount_reports[name] = table.loc[table[bin_col].eq("命中")]
+            group_predictions = {name: {key: values[positions] for key, values in predictions.get(name, {}).items()}}
             orders, amounts = _sample_tables(
-                tree, grouped_frames, y_maps, amount_reports, amount, long_format, target_specific_totals=filtered
+                tree,
+                grouped_frames,
+                y_maps,
+                amount_reports,
+                amount,
+                long_format,
+                target_specific_totals=filtered,
+                predictions=group_predictions,
             )
             for table, outputs in [(orders, order_tables), (amounts, amount_tables)]:
                 if table is not None:
@@ -886,6 +934,10 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
         )
         return name
     summaries, details = [], {}
+    # 分箱器返回完整分箱表，子计算需使用 list；保留外层配置的 worker 与在途任务预算。
+    binning_parallel_config = dict(tree.parallel_config or {})
+    if binning_parallel_config.get("result_retention") == "iterator":
+        binning_parallel_config["result_retention"] = "list"
     for dataset, (prepared, bound) in contexts.items():
         parts = []
         for basis, weight in [("订单", None)] + ([("金额", amount)] if amount else []):
@@ -900,7 +952,9 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
                 amount=weight,
                 long_format=True,
                 round_digits=False,
-                n_jobs=1,
+                n_jobs=tree.n_jobs,
+                parallel_backend=tree.parallel_backend,
+                parallel_config=binning_parallel_config,
                 verbose=0,
             )
             # 保留 feature_binning_summary 的指标 × 标签宽表；KS/AUC 使用原始特征的统一指标入口。

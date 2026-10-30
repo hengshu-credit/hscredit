@@ -531,3 +531,59 @@ API
 所有表格统一设置数值格式：比例与 KS 为 ``0.00%``，AUC/IV/WOE/LIFT 等为 ``0.0000``，
 计数为 ``#,##0``，金额为 ``#,##0.00``。金额口径中沿用“样本数”命名的权重列同样显示两位小数。
 显示格式不舍入中间值、不改变单元格数值；主报告保留模板列宽，特征分箱页自适应列宽且最大为 25。
+
+报告速度与并行执行
+----------------------------------------
+
+手工二叉树、多叉树和 DecisionTreeAnalyzer 共用报告计算流程：
+样本分布仅用 ``Rule.report`` 计算每组总体统计；每个数据集的最终树预测在本次报告内复用，
+各标签、订单/金额与业务分组的 AUC/KS 使用 ModelReport 的同一指标 worker。
+预测按行位置切片，支持重复索引；每次调用 report 都重新计算预测，不跨报告缓存模型状态。
+
+数据集评估和特征分箱复用 hscredit 的 joblib 调度，结果按输入顺序汇总，Excel 写入及绘图串行执行。
+配置沿用模型初始化时的 ``n_jobs``、``parallel_backend``、``parallel_config``：
+
+.. code-block:: python
+
+   from hscredit.report.mining import ManualTreeExtractor, MultiwayTreeExtractor
+
+   tree = MultiwayTreeExtractor(
+       target="FPD", features=features, max_n_bins=4,
+       n_jobs=2, parallel_backend="loky",  # joblib 多进程
+   ).fit(df_train)
+   tree.report(datasets, overdue=["MOB1"], dpds=[7, 3, 0],
+               amount="放款金额", date="放款时间", save="多叉树策略挖掘.xlsx")
+   # ManualTreeExtractor 使用相同的并行参数。
+   # parallel_backend="threading" 使用多线程；n_jobs=1 为串行。
+
+``n_jobs=-1`` 按现有工作量和资源预算自适应调度；显式后端及 worker 上限优先。
+外层数据集并行时节点内部串行，避免叠加启动多层 worker。
+小数据集上，线程调度及进程首次启动可能抵消并行收益；应按实际数据规模选择。
+
+2026-10-31，Python 3.11.5 验收环境，使用真实数据的 582/194/194 三数据集、
+MOB1 的 7/3/0 三标签、剔灰、金额、日期加商品类别分组，以及 quantile/uniform/tree 三种分箱。
+下表为绘图和 Excel 模板热身后的单次端到端计时，包含生成并保存完整工作簿：
+
+.. list-table:: 报告生成耗时（秒）
+   :header-rows: 1
+
+   * - 模型
+     - 优化前串行
+     - 优化后串行
+     - 2 线程
+     - 2 进程
+   * - 手工二叉树（11 节点）
+     - 32.58
+     - 12.45
+     - 12.94
+     - 13.12
+   * - 多叉树（9 节点）
+     - 25.90
+     - 9.92
+     - 10.38
+     - 8.79
+
+多进程测量中二叉树先执行，包含进程池首次启动；随后多叉树复用进程池，因此不能忽略启动成本比较模型。
+优化前后返回表逐值完全一致。两份工作簿共 47,335 个非空单元格，
+工作表 XML、数值格式、合并、列宽、筛选、树图内容保持一致；并行版本只有参数配置与文件创建时间不同。
+对应回归入口为 ``tests/test_report/test_tree_report_parallel.py`` 与原有树挖掘报告测试。

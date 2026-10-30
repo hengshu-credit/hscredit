@@ -135,7 +135,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     :type min_impurity_decrease: float
     :param feature_map: 字段名到中文含义的字典，默认 ``None``；用于图形标题及规则报告的字段说明。
     :type feature_map: dict[str, str] or None
-    :param n_jobs: 节点规则报告的并行预算，默认 -1 自动调度；树搜索按确定顺序串行执行。
+    :param n_jobs: 规则报告、Excel 数据集评估及特征分箱的并行总预算，默认 -1 自动调度；树搜索按确定顺序串行执行。
         1 表示串行；其他取值遵循 hscredit 统一并行策略。
     :type n_jobs: int or float or None
     :param parallel_backend: 规则报告的 joblib 后端，默认 ``None`` 使用报告默认后端。
