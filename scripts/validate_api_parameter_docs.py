@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -68,6 +69,20 @@ class _Parser(HTMLParser):
         self.stack[-1].children.append(data)
 
 
+def _parameter_description(paragraph):
+    """兼容 Sphinx 7/8 的智能标点，且不把类型注解中的破折号当作说明。"""
+    for index, child in enumerate(paragraph.children[1:], start=1):
+        if not isinstance(child, str):
+            continue
+        separator = re.search(r"\s+(?:--|–|—)\s+", child)
+        if separator is not None:
+            tail = "".join(
+                part.text() if isinstance(part, _Element) else part for part in paragraph.children[index + 1 :]
+            )
+            return (child[separator.end() :] + tail).strip()
+    return ""
+
+
 def parameter_docs(html):
     """返回各公开对象的参数名称与实际渲染说明，保留重复项供检查。"""
     parser = _Parser()
@@ -98,9 +113,7 @@ def parameter_docs(html):
                         if not strong or paragraph.children[0] is not strong[0]:
                             continue
                         parameter = strong[0].text().lstrip("*")
-                        text = paragraph.text()
-                        description = text.split(" -- ", 1)[1].strip() if " -- " in text else ""
-                        fields.append((parameter, description))
+                        fields.append((parameter, _parameter_description(paragraph)))
         result[name] = fields
     return result
 

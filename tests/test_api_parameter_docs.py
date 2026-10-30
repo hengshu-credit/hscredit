@@ -97,6 +97,29 @@ def test_validator_rejects_empty_and_duplicate_parameters(tmp_path):
     assert any("参数重复展示" in error for error in errors)
 
 
+@pytest.mark.parametrize("separator", [" -- ", " – ", " — ", "&nbsp;&ndash;&nbsp;"])
+def test_parameter_descriptions_support_sphinx_smart_punctuation(separator):
+    html = (
+        '<dl class="py function"><dt id="hscredit.example">函数</dt><dd>'
+        '<dl class="field-list"><dt>参数:</dt><dd><p><strong>x</strong> (<em>str</em>)'
+        + separator
+        + "<code>auto</code> 表示自动选择。</p></dd></dl></dd></dl>"
+    )
+    assert parameter_docs(html)["hscredit.example"] == [("x", "auto 表示自动选择。")]
+
+
+def test_type_annotation_separator_does_not_count_as_a_description(tmp_path):
+    api = tmp_path / "api"
+    api.mkdir()
+    (api / "example.html").write_text(
+        '<dl class="py function"><dt id="hscredit.example">函数</dt><dd>'
+        '<dl class="field-list"><dt>参数:</dt><dd><p><strong>x</strong>'
+        " (<em>Literal[' -- ']</em>)</p></dd></dl></dd></dl>",
+        encoding="utf-8",
+    )
+    assert collect_parameter_doc_errors(tmp_path) == ["hscredit.example.x: 缺少参数说明"]
+
+
 def test_merging_fields_preserves_nested_examples_and_other_domains():
     merge = runpy.run_path(str(ROOT / "docs/_ext/parameter_docs.py"))["merge_api_field_lists"]
     content = nodes.container()
