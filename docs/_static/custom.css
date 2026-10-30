@@ -211,6 +211,12 @@ samp,
     color: var(--hs-lav);
     transition: color 0.15s ease, background-color 0.15s ease;
 }
+/* 展开分支和切换高亮不改变字重或触发浏览器滚动锚定。 */
+.wy-side-scroll { overflow-anchor: none; }
+.wy-menu-vertical li[class*="toctree-l"] > a,
+.wy-menu-vertical li[class*="toctree-l"].current > a { font-weight: 400; }
+.wy-menu-vertical li.toctree-l1 > a,
+.wy-menu-vertical li.toctree-l1.current > a { font-weight: 600; }
 .wy-menu-vertical a:hover {
     background-color: rgba(123, 47, 255, 0.16);
     color: #ffffff;

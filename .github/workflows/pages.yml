@@ -51,6 +51,16 @@ jobs:
           test -f docs/_build/html/.nojekyll
           python scripts/validate_docs_build.py docs/_build/html
 
+      - name: 安装目录交互测试浏览器
+        run: |
+          npm install --prefix "$RUNNER_TEMP/hscredit-docs-browser" --no-save playwright@1.62.1
+          node "$RUNNER_TEMP/hscredit-docs-browser/node_modules/playwright/cli.js" install --with-deps chromium
+
+      - name: 校验目录交互
+        env:
+          NODE_PATH: ${{ runner.temp }}/hscredit-docs-browser/node_modules
+        run: node scripts/validate_docs_navigation.cjs docs/_build/html
+
       - name: 上传 Pages 构建产物
         uses: actions/upload-pages-artifact@v5
         with:

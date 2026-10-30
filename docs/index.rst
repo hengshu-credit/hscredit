@@ -82,7 +82,6 @@ hscredit 文档
 
 .. toctree::
    :maxdepth: 1
-   :titlesonly:
    :caption: 入门
 
    功能总览 <overview>
@@ -96,7 +95,6 @@ hscredit 文档
 
 .. toctree::
    :maxdepth: 1
-   :titlesonly:
    :caption: 建模实践
 
    模型流程 <articles/model-workflow>
@@ -109,7 +107,6 @@ hscredit 文档
 
 .. toctree::
    :maxdepth: 2
-   :titlesonly:
    :caption: 数据接入
 
    database
@@ -122,14 +119,12 @@ hscredit 文档
 
 .. toctree::
    :maxdepth: 2
-   :titlesonly:
    :caption: 智能技能
 
    智能技能 <skills>
 
 .. toctree::
    :maxdepth: 1
-   :titlesonly:
    :caption: 项目
 
    版本规划 <ROADMAP>
