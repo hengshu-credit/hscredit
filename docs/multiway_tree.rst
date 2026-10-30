@@ -5,7 +5,11 @@
 二分类和多分类标签。训练、编辑、预测和导出的 ``Rule`` 共用 ``BinSpec`` 分支语义。
 绘图继续使用现有 ``plot_tree`` 的卡片风格和 matplotlib、pyecharts、graphviz 后端。
 
-完整分步演示见仓库 ``examples/26_multiway_tree.ipynb``，使用 ``examples/hscredit_yyp.xlsx``。
+业务流程演示见仓库 ``examples/26_multiway_tree.ipynb``，使用 ``examples/hscredit_yyp.xlsx``。
+Notebook 依次演示自动建树、节点剪枝、自动重选特征、指定特征自动分裂、指定特征与阈值，
+展示最终树并导出全部节点规则。最终叶节点在训练集、验证集、测试集上分别生成 FPD 件数、
+MOB1 件数及金额报告，使用现有 ``ExcelWriter`` 和 ``dataframe2excel`` 写入同一工作簿。
+输出文件为 ``examples/model_report/multiway_tree/多叉树规则挖掘业务报告.xlsx``。
 
 方法速查
 --------
