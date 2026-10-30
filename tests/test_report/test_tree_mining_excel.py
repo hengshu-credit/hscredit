@@ -439,10 +439,11 @@ def test_feature_sheet_reuses_strategy_binning_and_preserves_template_width(data
     book = load_workbook(path)
     sheet = book["组合策略汇总_特征分箱"]
     tables = list(sheet.tables.values())
-    assert len(tables) == 3
+    assert len(tables) == 2
+    summary_range = range_boundaries(sheet.auto_filter.ref)
     ranges = [range_boundaries(table.ref) for table in tables]
-    assert ranges[0][3] < ranges[1][1] == ranges[2][1]
-    assert ranges[2][0] == ranges[1][2] + 2
+    assert summary_range[3] < ranges[0][1] == ranges[1][1]
+    assert ranges[1][0] == ranges[0][2] + 2
     for table, bounds in zip(tables, ranges):
         assert table.autoFilter.ref == table.ref
         assert table.tableStyleInfo.name is None
@@ -453,4 +454,121 @@ def test_feature_sheet_reuses_strategy_binning_and_preserves_template_width(data
         assert set(frame["分箱方法"]) == {"quantile", "uniform", "tree"}
         assert set(frame["统计口径"]) == {"订单", "金额"}
         assert "目标标签" in frame or "逾期标签" in frame
+    book.close()
+
+
+def test_report_formats_metric_levels_and_preserves_full_precision(tmp_path):
+    from hscredit.report.mining._tree_report import _write_report_table
+
+    rate = 0.123456789012345
+    wide = pd.DataFrame(
+        {
+            ("统计详情", "数据集"): ["训练"],
+            ("坏样本率", "FPD"): [rate],
+            ("AUC", "FPD"): [0.876543219876543],
+            ("KS", "FPD"): [rate],
+            ("PSI", "FPD"): [rate],
+            ("样本总数", "FPD"): [1234],
+            ("样本金额", "FPD"): [1234.56789],
+        }
+    )
+    mixed = pd.DataFrame(
+        {
+            "统计口径": ["订单", "金额"],
+            "坏样本数": [12, 1234.56789],
+            "LIFT值": [1, 2],
+            "指标IV值": [rate, rate],
+            "分档KS值": [rate, rate],
+        }
+    )
+    rule_wide = pd.DataFrame({("分箱详情", "节点编号"): [1], ("AUC", "坏样本率"): [rate]})
+    path = tmp_path / "格式.xlsx"
+    with ExcelWriter() as writer:
+        writer.set_filename(str(path))
+        _write_report_table(wide, writer, sheet_name="宽表", percent_cols=["坏样本率", "KS"], decimal=None)
+        _write_report_table(mixed, writer, sheet_name="混合口径", decimal=None)
+        _write_report_table(rule_wide, writer, sheet_name="规则宽表", decimal=None)
+    book = load_workbook(path)
+    assert [book["宽表"].cell(4, c).number_format for c in range(3, 9)] == [
+        "0.00%",
+        "0.0000",
+        "0.00%",
+        "0.0000",
+        "#,##0",
+        "#,##0.00",
+    ]
+    assert book["宽表"]["C4"].value == rate
+    assert book["宽表"]["H4"].value == 1234.56789
+    assert book["混合口径"]["C3"].number_format == "#,##0"
+    assert book["混合口径"]["C4"].number_format == "#,##0.00"
+    assert book["混合口径"]["D3"].number_format == "0.0000"
+    assert book["混合口径"]["F3"].number_format == "0.00%"
+    assert book["规则宽表"]["C4"].number_format == "0.00%"
+    book.close()
+
+
+@pytest.mark.parametrize("amount", [None, "金额"])
+def test_feature_ks_auc_use_raw_scores_and_independent_weighted_pairs(amount):
+    from hscredit.utils.targets import bind_targets
+    from hscredit.report.mining._tree_report import _feature_ranking_metrics
+
+    data = pd.DataFrame(
+        {
+            "评分": [0, 0, 1, 2, np.nan, np.inf],
+            "类别": list("abcdef"),
+            "目标": [0, 1, 0, 1, 1, 0],
+            "金额": [1, 4, 3, 2, 5, 6],
+        }
+    )
+    prepared, bound = bind_targets(data, target="目标")
+    result = _feature_ranking_metrics(prepared, bound, ["评分", "类别"], amount)
+    eligible = data.iloc[:4]
+    weights = eligible["金额"].to_numpy() if amount else np.ones(4)
+    bad = eligible.目标.eq(1).to_numpy()
+    pairs = eligible.评分.to_numpy()[bad, None] - eligible.评分.to_numpy()[~bad]
+    pair_weights = weights[bad, None] * weights[~bad]
+    raw_auc = ((pairs > 0) + 0.5 * (pairs == 0)) * pair_weights
+    raw_auc = raw_auc.sum() / pair_weights.sum()
+    grouped = pd.DataFrame({"评分": eligible.评分, "坏": weights * bad, "好": weights * ~bad}).groupby("评分").sum()
+    expected_ks = (grouped.坏.cumsum() / grouped.坏.sum() - grouped.好.cumsum() / grouped.好.sum()).abs().max()
+    assert result["KS", "目标"]["评分"] == pytest.approx(expected_ks)
+    assert result["AUC", "目标"]["评分"] == pytest.approx(max(raw_auc, 1 - raw_auc))
+    assert np.isnan(result["KS", "目标"]["类别"])
+    assert np.isnan(result["AUC", "目标"]["类别"])
+    single, target = bind_targets(data.assign(目标=0), target="目标")
+    one_class = _feature_ranking_metrics(single, target, ["评分"], amount)
+    assert one_class["KS", "目标"]["评分"] == 0
+    assert np.isnan(one_class["AUC", "目标"]["评分"])
+
+
+def test_feature_summary_is_wide_and_ks_is_not_binning_maximum(tmp_path):
+    data = pd.DataFrame({"评分": [0, 1, 2, 3] * 4, "FPD": [0, 1, 0, 1] * 4})
+    tree = MultiwayTreeExtractor(target="FPD", features=["评分"], max_depth=1, n_jobs=1).fit(data)
+    tree.manual_split(feature="评分", thresholds=[1.5])
+    path = tmp_path / "特征宽表.xlsx"
+    tree.report(
+        data,
+        target={"标签甲": data.FPD, "标签乙": data.FPD},
+        methods=["uniform"],
+        bin_params={"max_n_bins": 2},
+        save=path,
+    )
+    book = load_workbook(path)
+    sheet = book["组合策略汇总_特征分箱"]
+    assert sheet.auto_filter.ref.startswith("B5:")
+    assert len(sheet.tables) == 1  # 一份明细筛选表；宽表汇总使用工作表筛选。
+    assert "目标标签" not in [c.value for c in sheet[5]]
+    assert sheet["F4"].value == "KS" and sheet["H4"].value == "AUC"
+    assert sheet["F6"].value == pytest.approx(0.5)
+    assert sheet["H6"].value == pytest.approx(0.75)
+    assert sheet["F6"].number_format == "0.00%"
+    assert sheet["H6"].number_format == "0.0000"
+    # 两个等宽箱的坏率相同，分档 KS 为 0；汇总 KS 必须来自原始特征。
+    table = next(iter(sheet.tables.values()))
+    from openpyxl.utils.cell import range_boundaries
+
+    left, top, right, bottom = range_boundaries(table.ref)
+    rows = list(sheet.iter_rows(min_row=top, max_row=bottom, min_col=left, max_col=right, values_only=True))
+    detail = pd.DataFrame(rows[1:], columns=rows[0])
+    assert detail["分档KS值"].max() == 0
     book.close()

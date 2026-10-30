@@ -13,6 +13,80 @@ from ...utils.dates import date_groups
 from .._sample_stats import build_sample_stats_table
 
 
+def _report_metric_name(table, column):
+    """兼容指标在首层的统计宽表、指标在末层的规则宽表和单层长表。"""
+    if not isinstance(column, tuple):
+        return column
+    if ("分箱详情", "节点编号") in table.columns or column[0] in {"统计详情", "分箱详情"}:
+        return column[-1]
+    return column[0]
+
+
+def _write_report_table(data, excel_writer, *, amount_basis=False, **kwargs):
+    """通过 dataframe2excel 写表，按指标含义设置格式，不舍入数值或调整列宽。"""
+    from ...excel import dataframe2excel
+    from openpyxl.utils import get_column_letter
+
+    # 传入完整列键，避免宽表按最后一层标签误匹配指标。
+    for option in ("percent_cols", "custom_cols", "condition_cols", "color_cols", "left_cols", "right_cols"):
+        requested = kwargs.get(option)
+        if requested:
+            kwargs[option] = [c for c in data if c in requested or _report_metric_name(data, c) in requested]
+    end_row, end_col = dataframe2excel(data, excel_writer, **kwargs)
+    if data.empty:
+        return end_row, end_col
+    worksheet = excel_writer.get_sheet_by_name(kwargs.get("sheet_name") or "Sheet1")
+    first_row = end_row - len(data)
+    first_col = kwargs.get("start_col", 2) + (data.index.nlevels if kwargs.get("index", False) else 0)
+    basis_col = next((c for c in data if _report_metric_name(data, c) == "统计口径"), None)
+    currency_rows = data[basis_col].eq("金额").to_numpy() if basis_col is not None else np.zeros(len(data), dtype=bool)
+    counts = {"样本数", "样本总数", "好样本数", "坏样本数", "命中数", "累积好样本数", "累积坏样本数"}
+    decimals = {
+        "AUC",
+        "PSI",
+        "LIFT值",
+        "累积LIFT值",
+        "指标IV值",
+        "分档IV值",
+        "分档WOE值",
+        "风险拒绝比",
+        "累计风险拒绝比",
+        "累积风险拒绝比",
+        "分裂增益",
+        "原始IV值",
+        "有效IV值",
+    }
+    identifiers = {"数据集", "数据分组", "目标标签", "逾期标签", "分箱", "分箱标签", "配置"}
+    for offset, column in enumerate(data.columns):
+        metric = str(_report_metric_name(data, column))
+        if metric in identifiers:
+            continue
+        numeric = pd.api.types.is_numeric_dtype(data[column])
+        percent = (
+            column in (kwargs.get("percent_cols") or ())
+            or metric.endswith(("率", "占比", "KS值"))
+            or metric in {"KS", "坏账改善", "累积坏账改善"}
+        )
+        if percent:
+            number_format = "0.00%"
+        elif "金额" in metric or (metric in counts and amount_basis):
+            number_format = "#,##0.00"
+        elif metric in decimals:
+            number_format = "0.0000"
+        elif metric in counts or metric == "节点编号" or pd.api.types.is_integer_dtype(data[column]):
+            number_format = "#,##0"
+        elif numeric:
+            number_format = "0.0000"
+        else:
+            continue
+        letter = get_column_letter(first_col + offset)
+        excel_writer.set_number_format(worksheet, f"{letter}{first_row}:{letter}{end_row-1}", number_format)
+        if metric in counts and not amount_basis:
+            for position in np.flatnonzero(currency_rows):
+                excel_writer.set_number_format(worksheet, f"{letter}{first_row+position}", "#,##0.00")
+    return end_row, end_col
+
+
 def _strategy_table(table, long_format=True):
     """仅转换 Excel 展示字段；指标直接保留 Rule.report 的数值。"""
     multi = isinstance(table.columns, pd.MultiIndex)
@@ -115,7 +189,9 @@ def tree_report_excel(
     :param kwargs: 传给树 report 的评估参数，如 amount、round_digits。
     :return: 与输入数据集结构对应的中文效果表、列表或字典。
     """
-    from ...excel import ExcelWriter, dataframe2excel
+    from ...excel import ExcelWriter
+
+    dataframe2excel = _write_report_table
 
     if excel_writer is not None and not isinstance(excel_writer, ExcelWriter):
         raise TypeError("excel_writer 必须是 hscredit.excel.ExcelWriter 实例")
@@ -443,7 +519,7 @@ def _tree_view(tree, table, amount=False):
 
 
 def _write_mining_summary(tree, writer, sheet, row, training, training_amount):
-    from ...excel import dataframe2excel
+    dataframe2excel = _write_report_table
     from ...core.viz.tree_plots import _extract_tree_data
 
     nodes = _extract_tree_data(tree)["nodes"]
@@ -637,7 +713,7 @@ def _distribution_tables(tree, frames, contexts, date_values, amount, long_forma
 
 def _write_pair(writer, sheet, row, title, left, right, description, figures=None):
     """左右并列，中间留一个空列；上方统一标题和说明，下方保留一个空行。"""
-    from ...excel import dataframe2excel
+    dataframe2excel = _write_report_table
     from PIL import Image
 
     ws = writer.get_sheet_by_name(sheet)
@@ -686,7 +762,7 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
         "F1分数",
         "KS",
     ]
-    for table, col, _ in tables:
+    for table, col, basis in tables:
         if table is not None:
             end, _ = dataframe2excel(
                 table,
@@ -694,6 +770,7 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
                 sheet_name=sheet,
                 start_row=table_row,
                 start_col=col,
+                amount_basis=basis == "金额维度",
                 percent_cols=percent,
                 condition_cols=["坏样本率", "金额坏率", "LIFT值"],
                 decimal=None,
@@ -732,7 +809,8 @@ def _write_tree_pair(
 def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, amount, del_grey, operator):
     """复用 swap_out_report 使用的 feature_binning_summary，计算规则涉及的字段。"""
     from ..feature_analyzer import feature_binning_summary
-    from ...excel import dataframe2excel
+
+    dataframe2excel = _write_report_table
     from openpyxl.worksheet.table import Table, TableStyleInfo
     from openpyxl.utils import get_column_letter
 
@@ -764,10 +842,22 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
                 n_jobs=1,
                 verbose=0,
             )
-            labels = list(dict.fromkeys(c[1] for c in summary if c[0] != "分箱详情"))
-            summary = _stats_format(summary, labels, True, detail_group="分箱详情", index_name=None)
-            summary.insert(0, "数据集", dataset)
-            summary.insert(1, "统计口径", basis)
+            # 保留 feature_binning_summary 的指标 × 标签宽表；KS/AUC 使用原始特征的统一指标入口。
+            summary = summary.drop(columns=[c for c in summary if c[0] == "分档KS值"])
+            ranking = _feature_ranking_metrics(prepared, bound, features, weight)
+            for (metric, label), values in ranking.items():
+                if any(pd.notna(value) for value in values.values()):
+                    summary[(metric, label)] = summary[("分箱详情", "指标名称")].map(values)
+            metadata = [c for c in summary if c[0] == "分箱详情"]
+            ordered = metadata + [
+                c
+                for metric in ["KS", "AUC", "LIFT值", "指标IV值", "坏样本数", "坏样本率"]
+                for c in summary
+                if c[0] == metric
+            ]
+            summary = summary[ordered]
+            summary.insert(0, ("分箱详情", "数据集"), dataset)
+            summary.insert(1, ("分箱详情", "统计口径"), basis)
             summaries.append(summary)
             for feature, methods_tables in tables.items():
                 for method, table in methods_tables.items():
@@ -777,8 +867,19 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
                     parts.append(table)
         details[dataset] = pd.concat(parts, ignore_index=True)
     summary = pd.concat(summaries, ignore_index=True)
+    labels = [column[1] for column in summary if column[0] == "坏样本率"]
+    summary = summary[
+        [column for column in summary if column[0] == "分箱详情"]
+        + [
+            (metric, label)
+            for metric in ["KS", "AUC", "LIFT值", "指标IV值", "坏样本数", "坏样本率"]
+            for label in labels
+            if (metric, label) in summary
+        ]
+    ]
 
     def write_filter_table(table, row, col, title=None):
+        wide = isinstance(table.columns, pd.MultiIndex)
         end, _ = dataframe2excel(
             table,
             writer,
@@ -790,6 +891,13 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
             condition_cols=["LIFT值", "指标IV值"],
             decimal=None,
         )
+        # 宽表保留合并分层表头，使用工作表筛选；明细长表使用多个原生 Table。
+        if wide:
+            header_row = end - len(table) - 1
+            writer.add_auto_filter(
+                ws, f"{get_column_letter(col)}{header_row}:" f"{get_column_letter(col + len(table.columns)-1)}{end-1}"
+            )
+            return end
         # Worksheet 的 AutoFilter 只有一个范围；用原生 Table 为各数据集提供筛选按钮。
         identifiers = {key for worksheet in writer.workbook for key in worksheet.tables}
         ordinal = len(identifiers) + 1
@@ -812,5 +920,32 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
         )
         write_filter_table(table, row + 2, col)
         col += len(table.columns) + 1
-    writer.set_freeze_panes(ws, "D5")
+    writer.set_freeze_panes(ws, "D6")
     return name
+
+
+def _feature_ranking_metrics(data, targets, features, amount):
+    """复用 core.metrics.ks/auc；无法形成有效数值评分时不伪造指标。"""
+    from ...core.metrics import ks, auc
+
+    result = {}
+    weights = pd.to_numeric(data[amount], errors="coerce") if amount is not None else None
+    for label, target in targets.y_map(data, style="at").items():
+        result[("KS", label)], result[("AUC", label)] = {}, {}
+        for feature in features:
+            ks_value, auc_value = np.nan, np.nan
+            if pd.api.types.is_numeric_dtype(data[feature]):
+                scores = pd.to_numeric(data[feature], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+                valid = target.isin([0, 1]).to_numpy() & np.isfinite(scores)
+                if weights is not None:
+                    valid &= np.isfinite(weights.to_numpy(dtype=float, na_value=np.nan)) & weights.gt(0).to_numpy()
+                if valid.any():
+                    y = target.to_numpy()[valid]
+                    score = scores[valid]
+                    sample_weight = weights.to_numpy()[valid] if weights is not None else None
+                    ks_value = ks(y, score, sample_weight=sample_weight)
+                    if np.unique(y).size == 2:
+                        auc_value = auc(y, score, sample_weight=sample_weight)
+            result[("KS", label)][feature] = ks_value
+            result[("AUC", label)][feature] = auc_value
+    return result
