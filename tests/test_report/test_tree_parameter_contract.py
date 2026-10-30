@@ -83,7 +83,7 @@ def test_only_canonical_filter_metric_names_are_accepted(tree_class, metric):
         tree_class(rule_filter={"metric": metric})
 
 
-@pytest.mark.parametrize("metric,threshold", [("lift", 1.0), ("badrate", 0.5)])
+@pytest.mark.parametrize("metric,threshold", [("lift", 1.0), ("badrate", 0.5), ("badrate", 2)])
 def test_canonical_report_uses_amount_feature_map_and_training_filter(tree_class, sample, tmp_path, metric, threshold):
     tree = tree_class(
         target="FPD",

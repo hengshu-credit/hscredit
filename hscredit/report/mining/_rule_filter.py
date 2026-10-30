@@ -64,6 +64,8 @@ def select_rule_nodes(table, config):
     if config["leaf_only"]:
         mask &= table["是否叶子"].eq("是")
     metric_column = {"lift": "LIFT值", "badrate": "坏样本率"}[config["metric"]]
+    if config["metric"] == "badrate" and config["threshold"] > 1:
+        metric_column = "坏样本数"
     mask &= _OPERATORS[config["operator"]](table[metric_column], config["threshold"])
     return table.loc[mask, "节点编号"].tolist()
 

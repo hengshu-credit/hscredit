@@ -55,7 +55,10 @@ def test_legacy_multiway_has_disabled_filter(data):
     assert len(tree.report()) == len(tree.get_rules(leaf_only=False))
 
 
-@pytest.mark.parametrize("metric,threshold", [("badrate", 1 / 3), ("lift", 1)])
+@pytest.mark.parametrize(
+    "metric,threshold",
+    [("badrate", 1 / 3), ("badrate", 1), ("badrate", 2), ("badrate", 2.5), ("badrate", 100), ("lift", 1)],
+)
 @pytest.mark.parametrize("op", [">", ">=", "<", "<="])
 def test_filter_uses_training_orders_without_changing_tree(tree_type, data, metric, threshold, op):
     config = dict(metric=metric, threshold=threshold, operator=op, leaf_only=False, min_samples=0.05, max_samples=80)
@@ -67,6 +70,8 @@ def test_filter_uses_training_orders_without_changing_tree(tree_type, data, metr
         node = int(rule.name.rsplit("_", 1)[1].lstrip("N"))
         rows = data.loc[rule.predict(data)]
         value = rows.FPD.mean() if metric == "badrate" else rows.FPD.mean() / data.FPD.mean()
+        if metric == "badrate" and threshold > 1:
+            value = rows.FPD.sum()
         if node != 0 and 0.05 * len(data) <= len(rows) <= 80 and compare(value, threshold):
             expected.append(node)
     validation = data.iloc[::2].assign(FPD=lambda frame: 1 - frame.FPD, 金额=10000)
@@ -145,6 +150,38 @@ def test_filtered_excel_uses_same_nodes_for_all_labels_and_bases(tree_type, data
     assert len(sheet._images) == 6  # 即使筛选为空也展示完整树。
     assert not any(c.data_type == "e" for ws in book for row in ws for c in row)
     book.close()
+
+
+@pytest.mark.parametrize(
+    "metric,threshold,op,expected",
+    [
+        ("badrate", 0.5, ">=", [2, 3, 4]),
+        ("badrate", 1, ">=", [3]),
+        ("badrate", 1.0, ">", []),
+        ("badrate", 1.000001, ">=", [3, 4]),
+        ("badrate", 2, ">=", [3, 4]),
+        ("badrate", 2, ">", [4]),
+        ("badrate", 2, "<", [1, 2]),
+        ("badrate", 2, "<=", [1, 2, 3]),
+        ("badrate", 2.5, ">=", [4]),
+        ("lift", 2, ">=", []),
+    ],
+)
+def test_badrate_threshold_switches_to_bad_count_above_one(metric, threshold, op, expected):
+    from hscredit.report.mining._rule_filter import select_rule_nodes
+
+    # 四个互斥客群，坏样本数分别为 0、1、2、3；总计 10 单、6 单坏样本。
+    table = pd.DataFrame(
+        {
+            "节点编号": [0, 1, 2, 3, 4],
+            "是否叶子": ["否", "是", "是", "是", "是"],
+            "样本总数": [10, 2, 2, 2, 4],
+            "坏样本数": [6, 0, 1, 2, 3],
+            "坏样本率": [0.6, 0, 0.5, 1, 0.75],
+            "LIFT值": [1, 0, 5 / 6, 5 / 3, 5 / 4],
+        }
+    )
+    assert select_rule_nodes(table, dict(metric=metric, threshold=threshold, operator=op)) == expected
 
 
 def test_group_merges_feature_order_width_and_statistics(tree_type, data, tmp_path):

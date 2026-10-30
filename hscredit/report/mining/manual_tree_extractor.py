@@ -1034,6 +1034,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :param rule_filter: 默认 None 不筛选；显式字典配置 leaf_only、metric（默认 lift）、
             threshold（默认 1）、operator（默认 >=）、min_samples 和 max_samples；metric 仅支持 lift、badrate。
             样本量整数为个数、[0, 1] 浮点数为比例；仅按训练集订单口径筛选报告规则。
+            badrate 的 threshold > 1 按坏样本个数筛选，<= 1 按坏样本率筛选（1 表示 100%）；operator 保持生效。
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`min_weight_fraction_leaf=0.1` 等。
         """
@@ -1999,6 +2000,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         :param rule_filter: 默认 None 不筛选；显式字典配置 leaf_only、metric（默认 lift）、
             threshold（默认 1）、operator（默认 >=）、min_samples 和 max_samples；metric 仅支持 lift、badrate。
             样本量整数为个数、[0, 1] 浮点数为比例；仅按训练集订单口径筛选报告规则。
+            badrate 的 threshold > 1 按坏样本个数筛选，<= 1 按坏样本率筛选（1 表示 100%）；operator 保持生效。
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`criterion='entropy'` 等。
         """

@@ -33,6 +33,8 @@
 
 多叉树最大普通分支数为 `max_n_bins`，独立缺失分支不计入；不再接受 `max_branches`。树报告不接受 `sheet`、`data` 等旧参数别名。规则筛选的指标值统一为 `lift`、`badrate`，不使用中文列名或大写别名作为入参；报告输出仍使用中文指标名称。
 
+`rule_filter.metric="badrate"` 时，`threshold <= 1` 表示坏样本率，`threshold > 1` 表示坏样本个数；1 仍表示 100% 坏率。比较继续使用 `operator`（默认 `>=`），例如 `threshold=2` 默认筛选至少 2 个坏样本的规则。筛选只使用训练集订单计数，不使用验证集或金额口径；`lift` 的阈值不切换为个数。
+
 ## date、group、amount 的数据输入
 
 存在 DataFrame 作用数据的接口支持：

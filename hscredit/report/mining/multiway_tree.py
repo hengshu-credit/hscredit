@@ -148,7 +148,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     :param rule_filter: 默认 None 不筛选。显式字典支持 leaf_only（默认 True）、metric（默认 lift，
         也支持 badrate）、threshold（默认 1）、operator（默认 >=，支持 >、>=、<、<=）、
         min_samples 和 max_samples（整数为个数，[0, 1] 浮点数为比例）。
-        按训练集订单指标筛选 report/get_rule_table，完整树与 get_rules 的路由不变。
+        badrate 的 threshold > 1 时按坏样本个数筛选，<= 1 时按坏样本率筛选（1 表示 100%）；
+        比较符始终使用 operator，lift 不切换口径。按训练订单指标筛选 report/get_rule_table。
     :type rule_filter: dict or None
 
     **属性**

@@ -260,7 +260,12 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
    complete = multiway.get_rule_table(apply_rule_filter=False)
 
 显式空字典 ``{}`` 的默认条件为：仅叶节点、``LIFT值 >= 1``、样本量不设上下限。
-坏样本率阈值用小数表示，例如 0.2 表示 20%；样本量比例使用 [0, 1] 内的浮点数，
+``metric="badrate"`` 时，``threshold <= 1`` 按坏样本率筛选，例如 0.2 表示 20%，1 表示 100%；
+``threshold > 1`` 按训练集命中的坏样本个数筛选，直接比较给定数值，不取整。
+例如 ``{"metric": "badrate", "threshold": 2, "operator": ">="}`` 表示至少 2 个坏样本，
+将 operator 改为 ``">"`` 则表示多于 2 个坏样本。``lift`` 的 threshold 始终表示 LIFT 值。
+两种 badrate 口径都遵守 operator，不因阈值切换而改变比较符；传入 amount 也不会改成坏样本金额。
+样本量比例使用 [0, 1] 内的浮点数，
 整数 1 表示 1 单，浮点数 1.0 表示全部样本。上下限均包含边界。
 ``leaf_only=False`` 允许筛选中间节点；根节点只作总体基准，不参与显式筛选。
 
