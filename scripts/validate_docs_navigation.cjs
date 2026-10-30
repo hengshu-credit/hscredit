@@ -13,7 +13,10 @@ async function main() {
         try {
             const file = path.resolve(root, "." + decodeURIComponent(new URL(request.url, "http://localhost").pathname));
             assert(file.startsWith(root + path.sep));
-            const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css" };
+            const types = {
+                ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css",
+                ".svg": "image/svg+xml", ".woff2": "font/woff2", ".ttf": "font/ttf",
+            };
             response.setHeader("Content-Type", types[path.extname(file)] || "application/octet-stream");
             response.end(await fs.readFile(file));
         } catch (error) {
@@ -36,6 +39,32 @@ async function main() {
         async function ready() {
             await page.evaluate(() => document.fonts.ready);
             await page.waitForTimeout(150);
+        }
+        async function currentPageInView(targetPage = page) {
+            const position = await targetPage.locator(`${nav} a[aria-current='location']`).evaluateAll(links => {
+                const link = links[0];
+                if (!link) { return { count: links.length }; }
+                const scroller = link.closest(".wy-side-scroll");
+                const brand = scroller.querySelector(".wy-side-nav-search");
+                const bounds = link.getBoundingClientRect();
+                return {
+                    count: links.length,
+                    page: new URL(link.href).pathname,
+                    expected: location.pathname,
+                    top: bounds.top,
+                    bottom: bounds.bottom,
+                    visibleTop: brand.getBoundingClientRect().bottom,
+                    visibleBottom: scroller.getBoundingClientRect().bottom,
+                    remaining: scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+                    highlight: getComputedStyle(link).borderImageSource,
+                };
+            });
+            assert.equal(position.count, 1, "当前阅读项不唯一");
+            assert.equal(position.page, position.expected, "高亮仍指向上一页");
+            assert(position.top >= position.visibleTop && position.bottom <= position.visibleBottom, JSON.stringify(position));
+            assert(position.top <= position.visibleTop + 40 || position.remaining <= 2,
+                "新页面目录未定位到品牌栏下方：" + JSON.stringify(position));
+            assert(position.highlight.includes("linear-gradient"), "当前页缺少独立的定位高亮");
         }
         async function state(link) {
             return link.evaluate(a => ({
@@ -159,6 +188,8 @@ async function main() {
         assert.equal(page.url(), base + "/quickstart.html", "缩放手势触发翻页");
         await page.mouse.wheel(0, 120);
         await page.waitForURL(nextUrl);
+        await ready();
+        await currentPageInView();
         assert.equal(await page.evaluate(() => scrollY), 0, "翻页后未从页首开始");
         // 模拟历史返回仍可继续向下阅读。
         await page.goBack();
@@ -167,6 +198,26 @@ async function main() {
         await page.waitForTimeout(450);
         await page.mouse.wheel(0, 120);
         await page.waitForURL(nextUrl);
+        await ready();
+        await currentPageInView();
+
+        // 连续跨越指南、数据接入和 API 包目录，覆盖用户截图中的层级变化。
+        await page.goto(base + "/articles/model-interpretability.html");
+        for (let step = 0; step < 4; step++) {
+            await ready();
+            const next = await page.locator("footer a[rel='next']").evaluate(a => a.href);
+            await page.locator(".wy-side-scroll").evaluate(el => { el.scrollTop = 0; });
+            await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
+            await page.waitForTimeout(450);
+            await page.mouse.move(1100, 950);
+            await page.mouse.wheel(0, 120);
+            await page.waitForURL(next);
+            await ready();
+            await currentPageInView();
+            const inactiveHighlights = await page.locator(`${nav} li.current > a:not([aria-current='location'])`)
+                .evaluateAll(links => links.filter(link => getComputedStyle(link).borderImageSource !== "none").length);
+            assert.equal(inactiveHighlights, 0, "展开的旧分支仍显示当前项霓虹边框");
+        }
         // 使用完整导航中的真实最后一页，而不是删掉页面节点制造末页。
         await page.goto(base + "/index.html");
         const lastUrl = await page.locator(`${nav} a[href]`).evaluateAll(links => {
@@ -203,6 +254,9 @@ async function main() {
         assert.equal(mobile.url(), base + "/quickstart.html", "轻微触摸触发翻页");
         await swipe(180);
         await mobile.waitForURL(mobileNext);
+        await mobile.evaluate(() => document.fonts.ready);
+        await mobile.locator("[data-toggle='wy-nav-top']").click();
+        await currentPageInView(mobile);
         await mobile.close();
         assert.deepEqual(errors, []);
         console.log("文档交互通过：目录层级与滚动、跨页与刷新、移动导航、滚轮与触摸续读、嵌套区域与末页边界");

@@ -1247,7 +1247,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         """按手工二叉树接口返回全树规则效果，默认使用训练数据。
 
         :param datasets: 默认 None 使用训练数据；也支持 DataFrame、列表、元组或数据集字典。
-        :param target: 默认 None；标签列、数组、callable 或标签映射。
+        :param target: 默认 None；支持标签列名、Series、ndarray、list、callable 或标签映射；
+            与 overdue + dpds 互斥，未提供标签时使用训练目标。
         :param overdue: 默认 None；逾期字段或字段列表，与 dpds 同时提供。
         :param dpds: 默认 None；逾期阈值或阈值列表。
         :param del_grey: 默认 False；是否逐标签剔除灰样本。

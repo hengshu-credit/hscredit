@@ -223,7 +223,7 @@ samp,
 }
 .wy-menu-vertical li.toctree-l1 > a { font-weight: 600; }
 
-/* 当前条目：左侧霓虹竖线 + 高亮。
+/* 展开状态与阅读位置分开：只有阅读位置使用霓虹竖线和高亮。
    RTD 会给 current 分支内的每个链接设置浅灰背景；API 页面展开成员较多时，
    浅灰底会覆盖深色侧栏并与浅色文字失去对比，因此在这里统一重置展开分支。 */
 .wy-menu-vertical li.current,
@@ -241,8 +241,10 @@ samp,
     color: #ffffff;
     border-left: 3px solid transparent;
     border-right: none;
-    border-image: var(--hs-grad) 1;
-    box-shadow: inset 12px 0 22px -18px rgba(0, 245, 255, 0.6);
+    border-image: none;
+    border-top-color: transparent;
+    border-bottom-color: transparent;
+    box-shadow: none;
 }
 .wy-menu-vertical li.current a { border-right: none; }
 .wy-menu-vertical li.current a:hover { background: rgba(123, 47, 255, 0.22) !important; color: #fff; }
@@ -252,6 +254,7 @@ samp,
     color: #ffffff;
 }
 .wy-menu-vertical li.hs-scrollspy-current > a,
+.wy-menu-vertical li.hs-scrollspy-current.current > a,
 .wy-menu-vertical li.current > ul li.hs-scrollspy-current > a {
     background: linear-gradient(90deg, rgba(82, 103, 255, 0.36), rgba(154, 32, 255, 0.2)) !important;
     color: #ffffff !important;

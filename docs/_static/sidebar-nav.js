@@ -14,7 +14,7 @@
     var pageLinks = null;
     var pendingLink = null;
 
-    function keepVisible(link) {
+    function keepVisible(link, alignStart) {
         var scroller = link.closest(".wy-side-scroll");
         if (!scroller || !link.getClientRects().length) { return; }
         var brand = scroller.querySelector(".wy-side-nav-search");
@@ -26,7 +26,7 @@
         var visibleBottom = scrollerRect.bottom;
         var spacing = 8;
 
-        if (linkRect.top < visibleTop) {
+        if (alignStart || linkRect.top < visibleTop) {
             scroller.scrollTop -= visibleTop - linkRect.top + spacing;
         } else if (linkRect.bottom > visibleBottom) {
             scroller.scrollTop += linkRect.bottom - visibleBottom + spacing;
@@ -35,6 +35,21 @@
 
     function branchLink(item) {
         return item.querySelector(":scope > a");
+    }
+
+    function positionNewPage(link) {
+        var scroller = link.closest(".wy-side-scroll");
+        keepVisible(link, true);
+        var expectedTop = scroller.scrollTop;
+        // 字体和 Logo 载入会改变品牌栏及菜单高度；只补齐首次定位，
+        // 用户已滚动侧栏或开始阅读时不再移动目录。
+        function settle() {
+            if (activeLink !== link || Math.abs(scroller.scrollTop - expectedTop) > 2) { return; }
+            keepVisible(link, true);
+            expectedTop = scroller.scrollTop;
+        }
+        window.addEventListener("load", settle, { once: true });
+        if (document.fonts) { document.fonts.ready.then(settle); }
     }
 
     function branches() {
@@ -112,8 +127,10 @@
             if (anchor && Number.isFinite(state.offset)) {
                 scroller.scrollTop += anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top - state.offset;
             }
-            if (current && !anchor && window.location.hash && state.page !== window.location.pathname + window.location.hash) {
-                keepVisible(current.link);
+            if (current && !anchor && state.page !== window.location.pathname + window.location.hash) {
+                // 自动续读和页脚导航没有侧栏点击锚点，应定位新页面，
+                // 而不是沿用上一页的目录滚动位置。手动点击与刷新仍保留位置。
+                positionNewPage(current.link);
             }
         } else if (!restored) {
             if (current) { keepVisible(current.link); }
@@ -233,7 +250,9 @@
         var bottomGap = document.documentElement.scrollHeight - window.innerHeight - window.pageYOffset;
         var current = links[0];
 
-        if (bottomGap < 4) {
+        if (window.pageYOffset <= 1) {
+            current = links[0];
+        } else if (bottomGap < 4) {
             current = links[links.length - 1];
         } else {
             links.forEach(function (entry) {

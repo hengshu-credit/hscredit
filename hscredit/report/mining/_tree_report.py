@@ -57,7 +57,28 @@ def tree_report_excel(
     data_source=None,
     **kwargs,
 ):
-    """标签只求值一次；先写数据集信息，再写组合策略汇总与策略详情。"""
+    """标签只求值一次；先写数据集信息，再写组合策略汇总与策略详情。
+
+    :param tree: 已拟合的树规则挖掘器。
+    :param datasets: DataFrame、数据集列表/元组或名称到 DataFrame 的字典。
+    :param target: 默认 None；支持标签列名、Series、ndarray、list、callable 或标签映射；
+        与 overdue + dpds 互斥，未提供标签时使用树的训练目标。
+    :param overdue: 默认 None；逾期字段或字段列表，与 dpds 同时提供。
+    :param dpds: 默认 None；逾期阈值或阈值列表。
+    :param del_grey: 默认 False；是否逐标签剔除灰样本。
+    :param leaf_only: 默认 False 返回全部节点效果；True 仅返回叶节点效果。
+    :param feature_map: 默认 None；特征名称到中文含义的映射。
+    :param overdue_operator: 默认 '>'；逾期比较符，支持 '>'、'>='、'<'、'<='。
+    :param save: 默认 None；导出 Excel 路径。
+    :param sheet: 默认 '组合策略汇总'；策略汇总工作表名称。
+    :param excel_writer: 默认 None；可复用的 hscredit ExcelWriter。
+    :param date: 默认 None；用于样本时间分布的日期字段。
+    :param freq: 默认 'M'；日期统计频率。
+    :param project_desc: 默认 None；项目目标和取样逻辑说明。
+    :param data_source: 默认 None；数据来源说明。
+    :param kwargs: 传给树 report 的评估参数，如 amount、round_digits。
+    :return: 与输入数据集结构对应的中文效果表、列表或字典。
+    """
     from ...excel import ExcelWriter, dataframe2excel
     from ...core.viz import plot_tree
     import matplotlib.pyplot as plt
