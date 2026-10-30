@@ -921,17 +921,17 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
                     parts.append(table)
         details[dataset] = pd.concat(parts, ignore_index=True)
     summary = pd.concat(summaries, ignore_index=True)
-    metadata_names = ["数据集", "统计口径", "指标名称", "分箱方法"]
+    metadata_names = ["数据集", "指标名称", "统计口径", "分箱方法"]
     metadata = [("分箱详情", column) for column in metadata_names]
     # 数据集严格保持入参顺序；订单在金额前，其余按名称排序。
     order = pd.DataFrame(
         {
             "dataset": summary[metadata[0]].map({name: i for i, name in enumerate(contexts)}),
-            "basis": summary[metadata[1]].map({"订单": 0, "金额": 1}),
-            "feature": summary[metadata[2]],
+            "feature": summary[metadata[1]],
+            "basis": summary[metadata[2]].map({"订单": 0, "金额": 1}),
             "method": summary[metadata[3]],
         }
-    ).sort_values(["dataset", "basis", "feature", "method"], kind="stable")
+    ).sort_values(["dataset", "feature", "basis", "method"], kind="stable")
     summary = summary.loc[order.index].reset_index(drop=True)
     labels = [column[1] for column in summary if column[0] == "坏样本率"]
     summary = summary[

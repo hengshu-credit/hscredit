@@ -166,16 +166,19 @@ def test_group_merges_feature_order_width_and_statistics(tree_type, data, tmp_pa
     feature = book.worksheets[1]
     assert all(d.width <= 25 for d in feature.column_dimensions.values())
     left, top, right, bottom = range_boundaries(feature.auto_filter.ref)
-    assert [feature.cell(top, c).value for c in range(left, left + 4)] == ["数据集", "统计口径", "指标名称", "分箱方法"]
+    assert [feature.cell(top, c).value for c in range(left, left + 4)] == ["数据集", "指标名称", "统计口径", "分箱方法"]
     rows = pd.DataFrame(
         list(feature.iter_rows(min_row=top + 1, max_row=bottom, min_col=left, max_col=left + 3, values_only=True))
     ).ffill()
     assert rows[0].drop_duplicates().tolist() == list(datasets)
+    for _, subset in rows.groupby(0, sort=False):
+        assert subset[1].drop_duplicates().tolist() == sorted(subset[1].unique())
     for _, subset in rows.groupby([0, 1], sort=False):
+        assert subset[2].drop_duplicates().tolist() == ["订单", "金额"]
         assert list(subset[[2, 3]].itertuples(index=False, name=None)) == sorted(
             subset[[2, 3]].itertuples(index=False, name=None)
         )
-    assert any(r.min_col == left + 2 and r.max_row > r.min_row for r in feature.merged_cells.ranges)
+    assert any(r.min_col == left + 1 and r.max_row > r.min_row for r in feature.merged_cells.ranges)
     main = book.active
     features_cell = next(c for row in main for c in row if c.value == "features")
     assert main.cell(features_cell.row, features_cell.column + 1).alignment.horizontal == "left"
