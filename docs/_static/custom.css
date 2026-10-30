@@ -683,6 +683,12 @@ samp,
 }
 
 footer .rst-footer-buttons { margin-top: 1.2em; }
+.hs-next-page-hint {
+    margin: 0.8rem 0;
+    color: #6b6280;
+    font-size: 0.85rem;
+    text-align: right;
+}
 .rst-content .highlighted { background: #ffe6fa; box-shadow: 0 0 0 2px #ffb3ec; }
 
 /* 首页副标题（rubric）做成品牌标语 */

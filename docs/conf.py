@@ -123,7 +123,7 @@ html_short_title = "hscredit"
 html_logo = "_static/hengshucredit_logo.svg"
 html_favicon = "_static/hengshucredit_logo.svg"
 html_css_files = ["custom.css"]
-html_js_files = ["sidebar-nav.js", "copy-code.js"]
+html_js_files = ["sidebar-nav.js", "copy-code.js", "next-page.js"]
 
 # 文档只引用包内的官方字体源，构建时同步到 Sphinx 静态目录，避免维护两份字体。
 _BRAND_FONT_SOURCE = Path(__file__).resolve().parents[1] / "hscredit" / "resources" / "fonts" / "font.ttf"

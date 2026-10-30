@@ -85,7 +85,7 @@ async function main() {
         await section.click();
         await ready();
         stable(before, await state(section), ["top", "left", "side"]);
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
         await ready();
         stable(before, await state(section), ["side"]);
         assert(await install.evaluate(a => a.closest("li").classList.contains("current")), "锚点跳转收起了其他目录");
@@ -120,8 +120,92 @@ async function main() {
         assert(await page.locator(".wy-nav-side").evaluate(el => el.classList.contains("shift")), "移动目录无法展开");
         await page.locator(`${nav} a[href="#"]`).click();
         assert(await page.locator(".wy-nav-side").evaluate(el => !el.classList.contains("shift")), "移动目录导航后未关闭");
+
+        // 正文触底后才接受继续下滚；静止、侧栏和嵌套区域不翻页。
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await page.goto(base + "/quickstart.html");
+        await ready();
+        const nextUrl = await page.locator("footer a[rel='next']").evaluate(a => a.href);
+        assert(await page.locator(".hs-next-page-hint").count() === 1, "缺少继续阅读提示");
+        await page.mouse.move(1000, 750);
+        await page.mouse.wheel(0, 100000);
+        await page.waitForFunction(() => document.scrollingElement.scrollHeight - innerHeight - scrollY <= 2);
+        await page.waitForTimeout(450);
+        assert.equal(page.url(), base + "/quickstart.html", "首次触底或静止时自动翻页");
+        await page.mouse.move(150, 700);
+        await page.mouse.wheel(0, 600);
+        await page.waitForTimeout(200);
+        assert.equal(page.url(), base + "/quickstart.html", "侧栏滚动触发翻页");
+        // 用实际滚动容器覆盖图表、代码和表格的边界情况。
+        await page.evaluate(() => {
+            const area = document.createElement("div");
+            area.id = "nested-scroll-test";
+            area.style.cssText = "position:fixed;right:40px;bottom:40px;width:240px;height:160px;overflow:auto;z-index:9999;background:white";
+            area.innerHTML = '<div style="height:600px;width:800px">嵌套内容</div>';
+            document.querySelector(".wy-nav-content").append(area);
+            area.scrollTop = area.scrollHeight;
+        });
+        await page.locator("#nested-scroll-test").hover();
+        await page.mouse.wheel(0, 600);
+        await page.waitForTimeout(200);
+        assert.equal(page.url(), base + "/quickstart.html", "嵌套区域触底导致翻页");
+        await page.locator("#nested-scroll-test").evaluate(el => el.remove());
+        await page.mouse.move(1000, 750);
+        await page.mouse.wheel(200, 10);
+        await page.waitForTimeout(200);
+        assert.equal(page.url(), base + "/quickstart.html", "横向滚动触发翻页");
+        await page.locator(".wy-nav-content").dispatchEvent("wheel", { deltaY: 400, ctrlKey: true });
+        await page.waitForTimeout(200);
+        assert.equal(page.url(), base + "/quickstart.html", "缩放手势触发翻页");
+        await page.mouse.wheel(0, 120);
+        await page.waitForURL(nextUrl);
+        assert.equal(await page.evaluate(() => scrollY), 0, "翻页后未从页首开始");
+        // 模拟历史返回仍可继续向下阅读。
+        await page.goBack();
+        await ready();
+        await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
+        await page.waitForTimeout(450);
+        await page.mouse.wheel(0, 120);
+        await page.waitForURL(nextUrl);
+        // 使用完整导航中的真实最后一页，而不是删掉页面节点制造末页。
+        await page.goto(base + "/index.html");
+        const lastUrl = await page.locator(`${nav} a[href]`).evaluateAll(links => {
+            const pages = links.filter(a => !a.getAttribute("href").includes("#") && new URL(a.href).origin === location.origin);
+            return pages[pages.length - 1].href;
+        });
+        await page.goto(lastUrl);
+        await ready();
+        assert.equal(await page.locator("footer a[rel='next']").count(), 0, "未找到真实末页");
+        assert.equal(await page.locator(".hs-next-page-hint").count(), 0, "末页仍显示下一页提示");
+        await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
+        await page.waitForTimeout(450);
+        await page.mouse.wheel(0, 400);
+        await page.waitForTimeout(200);
+        assert.equal(page.url(), lastUrl, "末页触发了错误跳转");
+
+        const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+        mobile.on("pageerror", error => errors.push(error.message));
+        await mobile.goto(base + "/quickstart.html");
+        const mobileNext = await mobile.locator("footer a[rel='next']").evaluate(a => a.href);
+        const input = await mobile.context().newCDPSession(mobile);
+        async function swipe(distance) {
+            await input.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 280, y: 650 }] });
+            await input.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 280, y: 650 - distance }] });
+            await input.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        }
+        await mobile.evaluate(() => scrollTo(0, document.scrollingElement.scrollHeight - innerHeight - 50));
+        await swipe(250);
+        await mobile.waitForFunction(() => document.scrollingElement.scrollHeight - innerHeight - scrollY <= 2);
+        await mobile.waitForTimeout(450);
+        assert.equal(mobile.url(), base + "/quickstart.html", "首次滑动触底时自动翻页");
+        await swipe(30);
+        await mobile.waitForTimeout(200);
+        assert.equal(mobile.url(), base + "/quickstart.html", "轻微触摸触发翻页");
+        await swipe(180);
+        await mobile.waitForURL(mobileNext);
+        await mobile.close();
         assert.deepEqual(errors, []);
-        console.log("目录交互通过：小标题、独立展开、锚点、正文滚动、跨页、刷新、深层 API、移动导航");
+        console.log("文档交互通过：目录层级与滚动、跨页与刷新、移动导航、滚轮与触摸续读、嵌套区域与末页边界");
     } finally {
         if (browser) { await browser.close(); }
         await new Promise(resolve => server.close(resolve));
