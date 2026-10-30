@@ -1,5 +1,5 @@
-损失函数与评估指标
-==================
+损失函数 ``hscredit.core.models.losses``
+========================================================================
 
 .. autofunction:: hscredit.core.models.get_loss
 

@@ -12,20 +12,16 @@ from typing import Any, Callable, Sequence
 
 _BorderCandidate = tuple[bool, tuple[int, int, int], int, int, str]
 _EXPECTED_MODEL_MENU = (
-    "模型训练、调参与保存",
-    "models 模块设计复盘",
-    "经典模型",
-    "Boosting",
-    "表格神经网络",
-    "预训练、微调与继续训练",
-    "全模型建模链路验收",
-    "规则器",
-    "评分卡",
-    "概率校准",
-    "模型可解释性",
-    "损失函数与评估指标",
-    "评估指标",
-    "超参数调优",
+    "经典模型 hscredit.core.models.classical",
+    "提升模型 hscredit.core.models.boosting",
+    "神经网络 hscredit.core.models.net",
+    "规则模型 hscredit.core.models.rules",
+    "评分卡 hscredit.core.models.scorecard",
+    "概率校准 hscredit.core.models.calibration",
+    "模型解释 hscredit.core.models.explainability",
+    "损失函数 hscredit.core.models.losses",
+    "评估指标 hscredit.core.models.losses",
+    "参数搜索 hscredit.core.models.tuning",
 )
 _EXPECTED_DATABASE_GUIDE_TITLE = "数据库"
 

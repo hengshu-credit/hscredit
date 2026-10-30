@@ -1,15 +1,17 @@
 """规则表样式的新旧依赖分支与实际 HTML 渲染回归。"""
 
 from types import SimpleNamespace
+import pickle
 import warnings
 
 import matplotlib as mpl
+import numpy as np
 import pandas as pd
 import pytest
 from packaging.version import Version
 
 from hscredit._compat import install_matplotlib_colormap_compat, map_styler, pandas_styler_map_api
-from hscredit.utils import style_rule_table
+from hscredit.utils import BinTableDisplay, style_bin_table, style_rule_table
 
 
 @pytest.mark.parametrize(
@@ -118,3 +120,191 @@ def test_style_rule_table_renders_colors_formats_and_missing_values():
     assert "20.00%" in html and "1.25" in html
     assert ">分箱<" not in html
     assert ">-<" in html
+
+
+@pytest.mark.parametrize("multi_level", [False, True])
+def test_dataframe_show_renders_complex_values_without_changing_data(monkeypatch, tmp_path, multi_level):
+    """列表指标不能计算分位数；实际执行 HTML 格式化以覆盖延迟异常。"""
+    table = pd.DataFrame(
+        {
+            "方法": ["等频", "决策树", "手工", "特殊值", "缺失"],
+            "坏样本率序列": [[0.1, 0.2], [0.2], [], (0.3, 0.4), None],
+            "LIFT值序列": [np.array([1.0, 2.0]), np.array([]), {"低": 1.2}, {1, 2}, pd.NA],
+            "坏样本率": [[0.1, 0.2], np.array([0.3]), 0.25, "文本", np.nan],
+            "配置": [{"切分点": [100, 200]}, (1, 2), pd.Series([1, 2]), ["<b>原样文本</b>"], None],
+        }
+    )
+    if multi_level:
+        table.columns = pd.MultiIndex.from_product([["比较结果"], table.columns])
+    # pandas 2.0 的 assert_frame_equal 不支持 set；序列化快照也覆盖容器内部的改动。
+    original = pickle.dumps(table)
+    rendered = []
+    monkeypatch.setattr("IPython.display.display", lambda obj: rendered.append(obj.to_html()))
+
+    result = table.show()
+
+    assert isinstance(result, BinTableDisplay)
+    assert len(rendered) == 1
+    html = rendered[0]
+    assert "[0.1, 0.2]" in html and "[1. 2.]" in html
+    assert "切分点" in html and "25.00%" in html
+    assert "&lt;b&gt;原样文本&lt;/b&gt;" in html and "<b>原样文本</b>" not in html
+    assert ">-<" in html
+    assert "linear-gradient" not in html
+    output = tmp_path / "复杂类型.html"
+    assert result.export_html(str(output)) is result
+    assert "切分点" in output.read_text(encoding="utf-8")
+    assert pickle.dumps(table) == original
+
+
+@pytest.mark.parametrize("multi_level", [False, True])
+def test_show_keeps_numeric_bars_formats_and_precision(multi_level):
+    table = pd.DataFrame(
+        {
+            "样本总数": pd.Series([10, 20, pd.NA], dtype="Int64"),
+            "坏样本率": pd.Series([0.125, 0.25, pd.NA], dtype="Float64"),
+            "LIFT值": [1.25, 2.5, np.nan],
+            "分档KS值": [0.1234, 0.2345, np.nan],
+        }
+    )
+    if multi_level:
+        table.columns = pd.MultiIndex.from_product([["MOB1>3"], table.columns])
+    html = style_bin_table(table, precision={"坏样本率": 3}).to_html()
+    assert "12.500%" in html and "12.34%" in html
+    assert ">1.25<" in html and "125.00%" not in html
+    assert ">10<" in html and ">-<" in html
+    assert "linear-gradient" in html
+    plain = style_bin_table(
+        table, percent_format=False, highlight_bad_rate=False, highlight_lift=False, highlight_ks=False
+    ).to_html()
+    assert "linear-gradient" not in plain
+
+
+@pytest.mark.parametrize("styler_factory", [style_bin_table, style_rule_table])
+@pytest.mark.parametrize("multi_level", [False, True])
+def test_table_header_stripes_and_hover(styler_factory, multi_level):
+    table = pd.DataFrame({"指标含义": ["低分", "高分"], "样本总数": [10, 20]})
+    if multi_level:
+        table.columns = pd.MultiIndex.from_product([["结果"], table.columns])
+    html = styler_factory(table).to_html()
+    assert "thead th" in html and "#2639E9" in html and "#ffffff" in html
+    assert "tbody tr:nth-child(odd)" in html
+    assert "tbody tr:nth-child(even)" in html and "#f8f9ff" in html
+    assert "tbody tr:hover" in html and "#e8eaff" in html
+    assert "tbody tr:hover td" in html and "tbody tr:hover th" in html
+
+
+def test_show_explicit_columns_override_automatic_formats_and_flags(monkeypatch):
+    table = pd.DataFrame({"自定义率": [0.125, 0.5], "坏样本率": [0.25, 0.75], "自定义值": [1.0, 4.0]})
+    rendered = []
+    monkeypatch.setattr("IPython.display.display", lambda obj: rendered.append(obj))
+    table.show(
+        percent_cols=["自定义率"],
+        condition_cols=["自定义值"],
+        percent_format=False,
+        highlight_bad_rate=False,
+        condition_color="123456",
+        theme_color="#345678",
+        precision={"自定义率": 3},
+    )
+    styler = rendered[0]
+    html = styler.to_html()
+    assert "12.500%" in html and "25.00%" not in html
+    assert "#345678" in html and "#123456" in html
+    styles = styler._compute().ctx
+    assert any("linear-gradient" in value for _, value in styles[1, 2])
+    assert not any("linear-gradient" in value for _, value in styles[1, 1])
+
+
+def test_show_empty_lists_disable_automatic_formats():
+    table = pd.DataFrame({"坏样本率": [0.1, 0.2], "LIFT值": [1.0, 2.0]})
+    html = style_bin_table(table, percent_cols=[], condition_cols=[], color_cols=[]).to_html()
+    assert "10.00%" not in html and "linear-gradient" not in html
+
+
+@pytest.mark.parametrize("multi_level", [False, True])
+def test_show_color_blocks_override_bars_and_resolve_column_colors(multi_level):
+    table = pd.DataFrame({"坏样本率": [0.0, 0.2, 1.0], "得分": [0.0, 1.0, 2.0]})
+    if multi_level:
+        table.columns = pd.MultiIndex.from_product([["结果"], table.columns])
+    score = ("结果", "得分") if multi_level else "得分"
+    colors = {"坏样本率": ["00FF00", "FFFF00", "FF0000"], "得分": "111111", score: "123456"}
+    styler = style_bin_table(
+        table,
+        condition_cols=["坏样本率", score],
+        color_cols=["坏样本率"],
+        condition_color=colors,
+    )
+    html = styler.to_html()
+    styles = styler._compute().ctx
+    for row, expected in enumerate(["#00ff00", "#ffff00", "#ff0000"]):
+        assert dict(styles[row, 0])["background-color"] == expected
+        assert not any("linear-gradient" in value for _, value in styles[row, 0])
+    assert "#123456" in html
+
+
+def test_show_full_tuple_selector_and_color_priority():
+    table = pd.DataFrame([[0.1, 0.2], [0.3, 0.4]], columns=pd.MultiIndex.from_tuples([("甲", "率"), ("乙", "率")]))
+    styler = style_bin_table(
+        table,
+        percent_cols=[("甲", "率")],
+        condition_cols=["率"],
+        condition_color={"率": "111111", "甲": "222222", ("甲", "率"): "333333"},
+    )
+    html = styler.to_html()
+    assert "10.00%" in html and "20.00%" not in html
+    styles = styler._compute().ctx
+    assert "#333333" in str(styles[1, 0]) and "#111111" in str(styles[1, 1])
+
+
+def test_show_explicit_columns_survive_compact_mode_and_complex_values():
+    table = pd.DataFrame({"自定义率": [0.1, 0.2], "列表": [[1, 2], [3]], "隐藏列": [1, 2]})
+    html = style_bin_table(
+        table,
+        compact=True,
+        percent_cols=["自定义率", "列表"],
+        condition_cols=["列表"],
+        color_cols=["列表"],
+        fill=False,
+    ).to_html()
+    assert "10.00%" in html and "[1, 2]" in html and "隐藏列" not in html
+    assert "linear-gradient" not in html
+    assert "tbody tr:nth-child(even)" not in html
+
+
+@pytest.mark.parametrize("value", ["112233", ["000000", "112233"], {"得分": "112233"}])
+def test_show_condition_color_forms(value):
+    table = pd.DataFrame({"得分": [0, 1, 2]})
+    html = style_bin_table(table, condition_cols=["得分"], condition_color=value).to_html()
+    assert "#112233" in html
+
+
+def test_show_color_blocks_preserve_missing_and_constant_columns():
+    table = pd.DataFrame({"常量": [1.0, 1.0, np.nan], "缺失": [np.nan] * 3})
+    styler = style_bin_table(table, color_cols=["常量", "缺失"], condition_color="123456")
+    assert ">-<" in styler.to_html()
+    styles = styler._compute().ctx
+    assert dict(styles[0, 0])["background-color"] == dict(styles[1, 0])["background-color"]
+    assert "background-color" not in dict(styles[2, 0])
+    assert "background-color" not in dict(styles[0, 1])
+
+
+def test_show_two_color_scale_and_default_color_fallback():
+    table = pd.DataFrame({"色阶": [-2.0, 0.0, 2.0], "数据条": [1, 2, 3]})
+    styler = style_bin_table(
+        table,
+        color_cols=["色阶"],
+        condition_cols=["数据条"],
+        condition_color={"色阶": ["FF0000", "0000FF"]},
+    )
+    html = styler.to_html()
+    styles = styler._compute().ctx
+    assert dict(styles[0, 0])["background-color"] == "#ff0000"
+    assert dict(styles[2, 0])["background-color"] == "#0000ff"
+    assert "#F76E6C" in html
+
+
+@pytest.mark.parametrize("kwargs", [{"theme_color": "invalid"}, {"condition_cols": ["得分"], "condition_color": "red"}])
+def test_show_invalid_colors_report_chinese_error(kwargs):
+    with pytest.raises(ValueError, match="六位十六进制"):
+        style_bin_table(pd.DataFrame({"得分": [0.0, 1.0]}), **kwargs).to_html()

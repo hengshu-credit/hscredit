@@ -13,9 +13,11 @@ on:
       - "hscredit/report/mining/manual_tree_extractor.py"
       - "hscredit/report/mining/multiway_tree.py"
       - "hscredit/core/viz/tree_plots.py"
+      - "hscredit/core/viz/binning_plots.py"
       - "tests/test_rules/test_multiway_tree.py"
       - "tests/test_rules/test_multiway_missing.py"
       - "tests/test_visualization/test_multiway_tree_plots.py"
+      - "tests/test_visualization/test_bin_trend_missing.py"
       - "tests/test_utils/test_pandas*.py"
       - "tests/test_rules/test_manual_tree_compat.py"
       - "examples/21_manual_tree.ipynb"
@@ -32,9 +34,11 @@ on:
       - "hscredit/report/mining/manual_tree_extractor.py"
       - "hscredit/report/mining/multiway_tree.py"
       - "hscredit/core/viz/tree_plots.py"
+      - "hscredit/core/viz/binning_plots.py"
       - "tests/test_rules/test_multiway_tree.py"
       - "tests/test_rules/test_multiway_missing.py"
       - "tests/test_visualization/test_multiway_tree_plots.py"
+      - "tests/test_visualization/test_bin_trend_missing.py"
       - "tests/test_utils/test_pandas*.py"
       - "tests/test_rules/test_manual_tree_compat.py"
       - "examples/21_manual_tree.ipynb"
@@ -98,4 +102,5 @@ jobs:
           tests/test_visualization/test_tree_plots.py
           tests/test_rules/test_multiway_tree.py
           tests/test_rules/test_multiway_missing.py
-          tests/test_visualization/test_multiway_tree_plots.py -q --tb=short
+          tests/test_visualization/test_multiway_tree_plots.py
+          tests/test_visualization/test_bin_trend_missing.py -q --tb=short

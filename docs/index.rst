@@ -34,8 +34,8 @@ hscredit 文档
 模型人员提供覆盖 **数据探索、变量评估、分箱编码、特征筛选、评分卡建模、机器学习风控
 模型、策略规则分析、模型监控与报告交付** 的全流程能力。
 
-所有组件均遵循 scikit-learn 的 ``BaseEstimator`` / ``TransformerMixin`` 接口范式，
-可直接嵌入 ``Pipeline``；所有面向用户的输出（列名、报告、图表、错误信息）均为 **中文**。
+分箱、编码、筛选和学习模型遵循 scikit-learn 接口范式，
+可嵌入 ``Pipeline``；所有面向用户的输出（列名、报告、图表、错误信息）均为 **中文**。
 
 .. note::
 
@@ -45,37 +45,12 @@ hscredit 文档
 能力一览
 --------
 
-.. list-table::
-   :header-rows: 1
-   :widths: 22 14 64
+* **变量工程**：17 种一维分箱方法、1 个二维分箱器、9 种编码器、24 个筛选器。
+* **探索与评估**：58 个 EDA 函数、43 个指标函数、52 个绘图函数与 1 个树图组件。
+* **模型训练**：6 个经典模型、4 个 Boosting 模型、4 个神经网络模型、3 个评分卡模型。
+* **规则与交付**：6 个规则挖掘器、9 类数据库适配器、10 个金融函数，以及变量、模型、策略与 Excel 报告。
 
-   * - 风控工作
-     - 能力规模
-     - 说明
-   * - 数据探索分析
-     - 57 种 EDA
-     - 数据质量、目标分布、坏率趋势、客群画像/迁移、Vintage、Roll Rate、策略仿真
-   * - 变量分箱
-     - 17 种分箱器
-     - 等频/等宽/卡方/树/CART/Best IV/Best KS/Best Lift/MDLP/OR-Tools/CP-SAT/KMeans/单调/遗传/平滑/核密度/目标坏率/二维分箱
-   * - 特征编码
-     - 9 种编码器
-     - WOE、目标编码、频数编码、独热、序数、分位数、CatBoost/GBM 编码
-   * - 特征筛选
-     - 23 种筛选器
-     - 缺失率、众数率、方差、相关性、VIF、IV、Lift、PSI、模型重要性、逐步回归、Boruta
-   * - 风控指标
-     - 43 种指标
-     - KS、AUC、Gini、Lift、坏率、IV、PSI、CSI、分箱统计、分类与回归指标
-   * - 模型训练
-     - 36 个建模组件
-     - 逻辑回归、评分卡、随机森林、GBDT、XGBoost、LightGBM、CatBoost、NGBoost、规则模型
-   * - 可视化分析
-     - 46 种图表
-     - 分箱趋势、KS/ROC/PR/Lift/Gain、评分分布、策略阈值、Vintage、漂移、树图
-   * - 报告交付
-     - 28 种报告工具
-     - 特征分析、规则分析、Swap 分析、逾期预测、模型报告、模型对比、Excel 输出
+统计口径与模块入口见 :doc:`overview`。
 
 快速开始
 --------
@@ -106,29 +81,34 @@ hscredit 文档
 更多端到端示例见 :doc:`quickstart`。
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
+   :titlesonly:
    :caption: 入门
 
-   overview
-   installation
-   quickstart
-   overdue_labels
-   rule_swap_approval
-   analysis_parameters
-   parallelism
+   功能总览 <overview>
+   安装配置 <installation>
+   快速开始 <quickstart>
+   标签处理 <overdue_labels>
+   规则置换 <rule_swap_approval>
+   分析参数 <analysis_parameters>
+   并行计算 <parallelism>
 
 .. toctree::
    :maxdepth: 1
+   :titlesonly:
    :caption: 建模实践
 
-   articles/losses-guide
-   articles/tuning-guide
-   articles/manual_tree_rule_mining
-   multiway_tree
-   articles/model-interpretability
+   模型流程 <articles/model-workflow>
+   迁移续训 <api/training_lifecycle>
+   损失指标 <articles/losses-guide>
+   参数搜索 <articles/tuning-guide>
+   手工树 <articles/manual_tree_rule_mining>
+   多叉树 <multiway_tree>
+   模型解释 <articles/model-interpretability>
 
 .. toctree::
    :maxdepth: 2
+   :titlesonly:
    :caption: 数据接入
 
    database
@@ -141,16 +121,18 @@ hscredit 文档
 
 .. toctree::
    :maxdepth: 2
-   :caption: Agent Skills
+   :titlesonly:
+   :caption: 智能技能
 
-   skills
+   智能技能 <skills>
 
 .. toctree::
    :maxdepth: 1
+   :titlesonly:
    :caption: 项目
 
-   ROADMAP
-   project_notes
+   版本规划 <ROADMAP>
+   项目记录 <project_notes>
 
 索引与检索
 ----------

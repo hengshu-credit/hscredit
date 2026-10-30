@@ -1,5 +1,5 @@
-表格神经网络
-============
+神经网络 ``hscredit.core.models.net``
+==================================================================
 
 ``hscredit.core.models.net`` 提供 ``ResNet``、``FTTransformer``、``TabM``、``TabPFN``，
 也可直接从 ``hscredit`` 或 ``hscredit.core.models`` 导入。模型类和后端均按需加载。

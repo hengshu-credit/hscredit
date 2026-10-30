@@ -1,5 +1,5 @@
-全模型建模链路验收
-==================
+模型验收
+========
 
 可复现入口为 :download:`all_model_workflow_validation.ipynb <../../examples/all_model_workflow_validation.ipynb>`。
 Notebook 使用真实放款数据，依次执行数据划分、特征筛选、基线对比、超参数搜索、最终模型、完整报告及保存恢复。

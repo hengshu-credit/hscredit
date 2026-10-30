@@ -1,92 +1,73 @@
 # 功能总览
 
-`hscredit` 把信贷风控中策略、数据、变量、模型、规则、监控和报告等环节沉淀到一个
-工具箱中，减少在多个建模库、分析脚本与 Excel 模板之间反复切换的成本。
+hscredit 覆盖数据探索、变量工程、模型训练、规则分析与报告交付。分箱、编码、筛选和学习模型兼容 sklearn；报告、结果容器与工具函数提供独立入口。
 
-## 适用场景
+## 变量工程
 
-| 场景 | 你通常关心的问题 | hscredit 对应能力 |
-|:---|:---|:---|
-| 贷前评分卡建模 | 哪些变量有效、如何分箱、评分卡是否稳定 | IV/WOE、Best IV/KS 分箱、单调分箱、VIF/PSI 筛选、逻辑回归、ScoreCard、模型报告 |
-| 风控策略规则分析 | 哪些规则能拦截坏客户、规则覆盖是否重叠、新旧策略替换风险如何 | 单变量规则、多变量规则、树规则提取、规则指标、规则集分析、Swap 分析 |
-| 机器学习风控模型 | 如何训练树模型、比较模型效果、优化坏账和审批目标 | 随机森林、GBDT、XGBoost、LightGBM、CatBoost、NGBoost、风控损失函数、调参、模型对比 |
-| 变量有效性评估 | 变量是否有区分度、是否稳定、是否共线、是否能解释业务 | IV、KS、Lift、PSI、CSI、VIF、相关性、单变量 AUC、稳定性分析 |
-| 贷后表现分析 | 逾期表现如何爬坡、不同账龄风险如何变化 | Vintage、Roll Rate、MOB 逾期预测、坏率趋势、账龄表现汇总 |
-| 模型监控 | 客群是否漂移、分数是否漂移、变量是否衰减 | PSI/CSI、客群迁移、分数漂移、变量漂移、稳定性图表 |
-| 建模报告交付 | 如何快速形成模型评审和业务汇报材料 | ExcelWriter、模型报告、特征报告、规则报告、图表输出、pandas 扩展 |
+- **数据探索 `hscredit.core.eda`**：58 个公开分析函数，覆盖数据质量、目标分布、变量有效性、稳定性、客群、Vintage、Roll Rate 与报告。
+- **分箱 `hscredit.core.binning`**：17 种一维方法与独立的 OptimalBinning2D。支持等频、等宽、卡方、树、CART、最优 IV/KS/Lift、MDLP、OR-Tools、CP-SAT、KMeans、单调、遗传、平滑、核密度与目标坏率。
+- **编码 `hscredit.core.encoders`**：9 个编码器：WOE、Target、Count、OneHot、Ordinal、Quantile、CatBoost、GBM、Cardinality。
+- **筛选 `hscredit.core.selectors`**：23 个筛选器与 1 个 CompositeFeatureSelector，覆盖类型、正则、缺失率、众数率、基数、方差、相关性、VIF、IV/KS/Lift/PSI、模型重要性、RFE、逐步回归、Boruta 等。
+- **衍生 `hscredit.core.feature_engineering`**：1 个 NumExprDerive 表达式衍生器。
 
-## 数据探索与策略分析
+[分箱示例](../examples/01_binning.ipynb) · [编码示例](../examples/02_encoders.ipynb) · [筛选示例](../examples/03_selectors.ipynb) · [EDA 示例](../examples/06_eda.ipynb)
 
-| 能力 | 说明 |
-|:---|:---|
-| 数据质量分析 | 数据概览、缺失分析、字段摘要、数据质量报告 |
-| 目标变量分析 | 目标分布、整体坏率、分维度坏率、坏率趋势、样本分布 |
-| 变量探索 | 数值/类别分布、异常值、稀有类别、集中度分析 |
-| 变量有效性 | IV、WOE、分箱坏率、单调性、单变量 AUC、特征重要性排序 |
-| 稳定性分析 | PSI、CSI、跨期 PSI、特征漂移、分数漂移 |
-| 客群分析 | 客群画像、客群迁移、分群漂移、跨客群变量有效性 |
-| 策略分析 | 审批率/坏率权衡、策略仿真、Vintage 汇总、Roll Rate、标签泄漏检查 |
+## 模型训练
 
-## 分箱、编码与筛选
+- **经典模型 `hscredit.core.models.classical`**：6 个模型：LogisticRegression、RandomForest、ExtraTrees、GradientBoosting、SVM、DecisionTreeClassifier。
+- **提升模型 `hscredit.core.models.boosting`**：4 个模型：XGBoost、LightGBM、CatBoost、NGBoost。
+- **神经网络 `hscredit.core.models.net`**：4 个模型：ResNet、FTTransformer、TabM、TabPFN。
+- **评分卡 `hscredit.core.models.scorecard`**：3 个评分卡（ScoreCard、RoundScoreCard、ProbabilityScoreCard）、4 个转换器（Standard、Linear、Quantile、BoxCox）与 1 个 ScoreDriftCalibrator。
+- **概率校准 `hscredit.core.models.calibration`**：4 种方法：Platt、Isotonic、Beta、Histogram；另有统一入口与模型包装器。
+- **损失指标 `hscredit.core.models.losses`**：16 种注册损失与 12 种注册指标，覆盖区分度、成本、利润、审批率、坏账与排序。
+- **参数搜索 `hscredit.core.models.tuning`**：2 个调参器 ModelTuner、AutoTuner，支持交叉验证、剪枝、单/多目标、Pareto 与持久化。
+- **模型解释 `hscredit.core.models.explainability`**：14 个公开函数与 3 个组件 ModelExplainer、ExplanationResult、CounterfactualExplainer，覆盖 SHAP、原因码、反事实与解释报告。
 
-| 能力 | 说明 |
-|:---|:---|
-| 分箱方法 | 等宽、等频、树分箱、CART、卡方、Best IV、Best KS、Best Lift、MDLP、OR-Tools、CP-SAT、KMeans、单调约束、遗传算法、平滑、核密度、目标坏率、二维最优分箱 |
-| 编码方法 | WOE、Target、Count、OneHot、Ordinal、Quantile、CatBoost、Cardinality、GBM 编码 |
-| 特征筛选 | 缺失率、众数率、方差、相关性、VIF、IV、Lift、PSI、基数、类型、正则、模型重要性、零重要性、RFE、序列选择、逐步回归、Boruta、互信息、卡方、F 检验、稳定性感知、评分卡组合筛选 |
-| 特征衍生 | NumExprDerive 表达式引擎（基于 numexpr），支持 where/sin/cos/abs 等函数与条件逻辑的批量特征衍生 |
+[模型流程](../examples/28_model_workflow.ipynb) · [神经网络](../examples/net_models.ipynb) · [迁移续训](../examples/pretraining_and_continuation.ipynb) · [参数搜索](../examples/tuning_workflow.ipynb)
 
-## 建模、评估与监控
+## 评估与策略
 
-| 能力 | 说明 |
-|:---|:---|
-| 评分卡模型 | 逻辑回归、ScoreCard、RoundScoreCard、评分转换、分数漂移校准 |
-| 机器学习模型 | RandomForest、ExtraTrees、GradientBoosting、XGBoost、LightGBM、CatBoost、NGBoost |
-| 风控损失函数 | Focal、非对称 Focal、加权 BCE、成本敏感、坏账、审批率、利润最大化、排序、KS 聚焦、Top-K 坏样本捕获、金额加权等 |
-| 调参与解释 | Optuna 调参、模型评估、概率校准、解释性分析、内置 SHAP 支持 |
-| 风控指标 | KS、AUC、Gini、Lift、坏率、IV、PSI、CSI、回归指标、分箱统计 |
-| 金融计算 | FV/PV/PMT/NPER/IPMT/PPMT/RATE 现值终值年金计算，NPV/IRR/MIRR 净现值与收益率计算 |
+- **指标 `hscredit.core.metrics`**：43 个公开函数，以及 MonitoringBaseline、BinStatsAccumulator、MetricSpec 共 3 个组件。
+- **可视化 `hscredit.core.viz`**：52 个绘图函数与 1 个 DecisionTreeViz 组件，覆盖分箱、模型、评分、策略、漂移与决策树。
+- **规则引擎 `hscredit.core.rules`**：2 个规则执行组件 Rule、RuleFlow；另有规则制品、累加器和表达式工具。
+- **规则挖掘 `hscredit.report.mining`**：6 个挖掘器 SingleFeatureRuleMiner、MultiFeatureRuleMiner、MultiLabelRuleMiner、TreeRuleExtractor、ManualTreeExtractor、MultiwayTreeExtractor，以及 1 个 DecisionTreeAnalyzer。
+- **金融计算 `hscredit.core.financial`**：10 个函数 fv、pv、pmt、nper、ipmt、ppmt、rate、npv、irr、mirr。
 
-## 规则、报告与交付
+[指标示例](../examples/05_metrics.ipynb) · [可视化示例](../examples/07_viz.ipynb) · [规则置换](../examples/20_rule_swap_analysis.ipynb) · [手工树](../examples/25_manual_tree_rule_mining.ipynb)
 
-| 能力 | 说明 |
-|:---|:---|
-| 规则分析 | Rule 表达式、规则变量解析、规则美化、规则组合、规则集分类器、多标签规则分析 |
-| 规则挖掘 | 单特征规则、多特征交叉规则、多标签规则、树规则提取、手工树分析、规则指标 |
-| 策略置换 | 新旧策略置换、通过/拒绝交叉矩阵、风险迁移分析 |
-| 可视化 | 分箱趋势、模型评估、评分分布、策略曲线、变量稳定性、客群漂移、树图 |
-| Excel 报告 | 特征分析、规则分析、Swap 分析、逾期预测、模型报告、模型对比、格式化 Excel 输出 |
+## 数据与报告
 
-## 架构设计
+- **报告 `hscredit.report`**：24 个报告及辅助函数，覆盖特征、模型、规则、策略置换、逾期预测、筛选读写与客群漂移；另有 ModelReport、SwapAnalyzer 等报告类与结果容器。
+- **Excel `hscredit.excel`**：1 个 ExcelWriter 与 3 个工具函数 dataframe2excel、resolve_condition_color、register_pivot_aggregation，支持多 Sheet、图片、格式与透视表。
+- **数据库 `hscredit.database`**：9 类适配器：ClickHouse、Hive、Impala、MaxCompute、MongoDB、MySQL、Oracle、Redis、StarRocks。支持连接池、流式查询、批量写入与元数据。
+- **Pandas 扩展 `hscredit.utils`**：summary()、show()、save() 等入口，供 Notebook 展示与 Excel 交付使用。
 
-所有核心组件均继承自 sklearn `BaseEstimator` + `TransformerMixin`/`ClassifierMixin`，
-兼容 sklearn Pipeline，并统一支持两种调用风格：
+[报告示例](../examples/11_report.ipynb) · [Excel 示例](../examples/23_excel_writer.ipynb) · [数据库指南](database.md)
+
+## 统计口径
+
+以上数量于 **2026-10-30** 对照源码核实，不是测试数量或覆盖率。各项单位不同，重导出的能力不跨模块相加。
+
+- EDA、指标与模型解释按各模块 `__all__` 的公开函数与类分别计数。
+- 编码、筛选、模型、评分卡与校准按具体实现计数，排除基类、容器与兼容别名；筛选报告收集器不算筛选器。
+- 分箱按 `OptimalBinning.VALID_METHODS` 计数，二维分箱单列；工厂与基类不算算法。
+- 损失与模型指标按 `list_losses()`、`list_metrics()` 的注册条目计数，包含 logloss、brier 两个函数适配指标。
+- 绘图按 `core.viz.__all__` 的绘图区域计数，排除样式、颜色、图例与保存工具，保留独立树图后端入口。
+- 报告函数按 `report.__all__` 计数，排除重导出的 dataframe2excel 与 calculate_rule_metrics；报告类不计入函数数量。
+- 数据库按 `available_adapters()` 的内置适配器类型计数，不含用户注册的扩展。
+
+## 调用方式
+
+有监督组件支持 sklearn 风格，也支持通过 target 指定标签列：
 
 ```python
-# sklearn 风格 —— X 和 y 分别传入
+from hscredit import OptimalBinning
+
+binner = OptimalBinning(method="quantile")
 binner.fit(X_train, y_train)
 
-# scorecardpipeline 风格 —— 通过 target 参数指定目标列名
-binner = OptimalBinning(target="target")
-binner.fit(df)  # 自动从 df 中提取目标列
+binner = OptimalBinning(method="quantile", target="FPD")
+binner.fit(train_df)
 ```
 
-模块组织：
-
-```text
-hscredit/
-├── core/
-│   ├── binning/              # 分箱算法 + BaseBinning + OptimalBinning 工厂
-│   ├── encoders/             # 编码器（WOE/Target/Count/OneHot/...）
-│   ├── selectors/            # 特征筛选器
-│   ├── models/               # boosting / classical / scorecard / losses / rules / tuning
-│   ├── metrics/              # 分类 / 稳定性 / 特征 / 金融指标
-│   ├── viz/                  # 可视化图表
-│   ├── eda/                  # 数据探索
-│   ├── rules/                # 规则引擎（Rule 表达式）
-│   ├── financial/            # 金融计算（FV/PV/PMT/NPER/IRR/NPV）
-│   └── feature_engineering/  # NumExprDerive 表达式衍生
-├── report/                   # 报告生成器 + mining 规则挖掘器
-├── excel/                    # ExcelWriter 上下文管理器
-└── utils/                    # Pandas 扩展 / IO / 日志 / 随机种子
-```
+完整参数、返回值和成员方法见 [API 参考](api/index.rst)。

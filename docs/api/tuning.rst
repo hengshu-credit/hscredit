@@ -1,5 +1,5 @@
-超参数调优
-==========
+参数搜索 ``hscredit.core.models.tuning``
+========================================================================
 
 ``hscredit.core.models.tuning`` 提供基于 Optuna 的超参数调优组件
 （``pip install hscredit[tune]``）。可从顶层

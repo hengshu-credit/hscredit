@@ -6,13 +6,9 @@
 .. toctree::
    :maxdepth: 2
 
-   ../articles/model-workflow
-   ../articles/models-design-review
    classical_models
    boosting
    net
-   training_lifecycle
-   model_workflow_validation
    model_rules
    scorecard
    calibration

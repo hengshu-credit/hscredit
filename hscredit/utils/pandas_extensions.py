@@ -33,6 +33,9 @@ from __future__ import annotations
 """
 
 import logging
+import re
+from functools import partial
+from html import escape
 import pandas as pd
 from .._compat import map_styler, prepare_dependency
 from .arguments import binning_options
@@ -585,6 +588,234 @@ def _series_save(
 # =============================================================================
 
 
+def _format_table_value(value, spec=None):
+    """格式化标量指标，容器按文本展示，且不改变原始单元格。"""
+    if not pd.api.types.is_scalar(value):
+        return escape(str(value))
+    if pd.isna(value):
+        return "-"
+    is_number = pd.api.types.is_number(value) and not isinstance(value, (bool, np.bool_, complex, np.complexfloating))
+    if is_number and spec is not None:
+        return format(value, spec)
+    if isinstance(value, (float, np.floating)):
+        return format(value, f".{pd.get_option('styler.format.precision')}f")
+    return escape(str(value))
+
+
+def _is_numeric_table_column(series):
+    """仅对实数数值列启用指标数据条，排除容器、文本、布尔及复数。"""
+    return (
+        pd.api.types.is_numeric_dtype(series.dtype)
+        and not pd.api.types.is_bool_dtype(series.dtype)
+        and not pd.api.types.is_complex_dtype(series.dtype)
+    )
+
+
+def _select_table_columns(df, columns):
+    """按完整列名或多级表头末级名称选择列，与 dataframe2excel 一致。"""
+    if columns is None:
+        return []
+    if isinstance(columns, str):
+        columns = [columns]
+    selectors = [tuple(col) if isinstance(col, list) else col for col in columns]
+    return [col for col in df.columns if col in selectors or (isinstance(col, tuple) and col[-1] in selectors)]
+
+
+def _table_hex_color(color):
+    """校验并规范化表格使用的六位十六进制颜色。"""
+    if not isinstance(color, str) or re.fullmatch(r"#?[0-9a-fA-F]{6}", color) is None:
+        raise ValueError("表格颜色必须为六位十六进制字符串，可带 # 前缀")
+    return "#" + color.lstrip("#").upper()
+
+
+def _table_condition_colors(condition_color, column, default):
+    """复用 Excel 的完整列名、由内向外层级和缺省颜色优先级。"""
+    from ..excel.writer import _coerce_color_anchors, _resolve_condition_value
+
+    value = _resolve_condition_value(condition_color, column, default)
+    return [_table_hex_color(color) for color in _coerce_color_anchors(value)] or [_table_hex_color(default)]
+
+
+def _apply_table_color_blocks(styler, df, columns, condition_color):
+    """按数值生成颜色块；缺失、无穷和复杂类型不着色。"""
+    if not columns:
+        return styler
+    prepare_dependency("matplotlib")
+    from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm, to_hex
+
+    for col in columns:
+        if not _is_numeric_table_column(df[col]):
+            continue
+        values = df[col].dropna().astype(float)
+        values = values[np.isfinite(values)]
+        if values.empty:
+            continue
+        anchors = _table_condition_colors(condition_color, col, "F76E6C")
+        low, high = float(values.min()), float(values.max())
+        if len(anchors) == 1:
+            # 单色以零为白色基准，负值和正值两端均使用指定色。
+            anchors = [anchors[0], "#FFFFFF", anchors[0]]
+            bound = max(abs(low), abs(high)) or 1.0
+            norm = Normalize(-bound, bound)
+        elif len(anchors) == 3 and low < float(values.median()) < high:
+            norm = TwoSlopeNorm(float(values.median()), vmin=low, vmax=high)
+        else:
+            norm = Normalize(low, high)
+        cmap = LinearSegmentedColormap.from_list("table_condition", anchors, N=257)
+
+        def color_cell(value, *, norm=norm, cmap=cmap):
+            if pd.isna(value) or not np.isfinite(value):
+                return ""
+            rgba = cmap(norm(float(value)))
+            luminance = sum(weight * channel for weight, channel in zip((0.2126, 0.7152, 0.0722), rgba[:3]))
+            text_color = "#000000" if luminance > 0.5 else "#ffffff"
+            return f"background-color: {to_hex(rgba)}; color: {text_color}"
+
+        styler = map_styler(styler, color_cell, subset=[col])
+    return styler
+
+
+def _style_table_column_groups(styler, rgb):
+    """用层级底色和贯穿子列的分隔线区分多级表头的相邻分组。"""
+    columns = styler.data.columns
+    if not isinstance(columns, pd.MultiIndex) or columns.nlevels < 2:
+        return styler
+
+    last_level = columns.nlevels - 1
+    theme = "#" + "".join(f"{component:02x}" for component in rgb)
+    light = "#" + "".join(f"{round(255 * 0.88 + component * 0.12):02x}" for component in rgb)
+    dark = "#" + "".join(f"{round(component * 0.55):02x}" for component in rgb)
+    styles = [
+        {
+            "selector": f"thead th.level{last_level}",
+            "props": [("background-color", light), ("color", dark), ("border-bottom", f"2px solid {theme}")],
+        }
+    ]
+    # 由内向外设置，确保父分组边界不会被较细的子分组边界覆盖。
+    for level in reversed(range(last_level)):
+        group_number = -1
+        previous = None
+        for position in range(len(columns)):
+            # 使用 codes 区分完整父路径，也兼容缺失的层级名称。
+            group = tuple(int(columns.codes[index][position]) for index in range(level + 1))
+            is_start = group != previous
+            if is_start:
+                group_number += 1
+            shade = min(0.65 + 0.2 * level + 0.2 * (group_number % 2), 1.0)
+            background = "#" + "".join(f"{round(component * shade):02x}" for component in rgb)
+            styles.append(
+                {
+                    "selector": f"thead th.col_heading.level{level}.col{position}",
+                    "props": [
+                        ("background-color", background),
+                        ("color", "#ffffff"),
+                        ("font-size", "14px" if level == 0 else "13px"),
+                        ("padding", "10px 14px"),
+                        ("border-bottom", "2px solid #ffffff"),
+                    ],
+                }
+            )
+            if is_start and position > 0:
+                width = 3 if level == 0 else 2
+                styles.append(
+                    {
+                        "selector": f"thead th.col_heading.level{level}.col{position}",
+                        "props": [("border-left", f"{width}px solid #ffffff")],
+                    }
+                )
+                selectors = [
+                    f"thead th.col_heading.level{child}.col{position}" for child in range(level + 1, last_level + 1)
+                ]
+                selectors.append(f"tbody td.col{position}")
+                styles.append(
+                    {"selector": ", ".join(selectors), "props": [("border-left", f"{width}px solid {theme}")]}
+                )
+            previous = group
+    return styler.set_table_styles(styles, overwrite=False)
+
+
+def _apply_table_layout(styler, theme_color="2639E9", fill=True):
+    """统一展示表和规则表的表头、隔行底色及整行悬停效果。"""
+    theme = _table_hex_color(theme_color)
+    rgb = tuple(int(theme[i : i + 2], 16) for i in (1, 3, 5))
+
+    def tint(weight):
+        return "#" + "".join(f"{round(255 * (1 - weight) + component * weight):02x}" for component in rgb)
+
+    styler = styler.set_properties(
+        **{
+            "white-space": "nowrap",
+            "text-align": "center",
+            "font-size": "12px",
+            "font-family": "Arial, sans-serif",
+        }
+    )
+
+    styler = styler.set_table_styles(
+        [
+            {
+                "selector": "thead th",
+                "props": [
+                    ("background-color", theme),
+                    ("color", "#ffffff"),
+                    ("font-weight", "bold"),
+                    ("text-align", "center"),
+                    ("font-size", "12px"),
+                    ("padding", "8px 10px"),
+                    ("border", "1px solid rgba(255,255,255,0.3)"),
+                    ("white-space", "nowrap"),
+                ],
+            },
+            {
+                "selector": "tbody td, tbody th",
+                "props": [
+                    ("padding", "6px 10px"),
+                    ("border", "1px solid #e0e0e0"),
+                ],
+            },
+            {
+                "selector": "tbody tr:nth-child(odd)",
+                "props": [
+                    ("background-color", "#ffffff"),
+                ],
+            },
+            {
+                "selector": "tbody tr:nth-child(even)",
+                "props": [
+                    ("background-color", "#f8f9ff" if theme == "#2639E9" else tint(0.03)),
+                ],
+            },
+            {
+                "selector": "tbody tr:hover",
+                "props": [
+                    ("background-color", "#e8eaff" if theme == "#2639E9" else tint(0.1)),
+                ],
+            },
+            {
+                "selector": "tbody tr:hover td, tbody tr:hover th",
+                "props": [("box-shadow", f"inset 0 0 0 9999px rgba({rgb[0]},{rgb[1]},{rgb[2]},0.08)")],
+            },
+            {
+                "selector": "tr.selected, td.selected",
+                "props": [("background-color", "#e3f2fd"), ("color", "#1565C0")],
+            },
+            # 进度条样式
+            {
+                "selector": ".pd-bar",
+                "props": [
+                    ("opacity", "0.75"),
+                ],
+            },
+        ]
+    )
+
+    if not fill:
+        styler = styler.set_table_styles(
+            [style for style in styler.table_styles if "nth-child" not in style["selector"]]
+        )
+    return _style_table_column_groups(styler, rgb)
+
+
 class BinTableDisplay:
     """分箱表展示器.
 
@@ -623,6 +854,13 @@ class BinTableDisplay:
         index_as_bin: bool = False,
         percent_format: bool = True,
         high_tech_style: bool = False,
+        *,
+        percent_cols: Optional[List] = None,
+        condition_cols: Optional[List] = None,
+        color_cols: Optional[List] = None,
+        condition_color: Optional[Union[str, List[str], Dict[Any, Union[str, List[str]]]]] = None,
+        theme_color: str = "2639E9",
+        fill: bool = True,
         **kwargs,
     ) -> "BinTableDisplay":
         """展示美化的分箱表.
@@ -648,6 +886,18 @@ class BinTableDisplay:
         :param high_tech_style: 默认值为 ``False`` 。是否使用高科技/AI风格样式
         :type high_tech_style: bool
         :param kwargs: 其他参数
+        :param percent_cols: 百分比列；None 按指标名自动识别，[] 关闭自动百分比，显式名单优先于 percent_format。
+        :param condition_cols: 数据条列；None 沿用 ``highlight_*`` 自动识别，[] 关闭数据条，显式名单优先于 ``highlight_*``。
+        :param color_cols: 颜色块渐变列，默认不启用；与数据条重叠时颜色块优先。
+        :param condition_color: 与 dataframe2excel 同名配置：六位十六进制单色（可带 #）、2/3 色列表，
+            或按列配置的字典。完整 tuple 优先，其次从内向外匹配层级名；未匹配沿用默认配色。
+            色阶超过三色取首/中/尾，数据条取末色；单色色块以零为白色基准，三色色块以中位数为中值。
+        :param theme_color: 表头主题色，默认 "2639E9"，同时影响隔行底色和 hover 配色。
+        :param fill: 是否启用隔行底色，默认 True；不影响表头、hover 和显式条件格式。
+
+        列名单使用列名或多级表头完整 tuple，也可按末级名称选择多个标签的同名列。
+        显式指定的列在 compact=True 时仍保留；复杂单元格始终按文本显示。
+
         :return: self，支持链式调用
         """
         self._styler = _style_bin_table(
@@ -662,6 +912,12 @@ class BinTableDisplay:
             index_as_bin=index_as_bin,
             percent_format=percent_format,
             high_tech_style=high_tech_style,
+            percent_cols=percent_cols,
+            condition_cols=condition_cols,
+            color_cols=color_cols,
+            condition_color=condition_color,
+            theme_color=theme_color,
+            fill=fill,
         )
         try:
             from IPython.display import display
@@ -761,8 +1017,15 @@ def _style_bin_table(
     index_as_bin: bool = False,
     percent_format: bool = True,
     high_tech_style: bool = False,
+    *,
+    percent_cols: Optional[List] = None,
+    condition_cols: Optional[List] = None,
+    color_cols: Optional[List] = None,
+    condition_color: Optional[Union[str, List[str], Dict[Any, Union[str, List[str]]]]] = None,
+    theme_color: str = "2639E9",
+    fill: bool = True,
 ) -> Any:
-    """美化分箱表展示.
+    """美化 DataFrame 展示，兼容分箱统计及含列表、字典等复杂值的结果表.
 
     使用 pandas Styler 对分箱表进行格式化和高亮，使其在 Jupyter 中更易读。
 
@@ -777,6 +1040,18 @@ def _style_bin_table(
     :param index_as_bin: 是否将分箱作为索引显示
     :param percent_format: 是否将百分比相关列显示为百分比格式（默认True）
     :param high_tech_style: 是否使用高科技/AI风格样式
+    :param percent_cols: 百分比列；None 按指标名自动识别，[] 关闭自动百分比，显式名单优先于 percent_format。
+    :param condition_cols: 数据条列；None 沿用 ``highlight_*`` 自动识别，[] 关闭数据条，显式名单优先于 ``highlight_*``。
+    :param color_cols: 颜色块渐变列，默认不启用；与数据条重叠时颜色块优先。
+    :param condition_color: 与 dataframe2excel 同名配置：六位十六进制单色（可带 #）、2/3 色列表，
+        或按列配置的字典。完整 tuple 优先，其次从内向外匹配层级名；未匹配沿用默认配色。
+        色阶超过三色取首/中/尾，数据条取末色；单色色块以零为白色基准，三色色块以中位数为中值。
+    :param theme_color: 表头主题色，默认 "2639E9"，同时影响隔行底色和 hover 配色。
+    :param fill: 是否启用隔行底色，默认 True；不影响表头、hover 和显式条件格式。
+
+    列名单使用列名或多级表头完整 tuple，也可按末级名称选择多个标签的同名列。
+    显式指定的列在 compact=True 时仍保留；复杂单元格始终按文本显示。
+
     :return: 格式化后的 Styler 对象
     """
     # 检查是否为多级表头
@@ -839,6 +1114,10 @@ def _style_bin_table(
     if max_rows is not None and len(df_display) > max_rows:
         df_display = df_display.head(max_rows)
 
+    explicit_columns = set()
+    for selection in (percent_cols, condition_cols, color_cols):
+        explicit_columns.update(_select_table_columns(df_display, selection))
+
     # 紧凑模式下隐藏部分列
     if compact:
         # 确定要隐藏的列
@@ -881,7 +1160,7 @@ def _style_bin_table(
             hide_cols = [c for c in all_cols if not any(p in str(c) for p in keep_patterns)]
 
         if hide_cols:
-            df_display = df_display.drop(columns=hide_cols)
+            df_display = df_display.drop(columns=[col for col in hide_cols if col not in explicit_columns])
 
     # 创建 Styler
     styler = df_display.style
@@ -905,178 +1184,67 @@ def _style_bin_table(
         "分档KS值": 2,
     }
 
-    # 定义需要显示为百分比的列
+    # LIFT 为倍数，不按百分比显示。
     percent_columns = {
-        "样本占比": 2,
-        "好样本占比": 2,
-        "坏样本占比": 2,
-        "坏样本率": 2,
-        "LIFT值": 2,
-        "坏账改善": 2,
-        "累积LIFT值": 2,
-        "累积坏账改善": 2,
-        "分档KS值": 2,
+        "样本占比",
+        "好样本占比",
+        "坏样本占比",
+        "坏样本率",
+        "坏账改善",
+        "累积坏账改善",
+        "分档KS值",
     }
-
-    # 预定义的百分比格式
-    percent_formats = {
-        2: "{:.2%}",
-        3: "{:.3%}",
-        1: "{:.1%}",
-        0: "{:.0f}",
-    }
-
-    # 更新自定义精度
     if precision:
         default_precision.update(precision)
 
-    # 格式化数字
-    if is_multi_level:
-        # 多级表头
-        format_dict = {}
-        for col in df_display.columns:
-            col_name = col[1]
-            if percent_format and col_name in percent_columns:
-                precision_val = percent_columns[col_name]
-                format_dict[col] = percent_formats.get(precision_val, "{:.2%}")
-            elif col_name in default_precision:
-                precision_val = default_precision[col_name]
-                if precision_val == 0:
-                    format_dict[col] = "{:.0f}"
-                else:
-                    format_dict[col] = f"{{:.{precision_val}f}}"
-        if format_dict:
-            styler = styler.format(format_dict, na_rep="-")
-    else:
-        # 单层表头
-        format_dict = {}
-        for col in df_display.columns:
-            col_name = str(col)
-            if percent_format and col_name in percent_columns:
-                precision_val = percent_columns[col_name]
-                format_dict[col] = percent_formats.get(precision_val, "{:.2%}")
-            elif col_name in default_precision:
-                precision_val = default_precision[col_name]
-                if precision_val == 0:
-                    format_dict[col] = "{:.0f}"
-                else:
-                    format_dict[col] = f"{{:.{precision_val}f}}"
-        if format_dict:
-            styler = styler.format(format_dict, na_rep="-")
-
-    # ===== 条件格式：只对坏样本率、LIFT、KS使用进度条 =====
-    # 进度条颜色
-    bad_rate_color = "#5B8FF9"  # 蓝色
-    lift_color = "#5AD8A6"  # 绿色
-    ks_color = "#F6BD16"  # 金色
-
-    # 高亮坏样本率（进度条）
-    if highlight_bad_rate:
-        bad_rate_cols = _find_columns(df_display, "坏样本率")
-        for col in bad_rate_cols:
-            values = df_display[col].dropna()
-            vmin = 0
-            if len(values) > 0:
-                vmax = max(values.quantile(0.95), 0.1)
-                vmax = min(vmax * 1.2, 1)
-            else:
-                vmax = 1
-            styler = styler.bar(subset=[col], color=bad_rate_color, vmin=vmin, vmax=vmax, axis=0)
-
-    # 高亮 LIFT 值（进度条）
-    if highlight_lift:
-        lift_cols = _find_columns(df_display, "LIFT值")
-        for col in lift_cols:
-            lift_values = df_display[col].dropna()
-            vmin = 0
-            if len(lift_values) > 0:
-                vmax = max(lift_values.quantile(0.95), 1.5)
-                vmax = min(vmax * 1.2, 5)
-            else:
-                vmax = 2
-            styler = styler.bar(subset=[col], color=lift_color, vmin=vmin, vmax=vmax, axis=0)
-
-    # 高亮 KS 值（进度条）
-    if highlight_ks:
-        ks_cols = _find_columns(df_display, "分档KS值")
-        for col in ks_cols:
-            ks_values = df_display[col].dropna()
-            vmin = 0
-            if len(ks_values) > 0:
-                vmax = max(ks_values.quantile(0.95), 0.1)
-                vmax = min(vmax * 1.2, 1)
-            else:
-                vmax = 1
-            styler = styler.bar(subset=[col], color=ks_color, vmin=vmin, vmax=vmax, axis=0)
-
-    # 设置表格样式 - 列名不换行，横向滚动
-    styler = styler.set_properties(
-        **{
-            "white-space": "nowrap",
-            "text-align": "center",
-            "font-size": "12px",
+    selected_percent = (
+        set(_select_table_columns(df_display, percent_cols))
+        if percent_cols is not None
+        else {
+            col
+            for col in df_display.columns
+            if percent_format and (col[-1] if isinstance(col, tuple) else str(col)) in percent_columns
         }
     )
+    format_dict = {}
+    for col in df_display.columns:
+        col_name = col[-1] if isinstance(col, tuple) else str(col)
+        spec = None
+        digits = default_precision.get(col, default_precision.get(col_name))
+        if col in selected_percent:
+            spec = f".{digits if digits is not None else 2}%"
+        elif digits is not None:
+            spec = f".{digits}f"
+        format_dict[col] = partial(_format_table_value, spec=spec)
+    styler = styler.format(format_dict)
+    styler = styler.format_index(escape="html", axis=0).format_index(escape="html", axis=1)
 
-    # 表头和行列样式 - 简洁清爽风格
-    styler = styler.set_table_styles(
-        [
-            {
-                "selector": "thead th",
-                "props": [
-                    ("background-color", "#f5f5f5"),
-                    ("color", "#333333"),
-                    ("font-weight", "bold"),
-                    ("text-align", "center"),
-                    ("font-size", "12px"),
-                    ("padding", "8px"),
-                    ("border", "1px solid #dddddd"),
-                    ("white-space", "nowrap"),
-                ],
-            },
-            {
-                "selector": "td",
-                "props": [
-                    ("padding", "6px 8px"),
-                    ("border", "1px solid #dddddd"),
-                ],
-            },
-            # 奇偶行颜色不同
-            {
-                "selector": "tr:nth-child(odd)",
-                "props": [
-                    ("background-color", "#ffffff"),
-                ],
-            },
-            {
-                "selector": "tr:nth-child(even)",
-                "props": [
-                    ("background-color", "#fafafa"),
-                ],
-            },
-            {
-                "selector": "tr:hover",
-                "props": [
-                    ("background-color", "#f0f0f0"),
-                ],
-            },
-            # 进度条样式
-            {
-                "selector": ".pd-bar",
-                "props": [
-                    ("opacity", "0.7"),
-                ],
-            },
-            # 选中样式 - 柔和的颜色对比
-            {
-                "selector": "tr.selected, td.selected",
-                "props": [
-                    ("background-color", "#e3f2fd"),
-                    ("color", "#1565C0"),
-                ],
-            },
-        ]
-    )
+    block_columns = _select_table_columns(df_display, color_cols)
+    bar_columns = {}
+    if condition_cols is None:
+        for enabled, pattern, color, floor, ceiling in (
+            (highlight_bad_rate, "坏样本率", "5B8FF9", 0.1, 1),
+            (highlight_lift, "LIFT值", "5AD8A6", 1.5, 5),
+            (highlight_ks, "分档KS值", "F6BD16", 0.1, 1),
+        ):
+            if enabled:
+                for col in _find_columns(df_display, pattern):
+                    if _is_numeric_table_column(df_display[col]):
+                        values = df_display[col].dropna()
+                        values = values[np.isfinite(values)]
+                        if not values.empty:
+                            vmax = min(max(values.quantile(0.95), floor) * 1.2, ceiling)
+                            bar_columns[col] = (color, 0, vmax)
+    else:
+        bar_columns = {col: ("F76E6C", None, None) for col in _select_table_columns(df_display, condition_cols)}
+
+    for col, (default_color, vmin, vmax) in bar_columns.items():
+        if col in block_columns or not _is_numeric_table_column(df_display[col]):
+            continue
+        color = _table_condition_colors(condition_color, col, default_color)[-1]
+        styler = styler.bar(subset=[col], color=color, vmin=vmin, vmax=vmax, axis=0)
+    styler = _apply_table_color_blocks(styler, df_display, block_columns, condition_color)
+    styler = _apply_table_layout(styler, theme_color=theme_color, fill=fill)
 
     return styler
 
@@ -1101,6 +1269,13 @@ def style_bin_table(
     index_as_bin: bool = False,
     percent_format: bool = True,
     high_tech_style: bool = False,
+    *,
+    percent_cols: Optional[List] = None,
+    condition_cols: Optional[List] = None,
+    color_cols: Optional[List] = None,
+    condition_color: Optional[Union[str, List[str], Dict[Any, Union[str, List[str]]]]] = None,
+    theme_color: str = "2639E9",
+    fill: bool = True,
 ) -> Any:
     """美化分箱表展示.
 
@@ -1128,12 +1303,28 @@ def style_bin_table(
     :type percent_format: bool
     :param high_tech_style: 默认值为 ``False`` 。是否使用高科技/AI风格样式
     :type high_tech_style: bool
+    :param percent_cols: 百分比列；None 按指标名自动识别，[] 关闭自动百分比，显式名单优先于 percent_format。
+    :param condition_cols: 数据条列；None 沿用 ``highlight_*`` 自动识别，[] 关闭数据条，显式名单优先于 ``highlight_*``。
+    :param color_cols: 颜色块渐变列，默认不启用；与数据条重叠时颜色块优先。
+    :param condition_color: 与 dataframe2excel 同名配置：六位十六进制单色（可带 #）、2/3 色列表，
+        或按列配置的字典。完整 tuple 优先，其次从内向外匹配层级名；未匹配沿用默认配色。
+        色阶超过三色取首/中/尾，数据条取末色；单色色块以零为白色基准，三色色块以中位数为中值。
+    :param theme_color: 表头主题色，默认 "2639E9"，同时影响隔行底色和 hover 配色。
+    :param fill: 是否启用隔行底色，默认 True；不影响表头、hover 和显式条件格式。
+
+    列名单使用列名或多级表头完整 tuple，也可按末级名称选择多个标签的同名列。
+    显式指定的列在 compact=True 时仍保留；复杂单元格始终按文本显示。
+
     :return: 格式化后的 Styler 对象
 
     **参考样例**
 
     >>> table = feature_bin_stats(data, 'score', target='target')
-    >>> style_bin_table(table).show()
+    >>> style_bin_table(table, percent_cols=["坏样本率"], color_cols=["LIFT值"])
+    >>> table.show(
+    ...     percent_cols=["坏样本率"], condition_cols=["样本占比"], color_cols=["LIFT值"],
+    ...     condition_color={"样本占比": "5B8FF9", "LIFT值": ["F76E6C", "FFFFFF", "5AD8A6"]},
+    ... )
     """
     return _style_bin_table(
         df,
@@ -1147,6 +1338,12 @@ def style_bin_table(
         index_as_bin=index_as_bin,
         percent_format=percent_format,
         high_tech_style=high_tech_style,
+        percent_cols=percent_cols,
+        condition_cols=condition_cols,
+        color_cols=color_cols,
+        condition_color=condition_color,
+        theme_color=theme_color,
+        fill=fill,
     )
 
 
@@ -1186,9 +1383,9 @@ def style_rule_table(
     prepare_dependency("matplotlib")
     df_d = df.copy()
 
-    # MultiIndex（多标签 overdue/dpds）暂不做精细美化，返回基础 Styler 防止报错
+    # MultiIndex（多标签 overdue/dpds）沿用统一布局，暂不添加指标条件格式。
     if isinstance(df_d.columns, pd.MultiIndex):
-        return df_d.style.set_table_styles([{"selector": "thead th", "props": [("white-space", "nowrap")]}])
+        return _apply_table_layout(df_d.style)
 
     # 兼容报告格式与旧版精简格式的列名
     badrate_col = "坏样本率" if "坏样本率" in df_d.columns else "坏账率"
@@ -1289,15 +1486,7 @@ def style_rule_table(
 
         styler = map_styler(styler, _leaf_color, subset=["是否叶子"])
 
-    # --- 基础样式 ---
-    styler = styler.set_properties(
-        **{
-            "white-space": "nowrap",
-            "text-align": "center",
-            "font-size": "12px",
-            "font-family": "Arial, sans-serif",
-        }
-    )
+    styler = _apply_table_layout(styler)
 
     # --- 规则文本列左对齐 + 等宽字体（按列名定位，避免依赖列顺序）---
     if rule_col in df_d.columns:
@@ -1310,62 +1499,11 @@ def style_rule_table(
             },
         )
 
-    # --- 表头样式 ---
-    styler = styler.set_table_styles(
-        [
-            {
-                "selector": "thead th",
-                "props": [
-                    ("background-color", "#2639E9"),
-                    ("color", "#ffffff"),
-                    ("font-weight", "bold"),
-                    ("text-align", "center"),
-                    ("font-size", "12px"),
-                    ("padding", "8px 10px"),
-                    ("border", "1px solid rgba(255,255,255,0.3)"),
-                    ("white-space", "nowrap"),
-                ],
-            },
-            {
-                "selector": "tbody td",
-                "props": [
-                    ("padding", "6px 10px"),
-                    ("border", "1px solid #e0e0e0"),
-                ],
-            },
-            {
-                "selector": "tbody tr:nth-child(odd)",
-                "props": [
-                    ("background-color", "#ffffff"),
-                ],
-            },
-            {
-                "selector": "tbody tr:nth-child(even)",
-                "props": [
-                    ("background-color", "#f8f9ff"),
-                ],
-            },
-            {
-                "selector": "tbody tr:hover",
-                "props": [
-                    ("background-color", "#e8eaff"),
-                ],
-            },
-            # 进度条样式
-            {
-                "selector": ".pd-bar",
-                "props": [
-                    ("opacity", "0.75"),
-                ],
-            },
-        ]
-    )
-
     return styler
 
 
 def _show_method(self, **kwargs):
-    """展示美化的分箱表.
+    """展示美化的 DataFrame，复杂单元格按文本显示，数值指标保留条件格式.
 
     :param kwargs: 传递给 BinTableDisplay.show() 的参数
     :return: BinTableDisplay 对象，支持链式调用

@@ -28,20 +28,16 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     _write(
         tmp_path / "api" / "modeling.html",
         '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
-        '<li class="toctree-l3"><a href="../articles/model-workflow.html">模型训练、调参与保存</a></li>'
-        '<li class="toctree-l3"><a href="../articles/models-design-review.html">models 模块设计复盘</a></li>'
-        '<li class="toctree-l3"><a href="classical_models.html">经典模型</a></li>'
-        '<li class="toctree-l3"><a href="boosting.html">Boosting</a></li>'
-        '<li class="toctree-l3"><a href="net.html">表格神经网络</a></li>'
-        '<li class="toctree-l3"><a href="training_lifecycle.html">预训练、微调与继续训练</a></li>'
-        '<li class="toctree-l3"><a href="model_workflow_validation.html">全模型建模链路验收</a></li>'
-        '<li class="toctree-l3"><a href="model_rules.html">规则器</a></li>'
-        '<li class="toctree-l3"><a href="scorecard.html">评分卡</a></li>'
-        '<li class="toctree-l3"><a href="calibration.html">概率校准</a></li>'
-        '<li class="toctree-l3"><a href="explainability.html">模型可解释性</a></li>'
-        '<li class="toctree-l3"><a href="losses.html">损失函数与评估指标</a></li>'
-        '<li class="toctree-l3"><a href="model_metrics.html">评估指标</a></li>'
-        '<li class="toctree-l3"><a href="tuning.html">超参数调优</a></li>'
+        '<li class="toctree-l3"><a href="classical_models.html">经典模型 hscredit.core.models.classical</a></li>'
+        '<li class="toctree-l3"><a href="boosting.html">提升模型 hscredit.core.models.boosting</a></li>'
+        '<li class="toctree-l3"><a href="net.html">神经网络 hscredit.core.models.net</a></li>'
+        '<li class="toctree-l3"><a href="model_rules.html">规则模型 hscredit.core.models.rules</a></li>'
+        '<li class="toctree-l3"><a href="scorecard.html">评分卡 hscredit.core.models.scorecard</a></li>'
+        '<li class="toctree-l3"><a href="calibration.html">概率校准 hscredit.core.models.calibration</a></li>'
+        '<li class="toctree-l3"><a href="explainability.html">模型解释 hscredit.core.models.explainability</a></li>'
+        '<li class="toctree-l3"><a href="losses.html">损失函数 hscredit.core.models.losses</a></li>'
+        '<li class="toctree-l3"><a href="model_metrics.html">评估指标 hscredit.core.models.losses</a></li>'
+        '<li class="toctree-l3"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>'
         "</ul></li>",
     )
     _write(
@@ -92,12 +88,12 @@ def test_accepts_complete_docs_artifacts(tmp_path):
 @pytest.mark.parametrize(
     "link",
     [
-        '<li class="toctree-l3"><a href="training_lifecycle.html">预训练、微调与继续训练</a></li>',
-        '<li class="toctree-l3"><a href="model_workflow_validation.html">全模型建模链路验收</a></li>',
+        '<li class="toctree-l3"><a href="net.html">神经网络 hscredit.core.models.net</a></li>',
+        '<li class="toctree-l3"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>',
     ],
 )
-def test_rejects_missing_training_guide_menu_entry(tmp_path, link):
-    """新增训练指南也必须保留可直接访问的导航入口。"""
+def test_rejects_missing_model_api_menu_entry(tmp_path, link):
+    """模型 API 必须保留可直接访问的导航入口。"""
     test_accepts_complete_docs_artifacts(tmp_path)
     path = tmp_path / "api" / "modeling.html"
     path.write_text(path.read_text(encoding="utf-8").replace(link, ""), encoding="utf-8")
@@ -106,7 +102,7 @@ def test_rejects_missing_training_guide_menu_entry(tmp_path, link):
 
 
 def test_rejects_nested_or_reordered_model_menu(tmp_path):
-    """模型菜单必须按顺序直接生成四篇指南和十个 API 入口。"""
+    """模型菜单必须按顺序直接生成十个带模块路径的 API 入口。"""
     _write(
         tmp_path / "api" / "modeling.html",
         '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
@@ -114,8 +110,8 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
         '<li class="toctree-l4"><a href="models.html#classical">经典模型</a></li>'
         '<li class="toctree-l4"><a href="models.html#rules">规则器</a></li>'
         "</ul></li>"
-        '<li class="toctree-l3"><a href="boosting.html">Boosting</a></li>'
-        '<li class="toctree-l3"><a href="tuning.html">超参数调优</a></li>'
+        '<li class="toctree-l3"><a href="boosting.html">提升模型 hscredit.core.models.boosting</a></li>'
+        '<li class="toctree-l3"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>'
         "</ul></li>",
     )
 
@@ -123,7 +119,7 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
 
     assert any(
         "模型菜单" in error
-        and "经典模型、Boosting、表格神经网络、预训练、微调与继续训练、全模型建模链路验收、规则器、评分卡、概率校准、模型可解释性、损失函数与评估指标、评估指标、超参数调优"
+        and "经典模型 hscredit.core.models.classical、提升模型 hscredit.core.models.boosting、神经网络 hscredit.core.models.net、规则模型 hscredit.core.models.rules、评分卡 hscredit.core.models.scorecard、概率校准 hscredit.core.models.calibration、模型解释 hscredit.core.models.explainability、损失函数 hscredit.core.models.losses、评估指标 hscredit.core.models.losses、参数搜索 hscredit.core.models.tuning"
         in error
         for error in errors
     )

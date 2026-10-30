@@ -296,9 +296,10 @@ def _detect_bad_rate_trend(feature_table: pd.DataFrame) -> str:
     # 通过标签排除缺失值和特殊值分箱
     label_col = "分箱标签" if "分箱标签" in working.columns else "分箱"
     if label_col in working.columns:
-        working = working[
-            ~working[label_col].apply(_is_missing_bin_label) & ~working[label_col].apply(_is_special_bin_label)
-        ]
+        # 空字符串列的 apply 会保留原 dtype；显式转为布尔掩码后再筛选。
+        missing_mask = working[label_col].apply(_is_missing_bin_label).astype(bool)
+        special_mask = working[label_col].apply(_is_special_bin_label).astype(bool)
+        working = working.loc[~missing_mask & ~special_mask]
 
     rates = pd.to_numeric(working["坏样本率"], errors="coerce").dropna().to_numpy()
     if len(rates) <= 1:
