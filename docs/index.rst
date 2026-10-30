@@ -91,6 +91,7 @@ hscredit 文档
    标签处理 <overdue_labels>
    规则置换 <rule_swap_approval>
    分析参数 <analysis_parameters>
+   接口约定 <api/conventions>
    并行计算 <parallelism>
 
 .. toctree::

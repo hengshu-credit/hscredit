@@ -91,14 +91,17 @@ TabPFN 的混合精度推理可能产生批量相关的数值差异；加总校�
 
 .. note::
 
-   ``ExcelWriter`` / ``dataframe2excel`` 见 :doc:`excel`；规则挖掘器在下方
-   ``hscredit.report.mining`` 小节统一说明。
+   ``ExcelWriter`` / ``dataframe2excel`` 见 :doc:`excel`；规则挖掘器见子包 :doc:`mining`。
 
-.. rubric:: 规则挖掘 ``hscredit.report.mining``
+.. toctree::
+   :maxdepth: 2
 
-单特征 / 多特征交叉 / 多标签规则挖掘器与树规则提取器。
+   mining
 
-.. automodule:: hscredit.report.mining
-   :members:
-   :imported-members:
-   :show-inheritance:
+.. raw:: html
+
+   <script>
+   if (window.location.hash.startsWith('#hscredit.report.mining.')) {
+       window.location.replace('mining.html' + window.location.hash);
+   }
+   </script>

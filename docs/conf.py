@@ -105,7 +105,8 @@ intersphinx_disabled_reftypes = ["*"]
 html_theme = "sphinx_rtd_theme"
 
 html_theme_options = {
-    "navigation_depth": 5,
+    # API → core → models → losses → metrics → 类 → 方法。
+    "navigation_depth": 7,
     "collapse_navigation": False,
     "titles_only": False,
     # 衡枢真信品牌：深靛蓝导航头，使霓虹 Logo 发光（具体渐变与发光在 custom.css 中）

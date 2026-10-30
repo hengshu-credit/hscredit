@@ -13,6 +13,7 @@ class ApiLayoutParser(HTMLParser):
         self.descriptions = []
         self.links = {}
         self.objects = {}
+        self.page_levels = set()
         self.field_depth = 0
         self.code_depth = 0
         self.unrendered = []
@@ -21,18 +22,23 @@ class ApiLayoutParser(HTMLParser):
         attrs = dict(attrs)
         classes = (attrs.get("class") or "").split()
         if tag == "li":
-            self.lists.append(next((int(c[9:]) for c in classes if c.startswith("toctree-l")), None))
-        elif tag == "a" and self.lists and self.lists[-1]:
+            self.lists.append(
+                (next((int(c[9:]) for c in classes if c.startswith("toctree-l")), None), "current" in classes)
+            )
+        elif tag == "a" and self.lists and self.lists[-1][0]:
+            level, current = self.lists[-1]
             href = attrs.get("href", "")
+            if href == "#" and current:
+                self.page_levels.add(level)
             if href.startswith("#hscredit."):
-                self.links[href[1:]] = self.lists[-1]
+                self.links[href[1:]] = level
         elif tag == "dl":
             self.descriptions.append(classes)
             if "field-list" in classes:
                 self.field_depth += 1
         elif tag == "dt" and attrs.get("id", "").startswith("hscredit."):
-            nested = any("class" in cs or "exception" in cs for cs in self.descriptions[:-1])
-            self.objects[attrs["id"]] = 5 if nested else 4
+            ancestors = sum("class" in cs or "exception" in cs for cs in self.descriptions[:-1])
+            self.objects[attrs["id"]] = 1 + ancestors
         elif tag in {"pre", "code"}:
             self.code_depth += 1
 
@@ -56,10 +62,16 @@ def collect_api_layout_errors(build_dir):
     for path in sorted((Path(build_dir) / "api").glob("*.html")):
         parser = ApiLayoutParser()
         parser.feed(path.read_text(encoding="utf-8"))
-        for anchor, expected in parser.objects.items():
-            actual = parser.links.get(anchor)
-            if actual != expected:
-                errors.append(f"{path.name}：{anchor} 应位于第 {expected} 层目录，实际为 {actual}")
+        if parser.objects:
+            if len(parser.page_levels) != 1:
+                errors.append(f"{path.name}：无法确定唯一的 API 页面目录入口层级：{sorted(parser.page_levels)}")
+            else:
+                page_level = next(iter(parser.page_levels))
+                for anchor, offset in parser.objects.items():
+                    expected = page_level + offset
+                    actual = parser.links.get(anchor)
+                    if actual != expected:
+                        errors.append(f"{path.name}：{anchor} 应位于第 {expected} 层目录，实际为 {actual}")
         for text in parser.unrendered:
             errors.append(f"{path.name}：参数标记未解析：{text[:120]}")
     return errors

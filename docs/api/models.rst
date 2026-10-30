@@ -3,7 +3,7 @@
 模型 API 导航
 =============
 
-模型 API 已按用途拆分为以下页面：
+模型 API 位于 :doc:`core` 下的 :doc:`modeling`，按源码子包拆分为以下页面：
 
 * :doc:`classical_models`
 * :doc:`boosting`
@@ -13,8 +13,9 @@
 * :doc:`calibration`
 * :doc:`explainability`
 * :doc:`losses`
-* :doc:`model_metrics`
 * :doc:`tuning`
+
+模型评估对象在 ``losses`` 子包中，见 :doc:`model_metrics`。
 
 模型报告位于 :doc:`report`。
 

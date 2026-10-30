@@ -20,17 +20,66 @@ _EXPECTED_MODEL_MENU = (
     "概率校准 hscredit.core.models.calibration",
     "模型解释 hscredit.core.models.explainability",
     "损失函数 hscredit.core.models.losses",
-    "评估指标 hscredit.core.models.losses",
     "参数搜索 hscredit.core.models.tuning",
 )
+_EXPECTED_PACKAGE_MENUS = {
+    "api/index.html": (
+        "API 参考",
+        1,
+        (
+            "core.html",
+            "report.html",
+            "database.html",
+            "excel.html",
+            "utils.html",
+            "skills_runtime.html",
+            "exceptions.html",
+        ),
+    ),
+    "api/core.html": (
+        "核心模块 hscredit.core",
+        2,
+        (
+            "binning.html",
+            "encoders.html",
+            "selectors.html",
+            "modeling.html",
+            "metrics.html",
+            "feature_engineering.html",
+            "eda.html",
+            "viz.html",
+            "rules.html",
+            "financial.html",
+            "model_selection.html",
+        ),
+    ),
+    "api/modeling.html": (
+        "模型 hscredit.core.models",
+        3,
+        (
+            "classical_models.html",
+            "boosting.html",
+            "net.html",
+            "model_rules.html",
+            "scorecard.html",
+            "calibration.html",
+            "explainability.html",
+            "losses.html",
+            "tuning.html",
+        ),
+    ),
+    "api/report.html": ("报告 hscredit.report", 2, ("mining.html",)),
+    "api/losses.html": ("损失函数 hscredit.core.models.losses", 4, ("model_metrics.html",)),
+}
 _EXPECTED_DATABASE_GUIDE_TITLE = "数据库"
 
 
-class _LevelFiveLinkParser(HTMLParser):
-    """收集真正位于 ``li.toctree-l5`` 内的导航链接。"""
+class _LevelLinkParser(HTMLParser):
+    """收集真正位于指定导航层级内的链接，排除正文中的同名锚点。"""
 
-    def __init__(self) -> None:
+    def __init__(self, level: int) -> None:
         super().__init__()
+        self.level = level
         self._li_stack: list[bool] = []
         self.hrefs: set[str] = set()
 
@@ -38,7 +87,7 @@ class _LevelFiveLinkParser(HTMLParser):
         attributes = dict(attrs)
         if tag == "li":
             classes = (attributes.get("class") or "").split()
-            self._li_stack.append("toctree-l5" in classes)
+            self._li_stack.append(f"toctree-l{self.level}" in classes)
         elif tag == "a" and any(self._li_stack):
             href = attributes.get("href")
             if href:
@@ -49,14 +98,16 @@ class _LevelFiveLinkParser(HTMLParser):
             self._li_stack.pop()
 
 
-class _ModelMenuParser(HTMLParser):
-    """收集“模型”二级菜单下直接生成的三级菜单文字。"""
+class _PackageMenuParser(HTMLParser):
+    """收集包目录的直接子项，核对父子归属而非仅检查页面是否存在。"""
 
-    def __init__(self) -> None:
+    def __init__(self, label: str, level: int) -> None:
         super().__init__()
+        self.label = label
+        self.level = level
         self._li_stack: list[dict[str, Any]] = []
-        self._anchor: tuple[int, list[str]] | None = None
-        self.items: list[str] = []
+        self._anchor: tuple[int, list[str], str] | None = None
+        self.items: list[tuple[str, str]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
@@ -64,13 +115,13 @@ class _ModelMenuParser(HTMLParser):
             self._li_stack.append(
                 {
                     "classes": set((attributes.get("class") or "").split()),
-                    "is_model": False,
+                    "is_parent": False,
                 }
             )
         elif tag == "a" and self._li_stack:
             classes = self._li_stack[-1]["classes"]
-            if "toctree-l2" in classes or "toctree-l3" in classes:
-                self._anchor = (len(self._li_stack) - 1, [])
+            if f"toctree-l{self.level}" in classes or f"toctree-l{self.level + 1}" in classes:
+                self._anchor = (len(self._li_stack) - 1, [], attributes.get("href", ""))
 
     def handle_data(self, data: str) -> None:
         if self._anchor is not None:
@@ -78,16 +129,21 @@ class _ModelMenuParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "a" and self._anchor is not None:
-            stack_index, text_parts = self._anchor
+            stack_index, text_parts, href = self._anchor
             self._anchor = None
             if stack_index >= len(self._li_stack):
                 return
             item = self._li_stack[stack_index]
             label = " ".join("".join(text_parts).split())
-            if "toctree-l2" in item["classes"] and label == "模型":
-                item["is_model"] = True
-            elif "toctree-l3" in item["classes"] and any(parent["is_model"] for parent in self._li_stack[:stack_index]):
-                self.items.append(label)
+            if f"toctree-l{self.level}" in item["classes"] and label == self.label:
+                item["is_parent"] = True
+            elif (
+                f"toctree-l{self.level + 1}" in item["classes"]
+                and stack_index > 0
+                and self._li_stack[stack_index - 1]["is_parent"]
+                and "#" not in href
+            ):
+                self.items.append((label, href.rsplit("/", 1)[-1]))
         elif tag == "li" and self._li_stack:
             self._li_stack.pop()
 
@@ -292,31 +348,39 @@ def collect_search_runtime_errors(build_dir: Path) -> list[str]:
 def collect_validation_errors(build_dir: Path) -> list[str]:
     """返回文档构建产物违反导航与搜索契约的错误列表。"""
     errors: list[str] = []
-    modeling_html = _read(build_dir, "api/modeling.html", errors)
+    package_pages = {path: _read(build_dir, path, errors) for path in _EXPECTED_PACKAGE_MENUS}
     boosting_html = _read(build_dir, "api/boosting.html", errors)
+    model_metrics_html = _read(build_dir, "api/model_metrics.html", errors)
     eda_html = _read(build_dir, "api/eda.html", errors)
     database_html = _read(build_dir, "database.html", errors)
     database_api_html = _read(build_dir, "api/database.html", errors)
-    tooling_html = _read(build_dir, "api/tooling.html", errors)
     search_index = _read(build_dir, "searchindex.js", errors)
     language_data = _read(build_dir, "_static/language_data.js", errors)
     custom_css = _read(build_dir, "_static/custom.css", errors)
 
-    model_menu_parser = _ModelMenuParser()
-    model_menu_parser.feed(modeling_html)
-    if tuple(model_menu_parser.items) != _EXPECTED_MODEL_MENU:
-        expected = "、".join(_EXPECTED_MODEL_MENU)
-        actual = "、".join(model_menu_parser.items) or "未生成"
-        errors.append(f"模型菜单必须依次生成 {len(_EXPECTED_MODEL_MENU)} 个直接子项：{expected}；实际为：{actual}")
+    for path, (label, level, expected_pages) in _EXPECTED_PACKAGE_MENUS.items():
+        parser = _PackageMenuParser(label, level)
+        parser.feed(package_pages[path])
+        actual_pages = tuple(href for _, href in parser.items)
+        if actual_pages != expected_pages:
+            errors.append(f"API 包目录 {label} 的直接子项必须按代码结构排列：{expected_pages}；实际为：{actual_pages}")
+        if path == "api/modeling.html" and tuple(name for name, _ in parser.items) != _EXPECTED_MODEL_MENU:
+            expected = "、".join(_EXPECTED_MODEL_MENU)
+            actual = "、".join(name for name, _ in parser.items) or "未生成"
+            errors.append(f"模型菜单必须依次生成 {len(_EXPECTED_MODEL_MENU)} 个直接子项：{expected}；实际为：{actual}")
 
-    level_five_parser = _LevelFiveLinkParser()
-    level_five_parser.feed(boosting_html)
+    method_parser = _LevelLinkParser(6)
+    method_parser.feed(boosting_html)
     required_method_links = {
         "#hscredit.core.models.boosting.xgboost_model.XGBoost.fit",
         "#hscredit.core.models.boosting.xgboost_model.XGBoost.predict",
     }
-    if not required_method_links.issubset(level_five_parser.hrefs):
-        errors.append("侧边栏第 5 层未同时生成 XGBoost.fit() 与 predict() 方法入口")
+    if not required_method_links.issubset(method_parser.hrefs):
+        errors.append("侧边栏第 6 层未同时生成 XGBoost.fit() 与 predict() 方法入口")
+    metric_method_parser = _LevelLinkParser(7)
+    metric_method_parser.feed(model_metrics_html)
+    if "#hscredit.core.models.BaseMetric.evaluate" not in metric_method_parser.hrefs:
+        errors.append("侧边栏第 7 层未生成 losses.metrics 中 BaseMetric.evaluate() 方法入口")
 
     if "hscredit.core.eda.feature_summary" not in eda_html:
         errors.append("feature_summary 的 API 页面锚点缺失")
@@ -343,8 +407,6 @@ def collect_validation_errors(build_dir: Path) -> list[str]:
     )
     if not all(shortcut in database_api_html for shortcut in required_shortcuts):
         errors.append("数据库 API 页面缺少 query、read_query 或 stream_write 类外快捷操作锚点")
-    if 'href="database.html"' not in tooling_html or ">数据库" not in tooling_html:
-        errors.append("数据库 API 导航未进入报告与工具侧边栏")
     if not _has_database_result(parsed_search_index):
         errors.append("Database 搜索结果未包含可跳转的 API 页面锚点")
 

@@ -1,13 +1,13 @@
-报告与工具
-==========
+:orphan:
 
-分析报告、Excel 输出、通用工具与异常类型 API。
+报告与工具导航（旧入口）
+========================
 
-.. toctree::
-   :maxdepth: 2
+API 已按包目录组织，以下模块直接位于 :doc:`index` 下。
 
-   report
-   database
-   excel
-   utils
-   exceptions
+* :doc:`report`
+* :doc:`database`
+* :doc:`excel`
+* :doc:`utils`
+* :doc:`skills_runtime`
+* :doc:`exceptions`

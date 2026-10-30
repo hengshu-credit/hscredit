@@ -23,28 +23,64 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _write_package_menu(tmp_path, path, label, level, children):
+    links = "".join(f'<li class="toctree-l{level + 1}"><a href="{child}.html">{child}</a></li>' for child in children)
+    _write(tmp_path / "api" / path, f'<li class="toctree-l{level}"><a href="#">{label}</a><ul>{links}</ul></li>')
+
+
 def test_accepts_complete_docs_artifacts(tmp_path):
     """完整产物应通过导航、搜索运行时与布局契约校验。"""
+    _write_package_menu(
+        tmp_path,
+        "index.html",
+        "API 参考",
+        1,
+        ["core", "report", "database", "excel", "utils", "skills_runtime", "exceptions"],
+    )
+    _write_package_menu(
+        tmp_path,
+        "core.html",
+        "核心模块 hscredit.core",
+        2,
+        [
+            "binning",
+            "encoders",
+            "selectors",
+            "modeling",
+            "metrics",
+            "feature_engineering",
+            "eda",
+            "viz",
+            "rules",
+            "financial",
+            "model_selection",
+        ],
+    )
+    _write_package_menu(tmp_path, "report.html", "报告 hscredit.report", 2, ["mining"])
+    _write_package_menu(tmp_path, "losses.html", "损失函数 hscredit.core.models.losses", 4, ["model_metrics"])
+    _write(
+        tmp_path / "api" / "model_metrics.html",
+        '<li class="toctree-l7"><a href="#hscredit.core.models.BaseMetric.evaluate">evaluate</a></li>',
+    )
     _write(
         tmp_path / "api" / "modeling.html",
-        '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
-        '<li class="toctree-l3"><a href="classical_models.html">经典模型 hscredit.core.models.classical</a></li>'
-        '<li class="toctree-l3"><a href="boosting.html">提升模型 hscredit.core.models.boosting</a></li>'
-        '<li class="toctree-l3"><a href="net.html">神经网络 hscredit.core.models.net</a></li>'
-        '<li class="toctree-l3"><a href="model_rules.html">规则模型 hscredit.core.models.rules</a></li>'
-        '<li class="toctree-l3"><a href="scorecard.html">评分卡 hscredit.core.models.scorecard</a></li>'
-        '<li class="toctree-l3"><a href="calibration.html">概率校准 hscredit.core.models.calibration</a></li>'
-        '<li class="toctree-l3"><a href="explainability.html">模型解释 hscredit.core.models.explainability</a></li>'
-        '<li class="toctree-l3"><a href="losses.html">损失函数 hscredit.core.models.losses</a></li>'
-        '<li class="toctree-l3"><a href="model_metrics.html">评估指标 hscredit.core.models.losses</a></li>'
-        '<li class="toctree-l3"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>'
+        '<li class="toctree-l3 current"><a href="#">模型 hscredit.core.models</a><ul>'
+        '<li class="toctree-l4"><a href="classical_models.html">经典模型 hscredit.core.models.classical</a></li>'
+        '<li class="toctree-l4"><a href="boosting.html">提升模型 hscredit.core.models.boosting</a></li>'
+        '<li class="toctree-l4"><a href="net.html">神经网络 hscredit.core.models.net</a></li>'
+        '<li class="toctree-l4"><a href="model_rules.html">规则模型 hscredit.core.models.rules</a></li>'
+        '<li class="toctree-l4"><a href="scorecard.html">评分卡 hscredit.core.models.scorecard</a></li>'
+        '<li class="toctree-l4"><a href="calibration.html">概率校准 hscredit.core.models.calibration</a></li>'
+        '<li class="toctree-l4"><a href="explainability.html">模型解释 hscredit.core.models.explainability</a></li>'
+        '<li class="toctree-l4"><a href="losses.html">损失函数 hscredit.core.models.losses</a></li>'
+        '<li class="toctree-l4"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>'
         "</ul></li>",
     )
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l5"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.fit">'
+        '<li class="toctree-l6"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.fit">'
         "fit</a></li>"
-        '<li class="toctree-l5"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.predict">'
+        '<li class="toctree-l6"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.predict">'
         "predict</a></li>",
     )
     _write(
@@ -63,10 +99,6 @@ def test_accepts_complete_docs_artifacts(tmp_path):
         '<dt id="hscredit.database.shortcuts.query">query</dt>'
         '<dt id="hscredit.database.shortcuts.read_query">read_query</dt>'
         '<dt id="hscredit.database.shortcuts.stream_write">stream_write</dt>',
-    )
-    _write(
-        tmp_path / "api" / "tooling.html",
-        '<li class="toctree-l2"><a href="database.html">数据库</a></li>',
     )
     _write(
         tmp_path / "searchindex.js",
@@ -88,8 +120,8 @@ def test_accepts_complete_docs_artifacts(tmp_path):
 @pytest.mark.parametrize(
     "link",
     [
-        '<li class="toctree-l3"><a href="net.html">神经网络 hscredit.core.models.net</a></li>',
-        '<li class="toctree-l3"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>',
+        '<li class="toctree-l4"><a href="net.html">神经网络 hscredit.core.models.net</a></li>',
+        '<li class="toctree-l4"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>',
     ],
 )
 def test_rejects_missing_model_api_menu_entry(tmp_path, link):
@@ -102,16 +134,16 @@ def test_rejects_missing_model_api_menu_entry(tmp_path, link):
 
 
 def test_rejects_nested_or_reordered_model_menu(tmp_path):
-    """模型菜单必须按顺序直接生成十个带模块路径的 API 入口。"""
+    """模型菜单必须按顺序直接生成九个带模块路径的 API 入口。"""
     _write(
         tmp_path / "api" / "modeling.html",
-        '<li class="toctree-l2 current"><a href="#">模型</a><ul>'
-        '<li class="toctree-l3"><a href="models.html">模型 hscredit.core.models</a><ul>'
+        '<li class="toctree-l3 current"><a href="#">模型 hscredit.core.models</a><ul>'
+        '<li class="toctree-l4"><a href="models.html">模型 hscredit.core.models</a><ul>'
         '<li class="toctree-l4"><a href="models.html#classical">经典模型</a></li>'
         '<li class="toctree-l4"><a href="models.html#rules">规则器</a></li>'
         "</ul></li>"
-        '<li class="toctree-l3"><a href="boosting.html">提升模型 hscredit.core.models.boosting</a></li>'
-        '<li class="toctree-l3"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>'
+        '<li class="toctree-l4"><a href="boosting.html">提升模型 hscredit.core.models.boosting</a></li>'
+        '<li class="toctree-l4"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>'
         "</ul></li>",
     )
 
@@ -119,10 +151,118 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
 
     assert any(
         "模型菜单" in error
-        and "经典模型 hscredit.core.models.classical、提升模型 hscredit.core.models.boosting、神经网络 hscredit.core.models.net、规则模型 hscredit.core.models.rules、评分卡 hscredit.core.models.scorecard、概率校准 hscredit.core.models.calibration、模型解释 hscredit.core.models.explainability、损失函数 hscredit.core.models.losses、评估指标 hscredit.core.models.losses、参数搜索 hscredit.core.models.tuning"
+        and "经典模型 hscredit.core.models.classical、提升模型 hscredit.core.models.boosting、神经网络 hscredit.core.models.net、规则模型 hscredit.core.models.rules、评分卡 hscredit.core.models.scorecard、概率校准 hscredit.core.models.calibration、模型解释 hscredit.core.models.explainability、损失函数 hscredit.core.models.losses、参数搜索 hscredit.core.models.tuning"
         in error
         for error in errors
     )
+
+
+@pytest.mark.parametrize(
+    "page, child, label",
+    [("core", "modeling", "核心模块"), ("report", "mining", "报告"), ("losses", "model_metrics", "损失函数")],
+)
+def test_rejects_package_outside_its_code_parent(tmp_path, page, child, label):
+    """子包链接移到父包外，即使页面仍存在，也不能通过结构校验。"""
+    import re
+
+    test_accepts_complete_docs_artifacts(tmp_path)
+    path = tmp_path / "api" / f"{page}.html"
+    source = path.read_text(encoding="utf-8")
+    pattern = rf'<li class="toctree-l\d"><a href="{child}\.html">[^<]*</a></li>'
+    misplaced = re.search(pattern, source).group()
+    path.write_text(re.sub(pattern, "", source) + misplaced, encoding="utf-8")
+    assert any("API 包目录" in error and label in error for error in collect_validation_errors(tmp_path))
+
+
+@pytest.mark.parametrize("extra", ["modeling", "tooling"])
+def test_rejects_functional_group_as_top_level_package(tmp_path, extra):
+    """API 顶层不能重新混入并列的模型或跨目录工具分组。"""
+    test_accepts_complete_docs_artifacts(tmp_path)
+    path = tmp_path / "api" / "index.html"
+    source = path.read_text(encoding="utf-8")
+    source = source.replace("</ul>", f'<li class="toctree-l2"><a href="{extra}.html">{extra}</a></li></ul>', 1)
+    path.write_text(source, encoding="utf-8")
+    assert any("API 包目录 API 参考" in error for error in collect_validation_errors(tmp_path))
+
+
+@pytest.mark.parametrize("level", [5, 7])
+def test_rejects_wrong_model_method_depth(tmp_path, level):
+    """模型目录加深后，第六层仍必须可展开 fit/predict。"""
+    test_accepts_complete_docs_artifacts(tmp_path)
+    path = tmp_path / "api" / "boosting.html"
+    path.write_text(path.read_text(encoding="utf-8").replace("toctree-l6", f"toctree-l{level}"), encoding="utf-8")
+    assert any("第 6 层" in error for error in collect_validation_errors(tmp_path))
+
+
+def test_rejects_truncated_loss_metric_methods(tmp_path):
+    test_accepts_complete_docs_artifacts(tmp_path)
+    path = tmp_path / "api" / "model_metrics.html"
+    path.write_text('<main id="hscredit.core.models.BaseMetric.evaluate">evaluate</main>', encoding="utf-8")
+    assert any("第 7 层" in error for error in collect_validation_errors(tmp_path))
+
+
+def test_api_package_indexes_cover_source_packages():
+    """API 包索引必须覆盖实际公开目录，目录新增或挂错父级都会失败。"""
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    package_indexes = {
+        "hscredit": (
+            "index",
+            {
+                "core": "core",
+                "report": "report",
+                "database": "database",
+                "excel": "excel",
+                "utils": "utils",
+                "skills_runtime": "skills_runtime",
+            },
+        ),
+        "hscredit/core": (
+            "core",
+            {
+                "binning": "binning",
+                "encoders": "encoders",
+                "selectors": "selectors",
+                "models": "modeling",
+                "metrics": "metrics",
+                "feature_engineering": "feature_engineering",
+                "eda": "eda",
+                "viz": "viz",
+                "rules": "rules",
+                "financial": "financial",
+            },
+        ),
+        "hscredit/core/models": (
+            "modeling",
+            {
+                "classical": "classical_models",
+                "boosting": "boosting",
+                "net": "net",
+                "rules": "model_rules",
+                "scorecard": "scorecard",
+                "calibration": "calibration",
+                "explainability": "explainability",
+                "losses": "losses",
+                "tuning": "tuning",
+            },
+        ),
+        "hscredit/report": ("report", {"mining": "mining"}),
+    }
+    for package, (index, pages) in package_indexes.items():
+        actual = {p.parent.name for p in (root / package).glob("*/__init__.py") if not p.parent.name.startswith("_")}
+        assert actual == set(pages), package
+        source = (root / "docs/api" / f"{index}.rst").read_text(encoding="utf-8")
+        blocks = re.findall(r"(?m)^\.\. toctree::\n((?:[ \t]+[^\n]*\n|\n)*)", source)
+        entries = {
+            line.strip()
+            for block in blocks
+            for line in block.splitlines()
+            if line.strip() and not line.strip().startswith(":")
+        }
+        assert set(pages.values()) <= entries, package
+        for page in pages.values():
+            assert (root / "docs/api" / f"{page}.rst").is_file()
 
 
 def test_reports_broken_search_runtime_and_navigation(tmp_path):
@@ -138,7 +278,7 @@ def test_reports_broken_search_runtime_and_navigation(tmp_path):
 
     errors = collect_validation_errors(tmp_path)
 
-    assert any("第 5 层" in error for error in errors)
+    assert any("第 6 层" in error for error in errors)
     assert any("feature_summary" in error for error in errors)
     assert any("ChineseStemmer" in error for error in errors)
     assert any("3px" in error for error in errors)
@@ -166,7 +306,7 @@ def test_rejects_database_docs_without_navigation_or_search_result(tmp_path):
 
     errors = collect_validation_errors(tmp_path)
 
-    assert any("数据库 API 导航" in error for error in errors)
+    assert any("API 包目录 API 参考" in error and "database.html" in error for error in errors)
     assert any("Database" in error and "搜索结果" in error for error in errors)
 
 
@@ -202,7 +342,7 @@ def test_reports_current_nav_rule_that_drops_reserved_border(tmp_path):
     """当前项规则必须覆盖 RTD 的 border:none，保持点击前后文字位置一致。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l5"><a href="#XGBoost.fit">fit</a></li>',
+        '<li class="toctree-l6"><a href="#XGBoost.fit">fit</a></li>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(tmp_path / "searchindex.js", 'Search.setIndex({"terms":{"feature_summary":1}})')
@@ -221,8 +361,8 @@ def test_rejects_feature_summary_outside_searchable_api_objects(tmp_path):
     """无关元数据中的函数名不能冒充可跳转的 API 搜索结果。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l5"><a href="#XGBoost.fit">fit</a></li>'
-        '<li class="toctree-l5"><a href="#XGBoost.predict">predict</a></li>',
+        '<li class="toctree-l6"><a href="#XGBoost.fit">fit</a></li>'
+        '<li class="toctree-l6"><a href="#XGBoost.predict">predict</a></li>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(
@@ -242,11 +382,11 @@ def test_rejects_feature_summary_outside_searchable_api_objects(tmp_path):
     assert any("搜索结果" in error and "feature_summary" in error for error in errors)
 
 
-def test_rejects_method_anchors_outside_level_five_navigation(tmp_path):
-    """正文锚点与无关第五层条目不能冒充类方法菜单入口。"""
+def test_rejects_method_anchors_outside_level_six_navigation(tmp_path):
+    """正文锚点与无关第六层条目不能冒充类方法菜单入口。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l5"><a href="#unrelated">unrelated</a></li>'
+        '<li class="toctree-l6"><a href="#unrelated">unrelated</a></li>'
         '<main><a href="#XGBoost.fit">fit</a><a href="#XGBoost.predict">predict</a></main>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
@@ -271,8 +411,8 @@ def test_rejects_later_border_shorthand_in_the_same_rule(tmp_path):
     """同一规则内后出现的 border 简写不得破坏稳定左边框。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l5"><a href="#XGBoost.fit">fit</a></li>'
-        '<li class="toctree-l5"><a href="#XGBoost.predict">predict</a></li>',
+        '<li class="toctree-l6"><a href="#XGBoost.fit">fit</a></li>'
+        '<li class="toctree-l6"><a href="#XGBoost.predict">predict</a></li>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(

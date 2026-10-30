@@ -3,6 +3,7 @@
 import runpy
 from pathlib import Path
 
+import pytest
 from docutils import nodes
 from docutils.core import publish_doctree
 
@@ -90,7 +91,8 @@ def test_literal_with_accidental_inner_spaces_is_rendered():
     assert [node.astext() for node in document.findall(nodes.literal)] == ["[{'type': 'cell', 'name': '金额'}]"]
 
 
-def test_api_layout_checks_actual_object_parentage(tmp_path):
+@pytest.mark.parametrize("page_level", [2, 3, 4, 5])
+def test_api_layout_checks_actual_object_parentage(tmp_path, page_level):
     from scripts.validate_api_layout import collect_api_layout_errors
 
     api = tmp_path / "api"
@@ -100,13 +102,16 @@ def test_api_layout_checks_actual_object_parentage(tmp_path):
         '<dl class="py method"><dt id="hscredit.Example.fit">方法</dt></dl></dd></dl>'
     )
     nav = (
-        '<li class="toctree-l4"><a href="#hscredit.Example">类</a><ul>'
-        '<li class="toctree-l5"><a href="#hscredit.Example.fit">方法</a></li></ul></li>'
+        f'<li class="toctree-l{page_level} current"><a href="#">模块</a><ul>'
+        f'<li class="toctree-l{page_level + 1}"><a href="#hscredit.Example">类</a><ul>'
+        f'<li class="toctree-l{page_level + 2}"><a href="#hscredit.Example.fit">方法</a></li></ul></li></ul></li>'
     )
     path = api / "example.html"
     path.write_text(nav + body, encoding="utf-8")
     assert collect_api_layout_errors(tmp_path) == []
-    path.write_text(nav.replace("toctree-l4", "toctree-l5") + body, encoding="utf-8")
-    assert any("hscredit.Example 应位于第 4 层" in error for error in collect_api_layout_errors(tmp_path))
+    path.write_text(nav.replace(f"toctree-l{page_level + 1}", f"toctree-l{page_level + 2}") + body, encoding="utf-8")
+    assert any(
+        f"hscredit.Example 应位于第 {page_level + 1} 层" in error for error in collect_api_layout_errors(tmp_path)
+    )
     path.write_text(body, encoding="utf-8")
-    assert len(collect_api_layout_errors(tmp_path)) == 2
+    assert any("API 页面目录入口" in error for error in collect_api_layout_errors(tmp_path))

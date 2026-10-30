@@ -1,7 +1,8 @@
-模型
-====
+模型 ``hscredit.core.models``
+=============================
 
-模型训练、规则器、评分卡、概率校准、可解释性、损失函数、评估指标与自动调参 API。
+对应 ``hscredit/core/models/``，下列页面与其公开子包一一对应。
+模型评估对象属于 ``losses`` 子包，通用指标函数见 :doc:`metrics`。
 
 .. toctree::
    :maxdepth: 2
@@ -14,5 +15,4 @@
    calibration
    explainability
    losses
-   model_metrics
    tuning

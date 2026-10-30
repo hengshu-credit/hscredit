@@ -1,6 +1,11 @@
 损失函数 ``hscredit.core.models.losses``
 ========================================================================
 
+.. toctree::
+   :maxdepth: 1
+
+   model_metrics
+
 .. autofunction:: hscredit.core.models.get_loss
 
 .. autofunction:: hscredit.core.models.list_losses

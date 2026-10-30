@@ -73,10 +73,10 @@ F03 的内存上限是执行前的保守估算，包含命中掩码、索引和�
 
 以下为本地复核产物，未包含在 Git 提交中；远程仓库保留[可复核的测试汇总](validation/current-state-repairs.json)，运行验证脚本可重新生成产物：
 
-- [逐项真实数据验证结果](../.audit_tmp/prepush-review/real-data/verification.json)
-- [模型报告](../.audit_tmp/prepush-review/real-data/模型报告.xlsx)
-- [特征验证](../.audit_tmp/prepush-review/real-data/特征验证.xlsx)
-- [客群监控](../.audit_tmp/prepush-review/real-data/客群监控.xlsx)
+- 逐项真实数据验证结果：`.audit_tmp/prepush-review/real-data/verification.json`
+- 模型报告：`.audit_tmp/prepush-review/real-data/模型报告.xlsx`
+- 特征验证：`.audit_tmp/prepush-review/real-data/特征验证.xlsx`
+- 客群监控：`.audit_tmp/prepush-review/real-data/客群监控.xlsx`
 
 ## 五、运行环境与复现命令
 
