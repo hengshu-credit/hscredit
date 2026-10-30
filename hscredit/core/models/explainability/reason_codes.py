@@ -32,7 +32,15 @@ def build_reason_codes(
     feature_map: Optional[Mapping[str, str]] = None,
     reason_map: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> pd.DataFrame:
-    """仅将风险方向一致的不利 SHAP 贡献转换为原因码。"""
+    """仅将风险方向一致的不利 SHAP 贡献转换为原因码。
+
+    :param result: 已计算的 ExplanationResult，包含样本、贡献值及输出尺度。
+    :param risk_direction: ``'higher_output_higher_risk'`` 表示输出越高风险越大；``'higher_output_lower_risk'`` 表示越低风险越大。 默认 ``'higher_output_higher_risk'``。
+    :param keep: 每个样本最多保留的不利贡献原因数，必须为正整数。 默认 ``3``。
+    :param feature_map: 原始字段名到业务名称的映射；None 保留原字段名。 默认 ``None``。
+    :param reason_map: 字段名到原因配置的映射；每项支持 ``code`` 和 ``description``，None 使用默认原因码与描述。
+    :return: 按样本及不利贡献排序的中文原因码表；无不利贡献的样本保留状态行。
+    """
     if risk_direction not in {"higher_output_higher_risk", "higher_output_lower_risk"}:
         raise ValidationError("risk_direction 必须是 higher_output_higher_risk 或 higher_output_lower_risk")
     if not isinstance(keep, int) or keep <= 0:

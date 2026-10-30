@@ -43,6 +43,13 @@ class ModelExplainer:
 
     >>> result = ModelExplainer(model, background_data=X_train).explain(X_test)
     >>> ModelExplainer(model).get_global_report(result)
+
+    :param feature_names: 解释输入字段名及顺序；None 优先从已拟合模型读取。 默认 ``None``。
+    :param model_output: 输出尺度：``'probability'`` 类别概率、``'raw'`` 原始决策值、``'score'`` 信用分、``'prediction'`` 回归预测。 默认 ``'probability'``。
+    :param target_class: 解释的类别标签，必须出现在模型 classes_ 中；回归 prediction 模式不使用。 默认 ``1``。
+    :param max_background: 背景样本量上限，超过时按 random_state 确定性抽样。 默认 ``200``。
+    :param random_state: 背景和解释样本抽样随机种子。 默认 ``42``。
+    :param explainer_type: algorithm 的兼容入口；非空时覆盖 algorithm。 默认 ``None``。
     """
 
     def __init__(
@@ -241,7 +248,14 @@ class ModelExplainer:
         max_evals: Optional[int] = None,
         check_additivity: bool = True,
     ) -> ExplanationResult:
-        """计算选定类别的结构化 SHAP 解释。"""
+        """计算选定类别的结构化 SHAP 解释。
+
+        :param X: 待解释特征数据，字段顺序与模型和背景一致。
+        :param max_samples: 解释样本量上限；None 使用全部输入行。 默认 ``None``。
+        :param max_evals: 排列式解释等算法的评估预算；None 使用内部默认预算。
+        :param check_additivity: 是否检查基准值加 SHAP 贡献和与模型输出一致；失败时抛出 ValidationError。 默认 ``True``。
+        :return: 包含贡献值、基准值、样本身份及审计元数据的 ExplanationResult。
+        """
         frame = self._sample(coerce_explanation_frame(X, self.feature_names), max_samples)
         if self.feature_names is None:
             self.feature_names = list(frame.columns)
@@ -365,7 +379,12 @@ class ModelExplainer:
         return resolved
 
     def compute_shap_values(self, X, check_additivity: bool = True) -> np.ndarray:
-        """计算并返回选定类别的二维 SHAP 数组。"""
+        """计算并返回选定类别的二维 SHAP 数组。
+
+        :param X: 待解释特征数据，与训练字段顺序一致。
+        :param check_additivity: 是否验证 SHAP 加总与模型输出一致。 默认 ``True``。
+        :return: 形状为样本数乘特征数的二维 SHAP 数组。
+        """
         return self.explain(X, check_additivity=check_additivity).values
 
     def get_shap_importance(self, X=None) -> pd.Series:

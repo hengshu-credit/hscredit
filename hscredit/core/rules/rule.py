@@ -432,7 +432,11 @@ class Rule(ParallelizableMixin):
         return result
 
     def predict_batches(self, data: DataFrame, batch_size: int = 10000):
-        """逐块返回命中结果，不拼接全量明细；保留原始索引与行顺序。"""
+        """逐块返回命中结果，不拼接全量明细；保留原始索引与行顺序。
+
+        :param data: 含规则依赖字段的 DataFrame，保持原始行顺序分批计算。
+        :param batch_size: 每批处理行数，必须为正整数。 默认 ``10000``。
+        """
         if not isinstance(batch_size, int) or isinstance(batch_size, bool) or batch_size < 1:
             raise ValueError("batch_size 必须为正整数")
         if not isinstance(data, DataFrame):

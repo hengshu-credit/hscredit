@@ -541,6 +541,10 @@ def feature_cross_heatmap(
     **参考样例**
 
     >>> fig = feature_cross_heatmap(df, 'age', 'income', 'fpd30')
+
+    :param x1: 第一个已拟合特征名；与 x2 成对传入，或改用 features。 默认 ``None``。
+    :param x2: 第二个已拟合特征名；与 x1 成对传入，或改用 features。 默认 ``None``。
+    :param features: 两个特征名的序列，与 x1/x2 互斥。 默认 ``None``。
     """
     feature_x, feature_y = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
     df = df[[feature_x, feature_y, target]].dropna().copy()

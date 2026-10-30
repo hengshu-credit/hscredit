@@ -122,6 +122,10 @@ class ParallelBudget:
 
     **参考样例**
         ``ParallelBudget(available=4, depth=1)`` 表示第一层 worker 可使用 4 个工作预算。
+
+    :param available: 当前调用可用的最大 worker 预算，正整数。
+    :param depth: 当前并行调用嵌套深度，非负整数。
+    :param memory_budget_bytes: 可用内存预检预算，单位字节；None 不指定。 默认 ``None``。
     """
 
     available: int
@@ -140,7 +144,22 @@ class ParallelBudget:
 
 @dataclass(frozen=True)
 class ParallelWorkload:
-    """描述一次批量运算的规模和安全执行能力。"""
+    """描述一次批量运算的规模和安全执行能力。
+
+    :param task_count: 任务数，非负整数。
+    :param rows: 参与计算的样本行数，用于工作量估计。 默认 ``1``。
+    :param columns: 参与计算的字段数，用于工作量估计。 默认 ``1``。
+    :param data_bytes: 输入数据大小估计，单位字节。 默认 ``0``。
+    :param cost_per_item: 单个数据单元的相对计算成本，有限正数。 默认 ``1.0``。
+    :param capability: 任务执行能力：vectorized、process_safe、thread_safe 或 serial_only。 默认 ``'process_safe'``。
+    :param releases_gil: 计算是否释放 Python GIL，用于选择线程后端。 默认 ``False``。
+    :param has_parallel_children: 任务内是否还有并行子任务，用于分配嵌套预算。 默认 ``False``。
+    :param auto_max_workers: 自动调度的 worker 上限；None 不增加此项限制。 默认 ``None``。
+    :param operation: 操作名称，用于计划和诊断。 默认 ``'批量任务'``。
+    :param working_bytes_per_task: 每个任务的工作内存估计，单位字节。 默认 ``0``。
+    :param result_bytes_per_task: 每个任务的结果内存估计，单位字节。 默认 ``0``。
+    :param output_rows_per_task: 每个任务预计输出行数，用于结果规模预检。 默认 ``0``。
+    """
 
     task_count: int
     rows: int = 1
@@ -194,7 +213,20 @@ class ParallelWorkload:
 
 @dataclass(frozen=True)
 class ParallelExecutionPlan:
-    """一次并行调用的只读有效执行计划。"""
+    """一次并行调用的只读有效执行计划。
+
+    :param requested_workers: 按用户配置解析出的并行数。
+    :param workers: 考虑工作量、嵌套和资源约束后的有效并行数。
+    :param backend: 实际后端名称；None 表示未指定后端。
+    :param adaptive: 是否启用自动工作量调度。
+    :param estimated_work: 由行数、列数及单位计算成本得到的工作量估计。
+    :param data_bytes: 输入数据大小估计，单位字节。
+    :param child_budget: 分配给每个子任务的并行预算。
+    :param operation: 操作名称。
+    :param estimated_peak_bytes: 预计峰值内存，单位字节，不代表实测占用。
+    :param memory_budget_bytes: 用于预检的内存预算字节数；None 不限制此项。 默认 ``None``。
+    :param max_inflight_tasks: 同时在途任务数量上限；None 未指定。 默认 ``None``。
+    """
 
     requested_workers: int
     workers: int
@@ -245,6 +277,11 @@ def resolve_n_jobs(
 
     ``-1`` 大约使用物理 CPU 的 80%，并在多核环境中保留一个 CPU。
     正整数表示固定工作数， ``0`` 到 ``1`` 之间的小数表示物理 CPU 比例。
+
+    :param n_jobs: 并行预算：-1 自动，1 或 None 串行，正整数为上限，(0, 1) 浮点数为物理核比例。
+    :param task_count: 可选任务数，用于限制有效并行数。 默认 ``None``。
+    :param cpu_count: 显式物理核数，主要用于确定性规划；None 自动检测。 默认 ``None``。
+    :param available_budget: 外层允许的并行预算；None 不增加此项上限，调用方可传入当前上下文预算。 默认 ``None``。
     """
     if available_budget is not None:
         if isinstance(available_budget, (bool, np.bool_)) or not isinstance(available_budget, numbers.Integral):
@@ -299,6 +336,10 @@ def validate_parallel_config(
 
     工作数和后端由公共参数统一管理，不能在 ``parallel_config`` 中重复声明。
     ``backend_kwargs`` 用于承载后端专属参数，且会复制为独立字典。
+
+    :param parallel_backend: 显式 joblib 后端名；None 表示自动选择。
+    :param parallel_config: 并行配置映射；None 使用空配置。非法字段、类型或互相冲突的选项会报错。
+    :return: 经过校验的新配置字典。
     """
     if parallel_config is None:
         return {}
@@ -373,6 +414,12 @@ def plan_parallel_execution(
         不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
 
     :type n_jobs: NJobs
+
+    :param workload: ParallelWorkload，描述计算规模、能力和内存估计。
+    :param default_backend: 调用模块偏好的后端；显式 parallel_backend 优先。 默认 ``None``。
+    :param cpu_count: 可选物理核数覆盖值，None 自动检测。 默认 ``None``。
+    :param available_budget: 当前调用可用的并行预算上限。 默认 ``None``。
+    :return: 不启动任务的 ParallelExecutionPlan。
     """
     if not isinstance(workload, ParallelWorkload):
         raise ValidationError("workload 必须为 ParallelWorkload")
@@ -481,7 +528,13 @@ def plan_parallel_execution(
 
 
 def split_parallel_budget(available: int, task_count: int, has_parallel_children: bool) -> Tuple[int, int]:
-    """计算当前层和真实并行子层的工作预算。"""
+    """计算当前层和真实并行子层的工作预算。
+
+    :param available: 当前层可用的总并行数。
+    :param task_count: 当前层任务数。
+    :param has_parallel_children: 当前任务是否还会启动并行子任务。
+    :return: 外层 worker 数和每个子任务预算组成的二元组。
+    """
     available = _validate_integer(available, "available", 1)
     task_count = _validate_integer(task_count, "task_count", 0)
     if not isinstance(has_parallel_children, (bool, np.bool_)):
@@ -563,7 +616,11 @@ def resolve_native_workers(
     n_jobs: NJobs,
     native_workers: Optional[int] = None,
 ) -> int:
-    """统一解析 ``thread_count`` 、 ``num_workers`` 等原生线程参数。"""
+    """统一解析 ``thread_count`` 、 ``num_workers`` 等原生线程参数。
+
+    :param n_jobs: 并行预算：-1 自动，1 或 None 串行，正整数为上限，(0, 1) 浮点数为物理核比例。
+    :param native_workers: 底层模型显式要求的线程数；None 从公共并行预算推导。 默认 ``None``。
+    """
     if native_workers is not None:
         native_workers = _validate_integer(native_workers, "native_workers", 1)
     budget = _current_parallel_budget()
@@ -797,6 +854,15 @@ def parallel_execute(
         不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
 
     :type n_jobs: NJobs
+
+    :param function: 处理单个任务的可调用对象，以一个任务元素为唯一位置参数。
+    :param tasks: 任务元素的可迭代对象，结果保持提交顺序。
+    :param task_labels: 与任务等长的诊断标签；None 使用默认标识。
+    :param default_backend: 模块建议的 joblib 后端，显式 parallel_backend 优先。 默认 ``None``。
+    :param has_parallel_children: 任务内部是否还有并行子任务。 默认 ``False``。
+    :param workload: 工作负载及内存估计；None 通过已有任务推断。 默认 ``None``。
+    :param preserve_exceptions: 是否保留原始任务异常类型；False 使用带任务上下文的统一异常。 默认 ``False``。
+    :return: 按提交顺序排列的结果列表；配置 result_retention 为 iterator 时返回有界消费的迭代器。
     """
     config = validate_parallel_config(parallel_backend, parallel_config)
     current_budget = _current_parallel_budget()

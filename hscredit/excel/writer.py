@@ -686,6 +686,8 @@ class ExcelWriter:
 
         数字样字符串（如 ``"466"`` 、 ``"25%"`` 、 ``"00123"`` ）会保持为文本；保存时自动关闭
         Excel 的“以文本形式存储的数字”错误提示。
+
+        :param decimal: 数值展示的小数位数，影响写入单元格的格式。 默认 ``4``。
         """
         # 解析位置
         if isinstance(insert_space, str):
@@ -1555,6 +1557,8 @@ class ExcelWriter:
         :type style_only: bool
         :param multi_levels: 是否多层索引，默认为False
         :type multi_levels: bool
+
+        :param decimal: 数值展示的小数位数，影响写入单元格的格式。 默认 ``4``。
         """
         curr_col = column_index_from_string(col_index) if isinstance(col_index, str) else col_index
 
@@ -3645,6 +3649,8 @@ def dataframe2excel(
     ...     condition_cols=['iv', 'ks'],  # 条件格式
     ...     auto_width=True
     ... )
+
+    :param auto_filter: 是否为写入的数据区域启用 Excel 自动筛选。 默认 ``False``。
     """
     writer_params = writer_params or {}
     ExcelWriter._validate_decimal(decimal)

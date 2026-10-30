@@ -22,6 +22,8 @@ class PlattCalibrator(BaseCalibrator):
     :type n_bins: int
     :param strategy: 默认值为 ``'uniform'`` 。 ``"uniform"`` 等宽分箱或 ``"quantile"`` 等频分箱
     :type strategy: str
+
+    :param C: 逻辑回归正则化强度的倒数，必须为有限正数，值越小正则化越强。 默认 ``1.0``。
     """
 
     def __init__(self, n_bins: int = 10, strategy: str = "uniform", C: float = 1.0):
@@ -74,6 +76,8 @@ class IsotonicCalibrator(BaseCalibrator):
     :type n_bins: int
     :param strategy: 默认值为 ``'uniform'`` 。 ``"uniform"`` 等宽分箱或 ``"quantile"`` 等频分箱
     :type strategy: str
+
+    :param out_of_bounds: 超出校准训练范围时的处理：``'clip'`` 裁剪、``'nan'`` 返回缺失、``'raise'`` 报错。 默认 ``'clip'``。
     """
 
     def __init__(self, n_bins: int = 10, strategy: str = "uniform", out_of_bounds: str = "clip"):
@@ -114,7 +118,11 @@ class IsotonicCalibrator(BaseCalibrator):
 
 
 class BetaCalibrator(BaseCalibrator):
-    """使用 ``log(p)`` 与 ``-log(1-p)`` 特征拟合 Beta 校准。"""
+    """使用 ``log(p)`` 与 ``-log(1-p)`` 特征拟合 Beta 校准。
+
+    :param n_bins: 校准指标和可靠性曲线分箱数，正整数，默认 10。
+    :param strategy: 评估分箱策略，``'uniform'`` 等宽或 ``'quantile'`` 等频，默认 ``'uniform'``。
+    """
 
     @record_training
     def fit(self, y_prob, y_true):

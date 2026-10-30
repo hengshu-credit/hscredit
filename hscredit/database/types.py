@@ -48,8 +48,16 @@ class PoolOptions:
 
     **参数**
 
-    mincached、maxcached、maxshared、maxconnections 与 DBUtils ``PooledDB``
-    含义一致，值为 0 时沿用 DBUtils 的“不限制”语义。
+    参数与 DBUtils ``PooledDB`` 含义一致，各字段的零值语义见下方说明。
+
+    :param mincached: 池初始化时预建的空闲连接数，0 表示不预建。 默认 ``0``。
+    :param maxcached: 最多缓存的空闲连接数，0 表示不限制。 默认 ``0``。
+    :param maxshared: 最多共享连接数，0 表示不共享。 默认 ``0``。
+    :param maxconnections: 连接池允许的最大连接总数，0 表示不限制。 默认 ``0``。
+    :param blocking: 达到连接上限时是否阻塞等待可用连接。 默认 ``False``。
+    :param maxusage: 单连接最大复用次数；None 使用 DBUtils 默认行为。
+    :param setsession: 新连接建立后执行的 SQL 语句序列；None 不额外设置会话。 默认 ``None``。
+    :param ping: DBUtils ping 位掩码：0 不检查，1 获取连接时，2 创建游标时，4 执行时，7 每次检查。 默认 ``1``。
     """
 
     mincached: int = 0
@@ -139,7 +147,12 @@ class PoolOptions:
 
 @dataclass(frozen=True)
 class RedisPoolOptions:
-    """Redis 原生连接池配置。"""
+    """Redis 原生连接池配置。
+
+    :param max_connections: 原生池连接数上限，正整数；None 沿用 redis-py 默认值。
+    :param blocking: 是否使用阻塞式连接池。 默认 ``False``。
+    :param timeout: 等待连接的超时秒数，仅 blocking=True 可用；None 沿用原生池默认等待策略。
+    """
 
     max_connections: Optional[int] = None
     blocking: bool = False
@@ -147,7 +160,11 @@ class RedisPoolOptions:
 
     @classmethod
     def from_mapping(cls, value: Optional[Mapping[str, Any]] = None) -> "RedisPoolOptions":
-        """从映射创建 Redis 连接池配置。"""
+        """从映射创建 Redis 连接池配置。
+
+        :param value: 同类型配置实例、配置映射或 None；未知字段及非法范围会抛出 ValidationError。 默认 ``None``。
+        :return: 校验后的不可变连接池配置；None 创建默认配置。
+        """
 
         if value is None:
             return cls()
@@ -192,7 +209,14 @@ class RedisPoolOptions:
 
 @dataclass(frozen=True)
 class MongoPoolOptions:
-    """PyMongo ``MongoClient`` 原生连接池配置。"""
+    """PyMongo ``MongoClient`` 原生连接池配置。
+
+    :param min_pool_size: 每个服务端连接池最小连接数，非负整数。 默认 ``0``。
+    :param max_pool_size: 每个服务端连接池最大连接数，0 表示不限制。 默认 ``100``。
+    :param max_connecting: 池内可同时建立的连接数，必须为正整数。 默认 ``2``。
+    :param wait_queue_timeout_ms: 等待可用连接的超时毫秒数；None 沿用驱动默认值。
+    :param max_idle_time_ms: 空闲连接最大存活毫秒数；None 沿用驱动默认值。
+    """
 
     min_pool_size: int = 0
     max_pool_size: int = 100
@@ -202,7 +226,11 @@ class MongoPoolOptions:
 
     @classmethod
     def from_mapping(cls, value: Optional[Mapping[str, Any]] = None) -> "MongoPoolOptions":
-        """从映射创建 MongoDB 连接池配置。"""
+        """从映射创建 MongoDB 连接池配置。
+
+        :param value: 同类型配置实例、配置映射或 None；未知字段及非法范围会抛出 ValidationError。 默认 ``None``。
+        :return: 校验后的不可变连接池配置；None 创建默认配置。
+        """
 
         if value is None:
             return cls()
@@ -253,18 +281,19 @@ class DatabaseCapabilities:
 
     **参数**
 
-    transactions : bool
-        是否支持事务提交和回滚。
-    streaming_read : bool
-        是否支持流式读取。
-    native_bulk_write : bool
-        是否具有后端原生批量写入通道。
-    metadata_export : bool
-        是否支持表结构扫描。
-    write_modes : frozenset[str]
-        可保证的 ``a/r/o/d`` 写入模式集合。
-    atomic_replace : bool
-        是否提供显式暂存替换协议；True仍须运行时验证版本、表结构及可见性前提。
+    :param transactions: 是否支持事务提交和回滚。
+    :type transactions: bool
+    :param streaming_read: 是否支持流式读取。
+    :type streaming_read: bool
+    :param native_bulk_write: 是否具有后端原生批量写入通道。
+    :type native_bulk_write: bool
+    :param metadata_export: 是否支持表结构扫描。
+    :type metadata_export: bool
+    :param write_modes: 可保证的 ``a/r/o/d`` 写入模式集合。
+    :type write_modes: frozenset[str]
+    :param atomic_replace: 是否提供显式暂存替换协议；True仍须运行时验证版本、表结构及可见性前提。
+    :type atomic_replace: bool
+
     """
 
     transactions: bool = True
@@ -288,28 +317,39 @@ class WriteResult:
 
     **参数**
 
-    mode : {"a", "r", "o", "d"}
-        本次写入模式。
-    completed : bool
-        是否完成全部批次和适配器收尾。
-    rows_received、rows_inserted、rows_updated、rows_skipped : int, optional
-        输入及后端报告的行数统计。
-    batches_committed : int
-        已成功提交的批次数。
-    failed_batch : int, optional
-        失败批次编号；准备阶段为 0，收尾阶段为已提交批次数加 1。
-    consistency : str, optional
-        后端最终一致性说明。
-    details : dict
-        适配器附加的原始统计信息。
-    rows_staged、batches_staged : int
-        atomic_replace_table确认提交至暂存表的历史数量，不表示目标已经更新。
-    target_published : bool, optional
-        原子替换入口的未发布/已确认发布/未知状态；普通stream_write不使用此字段。
-    rows_published : int, optional
-        确认发布至目标的行数；发布结果未知时为None。
-    phase : str, optional
-        preparing/staging/publishing/published/publication_unknown等操作阶段。
+    :param mode: 本次写入模式。
+    :type mode: {"a", "r", "o", "d"}
+    :param completed: 是否完成全部批次和适配器收尾。
+    :type completed: bool
+    :param rows_received: 已接收的输入行数，默认 0；包含已提交和尚未成功提交的输入。
+    :type rows_received: int, optional
+    :param rows_inserted: 后端报告的新增行数；默认 None 表示后端不能提供可靠统计。
+    :type rows_inserted: int, optional
+    :param rows_updated: 后端报告的更新行数；默认 None 表示后端不能提供可靠统计。
+    :type rows_updated: int, optional
+    :param rows_skipped: 后端报告的跳过行数；默认 None 表示后端不能提供可靠统计。
+    :type rows_skipped: int, optional
+    :param batches_committed: 已成功提交的批次数。
+    :type batches_committed: int
+    :param failed_batch: 失败批次编号；准备阶段为 0，收尾阶段为已提交批次数加 1。
+    :type failed_batch: int, optional
+    :param consistency: 后端最终一致性说明。
+    :type consistency: str, optional
+    :param details: 适配器附加的原始统计信息。
+    :type details: dict
+    :param rows_staged: 原子替换入口确认写入暂存表的行数，默认 0，不表示目标已经更新。
+    :type rows_staged: int
+    :param batches_staged: 原子替换入口确认写入暂存表的批次数，默认 0，不表示目标已经更新。
+    :type batches_staged: int
+    :param target_published: 原子替换入口的未发布/已确认发布/未知状态；普通stream_write不使用此字段。
+    :type target_published: bool, optional
+    :param rows_published: 确认发布至目标的行数；发布结果未知时为None。
+    :type rows_published: int, optional
+    :param phase: preparing/staging/publishing/published/publication_unknown等操作阶段。
+    :type phase: str, optional
+
+    :param staging_table: 暂存表名称；未使用暂存协议时为 None。 默认 ``None``。
+    :param backup_table: 旧目标的备份表名称；未建立备份时为 None。 默认 ``None``。
     """
 
     mode: str
@@ -341,7 +381,16 @@ class WriteResult:
 
 @dataclass(frozen=True)
 class NoSQLWriteResult:
-    """Redis 与 MongoDB 共用的写入、更新和删除结果。"""
+    """Redis 与 MongoDB 共用的写入、更新和删除结果。
+
+    :param operation: 操作类型，``'write'`` 或 ``'delete'``。
+    :param acknowledged: 后端是否确认执行结果。
+    :param affected_count: 受影响的记录或 key 数；None 表示后端未提供。 默认 ``None``。
+    :param matched_count: 更新条件命中的文档数；None 表示不提供。 默认 ``None``。
+    :param modified_count: 实际修改的文档数；None 表示不提供。 默认 ``None``。
+    :param identifiers: 写入生成或返回的记录标识元组，默认空元组。
+    :param details: 后端附加统计信息，默认空映射。
+    """
 
     operation: str
     acknowledged: bool

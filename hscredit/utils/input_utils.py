@@ -23,6 +23,8 @@ def normalize_dpd_values(dpds, *, deduplicate: bool = True) -> List[Union[int, f
     numpy/pandas 标量与常用序列输入均受支持。整数值统一输出为 Python
     ``int`` ，非整数值输出为 Python ``float`` 。 ``deduplicate=False`` 保留重复
     阈值，供逾期字段与阈值一一对应的绘图入口使用。
+
+    :param deduplicate: 是否去掉重复的逾期阈值，同时保留首次出现的顺序。 默认 ``True``。
     """
     if isinstance(dpds, (list, tuple, np.ndarray, pd.Index, pd.Series)):
         values = list(dpds)

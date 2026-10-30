@@ -1722,7 +1722,7 @@ def feature_bin_stats(
     :type min_bin_size: Optional[Union[float, int]]
     :param missing_separate: 是否将缺失值单独分箱，默认 True
     :type missing_separate: bool
-    :param prebinning: 预分箱配置，参数格式与 OptimalBinning 保持一致，默认 'quantile'。
+    :param prebinning: 预分箱配置，参数格式与 OptimalBinning 保持一致，默认 None，不启用预分箱。
 
         - None: 不使用预分箱
 
@@ -1734,7 +1734,7 @@ def feature_bin_stats(
 
     :type prebinning: Optional[Union[str, BaseBinning, Dict]]
     :param prebinning_params: 预分箱参数（传给 OptimalBinning.prebinning_params）。
-        默认 None，此时会使用 {'max_n_bins': 100}，即先等频100箱再合并。
+        默认 None；启用预分箱时使用 {'max_n_bins': 100}，未启用时不执行预分箱。
 
     :type prebinning_params: Optional[Dict[str, Any]]
     :param return_cols: 指定返回的列名列表，默认返回所有列
@@ -1773,13 +1773,20 @@ def feature_bin_stats(
           单目标时同样会输出 ``逾期标签`` 列。 ``margins=True`` 时按各逾期标签分组分别追加合计行
 
     :type long_format: bool
-    :param kwargs: 其他分箱器参数（如 lift_refine、prebinning 等）
+    :param features: feature 的集合形式入口，支持字段名或一维字段序列，默认 None；不可与 feature 同时指定。
+    :param bin_params: 分箱参数映射，默认 None；显式顶层参数优先于此映射，再使用函数默认值。
+        不允许在此指定 data、target、overdue、dpds、feature 或 features。
+    :param kwargs: 传给分箱器的扩展参数，例如 lift_refine；也可通过 bin_params 集中配置。
 
     :return:
 
         - pd.DataFrame: 特征分箱统计表
 
-        - Tuple[pd.DataFrame, Dict]: 当 return_rules=True 时返回 (统计表, 分箱规则)
+        - return_rules=True 时返回 (统计表, 分箱规则字典)。
+
+        - return_binner=True 时返回 (统计表, 已拟合分箱器字典)。
+
+        - 两者均为 True 时返回 (统计表, 分箱规则字典, 已拟合分箱器字典)。
 
     **参考样例**
 
@@ -2266,6 +2273,11 @@ def feature_bin_stats_2d(
     :type return_binner: bool
     :param long_format: 默认值为 ``False`` 。是否按逾期标签纵向堆叠输出
     :type long_format: bool
+    :param x1: 第一个特征名，与 x2 成对使用；不可与 features 同时指定，默认 None。
+    :param x2: 第二个特征名，与 x1 成对使用；不可与 features 同时指定，默认 None。
+    :param bin_params: 分箱参数映射，默认 None；显式顶层参数优先于映射，再使用函数默认值。
+        标签和特征应通过顶层参数传入。
+    :param kwargs: 传给 OptimalBinning2D 的扩展参数，例如 x_params、y_params。
     :return: 二维分箱统计表； ``return_binner=True`` 时返回 ``(table, binner)``
 
     **参考样例**

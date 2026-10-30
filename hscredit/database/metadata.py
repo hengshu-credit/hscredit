@@ -44,10 +44,11 @@ class QualifiedTarget:
 
     **参数**
 
-    raw : str
-        用户提供并去除首尾空白后的原始目标。
-    parts : tuple[str, ...]
-        以点拆分的数据库、模式和表名片段。
+    :param raw: 用户提供并去除首尾空白后的原始目标。
+    :type raw: str
+    :param parts: 以点拆分的数据库、模式和表名片段。
+    :type parts: tuple[str, ...]
+
     """
 
     raw: str
@@ -78,10 +79,11 @@ class MetadataInspection:
 
     **参数**
 
-    rows : iterable of mapping
-        使用内部英文字段键保存的表/字段记录。
-    errors : list
-        部分数据库或表扫描失败时保留的原始错误信息。
+    :param rows: 使用内部英文字段键保存的表/字段记录。
+    :type rows: iterable of mapping
+    :param errors: 部分数据库或表扫描失败时保留的原始错误信息。
+    :type errors: list
+
     """
 
     rows: Iterable[Mapping[str, Any]] = field(default_factory=tuple)

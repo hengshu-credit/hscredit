@@ -22,16 +22,16 @@ class DatabaseError(HSCreditError):
 
     **参数**
 
-    message : str
-        面向用户的中文错误概要。
-    sql : str, optional
-        实际交给数据库执行的 SQL。
-    params : Any, optional
-        SQL 绑定参数；只作为属性保存，不进入异常文本。
-    driver_error : BaseException, optional
-        底层数据库驱动返回的原始异常。
-    cleanup_error : BaseException, optional
-        主操作失败后发生的资源清理异常。
+    :param message: 面向用户的中文错误概要。
+    :type message: str
+    :param sql: 实际交给数据库执行的 SQL。
+    :type sql: str, optional
+    :param params: SQL 绑定参数；只作为属性保存，不进入异常文本。
+    :type params: Any, optional
+    :param driver_error: 底层数据库驱动返回的原始异常。
+    :type driver_error: BaseException, optional
+    :param cleanup_error: 主操作失败后发生的资源清理异常。
+    :type cleanup_error: BaseException, optional
 
     **属性**
 
@@ -227,17 +227,39 @@ class DatabaseError(HSCreditError):
 
 
 class DatabaseConnectionError(DatabaseError):
-    """数据库连接或连接池操作失败。"""
+    """数据库连接或连接池操作失败。
+
+    :param message: 中文错误概要。
+    :param sql: 发生错误的 SQL 文本；None 表示未提供。
+    :param params: SQL 绑定参数，仅作为属性保存，不写入异常文本。
+    :param driver_error: 底层原始驱动异常；None 表示未提供。
+    :param cleanup_error: 关闭资源时的次要异常；None 表示未发生或未提供。
+    """
 
 
 class DatabaseQueryError(DatabaseError):
-    """数据库查询或 SQL 执行失败。"""
+    """数据库查询或 SQL 执行失败。
+
+    :param message: 中文错误概要。
+    :param sql: 发生错误的 SQL 文本；None 表示未提供。
+    :param params: SQL 绑定参数，仅作为属性保存，不写入异常文本。
+    :param driver_error: 底层原始驱动异常；None 表示未提供。
+    :param cleanup_error: 关闭资源时的次要异常；None 表示未发生或未提供。
+    """
 
 
 class DatabaseWriteError(DatabaseError):
     """数据库写入失败，并可携带部分写入结果。
 
     除  :class:`DatabaseError`  的 SQL 上下文属性外， ``result`` 保存失败前已经提交的批次和行数统计。
+
+    :param message: 中文错误概要。
+    :param sql: 发生错误的 SQL 文本；None 表示未提供。 默认 ``None``。
+    :param params: SQL 绑定参数，仅作为属性保存，不写入异常文本。 默认 ``None``。
+    :param driver_error: 底层原始驱动异常；None 表示未提供。 默认 ``None``。
+    :param cleanup_error: 关闭资源时的次要异常；None 表示未发生或未提供。 默认 ``None``。
+
+    :param result: 失败时保留的部分 WriteResult，包含已提交批次及行数；None 表示尚无结果。 默认 ``None``。
     """
 
     def __init__(
@@ -288,11 +310,25 @@ def database_error_from(
 
 
 class DatabaseMetadataError(DatabaseError):
-    """数据库元数据读取或导出失败。"""
+    """数据库元数据读取或导出失败。
+
+    :param message: 中文错误概要。
+    :param sql: 发生错误的 SQL 文本；None 表示未提供。
+    :param params: SQL 绑定参数，仅作为属性保存，不写入异常文本。
+    :param driver_error: 底层原始驱动异常；None 表示未提供。
+    :param cleanup_error: 关闭资源时的次要异常；None 表示未发生或未提供。
+    """
 
 
 class DatabaseCapabilityError(DatabaseError):
-    """数据库或目标表不支持所请求的能力。"""
+    """数据库或目标表不支持所请求的能力。
+
+    :param message: 中文错误概要。
+    :param sql: 发生错误的 SQL 文本；None 表示未提供。
+    :param params: SQL 绑定参数，仅作为属性保存，不写入异常文本。
+    :param driver_error: 底层原始驱动异常；None 表示未提供。
+    :param cleanup_error: 关闭资源时的次要异常；None 表示未发生或未提供。
+    """
 
 
 __all__ = [

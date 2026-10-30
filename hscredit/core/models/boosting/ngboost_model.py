@@ -533,6 +533,8 @@ class NGBoost(BaseRiskModel):
         """预测类别标签.
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
+
+        :param X: 待预测的二维特征数据；字段名称、顺序及预处理方式应与训练输入一致。
         """
         self._require_fitted()
         if predict_params:

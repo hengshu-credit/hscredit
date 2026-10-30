@@ -34,6 +34,22 @@ class BinSpec:
     kind 支持 interval、categories、missing、other。other 表示不属于
     values 的非缺失值；exclude_values 用于将特殊值从普通数值箱排除。
     include_missing 可以将缺失合并到指定普通箱。
+
+    :param feature: 原始字段名。
+    :param bin_id: 稳定分箱编号，不受展示标签舍入影响。
+    :param kind: 分箱类型：``'interval'`` 数值区间、``'categories'`` 类别集合、``'missing'`` 缺失、``'other'`` 其余非缺失值。 默认 ``'interval'``。
+    :param lower: 数值下界；None 表示无下界。 默认 ``None``。
+    :param upper: 数值上界；None 表示无上界。 默认 ``None``。
+    :param closed_left: 数值区间是否包含左端点。 默认 ``True``。
+    :param closed_right: 数值区间是否包含右端点。 默认 ``False``。
+    :param values: 类别箱的成员元组；other 箱表示此集合之外的值，默认空元组。
+    :param include_values: 额外并入此箱的值，默认空元组。
+    :param known_values: 训练时已知类别，用于识别未知值，默认空元组。
+    :param exclude_values: 从普通箱排除的特殊值，默认空元组。
+    :param include_missing: 是否将缺失值并入当前箱。 默认 ``False``。
+    :param special: 是否将当前箱标记为特殊值箱。 默认 ``False``。
+    :param unknown: 是否将不在 known_values 中的非缺失值并入此箱。 默认 ``False``。
+    :param transform_ref: 关联的特征变换引用标识；None 表示未指定。 默认 ``None``。
     """
 
     feature: str

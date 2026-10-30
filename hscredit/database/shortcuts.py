@@ -435,6 +435,12 @@ def read_many(
     """快捷批量读取 Redis keys 或 MongoDB 文档。
 
     参数与  :func:`read_one`  一致，返回后端批量读取结果。
+
+    :param source: 现有 Database 实例、连接配置映射或受支持的原生 DB-API 连接；函数仅关闭自己创建的连接。
+    :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+    :param db_type: 显式数据库类型，原生连接无法自动识别类型时必须提供。 默认 ``None``。
+    :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+    :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
     """
 
     return _invoke(source, "read_many", resource, selector, db_type=db_type, **options)
@@ -451,6 +457,12 @@ def read(
     """快捷自适应执行单条或批量 NoSQL 读取。
 
     参数与  :func:`read_one`  一致，具体单条/批量语义由适配器根据输入和选项确定。
+
+    :param source: 现有 Database 实例、连接配置映射或受支持的原生 DB-API 连接；函数仅关闭自己创建的连接。
+    :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+    :param db_type: 显式数据库类型，原生连接无法自动识别类型时必须提供。 默认 ``None``。
+    :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+    :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
     """
 
     return _invoke(source, "read", resource, selector, db_type=db_type, **options)
@@ -492,6 +504,12 @@ def write_many(
     """快捷批量写入 Redis key-value 或 MongoDB 文档。
 
     参数与  :func:`write_one`  一致， ``data`` 为批量输入。
+
+    :param source: 现有 Database 实例、连接配置映射或受支持的原生 DB-API 连接；函数仅关闭自己创建的连接。
+    :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+    :param db_type: 显式数据库类型，原生连接无法自动识别类型时必须提供。 默认 ``None``。
+    :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+    :param data: 待写入的键值映射或文档序列。 默认 ``None``。
     """
 
     return _invoke(source, "write_many", resource, data, db_type=db_type, **options)
@@ -561,6 +579,12 @@ def delete_many(
     """快捷批量删除 Redis keys 或 MongoDB 文档。
 
     参数与  :func:`delete_one`  一致，返回后端批量删除结果。
+
+    :param source: 现有 Database 实例、连接配置映射或受支持的原生 DB-API 连接；函数仅关闭自己创建的连接。
+    :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+    :param db_type: 显式数据库类型，原生连接无法自动识别类型时必须提供。 默认 ``None``。
+    :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+    :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
     """
 
     return _invoke(source, "delete_many", resource, selector, db_type=db_type, **options)
@@ -577,6 +601,12 @@ def delete(
     """快捷自适应执行单条或批量 NoSQL 删除。
 
     参数与  :func:`delete_one`  一致，具体单条/批量语义由适配器确定。
+
+    :param source: 现有 Database 实例、连接配置映射或受支持的原生 DB-API 连接；函数仅关闭自己创建的连接。
+    :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+    :param db_type: 显式数据库类型，原生连接无法自动识别类型时必须提供。 默认 ``None``。
+    :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+    :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
     """
 
     return _invoke(source, "delete", resource, selector, db_type=db_type, **options)

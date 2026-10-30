@@ -2,6 +2,53 @@
 
 import re
 
+from docutils import nodes
+
+
+def merge_api_field_lists(app, domain, objtype, contentnode):
+    """合并同一 API 的参数字段，消除 autodoc 补入的只有类型的重复参数。
+
+    部分 docstring 在示例之后补充参数。Sphinx 默认对每个顶层 field_list
+    补入整个签名的类型，导致每个列表都包含其他列表中已说明的参数。
+    只合并当前对象的直接子节点，不改变嵌套方法、说明框或示例中的字段。
+    """
+    if domain != "py":
+        return
+    field_lists = [child for child in contentnode if isinstance(child, nodes.field_list)]
+    if not field_lists:
+        return
+    first = field_lists[0]
+    for extra in field_lists[1:]:
+        for field in list(extra):
+            if field[0].astext().split()[0] in {"param", "parameter", "arg", "argument", "keyword", "type"}:
+                extra.remove(field)
+                first += field
+    # class-doc-from: both 会同时读类和构造器的说明。同名字段仅展示一次，
+    # 保留不同的补充段落，避免丢失构造器独有的约束或默认值说明。
+    seen = {}
+    for field_list in field_lists:
+        for field in list(field_list):
+            key = field[0].astext()
+            if key not in seen:
+                seen[key] = field
+                continue
+            if key.startswith("type ") or key == "rtype":
+                # 显式类型与签名推导类型可能只是写法不同（Optional[T] / T | None）。
+                # 类型字段只能有一个段落，否则 Sphinx 会丢掉类型展示。
+                field_list.remove(field)
+                continue
+            previous = seen[key][1]
+            existing = {child.astext() for child in previous}
+            for child in list(field[1]):
+                if child.astext() and child.astext() not in existing:
+                    field[1].remove(child)
+                    previous += child
+                    existing.add(child.astext())
+            field_list.remove(field)
+        if len(field_list) == 0:
+            contentnode.remove(field_list)
+
+
 _FIELD = re.compile(r"^(\s*):(\w+)(?:\s+[^:]+)?:\s*")
 _BULLET = re.compile(r"^\s*[-+*]\s+")
 # 优先识别完整 RST 标记，避免把角色、链接、数学公式中的内容再次包装。

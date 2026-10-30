@@ -153,6 +153,12 @@ class HSCreditApplyProxy:
     **参考样例**
         ``df.hscredit.apply(func, axis=1)``
         ``df.hscredit(n_jobs=-1, bar=True).apply(func, axis=1)``
+
+    :param _obj: 待执行 apply 的 DataFrame、Series 或 GroupBy 对象。
+    :param n_jobs: 并行预算：-1 自动，1 或 None 串行，正整数为上限，(0, 1) 浮点数为物理核比例。 默认 ``-1``。
+    :param bar: 是否按实际完成项显示进度条。 默认 ``True``。
+    :param parallel_backend: 可选 joblib 后端；None 按 callable 能力选择。 默认 ``None``。
+    :param parallel_config: 统一并行配置映射，仅作用于本代理。 默认 ``None``。
     """
 
     _obj: Any
@@ -221,6 +227,8 @@ def create_hscredit_apply_proxy(
     :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
         正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
         不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :param bar: 是否显示按实际完成项累计的进度条。 默认 ``True``。
     """
     return HSCreditApplyProxy(
         self,

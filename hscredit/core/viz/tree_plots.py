@@ -825,6 +825,8 @@ def plot_tree_matplotlib(
     >>> fig = plot_tree_matplotlib(ext, figsize=(20, 14), dpi=200)
     >>> plt.show()
     >>> fig.savefig('tree.png', dpi=200, bbox_inches='tight')
+
+    :param feature_names: 按训练列顺序提供的特征名序列，用于还原 sklearn 树节点的字段名称。 默认 ``None``。
     """
     # 提取树数据（feature_names 仅对 sklearn 树有效，ManualTreeExtractor 自行读取）
     tree_data = _extract_tree_data(tree_obj, feature_names=feature_names)
@@ -1253,6 +1255,8 @@ def plot_tree_pyecharts(
     >>> chart = plot_tree_pyecharts(ext, figsize=(14, 9))
     >>> chart.render('tree.html')
     >>> chart.render_notebook()  # 在 Jupyter 中直接显示
+
+    :param feature_names: 按训练列顺序提供的特征名序列，用于还原 sklearn 树节点的字段名称。 默认 ``None``。
     """
     try:
         from pyecharts import options as opts

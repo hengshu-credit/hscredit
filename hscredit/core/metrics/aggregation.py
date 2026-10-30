@@ -7,7 +7,15 @@ from ._binning import _binary_stats_from_counts, _validate_bin_arrays
 
 @dataclass(frozen=True)
 class MetricSpec:
-    """统计口径；本累加器按行计数，不将金额权重混称样本数。"""
+    """统计口径；本累加器按行计数，不将金额权重混称样本数。
+
+    :param target_type: 目标类型标识；当前固定分箱累加器使用 binary 二分类。 默认 ``'binary'``。
+    :param positive_label: 坏样本标签标识；当前二分类累加器使用 1。 默认 ``1``。
+    :param grain: 统计粒度说明；当前累加器按行计件数。 默认 ``'行'``。
+    :param feature: 特征名称标识，用于核对合并口径。 默认 ``None``。
+    :param target: 目标名称标识，用于核对合并口径。 默认 ``None``。
+    :param binning_version: 固定分箱语义版本，合并时必须一致。 默认 ``None``。
+    """
 
     target_type: str = "binary"
     positive_label: int = 1

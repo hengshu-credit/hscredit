@@ -13,12 +13,12 @@ class BaseDatabaseAdapter:
 
     **参数**
 
-    connect_kwargs : dict
-        传递给底层数据库驱动的连接参数。
-    pool_options : PoolOptions
-        已校验的连接池配置。
-    adapter_options : dict
-        仅由适配器解释的方言或原生通道参数。
+    :param connect_kwargs: 传递给底层数据库驱动的连接参数。
+    :type connect_kwargs: dict
+    :param pool_options: 已校验的连接池配置。
+    :type pool_options: PoolOptions
+    :param adapter_options: 仅由适配器解释的方言或原生通道参数。
+    :type adapter_options: dict
 
     **属性**
 
@@ -67,7 +67,11 @@ class BaseDatabaseAdapter:
         table_name: str,
         table_metadata: Optional[Mapping[str, Any]] = None,
     ) -> DatabaseCapabilities:
-        """返回目标表可保证的能力。"""
+        """返回目标表可保证的能力。
+
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        :param table_metadata: 已取得的表元数据；None 时由后端决定是否需要查询。 默认 ``None``。
+        """
 
         del table_name, table_metadata
         return self.capabilities
@@ -78,7 +82,12 @@ class BaseDatabaseAdapter:
         mode: str,
         table_metadata: Optional[Mapping[str, Any]] = None,
     ) -> DatabaseCapabilities:
-        """校验目标表是否支持指定写入模式。"""
+        """校验目标表是否支持指定写入模式。
+
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        :param mode: 写入模式：a 追加且重复键不覆盖，r 追加且重复键覆盖，o 保留结构清空重写，d 删除并重建；仅允许后端可保证的模式。
+        :param table_metadata: 已取得的表元数据；None 时由后端决定是否需要查询。 默认 ``None``。
+        """
 
         capabilities = self.capabilities_for_table(table_name, table_metadata)
         if mode not in capabilities.write_modes:
@@ -90,13 +99,19 @@ class BaseDatabaseAdapter:
         return capabilities
 
     def build_count_sql(self, sql: str) -> str:
-        """生成通用子查询计数 SQL。"""
+        """生成通用子查询计数 SQL。
+
+        :param sql: 待执行或改写的 SQL 文本，不在此参数中拼入绑定值。
+        """
 
         query = sql.rstrip().removesuffix(";").rstrip()
         return f"SELECT COUNT(1) FROM ({query}) hscredit_count"
 
     def quote_identifier(self, identifier: str) -> str:
-        """按当前数据库方言引用单个标识符。"""
+        """按当前数据库方言引用单个标识符。
+
+        :param identifier: 单个数据库标识符，不含限定名分隔点。
+        """
 
         if not isinstance(identifier, str) or not identifier:
             raise ValidationError("数据库标识符必须是非空字符串")
@@ -105,7 +120,10 @@ class BaseDatabaseAdapter:
         return f"{quote}{escaped}{quote}"
 
     def quote_qualified_name(self, name: str) -> str:
-        """逐段引用数据库对象限定名。"""
+        """逐段引用数据库对象限定名。
+
+        :param name: 由点分隔的多级数据库对象名称。
+        """
 
         from ..writing import split_qualified_name
 
@@ -171,7 +189,12 @@ class BaseDatabaseAdapter:
         *,
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> Any:
-        """创建目标表。"""
+        """创建目标表。
+
+        :param data: 用于推断建表结构的首批 DataFrame。
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        :param dialect_options: 后端专有建表、分区或写入配置映射。 默认 ``None``。
+        """
 
         raise NotImplementedError
 
@@ -183,7 +206,13 @@ class BaseDatabaseAdapter:
         dialect_options: Optional[Mapping[str, Any]] = None,
         exists: Optional[bool] = None,
     ) -> Any:
-        """目标表不存在时根据首批数据创建表，并容忍并发建表竞态。"""
+        """目标表不存在时根据首批数据创建表，并容忍并发建表竞态。
+
+        :param data: 用于推断建表结构的首批 DataFrame。
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        :param dialect_options: 后端专有建表、分区或写入配置映射。 默认 ``None``。
+        :param exists: 调用方已知的目标存在状态；None 时由适配器检查。 默认 ``None``。
+        """
 
         known_exists = self.table_exists(table_name) if exists is None else exists
         if known_exists is True:
@@ -204,13 +233,19 @@ class BaseDatabaseAdapter:
             raise
 
     def is_table_already_exists_error(self, exc: BaseException) -> bool:
-        """判断建表异常是否明确表示目标表已存在。"""
+        """判断建表异常是否明确表示目标表已存在。
+
+        :param exc: 捕获到的驱动异常，用于识别目标表已存在。
+        """
 
         del exc
         return False
 
     def table_exists(self, table_name: str) -> Optional[bool]:
-        """只读判断目标表是否存在；无法通用判断时返回 ``None`` 。"""
+        """只读判断目标表是否存在；无法通用判断时返回 ``None`` 。
+
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        """
 
         del table_name
         return None
@@ -225,7 +260,15 @@ class BaseDatabaseAdapter:
         dialect_options: Optional[Mapping[str, Any]] = None,
         table_exists: Optional[bool] = None,
     ) -> None:
-        """在任何建表、清空或删除动作之前校验写入能力。"""
+        """在任何建表、清空或删除动作之前校验写入能力。
+
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        :param mode: 写入模式：a 追加且重复键不覆盖，r 追加且重复键覆盖，o 保留结构清空重写，d 删除并重建；仅允许后端可保证的模式。
+        :param first_batch: 首批输入 DataFrame，用于验证模式、字段和键。
+        :param key_columns: 用于去重或更新匹配的键字段名序列。 默认 ``None``。
+        :param dialect_options: 后端专有建表、分区或写入配置映射。 默认 ``None``。
+        :param table_exists: 调用方已查询的目标表存在状态；None 表示未知。 默认 ``None``。
+        """
 
         del first_batch, key_columns, dialect_options, table_exists
         self.require_write_mode(table_name, mode)
@@ -238,7 +281,13 @@ class BaseDatabaseAdapter:
         *,
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> Optional[Sequence[str]]:
-        """解析显式或数据库元数据中的主键字段。"""
+        """解析显式或数据库元数据中的主键字段。
+
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        :param key_columns: 用于去重或更新匹配的键字段名序列。
+        :param first_batch: 首批输入 DataFrame，用于验证模式、字段和键。
+        :param dialect_options: 后端专有建表、分区或写入配置映射。 默认 ``None``。
+        """
 
         del table_name, first_batch, dialect_options
         return tuple(key_columns) if key_columns is not None else None
@@ -252,7 +301,14 @@ class BaseDatabaseAdapter:
         key_columns: Optional[Sequence[str]] = None,
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        """在首个批次写入前校验并准备目标表。"""
+        """在首个批次写入前校验并准备目标表。
+
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        :param mode: 写入模式：a 追加且重复键不覆盖，r 追加且重复键覆盖，o 保留结构清空重写，d 删除并重建；仅允许后端可保证的模式。
+        :param first_batch: 首批输入 DataFrame，用于验证模式、字段和键。
+        :param key_columns: 用于去重或更新匹配的键字段名序列。 默认 ``None``。
+        :param dialect_options: 后端专有建表、分区或写入配置映射。 默认 ``None``。
+        """
 
         del first_batch, key_columns, dialect_options
         self.require_write_mode(table_name, mode)
@@ -267,7 +323,15 @@ class BaseDatabaseAdapter:
         key_columns: Optional[Sequence[str]] = None,
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> Any:
-        """写入一个已经校验的 DataFrame 批次。"""
+        """写入一个已经校验的 DataFrame 批次。
+
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        :param batch: 本次待写入的 DataFrame。
+        :param mode: 写入模式：a 追加且重复键不覆盖，r 追加且重复键覆盖，o 保留结构清空重写，d 删除并重建；仅允许后端可保证的模式。
+        :param batch_index: 本次写入批次编号，供结果和失败定位使用。
+        :param key_columns: 用于去重或更新匹配的键字段名序列。 默认 ``None``。
+        :param dialect_options: 后端专有建表、分区或写入配置映射。 默认 ``None``。
+        """
 
         raise NotImplementedError
 
@@ -279,16 +343,30 @@ class BaseDatabaseAdapter:
         *,
         dialect_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        """完成适配器专有的写入收尾。"""
+        """完成适配器专有的写入收尾。
+
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        :param mode: 写入模式：a 追加且重复键不覆盖，r 追加且重复键覆盖，o 保留结构清空重写，d 删除并重建；仅允许后端可保证的模式。
+        :param result: 累计写入结果对象，供适配器补充收尾统计。
+        :param dialect_options: 后端专有建表、分区或写入配置映射。 默认 ``None``。
+        """
 
         del table_name, mode, result, dialect_options
 
     def atomic_replace_session(self, table_name: str):
-        """显式暂存/原子替换会话；默认后端不承诺该能力。"""
+        """显式暂存/原子替换会话；默认后端不承诺该能力。
+
+        :param table_name: 目标表限定名，由适配器按后端规则引用。
+        """
         raise DatabaseCapabilityError(f"数据库 {self.database_type} 不支持暂存表原子替换")
 
     def query(self, sql: str, params: Any = None, result: str = "dataframe") -> Any:
-        """执行查询。"""
+        """执行查询。
+
+        :param sql: 待执行或改写的 SQL 文本，不在此参数中拼入绑定值。
+        :param params: 驱动绑定参数；None 表示无参数。 默认 ``None``。
+        :param result: 结果形式：``'dataframe'``、``'records'`` 或 ``'rows'``。 默认 ``'dataframe'``。
+        """
 
         raise NotImplementedError
 

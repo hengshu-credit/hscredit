@@ -1533,7 +1533,17 @@ class ModelReport(ModelContextMixin):
         label: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        """返回评分分箱表，并缓存同一报告调用中的确定性结果。"""
+        """返回评分分箱表，并缓存同一报告调用中的确定性结果。
+
+        :param dataset: 已登记的数据集名称；``'train'``/``'test'`` 在无同名键时分别解析到第一/第二个数据集。 默认 ``'train'``。
+        :param method: 分类分箱方法；回归目前仅支持 ``'quantile'``，训练集切点复用于其他数据集。 默认 ``'quantile'``。
+        :param max_n_bins: 最大分箱数，正整数。 默认 ``10``。
+        :param amount: 金额列名；分类数据中存在时追加金额指标，回归分箱仍使用件数口径。 默认 ``None``。
+        :param margins: 是否追加合计行。 默认 ``True``。
+        :param label: 指定单个分类目标名称；None 使用默认标签，回归不接受指定标签。
+        :param labels: 多个分类目标名，优先于 label，按多级列合并；回归不支持多标签。 默认 ``None``。
+        :return: 评分或连续预测值的分箱统计 DataFrame，分类结果在同次报告中缓存。
+        """
         if self.task_type_ == "regression":
             from ._regression_model import bin_table
 
@@ -1878,6 +1888,11 @@ class ModelReport(ModelContextMixin):
 
     @report_model_current
     def get_feature_importance(self, top_n: Optional[int] = None) -> pd.DataFrame:
+        """返回模型特征重要性及适用的统计指标。
+
+        :param top_n: 保留重要性最高的前 N 个特征；None 返回全部。 默认 ``None``。
+        :return: 以特征名为索引的表；分类包括特征重要性、IV、KS、PSI，回归仅包含特征重要性。重要性按绝对值归一化。
+        """
         if self.task_type_ == "regression":
             importances = self._get_raw_feature_importance().dropna()
             total = importances.abs().sum()
@@ -2344,7 +2359,18 @@ class ModelReport(ModelContextMixin):
         label: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        """返回特征分箱表，并缓存同一报告调用中的确定性结果。"""
+        """返回特征分箱表，并缓存同一报告调用中的确定性结果。
+
+        :param feature: 要分析的输入特征名；分类优先复用模型已有分箱器。
+        :param dataset: 已登记的数据集名称；``'train'``/``'test'`` 在无同名键时分别解析到第一/第二个数据集。 默认 ``'train'``。
+        :param method: 分类分箱方法；回归目前仅支持 ``'quantile'``，训练集切点复用于其他数据集。 默认 ``'quantile'``。
+        :param max_n_bins: 最大分箱数，正整数。 默认 ``10``。
+        :param amount: 金额列名；分类数据中存在时追加金额指标，回归分箱仍使用件数口径。 默认 ``None``。
+        :param margins: 是否追加合计行。 默认 ``True``。
+        :param label: 指定单个分类目标名称；None 使用默认标签，回归不接受指定标签。
+        :param labels: 多个分类目标名，优先于 label，按多级列合并；回归不支持多标签。 默认 ``None``。
+        :return: 特征分箱统计 DataFrame，分类多标签返回多级列。
+        """
         if self.task_type_ == "regression":
             from ._regression_model import bin_table
 
@@ -3324,6 +3350,12 @@ class ModelReport(ModelContextMixin):
     # ---------- 10. 控制台输出 ----------
 
     def print_report(self, max_n_bins: int = 10, **kwargs) -> None:
+        """在控制台打印模型快速评估报告。
+
+        :param max_n_bins: 各数据集评分或预测分箱表的最大箱数。 默认 ``10``。
+        :param kwargs: 兼容保留参数，当前实现不使用。
+        :return: None；向标准输出打印性能、前十项重要性及分箱表。
+        """
         is_multi = self._is_multi_label()
         labels_arg = self._label_names if is_multi else None
 

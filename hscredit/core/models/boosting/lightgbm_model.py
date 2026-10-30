@@ -558,6 +558,8 @@ class LightGBM(BaseRiskModel):
         """预测类别标签.
 
         基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
+
+        :param X: 待预测的二维特征数据；字段名称、顺序及预处理方式应与训练输入一致。
         """
         self._require_fitted()
         if any(predict_params.get(name) for name in ("raw_score", "pred_leaf", "pred_contrib")):

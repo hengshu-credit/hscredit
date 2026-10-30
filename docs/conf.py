@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(".."))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "_ext"))
 
-from parameter_docs import normalize_parameter_docs
+from parameter_docs import merge_api_field_lists, normalize_parameter_docs
 
 # -- 项目信息 ---------------------------------------------------------------
 project = "hscredit"
@@ -244,6 +244,8 @@ def _skip_sklearn_plumbing(app, what, name, obj, skip, options):
 
 
 def setup(app):
+    # Sphinx 补充类型（默认优先级 500）后合并参数，属性等非参数说明保留原位置。
+    app.connect("object-description-transform", merge_api_field_lists, priority=600)
     app.connect("build-finished", _sync_brand_font)
     app.connect("autodoc-skip-member", _skip_sklearn_plumbing)
     app.connect("autodoc-process-docstring", _process_docstring)

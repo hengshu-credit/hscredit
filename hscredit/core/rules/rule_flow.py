@@ -746,6 +746,12 @@ class RuleFlow(ParallelizableMixin):
         """输出规则集整体通过与命中汇总。
 
         分组参数与  :meth:`report`  一致；未传入分组时返回一行整体汇总。
+
+        :param data: 供规则链评估的原始 DataFrame。
+        :param date: 按日期汇总时使用的日期字段；None 不按时间分组。 默认 ``None``。
+        :param freq: 日期分组频率，例如 M 按月。 默认 ``'M'``。
+        :param group: 分类分组字段；与日期维度按接口约定组合。 默认 ``None``。
+        :param dropna: 是否丢弃分组键为空的样本。 默认 ``True``。
         """
         self._validate_data(data)
         rows = []

@@ -55,7 +55,14 @@ class _ScoreCardLoadDispatcher:
 
         load_model.__name__ = "load"
         load_model.__qualname__ = f"{owner.__name__}.load"
-        load_model.__doc__ = "从持久化文件加载评分卡模型；在实例上调用 load(...) 时兼容加载评分规则。"
+        load_model.__doc__ = """从持久化文件加载评分卡模型。
+
+        :param file: 可信的评分卡模型文件路径；类调用委托给 ``load_pickle``。
+        :param engine: 序列化引擎，默认 ``'auto'`` 自动识别；还支持 joblib、pickle、dill、cloudpickle。
+        :param kwargs: 传给 ``load_pickle`` 的扩展参数，如 ``compression``。
+        :return: 已加载的 ScoreCard 模型。实例调用 ``card.load(rules)`` 则使用
+            ``load_rules`` 加载评分规则，参数约定见该方法。
+        """
         return load_model
 
 
@@ -1637,12 +1644,18 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         return self._clip_scores(self._apply_score_direction(scores))
 
     def transform(self, proba: Union[np.ndarray, pd.Series]) -> np.ndarray:
-        """将概率转换为评分，要求评分卡已拟合或已加载."""
+        """将概率转换为评分，要求评分卡已拟合或已加载.
+
+        :param proba: 一维坏样本概率，转换为信用评分。
+        """
         self._check_fitted()
         return self._finalize_scores(super().transform(proba))
 
     def inverse_transform(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
-        """将评分反向转换为概率，要求评分卡已拟合或已加载."""
+        """将评分反向转换为概率，要求评分卡已拟合或已加载.
+
+        :param scores: 信用评分数组，按当前评分刻度反算坏样本概率。
+        """
         self._check_fitted()
         return super().inverse_transform(self._remove_score_direction(scores))
 
@@ -3667,7 +3680,13 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         feature_map: Optional[Dict[str, str]] = None,
         reason_map: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> pd.DataFrame:
-        """返回评分卡中真正拉低分数的不利原因码。"""
+        """返回评分卡中真正拉低分数的不利原因码。
+
+        :param X: 待解释的原始特征数据，与评分卡训练字段一致。
+        :param keep: 每个样本最多保留的不利贡献原因数，必须为正整数。 默认 ``3``。
+        :param feature_map: 原始字段名到业务名称的映射；None 保留原字段名。 默认 ``None``。
+        :param reason_map: 字段名到原因配置的映射；每项支持 ``code`` 和 ``description``，None 使用默认原因码与描述。
+        """
         self._check_fitted()
         raw = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=self.feature_names_)
         woe = raw if self._detect_input_type(raw) else self._transform_to_woe(raw)

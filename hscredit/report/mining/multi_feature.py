@@ -386,6 +386,10 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         :return: 交叉矩阵DataFrame
 
         自定义边界必须包含 -inf/inf，数值区间与统一分箱器一致为左闭右开。
+
+        :param x1: 第一个已拟合特征名；与 x2 成对传入，或改用 features。 默认 ``None``。
+        :param x2: 第二个已拟合特征名；与 x1 成对传入，或改用 features。 默认 ``None``。
+        :param features: 两个特征名的序列，与 x1/x2 互斥。 默认 ``None``。
         """
         feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         self._check_fitted()
@@ -494,7 +498,18 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         target: Optional[str] = None,
         features=None,
     ) -> pd.DataFrame:
-        """获取双特征交叉的top规则（使用rule_expr+Rule.report命中结果）."""
+        """获取双特征交叉的top规则（使用rule_expr+Rule.report命中结果）.
+
+        :param x1: 第一个已拟合特征名；与 x2 成对传入，或改用 features。 默认 ``None``。
+        :param x2: 第二个已拟合特征名；与 x1 成对传入，或改用 features。 默认 ``None``。
+        :param top_n: 最多返回的候选交叉规则数。 默认 ``10``。
+        :param metric: 用于排序或绘图的交叉表指标，如 lift、badrate、count。 默认 ``'lift'``。
+        :param min_samples: 候选交叉区域最小样本数；None 继承构造参数。 默认 ``None``。
+        :param min_lift: 候选交叉区域最小 LIFT；None 继承构造参数。 默认 ``None``。
+        :param datasets: 用于 Rule.report 重新评估的数据；None 使用拟合时保存的数据和标签。 默认 ``None``。
+        :param target: 评估数据中的标签列名；None 使用构造参数 target。 默认 ``None``。
+        :param features: 两个特征名的序列，与 x1/x2 互斥。 默认 ``None``。
+        """
         feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         min_samples = self.min_samples if min_samples is None else min_samples
         min_lift = self.min_lift if min_lift is None else min_lift
@@ -731,7 +746,15 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         min_samples: Optional[int] = None,
         min_lift: Optional[float] = None,
     ) -> List[Rule]:
-        """获取挖掘的交叉规则（只使用Rule.expr，并基于Rule.report命中结果）."""
+        """获取挖掘的交叉规则（只使用Rule.expr，并基于Rule.report命中结果）.
+
+        :param top_n: 最多返回的候选交叉规则数。 默认 ``10``。
+        :param metric: 用于排序或绘图的交叉表指标，如 lift、badrate、count。 默认 ``'lift'``。
+        :param target: 评估数据中的标签列名；None 使用构造参数 target。 默认 ``None``。
+        :param datasets: 用于 Rule.report 重新评估的数据；None 使用拟合时保存的数据和标签。 默认 ``None``。
+        :param min_samples: 候选交叉区域最小样本数；None 继承构造参数。 默认 ``None``。
+        :param min_lift: 候选交叉区域最小 LIFT；None 继承构造参数。 默认 ``None``。
+        """
         reuse_report = datasets is None and (target is None or target == self.target)
         rules_df = self.get_all_cross_rules(top_n=top_n, metric=metric, min_samples=min_samples, min_lift=min_lift)
 
@@ -800,7 +823,15 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         min_samples: Optional[int] = None,
         min_lift: Optional[float] = None,
     ) -> List[Rule]:
-        """获取Rule对象列表（与get_rules保持一致）."""
+        """获取Rule对象列表（与get_rules保持一致）.
+
+        :param top_n: 最多返回的候选交叉规则数。 默认 ``10``。
+        :param metric: 用于排序或绘图的交叉表指标，如 lift、badrate、count。 默认 ``'lift'``。
+        :param target: 评估数据中的标签列名；None 使用构造参数 target。 默认 ``None``。
+        :param datasets: 用于 Rule.report 重新评估的数据；None 使用拟合时保存的数据和标签。 默认 ``None``。
+        :param min_samples: 候选交叉区域最小样本数；None 继承构造参数。 默认 ``None``。
+        :param min_lift: 候选交叉区域最小 LIFT；None 继承构造参数。 默认 ``None``。
+        """
         return self.get_rules(
             top_n=top_n, metric=metric, target=target, datasets=datasets, min_samples=min_samples, min_lift=min_lift
         )
@@ -856,6 +887,10 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         :param cmap: 颜色映射，默认使用RdYlGn
         :type cmap: Optional[str]
         :return: matplotlib Figure对象
+
+        :param x1: 第一个已拟合特征名；与 x2 成对传入，或改用 features。 默认 ``None``。
+        :param x2: 第二个已拟合特征名；与 x1 成对传入，或改用 features。 默认 ``None``。
+        :param features: 两个特征名的序列，与 x1/x2 互斥。 默认 ``None``。
         """
         feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         try:
@@ -920,6 +955,15 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
 
         :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
         :type dpi: int
+
+        :param x1: 第一个已拟合特征名；与 x2 成对传入，或改用 features。 默认 ``None``。
+        :param x2: 第二个已拟合特征名；与 x1 成对传入，或改用 features。 默认 ``None``。
+        :param metric: 用于排序或绘图的交叉表指标，如 lift、badrate、count。 默认 ``'lift'``。
+        :param figsize: 画布宽、高，单位英寸。 默认 ``(14, 10)``。
+        :param title: 图表标题；None 自动生成。 默认 ``None``。
+        :param save: 图片保存路径；None 不保存。 默认 ``None``。
+        :param cmap: Matplotlib 色图名称；None 按指标选取配色。 默认 ``None``。
+        :param features: 两个特征名的序列，与 x1/x2 互斥。 默认 ``None``。
         """
         feature1, feature2 = normalize_features(features, x1=x1, x2=x2, size=2, required=True)
         try:

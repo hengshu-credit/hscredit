@@ -549,6 +549,9 @@ class LogisticRegression(
         做法是：对负系数对应的输入列乘以 -1，同时把系数改成绝对值。
         这样线性预测值保持不变，但模型摘要和评分卡解释更符合 WOE 场景。
         如果提供 X 重新计算诊断，仍遵守统计预算；原训练带权时需显式提供对应权重。
+
+        :param X: 用于重新拟合的 WOE 特征矩阵。 默认 ``None``。
+        :param sample_weight: 与样本逐行对应的权重；None 表示等权。 默认 ``None``。
         """
         check_is_fitted(self)
 

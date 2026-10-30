@@ -647,7 +647,10 @@ class SelectionReportCollector:
         return pd.DataFrame(rows)
 
     def to_excel(self, filepath: str, **kwargs):
-        """以版本目录和完成清单发布完整Excel/JSON，返回实际产物路径与状态。"""
+        """以版本目录和完成清单发布完整Excel/JSON，返回实际产物路径与状态。
+
+        :param filepath: 筛选报告 Excel 输出路径，父目录应可写。
+        """
         return self.get_report().save(filepath, formats=("xlsx", "json"), **kwargs)
 
     def print_summary(self) -> None:

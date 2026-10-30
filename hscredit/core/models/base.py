@@ -385,7 +385,11 @@ class BaseRiskModel(
         self.tuner = None
 
     def get_params(self, deep: bool = True) -> Dict[str, Any]:
-        """保留原生扩展参数和 target，支持 clone、Pipeline 和参数搜索。"""
+        """保留原生扩展参数和 target，支持 clone、Pipeline 和参数搜索。
+
+        :param deep: 是否递归包含嵌套估计器参数；返回值可用于 sklearn 克隆和参数搜索。 默认 ``True``。
+        :return: 参数名到当前配置值的字典。
+        """
         params = dict(getattr(self, "_constructor_kwargs", {}))
         params.update(self.kwargs)
         params.update(super().get_params(deep=False))

@@ -115,7 +115,19 @@ def normalize_explanation_output(explanation: Any, output_index: Optional[int] =
 
 @dataclass(frozen=True)
 class ExplanationResult:
-    """一次模型解释计算的只读、可审计结果。"""
+    """一次模型解释计算的只读、可审计结果。
+
+    :param _explanation: 规范化后的 SHAP Explanation；建议通过 from_explanation 构造以验证形状和复制数据。
+    :param _data: 解释输入 DataFrame，与 SHAP 值保持相同行列顺序。
+    :param _sample_ids: 解释样本索引，与 _data 的行一一对应。
+    :param dataset_fingerprint: 覆盖输入索引、字段模式及数据值的指纹。
+    :param target_class: 被解释的类别标签；回归预测为 None。
+    :param output_index: 多输出 SHAP 中选取的类别位置；单输出可为 None。
+    :param model_output: 贡献值对应的模型输出尺度，如 probability、raw、score 或 prediction。
+    :param explainer_type: 实际采用的 SHAP 解释算法名称。
+    :param background_summary: 背景数据来源、样本量等摘要映射，不包含背景明细。
+    :param metadata: 本次解释的审计元数据映射，例如模型输出、风险方向及字段顺序。
+    """
 
     _explanation: Any
     _data: pd.DataFrame
@@ -141,7 +153,18 @@ class ExplanationResult:
         background_summary: Mapping[str, Any],
         metadata: Mapping[str, Any],
     ) -> "ExplanationResult":
-        """规范化 SHAP 输出并构造形状一致、外部不可原地修改的审计结果。"""
+        """规范化 SHAP 输出并构造形状一致、外部不可原地修改的审计结果。
+
+        :param explanation: 原始 SHAP Explanation，将按 output_index 规范为二维单输出。
+        :param data: 与 SHAP 值逐行逐列对应的解释输入。
+        :param target_class: 被解释的类别标签；回归预测为 None。
+        :param output_index: 多输出 SHAP 中选取的类别位置；单输出可为 None。
+        :param model_output: 贡献值对应的模型输出尺度，如 probability、raw、score 或 prediction。
+        :param explainer_type: 实际采用的 SHAP 解释算法名称。
+        :param background_summary: 背景数据来源、样本量等摘要映射，不包含背景明细。
+        :param metadata: 本次解释的审计元数据映射，例如模型输出、风险方向及字段顺序。
+        :return: 经过形状校验和数据复制的 ExplanationResult；形状不一致抛出 ValidationError。
+        """
         names = getattr(explanation, "feature_names", None)
         frame = coerce_explanation_frame(data, feature_names=names)
         normalized = normalize_explanation_output(explanation, output_index=output_index)
@@ -194,7 +217,11 @@ class ExplanationResult:
         return list(self._data.columns)
 
     def position_for(self, sample_id: Any) -> int:
-        """按样本索引返回唯一的位置。"""
+        """按样本索引返回唯一的位置。
+
+        :param sample_id: 原始样本索引标签，必须在解释结果中唯一存在。
+        :return: 样本的零基行位置；缺失或重复索引抛出 ValidationError。
+        """
         positions = np.flatnonzero(self._sample_ids == sample_id)
         if len(positions) == 0:
             raise ValidationError(f"样本索引不存在: {sample_id}")

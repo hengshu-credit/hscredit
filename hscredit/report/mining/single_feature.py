@@ -467,7 +467,18 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         datasets: Optional[pd.DataFrame] = None,
         target: Optional[str] = None,
     ) -> pd.DataFrame:
-        """获取Top规则（使用Rule.expr与Rule.report命中结果，支持缺失值规则）."""
+        """获取Top规则（使用Rule.expr与Rule.report命中结果，支持缺失值规则）.
+
+        :param top_n: 最多选取的候选规则数。 默认 ``10``。
+        :param metric: 排序指标，可用 lift、badrate、sample_ratio、selected_samples 等候选表指标。 默认 ``'lift'``。
+        :param feature: 限定一个已分析特征；None 汇总所有特征。 默认 ``None``。
+        :param min_lift: 候选规则最小 LIFT；None 使用构造参数 min_lift。 默认 ``None``。
+        :param min_samples: 候选规则最小命中样本数；None 使用构造参数 min_samples。 默认 ``None``。
+        :param ascending: 是否升序排列；False 优先返回指标值较大的规则。 默认 ``False``。
+        :param datasets: 用于 Rule.report 重新评估的数据；None 使用拟合时保存的数据和标签。 默认 ``None``。
+        :param target: 评估数据中的标签列名；None 使用构造参数 target。 默认 ``None``。
+        :return: 规则明细 DataFrame，包含规则表达式、命中指标及规则报告。
+        """
         self._check_fitted()
 
         min_lift = self.min_lift if min_lift is None else min_lift
@@ -560,7 +571,17 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         ascending: bool = False,
         top_n: int = 10000,
     ) -> List[Rule]:
-        """获取挖掘规则（只使用Rule.expr，并基于Rule.report命中结果）."""
+        """获取挖掘规则（只使用Rule.expr，并基于Rule.report命中结果）.
+
+        :param min_lift: 候选规则最小 LIFT；None 使用构造参数 min_lift。 默认 ``None``。
+        :param min_samples: 候选规则最小命中样本数；None 使用构造参数 min_samples。 默认 ``None``。
+        :param target: 评估数据中的标签列名；None 使用构造参数 target。 默认 ``None``。
+        :param datasets: 用于 Rule.report 重新评估的数据；None 使用拟合时保存的数据和标签。 默认 ``None``。
+        :param sort_by: 排序指标，可用 lift、badrate、sample_ratio、selected_samples 等候选表指标。 默认 ``'lift'``。
+        :param ascending: 是否升序排列；False 优先返回指标值较大的规则。 默认 ``False``。
+        :param top_n: 最多选取的候选规则数。 默认 ``10000``。
+        :return: Rule 对象列表，每个对象的 metadata_ 包含命中指标及规则报告；无符合条件规则时为空列表。
+        """
         rules_df = self.get_top_rules(
             top_n=top_n,
             metric=sort_by,
@@ -615,7 +636,17 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         ascending: bool = False,
         top_n: int = 10000,
     ) -> List[Rule]:
-        """获取Rule对象列表（与get_rules保持一致）."""
+        """获取Rule对象列表（与get_rules保持一致）.
+
+        :param min_lift: 候选规则最小 LIFT；None 使用构造参数 min_lift。 默认 ``None``。
+        :param min_samples: 候选规则最小命中样本数；None 使用构造参数 min_samples。 默认 ``None``。
+        :param target: 评估数据中的标签列名；None 使用构造参数 target。 默认 ``None``。
+        :param datasets: 用于 Rule.report 重新评估的数据；None 使用拟合时保存的数据和标签。 默认 ``None``。
+        :param sort_by: 排序指标，可用 lift、badrate、sample_ratio、selected_samples 等候选表指标。 默认 ``'lift'``。
+        :param ascending: 是否升序排列；False 优先返回指标值较大的规则。 默认 ``False``。
+        :param top_n: 最多选取的候选规则数。 默认 ``10000``。
+        :return: Rule 对象列表，每个对象的 metadata_ 包含命中指标及规则报告；无符合条件规则时为空列表。
+        """
         return self.get_rules(
             min_lift=min_lift,
             min_samples=min_samples,

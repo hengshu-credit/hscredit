@@ -977,6 +977,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     >>> print(rules)
     >>> # 导出树图
     >>> analyzer.export_tree('tree.dot')
+
+    :param kwargs: 传给内部决策树模型的扩展配置。
     """
 
     def __init__(
@@ -1094,7 +1096,15 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         tree_params: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> "DecisionTreeAnalyzer":
-        """在临时副本中训练，并在全部成功后提交拟合状态。"""
+        """在临时副本中训练，并在全部成功后提交拟合状态。
+
+        :param tree_params: 本次训练的决策树参数字典，用于更新实例树配置。 默认 ``None``。
+        :param kwargs: 本次训练的扩展树参数。
+        :param X: 训练 DataFrame，包含候选特征；未单独传入 y 时需包含目标列。
+        :param y: 与训练样本对齐的标签；None 时从构造参数 target 指定的列读取。 默认 ``None``。
+        :param features: 用于树训练的特征名序列；None 使用符合输入约定的特征列。 默认 ``None``。
+        :return: 拟合后的分析器自身。
+        """
         resolved_feature_names = features
         working = copy.deepcopy(self)
         working._fit_inplace(
@@ -1833,6 +1843,8 @@ class ManualTreeExtractor(ParallelizableMixin):
     >>> print(ext.report(df_test))
     >>> # 获取 Rule 对象
     >>> rules = ext.get_rules()
+
+    :param kwargs: 透传给 sklearn DecisionTreeClassifier 的扩展配置，例如 criterion、class_weight、ccp_alpha。
     """
 
     def __init__(
@@ -1924,6 +1936,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         >>> clf.fit(X, y)
         >>> mte = ManualTreeExtractor.from_sklearn(clf, features=features)
         >>> mte.manual_split(df, feature='age', threshold=35, node=1)
+
+        :param feature_map: 原始特征名到业务展示名称的映射；不改变规则使用的字段名。 默认 ``None``。
         """
         if features is None:
             features = list(getattr(clf, "feature_names_in_", []))
@@ -1964,7 +1978,17 @@ class ManualTreeExtractor(ParallelizableMixin):
         min_samples_leaf: Optional[int] = None,
         **kwargs: Any,
     ) -> "ManualTreeExtractor":
-        """串行构建临时树，全部成功后原子提交拟合状态。"""
+        """串行构建临时树，全部成功后原子提交拟合状态。
+
+        :param max_depth: 本次拟合的树最大深度，None 沿用实例配置。 默认 ``None``。
+        :param min_samples_split: 分裂节点所需最小样本数或占比，None 沿用实例配置。 默认 ``None``。
+        :param min_samples_leaf: 叶子节点最小样本数或占比，None 沿用实例配置。 默认 ``None``。
+        :param kwargs: 传给内部决策树的其他训练配置。
+        :param X: 训练 DataFrame，包含候选特征；未单独传入 y 时需包含目标列。
+        :param y: 与训练样本对齐的标签；None 时从构造参数 target 指定的列读取。 默认 ``None``。
+        :param features: 用于树训练的特征名序列；None 使用符合输入约定的特征列。 默认 ``None``。
+        :return: 拟合后的提取器自身。
+        """
         resolved_feature_names = features
         working = copy.deepcopy(self)
         working._fit_inplace(

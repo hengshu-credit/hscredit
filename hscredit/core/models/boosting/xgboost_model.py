@@ -677,6 +677,8 @@ class XGBoost(BaseRiskModel):
 
         支持传入包含target列的数据框（scorecardpipeline风格）。
         基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
+
+        :param X: 待预测的二维特征数据；字段名称、顺序及预处理方式应与训练输入一致。
         """
         self._require_fitted()
         if predict_params:
@@ -693,6 +695,8 @@ class XGBoost(BaseRiskModel):
         默认返回类别顺序为 classes_ 的两列概率，shape=(n_samples, 2)。
         原生 sklearn 接口已经返回两列概率时直接透传；仅兼容一维 raw margin 输出时
         应用一次 sigmoid 并补齐两列，不能在调用后再次对概率做 sigmoid。
+
+        :param X: 待预测的二维特征数据；字段名称、顺序及预处理方式应与训练输入一致。
         """
         self._require_fitted()
         X, _, _ = self._prepare_data(X, extract_target=True)

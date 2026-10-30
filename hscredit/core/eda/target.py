@@ -221,6 +221,8 @@ def bad_rate_by_dimension(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param segment_col: 用于分组比较坏率的维度字段名。 默认 ``None``。
     """
 
     dim_col = segment_col or dim_col

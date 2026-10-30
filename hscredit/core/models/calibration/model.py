@@ -375,6 +375,10 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         """生成校准前后指标对比报告.
 
         :return: 包含指标、校准前、校准后、改善值和改善率的中文 DataFrame
+
+        :param X: 待评估特征数据，用于计算原始及校准后的概率。
+        :param y: 与 X 对齐的真实 0/1 标签；可省略并通过 target 指定目标列。 默认 ``None``。
+        :param target: X 中的标签列名；显式 y 优先。 默认 ``None``。
         """
         check_is_fitted(self)
         X, y = self._prepare_data(X, y, target or self.target_)
@@ -450,6 +454,8 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         :param show: 是否显示图表，默认True
         :type show: bool
         :return: matplotlib Figure对象
+
+        :param colors: 绘图颜色序列；None 使用项目默认配色。
         """
         check_is_fitted(self)
 

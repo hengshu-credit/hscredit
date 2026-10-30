@@ -529,7 +529,11 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         return pickle_callback_state(super().__getstate__())
 
     def get_params(self, deep: bool = True) -> Dict[str, Any]:
-        """保留通过 ``**kwargs`` 接收的基类参数，保证 sklearn 克隆不改变配置。"""
+        """保留通过 ``**kwargs`` 接收的基类参数，保证 sklearn 克隆不改变配置。
+
+        :param deep: 是否递归包含嵌套估计器参数；返回值可用于 sklearn 克隆和参数搜索。 默认 ``True``。
+        :return: 参数名到当前配置值的字典。
+        """
         constructor = signature(type(self).__init__).parameters
         # 旧版本持久化实例仍可 clone/refit；补充新参数默认值，不改已有规则。
         for name in ("constraint_policy", "objective", "objective_params", "custom_objective"):

@@ -24,24 +24,22 @@ class QueryStream:
 
     **参数**
 
-    resource
-        实现 ``fetchmany(size)`` 、 ``close()`` 和 ``columns`` 的适配器查询资源。
-    chunksize : int
-        每次请求的最大行数。
-    retain : bool, default=True
-        是否保留已读取分块。
-    total_rows : int, optional
-        进度条总行数。
-    progress : bool, default=False
-        是否显示 tqdm 进度条。
-    result : {"dataframe", "records", "rows"}, default="dataframe"
-        每次迭代和最终合并使用的结果类型。
-    defaults : mapping, optional
-        JSON 投影字段在数据库返回 ``NULL`` 时使用的默认值。
-    sql : str, optional
-        当前流实际执行的 SQL，用于失败异常上下文。
-    params : Any, optional
-        SQL 绑定参数，仅作为失败异常属性保存。
+    :param chunksize: 每次请求的最大行数。
+    :type chunksize: int
+    :param retain: 是否保留已读取分块。
+    :type retain: bool, default=True
+    :param total_rows: 进度条总行数。
+    :type total_rows: int, optional
+    :param progress: 是否显示 tqdm 进度条。
+    :type progress: bool, default=False
+    :param result: 每次迭代和最终合并使用的结果类型。
+    :type result: {"dataframe", "records", "rows"}, default="dataframe"
+    :param defaults: JSON 投影字段在数据库返回 ``NULL`` 时使用的默认值。
+    :type defaults: mapping, optional
+    :param sql: 当前流实际执行的 SQL，用于失败异常上下文。
+    :type sql: str, optional
+    :param params: SQL 绑定参数，仅作为失败异常属性保存。
+    :type params: Any, optional
 
     **属性**
 
@@ -58,6 +56,8 @@ class QueryStream:
     >>> first = next(stream)
     >>> stream.stop("仅抽取首批")
     >>> partial = stream.to_dataframe()
+
+    :param resource: 由适配器创建的查询资源，实现 ``fetchmany(size)``、``close()`` 和 ``columns``。
     """
 
     def __init__(

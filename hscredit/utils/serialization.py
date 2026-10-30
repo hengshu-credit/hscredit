@@ -205,6 +205,17 @@ class ArtifactSerializableMixin:
         此接口仅用于可信pickle/joblib。trusted=False在读取前拒绝；默认True保留旧调用。
         metadata_policy控制元数据不一致的warn/strict/ignore行为；strict拒绝无元数据裸对象。
         expected_sha256可用于读取前核对可信来源的摘要，不会使不可信pickle变安全。
+
+        :param file: 已保存的制品文件路径。
+        :param engine: 序列化引擎，可选 ``'auto'``、``'joblib'``、``'pickle'``、``'dill'``、
+            ``'cloudpickle'``；默认 ``'auto'`` 根据文件内容和扩展名推断。
+        :param compression: 压缩方式，可选 gzip、bz2、xz、lz4、zstd；默认 ``None`` 根据扩展名推断。
+        :param metadata_policy: 元数据校验策略：``'warn'`` 警告、``'strict'`` 拒绝不一致或无元数据对象、
+            ``'ignore'`` 忽略元数据差异，默认 ``'warn'``。
+        :param trusted: 是否信任此制品；``False`` 在读取前拒绝，默认 ``True`` 保留旧调用行为。
+        :param expected_sha256: 预期文件 SHA256；None 不额外核对，非空时先验证摘要。 默认 ``None``。
+        :param kwargs: 传给底层读取器的扩展参数，例如文件对象的 ``source_name``。
+        :return: 恢复后的对象；类型与当前类不匹配时抛出异常。
         """
         if trusted is not True:
             raise SerializationError("只能反序列化可信来源的制品，请显式确认 trusted=True")

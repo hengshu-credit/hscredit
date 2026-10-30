@@ -47,17 +47,29 @@ class SerializationError(HSCreditError):
 
 
 def raise_not_fitted(component_name: str, action: str = "请先调用fit方法") -> None:
-    """抛出统一的未拟合异常。"""
+    """抛出统一的未拟合异常。
+
+    :param component_name: 尚未拟合的组件名称，用于中文错误信息。
+    :param action: 调用方正在执行的操作名称，用于提示先拟合。 默认 ``'请先调用fit方法'``。
+    """
     raise NotFittedError(f"{component_name}尚未拟合，{action}")
 
 
 def raise_feature_not_found(feature_name: str, owner_name: str = "特征") -> None:
-    """抛出统一的字段不存在异常。"""
+    """抛出统一的字段不存在异常。
+
+    :param feature_name: 未找到的特征名称。
+    :param owner_name: 应包含该特征的组件或对象名称。 默认 ``'特征'``。
+    """
     raise FeatureNotFoundError(f"{owner_name} '{feature_name}' 未找到")
 
 
 def raise_missing_columns(columns: Iterable[str], data_name: str = "数据集") -> None:
-    """抛出统一的缺失字段异常。"""
+    """抛出统一的缺失字段异常。
+
+    :param columns: 缺失字段的名称序列。
+    :param data_name: 被检查的数据集名称，用于错误定位。 默认 ``'数据集'``。
+    """
     missing: List[str] = list(columns)
     if missing:
         raise FeatureNotFoundError(f"{data_name}缺少以下字段: {missing}")

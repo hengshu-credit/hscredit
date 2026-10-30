@@ -81,22 +81,27 @@ def eda_summary(
 ) -> Dict[str, pd.DataFrame]:
     """EDA分析摘要.
 
-        快速生成数据集的关键分析结果
+    快速生成数据集的关键分析结果。
 
-        :param df: 输入数据
-        :param target: 目标变量名（可选）
-        :param features: 特征列表（可选）
-        :param date: 日期列名（可选）
-        :param mode: strict 遇必需章节失败抛异常；best_effort 记录原因并继续
-        :param return_result: True 返回兼容字典的 ReportResult，含完整章节状态
-        :return: EDA摘要字典
+    :param df: 输入数据
 
-        **参考样例**
+    :param target: 目标变量名（可选）
 
-        >>> summary = eda_summary(df, target='fpd15', date='apply_date')
-        >>> for key, value in summary.items():
-        ...     print(f"=== {key} ===")
-        ...     print(value)
+    :param features: 特征列表（可选）
+
+    :param date: 日期列名（可选）
+
+    :param mode: strict 遇必需章节失败抛异常；best_effort 记录原因并继续
+
+    :param return_result: True 返回兼容字典的 ReportResult，含完整章节状态
+    :return: EDA摘要字典；return_result=True 时返回兼容字典的 ReportResult。
+
+    **参考样例**
+
+    >>> summary = eda_summary(df, target='fpd15', date='apply_date')
+    >>> for key, value in summary.items():
+    ...     print(f"=== {key} ===")
+    ...     print(value)
 
     **参数**
 

@@ -1498,6 +1498,9 @@ def swap_analysis(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param method: 参考样本评分的分箱方法，用于构造风险估计分箱表。 默认 ``'quantile'``。
+    :param max_n_bins: 参考样本评分的最大分箱数。 默认 ``10``。
     """
     validate_overdue_operator(overdue_operator)
     swap_df = _apply_swap_type_rule_sets(

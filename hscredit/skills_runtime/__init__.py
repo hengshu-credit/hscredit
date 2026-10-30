@@ -19,7 +19,14 @@ def execute_skill(
     *,
     registry: Optional[OperationRegistry] = None,
 ) -> dict:
-    """校验并执行一个已登记的 Skill 操作。"""
+    """校验并执行一个已登记的 Skill 操作。
+
+    :param skill: 已登记的技能名称，例如 hsbin 或 hsreport。
+    :param request: 符合该技能操作协议的请求映射，含 operation、输入和输出配置。
+    :param objects: 请求中引用的内存对象名称到对象的映射；None 表示无内存对象。 默认 ``None``。
+    :param registry: 操作注册表；None 使用默认注册表。
+    :return: JSON 兼容结果字典，包含 status、operation、summary、artifacts、warnings、environment 和 manifest。
+    """
     active_registry = registry or ensure_default_operations()
     normalized = validate_request(skill, request, active_registry)
     spec = active_registry.get(skill, normalized.operation)

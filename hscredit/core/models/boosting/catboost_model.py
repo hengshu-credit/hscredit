@@ -543,6 +543,8 @@ class CatBoost(BaseRiskModel):
         """预测类别标签.
 
         基于 predict_proba 取阈值，确保自定义损失（原始分数输出）下也能返回正确类别。
+
+        :param X: 待预测的二维特征数据；字段名称、顺序及预处理方式应与训练输入一致。
         """
         self._require_fitted()
         if predict_params:
@@ -557,6 +559,8 @@ class CatBoost(BaseRiskModel):
         默认返回类别顺序为 classes_ 的两列概率，shape=(n_samples, 2)。
         原生返回两列概率时直接透传；仅兼容一维 raw margin 输出时应用一次 sigmoid，
         调用后不应再次转换。自定义训练目标与内置目标使用相同的公开概率语义。
+
+        :param X: 待预测的二维特征数据；字段名称、顺序及预处理方式应与训练输入一致。
         """
         self._require_fitted()
         X = X if isinstance(X, cb.Pool) else self._prepare_data(X)[0]

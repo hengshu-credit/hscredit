@@ -78,58 +78,89 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
     **参数**
 
     目标与分箱控制
-        :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
-            保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
-            实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
-        :type constraint_policy: str
 
-        :param target: 目标变量列名，默认为 'target'
-        :param max_n_bins: 两个特征的最大分箱数，默认 5
-        :param min_bin_size: 二维普通分箱的最小样本量；(0, 1) 浮点数表示占比，
-            正整数表示样本数，默认 0.02
-        :param method: 分箱方法，默认 'quantile'（等频）
-        :param monotonic: 单调性约束，默认 False。设为 'ascending'/'descending'/True 时，
-            作为 **硬约束** 作用于二维合并：最终各轴向相邻分箱的坏样本率保证满足单调趋势
-            （通过持续合并违例相邻分箱实现，可能使二维分箱数低于 max_n_bins_2d）
-            ``ascending`` 表示特征值越大坏样本率越高（越大越差）， ``descending`` 表示
-            特征值越大坏样本率越低（越大越好）；自动模式复用内部一维分箱器识别的方向。
-        :param max_n_bins_2d: 相邻格子合并后的最大二维分箱数，默认使用 max_n_bins。
-            统计所有已观测普通/缺失组合，特殊值保留箱不计入
+    :param constraint_policy: 约束冲突策略，默认 ``"raise"`` 报错；``"legacy"`` 在约束不可行时
+        保留原生尽力满足的规则（优化器无可行分区时可回退单箱）。不放宽输入校验或吞掉回调错误。
+        实际未满足项记录于 ``constraint_violations_``，不增加业务统计表列。
+
+    :type constraint_policy: str
+
+    :param target: 目标变量列名，默认为 'target'
+
+    :param max_n_bins: 两个特征的最大分箱数，默认 5
+
+    :param min_bin_size: 二维普通分箱的最小样本量；(0, 1) 浮点数表示占比，
+        正整数表示样本数，默认 0.02
+
+    :param method: 分箱方法，默认 'quantile'（等频）
+
+    :param monotonic: 单调性约束，默认 False。设为 'ascending'/'descending'/True 时，
+        作为 **硬约束** 作用于二维合并：最终各轴向相邻分箱的坏样本率保证满足单调趋势
+        （通过持续合并违例相邻分箱实现，可能使二维分箱数低于 max_n_bins_2d）
+        ``ascending`` 表示特征值越大坏样本率越高（越大越差）， ``descending`` 表示
+        特征值越大坏样本率越低（越大越好）；自动模式复用内部一维分箱器识别的方向。
+
+    :param max_n_bins_2d: 相邻格子合并后的最大二维分箱数，默认使用 max_n_bins。
+        统计所有已观测普通/缺失组合，特殊值保留箱不计入
 
     特征1 专用参数（以 _x 后缀区分）
-        :param max_n_bins_x: 特征1的最大分箱数
-        :param min_bin_size_x: 特征1的每箱最小样本占比
-        :param method_x: 特征1的分箱方法
-        :param monotonic_x: 特征1的单调性约束
-        :param user_splits_x: 特征1的自定义切分点，包含 np.nan/None 时显式预留缺失箱
-        :param special_codes_x: 特征1的特殊值列表
-        :param dtype_x: 特征1的数据类型，支持 numerical/categorical/None（自动识别）
+
+    :param max_n_bins_x: 特征1的最大分箱数
+
+    :param min_bin_size_x: 特征1的每箱最小样本占比
+
+    :param method_x: 特征1的分箱方法
+
+    :param monotonic_x: 特征1的单调性约束
+
+    :param user_splits_x: 特征1的自定义切分点，包含 np.nan/None 时显式预留缺失箱
+
+    :param special_codes_x: 特征1的特殊值列表
+
+    :param dtype_x: 特征1的数据类型，支持 numerical/categorical/None（自动识别）
 
     特征2 专用参数（以 _y 后缀区分）
-        :param max_n_bins_y: 特征2的最大分箱数
-        :param min_bin_size_y: 特征2的每箱最小样本占比
-        :param method_y: 特征2的分箱方法
-        :param monotonic_y: 特征2的单调性约束
-        :param user_splits_y: 特征2的自定义切分点，包含 np.nan/None 时显式预留缺失箱
-        :param special_codes_y: 特征2的特殊值列表
-        :param dtype_y: 特征2的数据类型，支持 numerical/categorical/None（自动识别）
+
+    :param max_n_bins_y: 特征2的最大分箱数
+
+    :param min_bin_size_y: 特征2的每箱最小样本占比
+
+    :param method_y: 特征2的分箱方法
+
+    :param monotonic_y: 特征2的单调性约束
+
+    :param user_splits_y: 特征2的自定义切分点，包含 np.nan/None 时显式预留缺失箱
+
+    :param special_codes_y: 特征2的特殊值列表
+
+    :param dtype_y: 特征2的数据类型，支持 numerical/categorical/None（自动识别）
 
     扩展参数
-        :param x_params: 额外参数仅传递给特征1的内部 OptimalBinning
-        :param y_params: 额外参数仅传递给特征2的内部 OptimalBinning
-            参数优先级统一为：显式 ``_x`` / ``_y`` 参数 > ``x_params`` / ``y_params`` > 全局参数。
-            所有参数会在构造内部 ``OptimalBinning`` 前完成合并和校验。
+
+    :param x_params: 额外参数仅传递给特征1的内部 OptimalBinning
+
+    :param y_params: 额外参数仅传递给特征2的内部 OptimalBinning
+        参数优先级统一为：显式 ``_x`` / ``_y`` 参数 > ``x_params`` / ``y_params`` > 全局参数。
+        所有参数会在构造内部 ``OptimalBinning`` 前完成合并和校验。
 
     其他参数
-        :param missing_separate: 是否将缺失值单独分箱，默认 True
-        :param missing_separate_x: 是否将特征1缺失值单独分箱，None 时继承 missing_separate
-        :param missing_separate_y: 是否将特征2缺失值单独分箱，None 时继承 missing_separate
-        :param random_state: 随机种子
-        :param decimal: 数值精度
-        :param woe_clip: WOE截断阈值
-        :param verbose: 是否输出详细信息
-        :param retain_training_data: 是否在内存实例中保留训练数据，默认 False；
-            任何 artifact/pickle 序列化都会剥离训练数据
+
+    :param missing_separate: 是否将缺失值单独分箱，默认 True
+
+    :param missing_separate_x: 是否将特征1缺失值单独分箱，None 时继承 missing_separate
+
+    :param missing_separate_y: 是否将特征2缺失值单独分箱，None 时继承 missing_separate
+
+    :param random_state: 随机种子
+
+    :param decimal: 数值精度
+
+    :param woe_clip: WOE截断阈值
+
+    :param verbose: 是否输出详细信息
+
+    :param retain_training_data: 是否在内存实例中保留训练数据，默认 False；
+        任何 artifact/pickle 序列化都会剥离训练数据
 
     :param user_splits_fixed_x: x 轴用户节点固定配置，默认 ``None``；支持布尔值或布尔序列，语义同一维分箱。
     :param user_splits_fixed_y: y 轴用户节点固定配置，默认 ``None``；支持布尔值或布尔序列，语义同一维分箱。
@@ -339,7 +370,13 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         x1=None,
         x2=None,
     ) -> "OptimalBinning2D":
-        """在干净候选对象上完整拟合并于成功后一次提交。"""
+        """在干净候选对象上完整拟合并于成功后一次提交。
+
+        :param X: 包含两个待分箱字段的 DataFrame 或二维数组。
+        :param y: 与 X 行对齐的二分类标签；默认从构造参数 target 指定的列提取。
+        :param features: 两个特征名，顺序对应 x/y 轴；省略时从输入中推断。 默认 ``None``。
+        :return: 拟合后的分箱器自身。
+        """
         candidate = clone(self)
         result = candidate._fit(X, y, features)
         if result is not candidate:
@@ -1002,7 +1039,14 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         save: Optional[str] = None,
         **kwargs,
     ) -> Any:
-        """绘制三维表面图展示交互效应."""
+        """绘制三维表面图展示交互效应.
+
+        :param metric: 曲面高度指标：``'bad_rate'``、``'woe'`` 或 ``'lift'``。 默认 ``'bad_rate'``。
+        :param figsize: 画布宽、高，单位英寸；None 使用 (12, 8)。 默认 ``None``。
+        :param title: 图标题；None 使用默认标题。
+        :param save: 图片保存路径；None 不保存文件。 默认 ``None``。
+        :param kwargs: 传给 Matplotlib plot_surface 的绘图选项。
+        """
         if not self._is_fitted:
             raise NotFittedError("分箱器尚未拟合，请先调用 fit 方法")
 

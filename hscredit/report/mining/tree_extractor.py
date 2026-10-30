@@ -266,7 +266,13 @@ class TreeRuleExtractor(BaseRuleMiner):
         features: FeatureNames = None,
         **kwargs,
     ) -> "TreeRuleExtractor":
-        """在临时副本中拟合，成功后原子提交模型与编码状态。"""
+        """在临时副本中拟合，成功后原子提交模型与编码状态。
+
+        :param X: 训练 DataFrame，包含候选特征；未单独传入 y 时需包含目标列。
+        :param y: 与训练样本对齐的标签；None 时从构造参数 target 指定的列读取。 默认 ``None``。
+        :param features: 用于树训练的特征名序列；None 使用符合输入约定的特征列。 默认 ``None``。
+        :return: 拟合后的提取器自身。
+        """
         working = copy.copy(self)
         working.model_kwargs = dict(self.model_kwargs)
         working._fit_inplace(X, y, features=features, **kwargs)
@@ -910,6 +916,12 @@ class TreeRuleExtractor(BaseRuleMiner):
         """获取挖掘规则（直接返回Rule对象）.
 
         当传入 datasets 时，规则效果通过 Rule.report 计算并回填到 rule.metadata_。
+
+        :param top_n: 先取前 top_n 条候选，再应用样本量和置信度过滤，最终数量可能更少。 默认 ``100``。
+        :param min_samples: 树节点的最小命中样本数。 默认 ``10``。
+        :param min_confidence: 树节点预测类别的概率下限。 默认 ``0.0``。
+        :param target: 评估标签列名；None 使用构造参数 target。 默认 ``None``。
+        :param datasets: 可选评估数据；传入时用 Rule.report 回填命中指标，不传时保留树规则原始信息。 默认 ``None``。
         """
         if not self.rules_:
             self.extract_rules()
@@ -951,7 +963,14 @@ class TreeRuleExtractor(BaseRuleMiner):
         target: Optional[str] = None,
         datasets: Optional[pd.DataFrame] = None,
     ) -> List[Rule]:
-        """获取Rule对象列表（与get_rules保持一致）."""
+        """获取Rule对象列表（与get_rules保持一致）.
+
+        :param top_n: 先取前 top_n 条候选，再应用样本量和置信度过滤，最终数量可能更少。 默认 ``100``。
+        :param min_samples: 树节点的最小命中样本数。 默认 ``10``。
+        :param min_confidence: 树节点预测类别的概率下限。 默认 ``0.0``。
+        :param target: 评估标签列名；None 使用构造参数 target。 默认 ``None``。
+        :param datasets: 可选评估数据；传入时用 Rule.report 回填命中指标，不传时保留树规则原始信息。 默认 ``None``。
+        """
         return self.get_rules(
             top_n=top_n, min_samples=min_samples, min_confidence=min_confidence, target=target, datasets=datasets
         )
@@ -964,7 +983,14 @@ class TreeRuleExtractor(BaseRuleMiner):
         min_samples: int = 10,
         min_confidence: float = 0.0,
     ) -> pd.DataFrame:
-        """获取规则DataFrame（以rule_expr+Rule.report命中结果为准）."""
+        """获取规则DataFrame（以rule_expr+Rule.report命中结果为准）.
+
+        :param top_n: 先取前 top_n 条候选，再应用样本量和置信度过滤，最终数量可能更少。 默认 ``100``。
+        :param datasets: 可选评估数据；传入时用 Rule.report 回填命中指标，不传时保留树规则原始信息。 默认 ``None``。
+        :param target: 评估标签列名；None 使用构造参数 target。 默认 ``None``。
+        :param min_samples: 树节点的最小命中样本数。 默认 ``10``。
+        :param min_confidence: 树节点预测类别的概率下限。 默认 ``0.0``。
+        """
         rule_objs = self.get_rules(
             top_n=top_n,
             min_samples=min_samples,

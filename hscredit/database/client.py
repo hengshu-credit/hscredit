@@ -27,14 +27,12 @@ class Database:
 
     **参数**
 
-    database_type : str
-        已注册数据库类型或别名。
-    pool_options : mapping or PoolOptions, optional
-        连接池配置。
-    adapter_options : mapping, optional
-        后端专有配置。
-    ``**connect_kwargs``
-        直接传递给后端驱动的连接参数。
+    :param database_type: 已注册数据库类型或别名。
+    :type database_type: str
+    :param pool_options: 连接池配置。
+    :type pool_options: mapping or PoolOptions, optional
+    :param adapter_options: 后端专有配置。
+    :type adapter_options: mapping, optional
 
     **属性**
 
@@ -45,6 +43,8 @@ class Database:
 
     >>> with Database("mysql", host="127.0.0.1", database="risk") as db:
     ...     rows = db.query("SELECT 1", result="rows")
+
+    :param connect_kwargs: 直接传给数据库驱动的连接关键字参数，例如 host、port、database、user；参数集合取决于所选后端。
     """
 
     def __init__(
@@ -160,27 +160,52 @@ class Database:
         return method(*args, **kwargs)
 
     def read_one(self, resource: Any, selector: Any = None, **options: Any) -> Any:
-        """读取单个 Redis key 或 MongoDB 文档。"""
+        """读取单个 Redis key 或 MongoDB 文档。
+
+        :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+        :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
+        :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+        """
 
         return self._call_nosql("read_one", resource, selector, **options)
 
     def read_many(self, resource: Any, selector: Any = None, **options: Any) -> Any:
-        """批量读取 Redis keys 或 MongoDB 文档。"""
+        """批量读取 Redis keys 或 MongoDB 文档。
+
+        :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+        :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
+        :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+        """
 
         return self._call_nosql("read_many", resource, selector, **options)
 
     def read(self, resource: Any, selector: Any = None, **options: Any) -> Any:
-        """根据输入形态自适应执行单条或批量读取。"""
+        """根据输入形态自适应执行单条或批量读取。
+
+        :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+        :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
+        :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+        """
 
         return self._call_nosql("read", resource, selector, **options)
 
     def write_one(self, resource: Any, data: Any, **options: Any) -> Any:
-        """写入单个 Redis key 或 MongoDB 文档。"""
+        """写入单个 Redis key 或 MongoDB 文档。
+
+        :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+        :param data: Redis 的值或 MongoDB 文档；批量写入使用键值映射或文档序列。
+        :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+        """
 
         return self._call_nosql("write_one", resource, data, **options)
 
     def write_many(self, resource: Any, data: Any = None, **options: Any) -> Any:
-        """批量写入 Redis key-value 或 MongoDB 文档。"""
+        """批量写入 Redis key-value 或 MongoDB 文档。
+
+        :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+        :param data: Redis 的值或 MongoDB 文档；批量写入使用键值映射或文档序列。 默认 ``None``。
+        :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+        """
 
         return self._call_nosql("write_many", resource, data, **options)
 
@@ -213,22 +238,42 @@ class Database:
         return self.stream_write(data, resource, **options)
 
     def delete_one(self, resource: Any, selector: Any = None, **options: Any) -> Any:
-        """删除单个 Redis key 或首个匹配 MongoDB 文档。"""
+        """删除单个 Redis key 或首个匹配 MongoDB 文档。
+
+        :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+        :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
+        :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+        """
 
         return self._call_nosql("delete_one", resource, selector, **options)
 
     def delete_many(self, resource: Any, selector: Any = None, **options: Any) -> Any:
-        """批量删除 Redis keys 或 MongoDB 文档。"""
+        """批量删除 Redis keys 或 MongoDB 文档。
+
+        :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+        :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
+        :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+        """
 
         return self._call_nosql("delete_many", resource, selector, **options)
 
     def delete(self, resource: Any, selector: Any = None, **options: Any) -> Any:
-        """根据输入形态与 ``many`` 选项自适应执行删除。"""
+        """根据输入形态与 ``many`` 选项自适应执行删除。
+
+        :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+        :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
+        :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+        """
 
         return self._call_nosql("delete", resource, selector, **options)
 
     def exists(self, resource: Any, selector: Any = None, **options: Any) -> bool:
-        """判断 Redis key 或 MongoDB 匹配文档是否存在。"""
+        """判断 Redis key 或 MongoDB 匹配文档是否存在。
+
+        :param resource: Redis 的 key 或 MongoDB 的集合名；批量接口也接受后端支持的 key 序列或映射。
+        :param selector: MongoDB 查询条件映射；Redis 通常使用 resource 指定 key，默认 None。
+        :param options: 传给当前后端的操作选项；Redis 与 MongoDB 支持的选项不同，见数据库使用指南。
+        """
 
         return bool(self._call_nosql("exists", resource, selector, **options))
 
@@ -831,6 +876,13 @@ class Database:
         分别表示未发布/已确认发布/请求后结果未知，未知时禁止自动重试。
         batches_committed在此入口表示已确认目标发布次数（0或1），不是暂存批数。
         清理失败记录在details，不掩盖主异常；成功发布但清理失败仍返回已发布收据。
+
+        :param data: DataFrame、记录迭代器或分块数据源，将全部写入暂存表后发布。
+        :param table_name: 待替换目标表的限定名。
+        :param batch_size: 写入暂存表时每批行数，必须为正整数。 默认 ``10000``。
+        :param columns: 显式输入列名及顺序；None 时由数据推断。 默认 ``None``。
+        :param keep_backup: 发布成功后是否保留旧目标的备份表。 默认 ``True``。
+        :return: 记录暂存、发布和备份状态的 WriteResult；失败异常保留部分结果。
         """
         self._ensure_open()
         capabilities = getattr(self.adapter, "capabilities", None)

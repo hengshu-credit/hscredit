@@ -474,7 +474,11 @@ class OptimalBinning(BaseBinning):
 
     @classmethod
     def available_objectives(cls, method: str):
-        """列出该方法支持的目标名称；固定算法目标的方法返回空列表。"""
+        """列出该方法支持的目标名称；固定算法目标的方法返回空列表。
+
+        :param method: 分箱方法名，取值见 VALID_METHODS。
+        :return: 该方法支持的目标名称列表；固定算法目标的方法返回空列表。
+        """
         method = cls.validate_method(method)
         if method not in OBJECTIVE_METHODS:
             return []
@@ -549,7 +553,11 @@ class OptimalBinning(BaseBinning):
         }
 
     def get_params(self, deep: bool = True) -> Dict[str, Any]:
-        """在不改变 ``**kwargs`` 入口的前提下暴露方法专属参数。"""
+        """在不改变 ``**kwargs`` 入口的前提下暴露方法专属参数。
+
+        :param deep: 是否递归包含嵌套估计器参数；返回值可用于 sklearn 克隆和参数搜索。 默认 ``True``。
+        :return: 参数名到当前配置值的字典。
+        """
         params = super().get_params(deep=deep)
         params.update(self.kwargs)
         params.update(self._fit_control_options)

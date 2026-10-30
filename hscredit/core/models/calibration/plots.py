@@ -146,7 +146,16 @@ def plot_calibration_comparison(
     show: bool = True,
     colors: Optional[List[str]] = None,
 ):
-    """绘制多个模型的可靠性曲线和 Brier/ECE 指标比较。"""
+    """绘制多个模型的可靠性曲线和 Brier/ECE 指标比较。
+
+    :param y_true: 真实 0/1 标签，1 表示坏样本。
+    :param y_prob_dict: 校准方法名到一维预测概率数组的映射，各数组与 y_true 等长。
+    :param n_bins: 可靠性曲线分箱数。 默认 ``10``。
+    :param figsize: 图宽、高，单位英寸。 默认 ``(12, 5)``。
+    :param title: 图表标题。 默认 ``None``。
+    :param show: 是否调用 Matplotlib 显示图形。 默认 ``True``。
+    :param colors: 各条曲线的颜色序列；None 使用默认配色。
+    """
     import matplotlib.pyplot as plt
 
     if not isinstance(y_prob_dict, dict) or not y_prob_dict:

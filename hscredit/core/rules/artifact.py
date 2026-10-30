@@ -36,7 +36,16 @@ def _decode(value):
 
 @dataclass
 class RuleArtifact:
-    """可审计的规则语义包，不包含训练数据；JSON 不执行反序列化代码。"""
+    """可审计的规则语义包，不包含训练数据；JSON 不执行反序列化代码。
+
+    :param expression: 可由 Rule 执行的原始字段表达式。
+    :param bins: 表达式关联的 BinSpec 元组，用于审计原始分箱边界。 默认 ``()``。
+    :param preprocessing_version: 规则依赖的预处理版本；raw-v1 表示基于原始字段。 默认 ``'raw-v1'``。
+    :param target_spec: 标签定义和统计口径映射，默认空字典。
+    :param metrics: 规则指标快照映射，默认空字典。
+    :param validation: 规则验证状态说明。 默认 ``'未验证'``。
+    :param version: 制品结构版本，目前仅支持 1。 默认 ``1``。
+    """
 
     expression: str
     bins: tuple = ()
