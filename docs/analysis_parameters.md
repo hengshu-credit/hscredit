@@ -15,6 +15,8 @@
 | 绘图尺寸、字号、方向、保存路径 | `figsize`、`fontsize`、`orientation`、`save` |
 | 图片保存分辨率 | `dpi` |
 | 绘图入口返回统计数据 | `result` |
+| 树/策略报告工作表名 | `sheet_name` |
+| 树/策略报告保存路径 | `save`；模型一键报告仍按该入口签名使用 `excel_path`，二者不互作别名 |
 
 ## 字段选择
 
@@ -23,6 +25,12 @@
 二维分箱器、二维统计、二维绘图和交叉规则接口支持 `features=np.array(["score", "age"])`，也支持 `x1="score", x2="age"`。两个字段必须不同；`x1/x2` 必须成对出现，不能与 `features` 混用。
 
 规则挖掘器的构造和 `fit` 使用 `features`。模型报告的公开字段入参也使用 `features`；sklearn 的 `feature_names_in_` 和绘图使用的模型特征名称元数据保持原有含义。编码器需要处理的字段由 `cols` 改为 `features`。
+
+手工二叉树、多叉树及 DecisionTreeAnalyzer 的 `features` 同样支持字符串或一维 list、tuple、ndarray、Index，树规则中的字段名须为字符串。`fit` 显式字段优先于构造配置。`report` 和 `get_rule_table` 使用 `datasets`，支持自带标签列的单表、表格列表/元组或名称到 DataFrame 的字典。
+
+树报告显式提供 `amount`、`feature_map`、`apply_rule_filter`；导出使用 `save`、`sheet_name`、`excel_writer`。完整 Excel 报告的日期、分组和金额从业务字段读取；单表规则效果评估也支持外部金额向量。分裂与筛选配置在初始化时声明，并行使用 `n_jobs`、`parallel_backend`、`parallel_config`。规范参数与优先级见[多叉树与统一树报告](multiway_tree.rst)。
+
+多叉树最大普通分支数为 `max_n_bins`，独立缺失分支不计入；不再接受 `max_branches`。树报告不接受 `sheet`、`data` 等旧参数别名。规则筛选的指标值统一为 `lift`、`badrate`，不使用中文列名或大写别名作为入参；报告输出仍使用中文指标名称。
 
 ## date、group、amount 的数据输入
 

@@ -238,7 +238,7 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
 
    rule_filter = {
        "leaf_only": True,
-       "metric": "LIFT",        # 也支持“LIFT值”和“坏样本率”
+       "metric": "lift",        # lift 或 badrate（坏样本率）
        "threshold": 1.5,
        "operator": ">=",        # >、>=、<、<=
        "min_samples": 0.02,     # 浮点数表示训练样本占比
@@ -281,6 +281,76 @@ ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛
 
 报告与模型效果的输入输出
 ------------------------
+
+参数名称遵循 :doc:`analysis_parameters`，并行配置遵循 :doc:`parallelism`。
+三种树的 ``report`` 和 ``get_rule_table`` 分别使用相同的参数名称、顺序及默认值。
+本次直接使用规范名称，不保留旧参数别名。
+
+.. list-table:: 常用参数与作用范围
+   :header-rows: 1
+
+   * - 参数
+     - 默认值
+     - 说明
+   * - ``features``
+     - None
+     - 构造和 fit 的建树字段；字符串或一维 list/tuple/ndarray/Index，fit 显式值优先。
+   * - ``datasets``
+     - None
+     - 报告数据；None 使用保存的训练数据，支持 DataFrame、列表/元组和名称到 DataFrame 的字典。
+   * - ``target`` / ``overdue`` + ``dpds``
+     - None
+     - 两种标签模式互斥；均未提供时使用训练目标。dpds 支持整数、小数或阈值序列。
+   * - ``amount``
+     - None
+     - Excel 报告使用金额列名，训练集和各评估集均须包含该列；同时输出订单与金额，返回金额规则表。
+   * - ``date`` / ``freq`` / ``group``
+     - None / M / None
+     - Excel 的日期字段、分组频率及业务分组字段；group 可为字段名列表。日期和业务字段可组合分组。
+   * - ``feature_map``
+     - None
+     - 字段到业务含义的映射；report/get_rule_table 的显式值优先于构造配置，不修改原模型配置。
+   * - ``leaf_only`` / ``apply_rule_filter``
+     - False / True
+     - 前者仅限制输出节点类型；后者应用初始化的 rule_filter，未配置时不筛选。
+   * - ``long_format``
+     - True
+     - 规则表按节点、标签展开；False 返回宽表，不影响固定使用宽表的样本统计和特征汇总。
+   * - ``methods`` / ``bin_params``
+     - quantile、uniform、tree / None
+     - 特征分箱页的方法及配置；支持公共参数或按方法分组的参数字典，不改变最终树。
+   * - ``save`` / ``sheet_name`` / ``excel_writer``
+     - None / 组合策略汇总 / None
+     - 文件路径、主报告页名称和已有 ExcelWriter；页名最长 24 字符，自动附加“_特征分箱”页。
+   * - ``project_desc`` / ``data_source``
+     - None / None
+     - 项目目标、取样说明和数据来源文本，仅用于报告展示。
+   * - ``n_jobs`` / ``parallel_backend`` / ``parallel_config``
+     - -1 / None / None
+     - 在树初始化时设置，report/get_rule_table 沿用该配置，不在报告方法中重复传入。
+
+树规则字段名必须为字符串；字段集合的多种容器会按原顺序规范化，重复字段或多维数组会报错。
+``fit(X, y=...)`` 的显式 y 优先于 X 中的 target 列。报告始终在指定数据集上评估固定的最终树，
+不会因为传入新的目标标签重新训练或更改规则。
+仅返回规则表时，单个 DataFrame 的 amount 也支持 Rule.report 的一维金额数据；
+Series 按索引对齐，数组按位置对应。完整 Excel 报告的 date、group、amount 使用字段名，
+应在 fit/report 前将这些业务字段保留在 DataFrame 中，features 只选择建树字段。
+
+二叉树 ``manual_split`` 使用单字段 ``feature`` 和单个切点 ``threshold``；
+多叉树使用 ``feature`` 与切点序列 ``thresholds``，或类别分组 ``category_groups``。
+这些单数/复数名称对应不同的数据形状，不互作别名。分裂准则为 ``criterion``，
+分箱方法为 ``methods``，规则筛选指标为 ``rule_filter["metric"]``，三者分别配置。
+
+``rule_filter`` 只接受 ``leaf_only``、``metric``、``threshold``、``operator``、
+``min_samples`` 和 ``max_samples``。metric 使用 ``lift`` 或 ``badrate``；
+``LIFT``、``LIFT值``、``坏样本率`` 等不再作为入参别名，输出指标列仍为中文。
+min_samples/max_samples 是训练订单命中量约束，不是分箱器的 min_bin_size/max_bin_size。
+整数表示个数，[0, 1] 内浮点数表示比例，所有条件联合生效。
+
+报告不再接受 ``sheet``、``data``、``max_branches`` 等旧名称；错误参数会明确报错。
+``get_rule_table`` 可通过关键字转交 report 的导出选项，例如
+``tree.get_rule_table(datasets, amount="放款金额", sheet_name="策略", save="策略.xlsx")``。
+其他额外参数仅限 Rule.report 的 ``prior_rules``、``margins``、``filter_cols`` 及原始精度设置。
 
 数据集传参沿用 ``auto_model_report`` 的常用约定：每个 DataFrame 自带目标列，
 统一通过 ``datasets`` 传入字典或列表，通过 ``target`` 指定目标列名。
@@ -333,9 +403,9 @@ ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛
 多叉树、手工二叉树和 ``DecisionTreeAnalyzer`` 使用一致的规则接口：
 ``get_rule_table(datasets=None, target=None, overdue=None, dpds=None, ...)`` 默认展示所有节点效果，
 ``get_rules()`` 返回叶节点 ``Rule``，``get_rules(leaf_only=False)`` 返回含根节点的全部路径。
-旧多叉树 ``get_rule_table(data=...)`` 仍作为兼容别名保留。
+三个入口统一使用 ``datasets``，不再接受 ``data`` 别名。
 
-``report`` 参考 scorecardpipeline ``DecisionTreeRuleExtractor.report`` 的 ``sheet`` / ``save``
+``report`` 参考 scorecardpipeline ``DecisionTreeRuleExtractor.report`` 的 ``sheet_name`` / ``save``
 调用方式，新增直接导出能力；保存前后返回的 DataFrame、列表或字典结构保持一致：
 
 .. code-block:: python
@@ -344,7 +414,7 @@ ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛
    reports = tree.report(
        datasets, overdue=["MOB1"], dpds=[7, 3, 0], leaf_only=False,
        round_digits=False, date="放款时间", freq="M", data_source="真实放款数据",
-       sheet="组合策略汇总", save="多叉树挖掘报告.xlsx",
+       sheet_name="组合策略汇总", save="多叉树挖掘报告.xlsx",
    )
 
 工作簿使用单张连续报告页，按“基本信息与模型性能、挖掘摘要、策略详情、最终树在各数据集上的应用”排列。
@@ -372,7 +442,7 @@ ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛
 ``get_node_table()`` 返回完整结构，二分类增加坏率、LIFT 等规则指标，多分类保留各类别计数和占比。
 叶子自身没有分裂特征，所属客群由“指标含义”和“分支条件”描述；父节点编号使用可空整数。
 
-可以用已有 ``ExcelWriter`` 汇总不同口径，使用不同的 ``sheet`` 避免覆盖同名报告：
+可以用已有 ``ExcelWriter`` 汇总不同口径，使用不同的 ``sheet_name`` 避免覆盖同名报告：
 
 .. code-block:: python
 
@@ -380,9 +450,9 @@ ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛
 
    with ExcelWriter() as writer:
        writer.set_filename("多口径树报告.xlsx")
-       tree.report(datasets, target="FPD", sheet="FPD件数", excel_writer=writer)
+       tree.report(datasets, target="FPD", sheet_name="FPD件数", excel_writer=writer)
        tree.report(datasets, overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额",
-                   sheet="MOB1金额", excel_writer=writer)
+                   sheet_name="MOB1金额", excel_writer=writer)
 
 同名报告页重建，其他工作表保留。金额策略表中的命中数、好坏样本数表示金额，
 坏样本率为金额坏率；准确率、精确率、召回率和 F1 仍按件数计算。
@@ -412,8 +482,7 @@ ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛
 该上限对每个节点的普通分支生效，不含独立缺失分支，不是整棵树的叶节点总数。
 例如 4 个普通分支加 1 个独立缺失分支时只需要 ``max_n_bins=4``；缺失合并时不增加分支。
 ``max_n_bins=1, missing_separate=True`` 允许仅按“非缺失 / 缺失”分成两支。
-两个参数均未提供时，默认最多 4 个普通分支，独立缺失分支另计。
-旧参数 ``max_branches`` 显式传入时保留原来的总分支数含缺失语义；同时提供时显式 ``max_n_bins`` 优先。
+默认 ``max_n_bins=4``，独立缺失分支另计；不接受 ``max_branches``。
 ``set_params(max_n_bins=...)`` 控制后续训练和节点分裂，
 已有节点需重新 fit 或重分裂才改变结构。
 报告参数 ``bin_params={"max_n_bins": 5}`` 只设置特征分箱页的箱数，不改变树的分叉上限。

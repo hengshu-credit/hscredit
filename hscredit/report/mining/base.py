@@ -8,24 +8,23 @@ from sklearn.base import BaseEstimator
 
 from ...utils.parallel import ParallelizableMixin, ParallelWorkload
 from ...utils.data_contracts import prepare_xy
+from ...utils.arguments import normalize_features
 
 _NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
 
 
-FeatureNames = Optional[Union[str, List[str]]]
+FeatureNames = Optional[Union[str, List[str], Tuple[str, ...], np.ndarray, pd.Index]]
 
 
 def normalize_feature_names(features: FeatureNames, parameter_name: str = "features") -> Optional[List[str]]:
-    """将单个字段名或字段名列表归一化为列表，并保持原始顺序。"""
-    if features is None:
-        return None
-    if isinstance(features, str):
-        return [features]
-    if not isinstance(features, list) or any(not isinstance(feature, str) for feature in features):
-        raise TypeError(f"{parameter_name} 必须是 str、list[str] 或 None")
-    if len(features) != len(set(features)):
-        raise ValueError(f"{parameter_name} 中不能包含重复字段")
-    return list(features)
+    """复用分析参数规范；规则表达式字段名保持字符串，顺序与输入一致。"""
+    try:
+        selected = normalize_features(features)
+    except (TypeError, ValueError) as exc:
+        raise type(exc)(str(exc).replace("features", parameter_name)) from exc
+    if selected is not None and any(not isinstance(feature, str) for feature in selected):
+        raise TypeError(f"{parameter_name} 中的规则字段名必须是字符串")
+    return selected
 
 
 def resolve_feature_map(

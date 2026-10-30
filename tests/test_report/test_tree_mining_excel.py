@@ -128,8 +128,8 @@ def test_report_containers_and_external_writer(tree, data, tmp_path):
     with ExcelWriter() as writer:
         writer.set_filename(str(path))
         writer.get_sheet_by_name("业务原表")["A1"] = "保留"
-        tree.report(data, sheet="FPD", excel_writer=writer, save=path)
-        tree.report(data, overdue=["MOB1"], dpds=[7, 3, 0], sheet="MOB", excel_writer=writer)
+        tree.report(data, sheet_name="FPD", excel_writer=writer, save=path)
+        tree.report(data, overdue=["MOB1"], dpds=[7, 3, 0], sheet_name="MOB", excel_writer=writer)
     book = load_workbook(path)
     assert book["业务原表"]["A1"].value == "保留"
     assert len(book["FPD"]._images) == len(book["MOB"]._images) == 2
@@ -180,10 +180,11 @@ def test_node_details_after_local_edits(data):
     tree.prune(node=child)
     after = tree.get_node_table()
     assert len(after) == len(tree.nodes_) < len(table)
-    pd.testing.assert_frame_equal(tree.get_rule_table(data=data), tree.get_rule_table(datasets=data))
-    pd.testing.assert_frame_equal(tree.get_rule_table(data, True), tree.get_rule_table(data, leaf_only=True))
-    with pytest.raises(ValueError, match="不能同时"):
-        tree.get_rule_table(datasets=data, data=data)
+    pd.testing.assert_frame_equal(tree.get_rule_table(data), tree.get_rule_table(datasets=data))
+    with pytest.raises(TypeError, match="datasets"):
+        tree.get_rule_table(data=data)
+    with pytest.raises(TypeError):
+        tree.get_rule_table(data, True)
 
 
 def test_no_export_without_save(tree, data, monkeypatch):

@@ -53,7 +53,7 @@ def test_auto_grows_true_multiway_node_and_exact_probability(criterion):
 
 
 def test_bonferroni_adjusts_actual_numeric_search_count(monkeypatch):
-    tree = MultiwayTreeExtractor(max_depth=0, max_branches=3).fit(sample())
+    tree = MultiwayTreeExtractor(max_depth=0, max_n_bins=3).fit(sample())
     monkeypatch.setattr(tree, "_numeric_pool", lambda values: (39.5, 79.5))
     row = tree.get_split_candidates().iloc[0]
     assert row["调整后P值"] == pytest.approx(row["P值"] * 3)
@@ -62,7 +62,7 @@ def test_bonferroni_adjusts_actual_numeric_search_count(monkeypatch):
 
 def test_binary_and_multiway_branch_limits_and_greedy_search():
     data = sample()
-    binary = MultiwayTreeExtractor(max_depth=1, max_branches=2).fit(data)
+    binary = MultiwayTreeExtractor(max_depth=1, max_n_bins=2).fit(data)
     assert all(len(node.children) <= 2 for node in binary.nodes_.values())
     greedy = MultiwayTreeExtractor(max_depth=1, max_candidates=1).fit(data)
     assert len(greedy.nodes_[0].children) >= 3

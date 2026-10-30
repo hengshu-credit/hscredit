@@ -20,10 +20,11 @@ def data(categorical=False, missing=True):
 
 @pytest.mark.parametrize("categorical", [False, True])
 @pytest.mark.parametrize("missing", [False, True])
-@pytest.mark.parametrize("limit", [None, 4])
+@pytest.mark.parametrize("limit", ["default", 4])
 def test_auto_four_ordinary_branches_plus_independent_missing(categorical, missing, limit):
     frame = data(categorical, missing)
-    tree = MultiwayTreeExtractor(max_n_bins=limit, missing_separate=True, criterion="gini", max_depth=1).fit(frame)
+    options = {} if limit == "default" else {"max_n_bins": limit}
+    tree = MultiwayTreeExtractor(**options, missing_separate=True, criterion="gini", max_depth=1).fit(frame)
     root = tree.nodes_[0]
     assert len(root.children) == 5
     assert len([b for b in root.branches if b.kind != "missing"]) == 4
@@ -56,17 +57,17 @@ def test_manual_split_and_missing_marker_do_not_consume_normal_bin(categorical):
         assert not tree.nodes_[0].missing_separate
 
 
-def test_alias_precedence_set_params_and_old_pickle(tmp_path):
+def test_canonical_parameter_set_params_and_serialization(tmp_path):
     frame = data()
-    old = MultiwayTreeExtractor(max_branches=4, missing_separate=True, criterion="gini", max_depth=1).fit(frame)
-    assert len(old.nodes_[0].children) == 4  # 显式旧参数保留总数含缺失口径。
-    del old.max_n_bins
-    path = old.save(tmp_path / "旧模型.pkl")
+    tree = MultiwayTreeExtractor(max_n_bins=4, missing_separate=True, criterion="gini", max_depth=1).fit(frame)
+    assert len(tree.nodes_[0].children) == 5
+    assert "max_branches" not in tree.get_params()
+    with pytest.raises(TypeError, match="max_branches"):
+        MultiwayTreeExtractor(max_branches=4)
+    path = tree.save(tmp_path / "模型.pkl")
     loaded = MultiwayTreeExtractor.load(path)
-    assert loaded.max_n_bins is None
-    loaded.fit(frame)
-    assert len(loaded.nodes_[0].children) == 4
-    loaded.set_params(max_n_bins=4).fit(frame)
+    assert loaded.max_n_bins == 4
+    np.testing.assert_array_equal(loaded.predict(frame), tree.predict(frame))
     assert len(loaded.nodes_[0].children) == 5
     loaded.set_params(max_n_bins=2).fit(frame)
     assert len(loaded.nodes_[0].children) == 3
@@ -83,7 +84,7 @@ def test_one_normal_bin_can_split_only_missing(categorical):
     assert not tree.nodes_[0].children
 
 
-@pytest.mark.parametrize("limit", [0, -1, 2.5, True, "4"])
+@pytest.mark.parametrize("limit", [None, 0, -1, 2.5, True, "4"])
 def test_invalid_normal_branch_limit(limit):
     with pytest.raises(InputValidationError, match="max_n_bins"):
         MultiwayTreeExtractor(max_n_bins=limit).fit(data())

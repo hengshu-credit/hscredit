@@ -55,7 +55,7 @@ def test_legacy_multiway_has_disabled_filter(data):
     assert len(tree.report()) == len(tree.get_rules(leaf_only=False))
 
 
-@pytest.mark.parametrize("metric,threshold", [("坏样本率", 1 / 3), ("LIFT", 1)])
+@pytest.mark.parametrize("metric,threshold", [("badrate", 1 / 3), ("lift", 1)])
 @pytest.mark.parametrize("op", [">", ">=", "<", "<="])
 def test_filter_uses_training_orders_without_changing_tree(tree_type, data, metric, threshold, op):
     config = dict(metric=metric, threshold=threshold, operator=op, leaf_only=False, min_samples=0.05, max_samples=80)
@@ -66,7 +66,7 @@ def test_filter_uses_training_orders_without_changing_tree(tree_type, data, metr
     for rule in rules:
         node = int(rule.name.rsplit("_", 1)[1].lstrip("N"))
         rows = data.loc[rule.predict(data)]
-        value = rows.FPD.mean() if metric == "坏样本率" else rows.FPD.mean() / data.FPD.mean()
+        value = rows.FPD.mean() if metric == "badrate" else rows.FPD.mean() / data.FPD.mean()
         if node != 0 and 0.05 * len(data) <= len(rows) <= 80 and compare(value, threshold):
             expected.append(node)
     validation = data.iloc[::2].assign(FPD=lambda frame: 1 - frame.FPD, 金额=10000)

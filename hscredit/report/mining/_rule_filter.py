@@ -15,7 +15,7 @@ def normalize_rule_filter(config):
         return None
     if not isinstance(config, dict):
         raise ValueError("rule_filter 必须为字典或 None")
-    defaults = dict(leaf_only=True, metric="LIFT值", threshold=1.0, operator=">=", min_samples=None, max_samples=None)
+    defaults = dict(leaf_only=True, metric="lift", threshold=1.0, operator=">=", min_samples=None, max_samples=None)
     unknown = set(config) - set(defaults)
     if unknown:
         raise ValueError(f"rule_filter 不支持的配置：{sorted(unknown)}")
@@ -23,11 +23,8 @@ def normalize_rule_filter(config):
     if not isinstance(result["leaf_only"], (bool, np.bool_)):
         raise ValueError("rule_filter.leaf_only 必须为布尔值")
     metric = result["metric"]
-    if not isinstance(metric, str):
-        raise ValueError("rule_filter.metric 必须为坏样本率或 LIFT值")
-    result["metric"] = "LIFT值" if metric.lower() in {"lift", "lift值"} else metric
-    if result["metric"] not in {"坏样本率", "LIFT值"}:
-        raise ValueError("rule_filter.metric 必须为坏样本率或 LIFT值")
+    if not isinstance(metric, str) or metric not in {"lift", "badrate"}:
+        raise ValueError("rule_filter.metric 必须为 lift 或 badrate")
     if not isinstance(result["operator"], str) or result["operator"] not in _OPERATORS:
         raise ValueError("rule_filter.operator 必须为 >、>=、< 或 <=")
     value = result["threshold"]
@@ -66,7 +63,8 @@ def select_rule_nodes(table, config):
     mask = table["节点编号"].ne(0) & counts.ge(minimum) & counts.le(maximum)
     if config["leaf_only"]:
         mask &= table["是否叶子"].eq("是")
-    mask &= _OPERATORS[config["operator"]](table[config["metric"]], config["threshold"])
+    metric_column = {"lift": "LIFT值", "badrate": "坏样本率"}[config["metric"]]
+    mask &= _OPERATORS[config["operator"]](table[metric_column], config["threshold"])
     return table.loc[mask, "节点编号"].tolist()
 
 

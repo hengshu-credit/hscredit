@@ -13,6 +13,46 @@ from ...utils.dates import date_groups
 from .._sample_stats import build_sample_stats_table
 
 
+def reject_legacy_tree_keywords(kwargs):
+    """旧名称不作别名，也不透传到 Rule.report 后静默忽略。"""
+    renamed = {
+        "sheet": "sheet_name",
+        "data": "datasets",
+        "excel_path": "save",
+        "max_branches": "max_n_bins",
+        "date_col": "date",
+        "date_freq": "freq",
+        "group_col": "group",
+        "amount_col": "amount",
+        "binning_params": "bin_params",
+        "hscredit_methods": "methods",
+    }
+    for old, new in renamed.items():
+        if old in kwargs:
+            raise TypeError(f"参数 {old} 已移除，请使用 {new}")
+    for name in ("n_jobs", "parallel_backend", "parallel_config", "max_n_bins"):
+        if name in kwargs:
+            raise TypeError(f"请在树初始化时设置 {name}，report/get_rule_table 不接受该参数")
+    unknown = set(kwargs) - {
+        "margins",
+        "prior_rules",
+        "filter_cols",
+        "round_digits",
+        "save",
+        "sheet_name",
+        "excel_writer",
+        "date",
+        "freq",
+        "group",
+        "methods",
+        "bin_params",
+        "project_desc",
+        "data_source",
+    }
+    if unknown:
+        raise TypeError(f"未知树报告参数：{sorted(unknown)}；请使用 report/get_rule_table 的规范参数名")
+
+
 def _report_metric_name(table, column):
     """兼容指标在首层的统计宽表、指标在末层的规则宽表和单层长表。"""
     if not isinstance(column, tuple):
@@ -192,7 +232,7 @@ def tree_report_excel(
     feature_map=None,
     overdue_operator=">",
     save=None,
-    sheet="组合策略汇总",
+    sheet_name="组合策略汇总",
     excel_writer=None,
     date=None,
     freq="M",
@@ -221,7 +261,7 @@ def tree_report_excel(
     :param feature_map: 默认 None；特征名称到中文含义的映射。
     :param overdue_operator: 默认 '>'；逾期比较符，支持 '>'、'>='、'<'、'<='。
     :param save: 默认 None；导出 Excel 路径。
-    :param sheet: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
+    :param sheet_name: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
     :param excel_writer: 默认 None；可复用的 hscredit ExcelWriter。
     :param date: 默认 None；用于样本时间分布的日期字段。
     :param freq: 默认 'M'；日期统计频率。
@@ -239,11 +279,12 @@ def tree_report_excel(
     from ._rule_filter import filter_rule_tables
 
     dataframe2excel = _write_report_table
+    sheet = sheet_name
 
     if excel_writer is not None and not isinstance(excel_writer, ExcelWriter):
         raise TypeError("excel_writer 必须是 hscredit.excel.ExcelWriter 实例")
     if not isinstance(sheet, str) or not sheet or len(sheet) > 24 or any(c in sheet for c in "[]:*?/\\"):
-        raise ValueError("sheet 必须是 1 至 24 字符的有效 Excel 工作表名称")
+        raise ValueError("sheet_name 必须是 1 至 24 字符的有效 Excel 工作表名称")
     frames = (
         datasets
         if isinstance(datasets, dict)
@@ -603,12 +644,6 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount, s
     row, _ = dataframe2excel(summary, writer, sheet_name=sheet, title="二、规则挖掘摘要", start_row=row)
     model = tree if hasattr(tree, "get_params") else getattr(tree, "clf", getattr(tree, "_sklearn_clf", None))
     parameters = model.get_params(deep=False) if model is not None else {}
-    if hasattr(tree, "_branch_limit"):
-        if tree.max_n_bins is not None or tree.max_branches is None:
-            parameters.pop("max_branches", None)
-            parameters["max_n_bins"] = tree._branch_limit()
-        else:
-            parameters.pop("max_n_bins", None)
     parameters["features"] = getattr(tree, "features_", None) or getattr(tree, "_feature_list", None)
     parameters["rule_filter"] = getattr(tree, "rule_filter", None)
     params = pd.DataFrame([{"参数": name, "配置": str(value)} for name, value in parameters.items()])

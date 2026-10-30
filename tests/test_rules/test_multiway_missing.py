@@ -58,7 +58,7 @@ def test_numeric_marker_position_matches_binner_and_raw_rows(marker, position):
 
 def test_screenshot_trailing_nan_explicit_branch_wins():
     data = pd.DataFrame({"评分": [0.1, 0.15, 0.2, 0.3, np.nan] * 10, "target": [0, 1, 0, 1, 1] * 10})
-    tree = MultiwayTreeExtractor(max_depth=1, max_branches=4).fit(data)
+    tree = MultiwayTreeExtractor(max_depth=1, max_n_bins=4).fit(data)
     tree.manual_split(feature="评分", thresholds=[0.12, 0.18, 0.25, np.nan], missing_branch=0)
     assert len(tree.nodes_[0].children) == 4
     assert not tree.nodes_[0].missing_separate
@@ -91,7 +91,7 @@ def test_auto_separate_keeps_rare_missing_and_obeys_total_branch_limit(feature, 
     )
     tree = MultiwayTreeExtractor(
         max_depth=1,
-        max_branches=4,
+        max_n_bins=4,
         min_samples_split=2,
         min_samples_leaf=10,
         criterion="gini",
@@ -245,7 +245,7 @@ def test_screenshot_merge_marker_and_matching_explicit_branch_agree(destination)
     cuts = [0.12, 0.18, 0.25]
     splits = cuts.copy()
     splits.insert(destination, np.nan)
-    marked = MultiwayTreeExtractor(max_depth=1, missing_separate=True, max_branches=5).fit(data)
+    marked = MultiwayTreeExtractor(max_depth=1, missing_separate=True, max_n_bins=5).fit(data)
     explicit = clone(marked).fit(data)
     marked.manual_split(feature="评分", thresholds=splits)
     explicit.manual_split(feature="评分", thresholds=cuts + [np.nan], missing_branch=destination)

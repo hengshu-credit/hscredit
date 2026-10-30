@@ -102,18 +102,15 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
 
     :param target: 标签列名，默认 ``'target'``；``fit(X, y)`` 中显式 y 优先，目标列不参与分裂。
     :type target: str
-    :param features: 特征列名或列表；默认 ``None`` 使用除标签外的全部列，顺序保留在 ``features_``。
+    :param features: 特征列名或一维 list、tuple、ndarray、Index；默认 ``None`` 使用除标签外的全部列，顺序保留在 ``features_``。
         可在 ``fit`` 中覆盖。金额、日期和逾期字段只用于报告时，应通过此参数限制分裂特征。
-    :type features: str or list[str] or None
+    :type features: str or list[str] or tuple[str] or numpy.ndarray or pandas.Index or None
     :param max_depth: 非负整数，根节点深度为 0，默认 3；0 表示只保留根节点。
     :type max_depth: int
-    :param max_branches: 兼容旧参数，默认 None；显式使用时沿用包含独立缺失分支的总数限制。
-        仅在 max_n_bins=None 时生效；新代码请使用 max_n_bins。
-    :type max_branches: int or None
     :param max_n_bins: 每次分裂最多普通分支数，不含独立缺失分支，至少 1。
-        默认 None 且未传旧参数时使用 4；显式提供时优先于旧参数。
+        默认 4，与分箱器的普通箱数口径一致。
         支持构造参数及 set_params，不限制整棵树的叶节点总数。
-    :type max_n_bins: int or None
+    :type max_n_bins: int
     :param min_samples_split: 自动分裂的最小节点样本数，默认 20。
     :type min_samples_split: int
     :param min_samples_leaf: 自动分裂的最小普通叶节点样本数，默认 10；独立缺失分支不受此限制。
@@ -146,8 +143,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     :param missing_separate: 默认 False，自动学习缺失值合并方向；True 时保留独立缺失分支。
         节点训练样本无缺失时默认走最左分支；显式 missing_branch 或规则中的缺失标记优先。
     :type missing_separate: bool
-    :param rule_filter: 默认 None 不筛选。显式字典支持 leaf_only（默认 True）、metric（默认 LIFT值，
-        也支持坏样本率）、threshold（默认 1）、operator（默认 >=，支持 >、>=、<、<=）、
+    :param rule_filter: 默认 None 不筛选。显式字典支持 leaf_only（默认 True）、metric（默认 lift，
+        也支持 badrate）、threshold（默认 1）、operator（默认 >=，支持 >、>=、<、<=）、
         min_samples 和 max_samples（整数为个数，[0, 1] 浮点数为比例）。
         按训练集订单指标筛选 report/get_rule_table，完整树与 get_rules 的路由不变。
     :type rule_filter: dict or None
@@ -175,14 +172,13 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     # 旧版持久化对象没有此参数时，继续沿用原有的缺失合并策略。
     missing_separate = False
     rule_filter = None
-    max_n_bins = None
 
     def __init__(
         self,
         target="target",
         features=None,
         max_depth=3,
-        max_branches=None,
+        max_n_bins=4,
         min_samples_split=20,
         min_samples_leaf=10,
         criterion="chi2",
@@ -197,12 +193,10 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         parallel_config=None,
         missing_separate=False,
         rule_filter=None,
-        max_n_bins=None,
     ):
         self.target = target
         self.features = features
         self.max_depth = max_depth
-        self.max_branches = max_branches
         self.max_n_bins = max_n_bins
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
@@ -223,12 +217,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         self.rule_filter = rule_filter
 
     def _branch_limit(self, missing_separate=False):
-        """普通分支上限外另加独立缺失分支；旧参数仍按总分支数解释。"""
-        if self.max_n_bins is not None:
-            return self.max_n_bins + int(missing_separate)
-        if self.max_branches is not None:
-            return self.max_branches
-        return 4 + int(missing_separate)
+        """普通分支上限外另加独立缺失分支。"""
+        return self.max_n_bins + int(missing_separate)
 
     def _validate_parameters(self):
         from ._rule_filter import normalize_rule_filter
@@ -239,15 +229,13 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             raise InputValidationError("构造参数 missing_separate 必须是布尔值")
         for name, minimum in (
             ("max_depth", 0),
-            ("max_branches", 2) if self.max_n_bins is None else ("max_n_bins", 1),
+            ("max_n_bins", 1),
             ("min_samples_split", 2),
             ("min_samples_leaf", 1),
             ("max_prebins", 2),
             ("max_candidates", 1),
         ):
             value = getattr(self, name)
-            if name == "max_branches" and value is None:
-                continue
             if isinstance(value, bool) or not isinstance(value, Integral) or value < minimum:
                 raise InputValidationError(f"{name} 必须是大于等于 {minimum} 的整数")
         if self.criterion not in ("chi2", "gini", "entropy"):
@@ -275,7 +263,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         :type y: array-like or None
         :param features: 本次使用的特征列名或列表，默认 ``None`` 沿用构造配置；
             两处均为 ``None`` 时使用除目标列外的全部列。数组输入时名称数须等于列数。
-        :type features: str or list[str] or None
+        :type features: str or list[str] or tuple[str] or numpy.ndarray or pandas.Index or None
         :return: 训练后的当前实例，支持链式调用。
         :rtype: MultiwayTreeExtractor
         :raises InputValidationError: 模型参数、特征或训练数据不符合约束。
@@ -827,7 +815,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             count = len(groups)
             values = series.to_numpy()
         if count > self._branch_limit(separate):
-            raise InputValidationError("分支数超过配置上限：max_n_bins 不含独立缺失分支，旧 max_branches 包含缺失分支")
+            raise InputValidationError("普通分支数超过 max_n_bins，独立缺失分支不计入上限")
         if count < 2:
             raise InputValidationError("分裂至少需要两个分支；仅区分缺失与非缺失可指定 missing_separate=True")
         if missing_branch is not None and (
@@ -1149,7 +1137,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         *,
         overdue_operator=">",
         save=None,
-        sheet="组合策略汇总",
+        sheet_name="组合策略汇总",
+        amount=None,
         excel_writer=None,
         date=None,
         freq="M",
@@ -1177,7 +1166,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
         :param data_source: 默认 None；数据来源说明。
         :param save: 默认 None；Excel 路径，在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
-        :param sheet: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
+        :param sheet_name: 默认“组合策略汇总”；与策略报告一致的工作表名，最长 24 字符。
+        :param amount: 默认 None；金额列名。Excel 报告要求训练数据及各评估数据集均包含该列；
+            同时展示订单/金额口径，返回值为金额口径规则表。仅返回规则表时也支持 Rule.report 的一维金额数据。
         :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
         :param feature_map: 默认 None 沿用构造参数；字段含义映射，与手工二叉树一致。
         :param datasets: 默认 None 使用训练数据； 待评估 DataFrame、DataFrame 列表/元组，或名称到 DataFrame 的字典。
@@ -1221,6 +1212,10 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         ... )
         >>> reports = tree.report({'训练集': df_train, '测试集': df_test}, leaf_only=True)
         """
+        from ._tree_report import reject_legacy_tree_keywords
+
+        reject_legacy_tree_keywords(kwargs)
+        kwargs["amount"] = amount
         self._check_fitted()
         datasets = self._data if datasets is None else datasets
         if save is not None or excel_writer is not None:
@@ -1238,7 +1233,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 feature_map=feature_map,
                 overdue_operator=overdue_operator,
                 save=save,
-                sheet=sheet,
+                sheet_name=sheet_name,
                 excel_writer=excel_writer,
                 date=date,
                 freq=freq,
@@ -1340,11 +1335,16 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         *,
         overdue_operator=">",
         long_format=True,
-        data=None,
+        amount=None,
+        feature_map=None,
+        apply_rule_filter=True,
         **kwargs,
     ):
         """按手工二叉树接口返回全树规则效果，默认使用训练数据。
 
+        :param apply_rule_filter: 默认 True；按初始化配置在训练集筛选，False 返回完整规则。
+        :param amount: 默认 None；金额列名或一维金额数据，传给 report，口径保持一致。
+        :param feature_map: 默认 None 沿用构造配置；本次字段含义映射，显式值优先。
         :param long_format: 默认 True 按标签返回长表，False 保留原多标签宽表。
         :param datasets: 默认 None 使用训练数据；也支持 DataFrame、列表、元组或数据集字典。
         :param target: 默认 None；支持标签列名、Series、ndarray、list、callable 或标签映射；
@@ -1355,18 +1355,13 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         :param del_grey: 默认 False；是否逐标签剔除灰样本。
         :param leaf_only: 默认 False 包含全部节点；True 仅返回叶子。
         :param overdue_operator: 默认 '>'；逾期比较符。
-        :param data: 默认 None；旧版 datasets 的关键字别名，不能同时提供。
-        :param kwargs: 传给 report 的参数，如 amount、round_digits、save、sheet 和 excel_writer。
+        :param kwargs: 传给 report 的参数，如 amount、round_digits、save、sheet_name 和 excel_writer。
         :return: 与 report 相同的中文效果表或表格容器，指标来自 Rule.report。
         """
+        from ._tree_report import reject_legacy_tree_keywords
+
+        reject_legacy_tree_keywords(kwargs)
         self._check_fitted()
-        if data is not None:
-            if datasets is not None:
-                raise InputValidationError("datasets 与 data 不能同时提供")
-            datasets = data
-        if isinstance(target, (bool, np.bool_)):
-            # 兼容原 get_rule_table(data, leaf_only) 的第二个位置参数。
-            leaf_only, target = bool(target), None
         return self.report(
             datasets,
             target=target,
@@ -1376,6 +1371,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             leaf_only=leaf_only,
             overdue_operator=overdue_operator,
             long_format=long_format,
+            amount=amount,
+            feature_map=feature_map,
+            apply_rule_filter=apply_rule_filter,
             **kwargs,
         )
 

@@ -1004,7 +1004,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         """初始化决策树训练器。
 
         :param target: 目标变量列名（0=好样本，1=坏样本）
-        :param features: 特征名列表（默认自动从数据中推断数值列）
+        :param features: 默认 None 自动推断数值特征；支持字符串或一维 list、tuple、ndarray、Index；fit 的显式值优先。
         :param tree_params: 决策树参数字典，默认值如下：
 
             ============ ================================
@@ -1025,8 +1025,14 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             并兼容不支持原生缺失的旧版 sklearn（例如训练前已将缺失填充为 -999，则传入
             ``missing=-999`` ）。
 
-        :param rule_filter: 默认 None 不筛选；显式字典配置 leaf_only、metric（默认 LIFT值）、
-            threshold（默认 1）、operator（默认 >=）、min_samples 和 max_samples。
+        :param n_jobs: 并行总预算，默认 -1 自动调度；1 或 None 串行，正整数为 worker 上限，
+            (0, 1) 浮点数为物理核比例。规则评估及 Excel 数据集计算、特征分箱共用该预算。
+        :param parallel_backend: 默认 None 自动选择；loky 为多进程，threading 为多线程。
+        :param parallel_config: 默认 None；复用 hscredit 并行配置，如 batch_size、pre_dispatch、
+            max_nbytes、inner_max_num_threads；不能在字典中重复指定 n_jobs 或 backend。
+        :param feature_map: 默认 None；字段名到业务含义的映射，report/get_rule_table 的显式值优先。
+        :param rule_filter: 默认 None 不筛选；显式字典配置 leaf_only、metric（默认 lift）、
+            threshold（默认 1）、operator（默认 >=）、min_samples 和 max_samples；metric 仅支持 lift、badrate。
             样本量整数为个数、[0, 1] 浮点数为比例；仅按训练集订单口径筛选报告规则。
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`min_weight_fraction_leaf=0.1` 等。
@@ -1341,17 +1347,20 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
     def report(
         self,
-        datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]] = None,
+        datasets: Optional[
+            Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]
+        ] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
-        dpds: Optional[Union[int, List[int]]] = None,
+        dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
         del_grey: bool = False,
         leaf_only: bool = False,
         feature_map: Optional[Dict[str, str]] = None,
         *,
         overdue_operator: str = ">",
         save=None,
-        sheet="组合策略汇总",
+        sheet_name="组合策略汇总",
+        amount=None,
         excel_writer=None,
         date=None,
         freq="M",
@@ -1382,12 +1391,14 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
         :param data_source: 默认 None；数据来源说明。
         :param save: 默认 None；Excel 路径，在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
-        :param sheet: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
+        :param sheet_name: 默认“组合策略汇总”；与策略报告一致的工作表名，最长 24 字符。
+        :param amount: 默认 None；金额列名。Excel 报告要求训练数据及各评估数据集均包含该列；
+            同时展示订单/金额口径，返回值为金额口径规则表。仅返回规则表时也支持 Rule.report 的一维金额数据。
         :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
         :param datasets: 默认 None 使用训练数据； 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
 
-        :type datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]
+        :type datasets: pandas.DataFrame or list or tuple or dict or None
         :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
             或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
             callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
@@ -1398,7 +1409,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :type overdue: Optional[Union[str, List[str]]]
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
-        :type dpds: Optional[Union[int, List[int]]]
+        :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
         :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
@@ -1428,6 +1439,10 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         :type overdue_operator: str
         """
+        from ._tree_report import reject_legacy_tree_keywords
+
+        reject_legacy_tree_keywords(kwargs)
+        kwargs["amount"] = amount
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
@@ -1447,7 +1462,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
                 feature_map=feature_map,
                 overdue_operator=overdue_operator,
                 save=save,
-                sheet=sheet,
+                sheet_name=sheet_name,
                 excel_writer=excel_writer,
                 date=date,
                 freq=freq,
@@ -1580,17 +1595,22 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
     def get_rule_table(
         self,
-        datasets: Optional[pd.DataFrame] = None,
+        datasets: Optional[
+            Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]
+        ] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
-        dpds: Optional[Union[int, List[int]]] = None,
+        dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
         del_grey: bool = False,
         leaf_only: bool = False,
         *,
         overdue_operator: str = ">",
         long_format=True,
+        amount=None,
+        feature_map=None,
+        apply_rule_filter=True,
         **kwargs: Any,
-    ) -> pd.DataFrame:
+    ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """获取决策树所有节点（分裂节点+叶子节点）的规则效果表。
 
         从每个节点提取规则路径，解析为  :class:`Rule`  对象后调用  :meth:`Rule.report`
@@ -1600,9 +1620,12 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         **参数**
 
+        :param apply_rule_filter: 默认 True；按初始化配置在训练集筛选，False 返回完整规则。
+        :param amount: 默认 None；金额列名或一维金额数据，传给 report，口径保持一致。
+        :param feature_map: 默认 None 沿用构造配置；本次字段含义映射，显式值优先。
         :param long_format: 默认 True 按标签返回长表，False 保留原多标签宽表。
-        :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
-        :type datasets: Optional[pd.DataFrame]
+        :param datasets: DataFrame、表格列表/元组或名称到 DataFrame 的字典；默认 None 使用保存的训练数据。
+        :type datasets: Optional[Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]]
         :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
             或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
             callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
@@ -1613,7 +1636,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :type overdue: Optional[Union[str, List[str]]]
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
-        :type dpds: Optional[Union[int, List[int]]]
+        :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
         :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
@@ -1638,6 +1661,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         :type overdue_operator: str
         """
+        from ._tree_report import reject_legacy_tree_keywords
+
+        reject_legacy_tree_keywords(kwargs)
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
@@ -1654,6 +1680,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             del_grey=del_grey,
             leaf_only=leaf_only,
             long_format=long_format,
+            amount=amount,
+            feature_map=feature_map,
+            apply_rule_filter=apply_rule_filter,
             **kwargs,
         )
 
@@ -1959,8 +1988,16 @@ class ManualTreeExtractor(ParallelizableMixin):
             规则评估均将缺失等价为该数值，使规则命中样本数与决策树节点样本数完全一致，
             并兼容不支持原生缺失的旧版 sklearn。
 
-        :param rule_filter: 默认 None 不筛选；显式字典配置 leaf_only、metric（默认 LIFT值）、
-            threshold（默认 1）、operator（默认 >=）、min_samples 和 max_samples。
+        :param n_jobs: 并行总预算，默认 -1 自动调度；1 或 None 串行，正整数为 worker 上限，
+            (0, 1) 浮点数为物理核比例。规则评估及 Excel 数据集计算、特征分箱共用该预算。
+        :param parallel_backend: 默认 None 自动选择；loky 为多进程，threading 为多线程。
+        :param parallel_config: 默认 None；复用 hscredit 并行配置，如 batch_size、pre_dispatch、
+            max_nbytes、inner_max_num_threads；不能在字典中重复指定 n_jobs 或 backend。
+        :param feature_map: 默认 None；字段名到业务含义的映射，report/get_rule_table 的显式值优先。
+        :param features: 默认 None 自动推断数值特征；支持字符串或由字符串组成的一维 list、tuple、ndarray、Index。
+            fit 的显式 features 优先，字段不得包含 target。
+        :param rule_filter: 默认 None 不筛选；显式字典配置 leaf_only、metric（默认 lift）、
+            threshold（默认 1）、operator（默认 >=）、min_samples 和 max_samples；metric 仅支持 lift、badrate。
             样本量整数为个数、[0, 1] 浮点数为比例；仅按训练集订单口径筛选报告规则。
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`criterion='entropy'` 等。
@@ -2565,17 +2602,22 @@ class ManualTreeExtractor(ParallelizableMixin):
 
     def get_rule_table(
         self,
-        datasets: Optional[pd.DataFrame] = None,
+        datasets: Optional[
+            Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]
+        ] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
-        dpds: Optional[Union[int, List[int]]] = None,
+        dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
         del_grey: bool = False,
         leaf_only: bool = False,
         *,
         overdue_operator: str = ">",
         long_format=True,
+        amount=None,
+        feature_map=None,
+        apply_rule_filter=True,
         **kwargs: Any,
-    ) -> pd.DataFrame:
+    ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """获取当前树各节点规则在数据集上的效果表。
 
         从树的每个节点提取规则路径，解析为  :class:`Rule`  对象后调用  :meth:`Rule.report`
@@ -2585,9 +2627,12 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         **参数**
 
+        :param apply_rule_filter: 默认 True；按初始化配置在训练集筛选，False 返回完整规则。
+        :param amount: 默认 None；金额列名或一维金额数据，传给 report，口径保持一致。
+        :param feature_map: 默认 None 沿用构造配置；本次字段含义映射，显式值优先。
         :param long_format: 默认 True 按标签返回长表，False 保留原多标签宽表。
-        :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
-        :type datasets: Optional[pd.DataFrame]
+        :param datasets: DataFrame、表格列表/元组或名称到 DataFrame 的字典；默认 None 使用保存的训练数据。
+        :type datasets: Optional[Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]]
         :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
             或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
             callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
@@ -2598,7 +2643,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         :type overdue: Optional[Union[str, List[str]]]
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
-        :type dpds: Optional[Union[int, List[int]]]
+        :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
         :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
@@ -2629,6 +2674,9 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         :type overdue_operator: str
         """
+        from ._tree_report import reject_legacy_tree_keywords
+
+        reject_legacy_tree_keywords(kwargs)
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
@@ -2645,6 +2693,9 @@ class ManualTreeExtractor(ParallelizableMixin):
             del_grey=del_grey,
             leaf_only=leaf_only,
             long_format=long_format,
+            amount=amount,
+            feature_map=feature_map,
+            apply_rule_filter=apply_rule_filter,
             **kwargs,
         )
 
@@ -2719,17 +2770,20 @@ class ManualTreeExtractor(ParallelizableMixin):
 
     def report(
         self,
-        datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]] = None,
+        datasets: Optional[
+            Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]
+        ] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
-        dpds: Optional[Union[int, List[int]]] = None,
+        dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
         del_grey: bool = False,
         leaf_only: bool = False,
         feature_map: Optional[Dict[str, str]] = None,
         *,
         overdue_operator: str = ">",
         save=None,
-        sheet="组合策略汇总",
+        sheet_name="组合策略汇总",
+        amount=None,
         excel_writer=None,
         date=None,
         freq="M",
@@ -2760,12 +2814,14 @@ class ManualTreeExtractor(ParallelizableMixin):
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
         :param data_source: 默认 None；数据来源说明。
         :param save: 默认 None；Excel 路径，在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
-        :param sheet: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
+        :param sheet_name: 默认“组合策略汇总”；与策略报告一致的工作表名，最长 24 字符。
+        :param amount: 默认 None；金额列名。Excel 报告要求训练数据及各评估数据集均包含该列；
+            同时展示订单/金额口径，返回值为金额口径规则表。仅返回规则表时也支持 Rule.report 的一维金额数据。
         :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
         :param datasets: 默认 None 使用训练数据； 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
 
-        :type datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]
+        :type datasets: pandas.DataFrame or list or tuple or dict or None
         :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
             或 ``{标签名: 标签数据或 callable}``；与 ``overdue+dpds`` 互斥。
             callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
@@ -2776,7 +2832,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         :type overdue: Optional[Union[str, List[str]]]
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
-        :type dpds: Optional[Union[int, List[int]]]
+        :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
         :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
@@ -2806,6 +2862,10 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         :type overdue_operator: str
         """
+        from ._tree_report import reject_legacy_tree_keywords
+
+        reject_legacy_tree_keywords(kwargs)
+        kwargs["amount"] = amount
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
@@ -2825,7 +2885,7 @@ class ManualTreeExtractor(ParallelizableMixin):
                 feature_map=feature_map,
                 overdue_operator=overdue_operator,
                 save=save,
-                sheet=sheet,
+                sheet_name=sheet_name,
                 excel_writer=excel_writer,
                 date=date,
                 freq=freq,
