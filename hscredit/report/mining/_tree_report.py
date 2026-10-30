@@ -873,6 +873,7 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
     if name in writer.workbook.sheetnames:
         del writer.workbook[name]
     ws = writer.get_sheet_by_name(name)
+    ws.freeze_panes = None
     if not features:
         writer.insert_value2sheet(
             ws, "B2", value="当前报告规则未使用分裂特征", style="header_middle", align={"horizontal": "left"}
@@ -993,7 +994,6 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
         )
         write_filter_table(table, row + 2, col)
         col += len(table.columns) + 1
-    writer.set_freeze_panes(ws, "D6")
     return name
 
 
