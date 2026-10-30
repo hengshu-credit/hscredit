@@ -326,7 +326,7 @@ def test_node_edits_and_roundtrip_keep_missing_policy(tmp_path):
     "kwargs",
     [
         {"thresholds": [1, np.nan, 2, None]},
-        {"thresholds": [1, 2, 3], "missing_separate": True},
+        {"thresholds": [1, 2, 3, 4], "missing_separate": True},
         {"thresholds": [1, 2], "missing_branch": 5},
         {"thresholds": [1, 2], "missing_branch": True},
         {"thresholds": [1, 2], "missing_separate": "yes"},

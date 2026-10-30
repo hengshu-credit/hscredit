@@ -119,7 +119,7 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
 
    tree = MultiwayTreeExtractor(
        target="FPD", features=["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24", "商品类别"],
-       max_branches=4, max_depth=3, criterion="chi2",
+       max_n_bins=4, max_depth=3, criterion="chi2",
    ).fit(df_train)
    candidates = tree.get_split_candidates(node=0)
    tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[0.12, 0.18, 0.25], node=0)
@@ -172,7 +172,7 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
 .. code-block:: python
 
    # 三个阈值对应四个普通分支，另加缺失分支，共五叉
-   tree.set_params(max_branches=5)
+   tree.set_params(max_n_bins=4)
    tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[0.12, 0.18, 0.25], missing_separate=True)
    # 没有普通切点时，可以只分成“非缺失”和“缺失”两支
    tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[], missing_separate=True)
@@ -191,7 +191,7 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
 构造参数 ``missing_separate=False`` 保持原来的自动合并行为；设为 True 可在自动训练、``grow`` 中使用独立分支。
 方法参数 ``missing_separate=None`` 沿用构造配置。
 
-缺失分支计入 ``max_branches``，独立缺失分支不受普通分支 ``min_samples_leaf`` 限制。
+独立缺失分支不计入 ``max_n_bins``，也不受普通分支 ``min_samples_leaf`` 限制。
 在实际分裂节点上，即使训练时没有缺失也会保留该分支，计数为 0，未来缺失样本使用最近非空祖先的概率。
 类别的未知值在合并模式下与缺失同路，在独立模式下走样本最多的普通类别分支，不会进入纯缺失分支。
 ``apply``、``predict_proba``、``Rule``、节点统计及三个绘图后端共用这套分支定义。
@@ -221,7 +221,7 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
 
 人工阈值允许产生空分支，其样本计数仍为 0，预测概率继承最近的非空祖先。
 已保存模型保留训练时的分支语义；更新库后需重新训练或重新分裂节点，才会使用新的默认路由。
-自动分裂执行 ``min_samples_split``、普通叶节点的 ``min_samples_leaf``、``max_depth`` 和 ``max_branches`` 约束。
+自动分裂执行 ``min_samples_split``、普通叶节点的 ``min_samples_leaf``、``max_depth`` 和 ``max_n_bins`` 约束。
 ``get_rules()`` 返回互斥且完整覆盖输入的叶子规则；``to_ruleset(nodes=[...])`` 可把选定节点合成
 风险策略。默认全叶 OR 规则集会命中所有样本，不能直接当作拒绝策略。
 
@@ -250,7 +250,7 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
        criterion="gini", rule_filter=rule_filter,
    ).fit(df_train)
    multiway = MultiwayTreeExtractor(
-       target="FPD", features=features, max_depth=3, max_branches=4,
+       target="FPD", features=features, max_depth=3, max_n_bins=4,
        min_samples_split=50, min_samples_leaf=25,
        criterion="gini", rule_filter=rule_filter,
    ).fit(df_train)
@@ -408,6 +408,16 @@ ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛
 ``report`` 和 ``get_rule_table`` 默认包含全部节点，父子节点命中存在重叠，不能直接相加计数。
 只需互斥叶节点结果时传 ``leaf_only=True``。
 
+最大分叉数统一使用 ``max_n_bins``，例如 ``MultiwayTreeExtractor(max_n_bins=4)``。
+该上限对每个节点的普通分支生效，不含独立缺失分支，不是整棵树的叶节点总数。
+例如 4 个普通分支加 1 个独立缺失分支时只需要 ``max_n_bins=4``；缺失合并时不增加分支。
+``max_n_bins=1, missing_separate=True`` 允许仅按“非缺失 / 缺失”分成两支。
+两个参数均未提供时，默认最多 4 个普通分支，独立缺失分支另计。
+旧参数 ``max_branches`` 显式传入时保留原来的总分支数含缺失语义；同时提供时显式 ``max_n_bins`` 优先。
+``set_params(max_n_bins=...)`` 控制后续训练和节点分裂，
+已有节点需重新 fit 或重分裂才改变结构。
+报告参数 ``bin_params={"max_n_bins": 5}`` 只设置特征分箱页的箱数，不改变树的分叉上限。
+
 分裂搜索与 SAS 的关系
 ----------------------------------------
 
@@ -419,7 +429,7 @@ ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛
 * ``gini`` 与 ``entropy`` 最大化父节点不纯度减去按子节点样本量加权的不纯度。
 * 数值候选池复用 ``hscredit.core.binning.QuantileBinning`` 的无监督切点计算。
   候选组合不超过 ``max_candidates`` 时联合穷举多切点；超过时逐步增加切点，不能保证全局最优。
-* 类别从各类别独立成组开始，按最大 Pearson P 值逐次合并相似组，比较不超过 ``max_branches``
+* 类别从各类别独立成组开始，按最大 Pearson P 值逐次合并相似组，比较不超过 ``max_n_bins``
   的候选分组。这是启发式搜索，不强加类别顺序，也不声称实现完整 CHAID。
 
 模型效果中二分类提供 AUC、KS、准确率和交叉熵，多分类提供 OVR AUC、准确率和交叉熵。
@@ -428,6 +438,69 @@ ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛
 
 参考：`SAS 分裂准则 <https://support.sas.com/documentation/cdl/en/stathpug/68163/HTML/default/stathpug_hpsplit_details02.htm>`_，
 `SAS 交互式训练与剪枝 <https://support.sas.com/documentation/cdl/en/emgsj/64144/HTML/default/n1vdha504xxy5tn10t9azejt0n7t.htm>`_。
+
+最优性的核验（2026-10-31）
+----------------------------------------
+
+``fit`` 从根节点递归生长；每个节点按当前路径取得训练样本，搜索各特征的候选分裂，
+选择当前评分最高的方案后递归处理子节点。没有子树前瞻、回溯或全局树优化。
+数值候选、类别合并、节点选择及整树递归是不同层次，不能混称“全局最优”。
+
+默认 ``max_prebins=12`` 时数值特征通常最多 11 个候选点，4 个普通分支对应
+``C(11,1)+C(11,2)+C(11,3)=231`` 个组合，在默认 ``max_candidates=5000`` 内会穷举。
+它只保证候选池及样本约束内的最佳分裂；唯一值不超过 max_prebins 时才会使用全部相邻唯一值中点。
+将 max_prebins 提高到 50 后，49 个候选点对应 19649 个上述组合，会超过默认预算并进入贪心搜索。
+仅提高预分箱数不能作为最优性保证。
+
+核验使用 Python 3.11.5、``examples/hscredit_yyp.xlsx``，按业务 Notebook 的 FPD 分层随机拆分
+取 582 条训练样本，随机种子 42。保持最多 4 个普通分支、每叶至少 25 单，
+用全部相邻唯一值边界上的动态规划与原始行 Gini 公式独立对照；另用 15 组小样本穷举核验动态规划结果。
+
+.. list-table:: 根节点数值特征的 Gini 不纯度下降
+   :header-rows: 1
+
+   * - 特征
+     - 当前候选池最优
+     - 全部有效边界最优
+   * - 衡枢鉴真分老客版
+     - 0.00818176
+     - 0.01721117
+   * - 近六个月非银多头机构数
+     - 0.00370336
+     - 0.00438628
+   * - 青云24
+     - 0.00508643
+     - 0.00820892
+
+最终树节点 2 的 436 条样本中，固定“近六个月非银多头机构数”：业务手工切点 ``[50, 65, 75]``
+的增益为 0.00178994；候选池自动切点 ``[64, 66, 73]`` 为 0.00223014；
+相同约束下全部边界搜索的 ``[63.5, 66.5, 75.5]`` 为 0.00341347。
+这些数值只证明训练节点存在更好的不纯度下降，不保证验证集 AUC、KS、LIFT 或业务收益更好。
+
+其他已复现的边界：
+
+* 120 条有序样本，前 55 条为 0、后 65 条为 1，最大二叉、每叶至少 10 单。
+  等频候选选出 59.5，增益 0.42013889；全部边界中的 54.5 可达 0.49652778。
+* 同一 12 条样本的候选池，强制 ``max_candidates=1`` 后贪心选出 ``[1.5, 2.5]``，
+  增益 0.11574074；枚举可找到 ``[6.5, 8.5]``，增益 0.13690476。
+* 类别特征 5 个类别、最多 3 组，穷举 40 种分区得到增益 0.12256061，当前逐步合并为 0.12186546。
+* XOR 数据上自动树因单层增益为 0 停在根节点，准确率 50%；手工指定第一层后继续 grow，
+  可得到两层、准确率 100% 的树，证明局部贪心不保证整树最优。
+
+自动停止存在一个已复现的问题：``_grow`` 只对排名第一的候选检查 ``_allowed``。
+在 ``criterion="chi2"``、``min_impurity_decrease=0.0974`` 的 100 条样本中，
+候选 A 调整后 LogWorth 更高，但 Gini 增益为 0.0968；候选 B 增益为 0.098 且通过显著性门槛。
+当前实现因 A 不合格而停止，没有继续选择合格的 B。后续应先在搜索层筛出满足全部自动生长约束的方案，
+再比较评分，而不只在每个特征最佳候选选出后过滤。
+
+``manual_split(node=...)`` 和指定 feature 但不传 thresholds 时复用同一候选搜索，
+但手工操作不要求通过 alpha / min_impurity_decrease。明确给出 thresholds 或 category_groups 时
+直接安装指定分裂，不做最优性搜索；``grow=True`` 仅继续生长后代，不回头优化指定切点。
+训练评分使用目标标签与订单计数；规则筛选和报告金额口径不参与建树目标。
+
+后续优化可优先评估复用 ``core/binning/_partition_solver.py`` 的连续分区求解能力，
+保留 OPTIMAL / FEASIBLE 求解状态，并适配树的右闭区间、缺失路由和多分类。
+候选池最优、全边界单节点最优和整树最优仍需分别说明。
 
 API
 ---

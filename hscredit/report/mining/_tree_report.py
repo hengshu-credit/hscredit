@@ -582,6 +582,12 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount, s
     row, _ = dataframe2excel(summary, writer, sheet_name=sheet, title="二、规则挖掘摘要", start_row=row)
     model = tree if hasattr(tree, "get_params") else getattr(tree, "clf", getattr(tree, "_sklearn_clf", None))
     parameters = model.get_params(deep=False) if model is not None else {}
+    if hasattr(tree, "_branch_limit"):
+        if tree.max_n_bins is not None or tree.max_branches is None:
+            parameters.pop("max_branches", None)
+            parameters["max_n_bins"] = tree._branch_limit()
+        else:
+            parameters.pop("max_n_bins", None)
     parameters["features"] = getattr(tree, "features_", None) or getattr(tree, "_feature_list", None)
     parameters["rule_filter"] = getattr(tree, "rule_filter", None)
     params = pd.DataFrame([{"参数": name, "配置": str(value)} for name, value in parameters.items()])

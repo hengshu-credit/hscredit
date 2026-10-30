@@ -107,8 +107,13 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     :type features: str or list[str] or None
     :param max_depth: 非负整数，根节点深度为 0，默认 3；0 表示只保留根节点。
     :type max_depth: int
-    :param max_branches: 每次分裂最多分支数（含独立缺失分支），至少 2，默认 4。
-    :type max_branches: int
+    :param max_branches: 兼容旧参数，默认 None；显式使用时沿用包含独立缺失分支的总数限制。
+        仅在 max_n_bins=None 时生效；新代码请使用 max_n_bins。
+    :type max_branches: int or None
+    :param max_n_bins: 每次分裂最多普通分支数，不含独立缺失分支，至少 1。
+        默认 None 且未传旧参数时使用 4；显式提供时优先于旧参数。
+        支持构造参数及 set_params，不限制整棵树的叶节点总数。
+    :type max_n_bins: int or None
     :param min_samples_split: 自动分裂的最小节点样本数，默认 20。
     :type min_samples_split: int
     :param min_samples_leaf: 自动分裂的最小普通叶节点样本数，默认 10；独立缺失分支不受此限制。
@@ -159,7 +164,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
 
     **参考样例**
 
-    >>> tree = MultiwayTreeExtractor(target='FPD', features=['评分'], max_branches=4).fit(df)
+    >>> tree = MultiwayTreeExtractor(target='FPD', features=['评分'], max_n_bins=4).fit(df)
     >>> tree.manual_split(feature='评分', thresholds=[500, 650, 750], node=0)
     >>> tree.set_thresholds(0, [520, 660, 760]).grow(node=tree.get_leaf_node_ids()[0])
     >>> tree.prune(node=tree.get_leaf_node_ids()[0])
@@ -170,13 +175,14 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     # 旧版持久化对象没有此参数时，继续沿用原有的缺失合并策略。
     missing_separate = False
     rule_filter = None
+    max_n_bins = None
 
     def __init__(
         self,
         target="target",
         features=None,
         max_depth=3,
-        max_branches=4,
+        max_branches=None,
         min_samples_split=20,
         min_samples_leaf=10,
         criterion="chi2",
@@ -191,11 +197,13 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         parallel_config=None,
         missing_separate=False,
         rule_filter=None,
+        max_n_bins=None,
     ):
         self.target = target
         self.features = features
         self.max_depth = max_depth
         self.max_branches = max_branches
+        self.max_n_bins = max_n_bins
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
         self.criterion = criterion
@@ -214,6 +222,14 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         normalize_rule_filter(rule_filter)
         self.rule_filter = rule_filter
 
+    def _branch_limit(self, missing_separate=False):
+        """普通分支上限外另加独立缺失分支；旧参数仍按总分支数解释。"""
+        if self.max_n_bins is not None:
+            return self.max_n_bins + int(missing_separate)
+        if self.max_branches is not None:
+            return self.max_branches
+        return 4 + int(missing_separate)
+
     def _validate_parameters(self):
         from ._rule_filter import normalize_rule_filter
 
@@ -223,13 +239,15 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             raise InputValidationError("构造参数 missing_separate 必须是布尔值")
         for name, minimum in (
             ("max_depth", 0),
-            ("max_branches", 2),
+            ("max_branches", 2) if self.max_n_bins is None else ("max_n_bins", 1),
             ("min_samples_split", 2),
             ("min_samples_leaf", 1),
             ("max_prebins", 2),
             ("max_candidates", 1),
         ):
             value = getattr(self, name)
+            if name == "max_branches" and value is None:
+                continue
             if isinstance(value, bool) or not isinstance(value, Integral) or value < minimum:
                 raise InputValidationError(f"{name} 必须是大于等于 {minimum} 的整数")
         if self.criterion not in ("chi2", "gini", "entropy"):
@@ -474,7 +492,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
 
             if self._numeric[feature]:
                 pool = self._numeric_pool(values)
-                limit = min(self.max_branches - 1 - int(separate), len(pool))
+                limit = min(self._branch_limit(separate) - 1 - int(separate), len(pool))
                 if separate:
                     consider()
                 if sum(comb(len(pool), k) for k in range(1, limit + 1)) <= self.max_candidates:
@@ -495,7 +513,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 for group in groups:
                     value_expression(group[0])
                 while len(groups) >= (1 if separate else 2):
-                    if len(groups) + int(separate) <= self.max_branches:
+                    if len(groups) + int(separate) <= self._branch_limit(separate):
                         consider(groups=tuple(groups))
                     if len(groups) == (1 if separate else 2):
                         break
@@ -722,7 +740,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             与指向另一位置的独立类别缺失组冲突时会报错。
         :type missing_branch: int or None
         :param missing_separate: 默认 ``None`` 沿用构造配置；``True`` 保留独立缺失分支，
-            数值型追加在末尾，类别独立组保持声明位置。计入 max_branches，训练无缺失也保留空分支。
+            数值型追加在末尾，类别独立组保持声明位置。不计入 max_n_bins，训练无缺失也保留空分支。
             显式 missing_branch 或合并标记可覆盖此配置。未知类别在合并模式下与缺失同路，
             在独立模式下走样本最多的普通类别分支。
         :type missing_separate: bool or None
@@ -752,8 +770,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         if feature is not None and feature not in self.features_:
             raise InputValidationError(f"特征 {feature} 不在拟合字段中")
         if thresholds is None and category_groups is None:
-            if missing_branch is not None and missing_branch >= self.max_branches:
-                raise InputValidationError("missing_branch 超出 max_branches 允许的分支范围")
+            if missing_branch is not None and missing_branch >= self._branch_limit():
+                raise InputValidationError("missing_branch 超出 max_n_bins 允许的分支范围")
             candidates = [
                 c for c in self._search(node, separate, missing_branch) if feature is None or c["feature"] == feature
             ]
@@ -808,8 +826,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             cuts = ()
             count = len(groups)
             values = series.to_numpy()
-        if count > self.max_branches:
-            raise InputValidationError("总分支数（含独立缺失分支）超过 max_branches，请增加上限或减少普通切分点")
+        if count > self._branch_limit(separate):
+            raise InputValidationError("分支数超过配置上限：max_n_bins 不含独立缺失分支，旧 max_branches 包含缺失分支")
         if count < 2:
             raise InputValidationError("分裂至少需要两个分支；仅区分缺失与非缺失可指定 missing_separate=True")
         if missing_branch is not None and (
