@@ -7,8 +7,9 @@
 
 业务流程演示见仓库 ``examples/26_multiway_tree.ipynb``，使用 ``examples/hscredit_yyp.xlsx``。
 Notebook 依次演示自动建树、节点剪枝、自动重选特征、指定特征自动分裂、指定特征与阈值，
-展示最终树并导出全部节点规则。最终叶节点在训练集、验证集、测试集上分别生成 FPD 件数、
-MOB1 件数及金额报告，使用现有 ``ExcelWriter`` 和 ``dataframe2excel`` 写入同一工作簿。
+展示最终树并导出全部节点规则。在训练集、验证集、测试集上复核 FPD 后，
+直接调用 ``report(..., overdue=['MOB1'], dpds=[7, 3, 0], save=...)`` 输出 Excel 挖掘报告。
+Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``amount`` 参数选择。
 输出文件为 ``examples/model_report/multiway_tree/多叉树规则挖掘业务报告.xlsx``。
 
 方法速查
@@ -226,6 +227,49 @@ MOB1 件数及金额报告，使用现有 ``ExcelWriter`` 和 ``dataframe2excel`
 
 报告与模型效果的输入输出
 ------------------------
+
+多叉树、手工二叉树和 ``DecisionTreeAnalyzer`` 使用一致的规则接口：
+``get_rule_table(datasets=None, target=None, overdue=None, dpds=None, ...)`` 默认展示所有节点效果，
+``get_rules()`` 返回叶节点 ``Rule``，``get_rules(leaf_only=False)`` 返回含根节点的全部路径。
+旧多叉树 ``get_rule_table(data=...)`` 仍作为兼容别名保留。
+
+``report`` 参考 scorecardpipeline ``DecisionTreeRuleExtractor.report`` 的 ``sheet`` / ``save``
+调用方式，新增直接导出能力；保存前后返回的 DataFrame、列表或字典结构保持一致：
+
+.. code-block:: python
+
+   datasets = {"训练集": df_train, "验证集": df_valid, "测试集": df_test}
+   reports = tree.report(
+       datasets, overdue=["MOB1"], dpds=[7, 3, 0], leaf_only=False,
+       round_digits=False, date="放款时间", freq="M", data_source="真实放款数据",
+       sheet="组合策略汇总", save="多叉树挖掘报告.xlsx",
+   )
+
+工作簿按“1-基本信息、组合策略汇总、策略详情”排列。
+基本信息复用模型报告的样本统计和时间分布构造器，展示数据源、取样逻辑、日期区间和各标签好坏样本分布。
+组合策略汇总按数据集纵向排列，沿用 scorecardpipeline 的“组合策略、命中数、命中率、样本整体坏率”字段，
+保留多标签表头及坏率、LIFT 条件格式；这些名称只影响 Excel 展示，原 report 返回列名保持不变。
+策略详情依次展示训练集规则表、最终树图及完整节点信息。自定义 sheet 时，配套页使用同名前缀。
+表格不自动换行，列宽复用 ``ExcelWriter.adjust_columns_width``，默认最大宽度为 50；
+章节标题合并与模型报告共用同一布局函数。
+``get_node_table()`` 返回完整结构，二分类增加坏率、LIFT 等规则指标，多分类保留各类别计数和占比。
+叶子自身没有分裂特征，所属客群由“指标含义”和“分支条件”描述；父节点编号使用可空整数。
+
+可以用已有 ``ExcelWriter`` 汇总不同口径，使用不同的 ``sheet`` 避免覆盖同名报告：
+
+.. code-block:: python
+
+   from hscredit.excel import ExcelWriter
+
+   with ExcelWriter() as writer:
+       writer.set_filename("多口径树报告.xlsx")
+       tree.report(datasets, target="FPD", sheet="FPD件数", excel_writer=writer)
+       tree.report(datasets, overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额",
+                   sheet="MOB1金额", excel_writer=writer)
+
+同名报告页重建，其他工作表保留。金额策略表中的命中数、好坏样本数表示金额，
+坏样本率为金额坏率；准确率、精确率、召回率和 F1 仍按件数计算。
+规则清单包括重叠的父子路径，不能对所有节点的样本数直接求和。
 
 ``get_node_table()`` 展示训练时的节点结构和计数；``report`` 在给定数据上重新计算每个节点
 规则的命中效果；``evaluate`` 评估整棵树的预测。三者对应不同层次的结果：

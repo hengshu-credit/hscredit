@@ -775,7 +775,11 @@ def _node_hit_report(
     """
     data, target = bind_targets(data, target, overdue, dpds, del_grey, kwargs.get("overdue_operator", ">"))
     overdue, dpds = None, None
-    rules_df = df_rules[df_rules["if_leaf"]] if leaf_only else df_rules
+    # 二叉树内部路径表通常不含根节点，公开的全节点报告仍应保留总体基准。
+    if 0 not in df_rules["node"].values:
+        root = pd.DataFrame([{"node": 0, "if_leaf": df_rules.empty, "rule_list": []}])
+        df_rules = pd.concat([root, df_rules], ignore_index=True)
+    rules_df = df_rules.loc[df_rules["if_leaf"].astype(bool)] if leaf_only else df_rules
 
     tasks = []
     labels = []
@@ -1325,7 +1329,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
     def report(
         self,
-        datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]],
+        datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, List[int]]] = None,
@@ -1334,6 +1338,13 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         feature_map: Optional[Dict[str, str]] = None,
         *,
         overdue_operator: str = ">",
+        save=None,
+        sheet="组合策略汇总",
+        excel_writer=None,
+        date=None,
+        freq="M",
+        project_desc=None,
+        data_source=None,
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估决策树各节点规则的效果。
@@ -1344,7 +1355,14 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         **参数**
 
-        :param datasets: 待评估数据集，支持单个 DataFrame、DataFrame 列表、
+        :param date: 默认 None；日期字段，输出与模型报告同口径的样本时间分布。
+        :param freq: 默认 'M'；日期统计频率。
+        :param project_desc: 默认 None；项目目标和取样逻辑说明。
+        :param data_source: 默认 None；数据来源说明。
+        :param save: 默认 None；Excel 路径，输出基本信息、组合策略汇总和策略详情。
+        :param sheet: 默认 '组合策略汇总'；效果表名，默认配套基本信息和策略详情页，自定义名称时使用同名前缀。
+        :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
+        :param datasets: 默认 None 使用训练数据； 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
 
         :type datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]
@@ -1391,11 +1409,37 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
+        datasets = self._data if datasets is None else datasets
+        if save is not None or excel_writer is not None:
+            from ._tree_report import tree_report_excel
+
+            kwargs.pop("overdue_operator", None)
+            return tree_report_excel(
+                self,
+                datasets,
+                target=target,
+                overdue=overdue,
+                dpds=dpds,
+                del_grey=del_grey,
+                leaf_only=leaf_only,
+                feature_map=feature_map,
+                overdue_operator=overdue_operator,
+                save=save,
+                sheet=sheet,
+                excel_writer=excel_writer,
+                date=date,
+                freq=freq,
+                project_desc=project_desc,
+                data_source=data_source,
+                **kwargs,
+            )
+        if datasets is None:
+            raise InputValidationError("report 需要数据集，请传入 datasets 或先 fit 训练数据")
 
         if isinstance(datasets, dict):
             names = list(datasets)
             data_values = list(datasets.values())
-        elif isinstance(datasets, list):
+        elif isinstance(datasets, (list, tuple)):
             names = None
             data_values = list(datasets)
         else:
@@ -1431,11 +1475,13 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
                 has_parallel_children=True,
             ),
         )
-        if isinstance(datasets, dict):
-            return dict(zip(names, results))
-        if isinstance(datasets, list):
-            return results
-        return results[0]
+        result = (
+            dict(zip(names, results))
+            if isinstance(datasets, dict)
+            else (results if isinstance(datasets, (list, tuple)) else results[0])
+        )
+
+        return result
 
     def _report_one_dataset(
         self,
@@ -1469,15 +1515,16 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
     def get_leaf_node_ids(self) -> List[int]:
         """获取所有叶子节点的 ID 列表。"""
         self._check_fitted()
-        return self._df_rules[self._df_rules["if_leaf"]]["node"].tolist()
+        return self._df_rules.loc[self._df_rules["if_leaf"].astype(bool), "node"].tolist() or [0]
 
     # -------------------------------------------------------------------------
     # 规则提取
     # -------------------------------------------------------------------------
 
-    def get_rules(self) -> List[Rule]:
+    def get_rules(self, leaf_only: bool = True) -> List[Rule]:
         """将树的叶子节点转换为 Rule 对象列表。
 
+        :param leaf_only: 默认 True 仅返回叶节点；False 返回包括根节点的全部路径规则。
         :return: Rule 对象列表，每个 Rule 对应一个叶子节点
 
         **参考样例**
@@ -1488,12 +1535,13 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         """
         self._check_fitted()
         rules: List[Rule] = []
-        leaf_rules = self._df_rules[self._df_rules["if_leaf"]]
+        if 0 not in self._df_rules["node"].values and (not leaf_only or self._df_rules.empty):
+            rules.append(Rule("True", name="DecisionTree_N0", description="全部样本"))
+        leaf_rules = self._df_rules[self._df_rules["if_leaf"]] if leaf_only else self._df_rules
         for _, row in leaf_rules.iterrows():
             rule = self._format_rule(row["rule_list"])
             if rule is None:
-                # 叶子节点必然带有规则路径，空规则（根节点）理论上不会出现，稳妥跳过
-                continue
+                rule = Rule("True", description="全部样本")
             rule.name = f"DecisionTree_N{int(row['node'])}"
             rules.append(rule)
         return rules
@@ -2595,7 +2643,7 @@ class ManualTreeExtractor(ParallelizableMixin):
 
     def report(
         self,
-        datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]],
+        datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, List[int]]] = None,
@@ -2604,6 +2652,13 @@ class ManualTreeExtractor(ParallelizableMixin):
         feature_map: Optional[Dict[str, str]] = None,
         *,
         overdue_operator: str = ">",
+        save=None,
+        sheet="组合策略汇总",
+        excel_writer=None,
+        date=None,
+        freq="M",
+        project_desc=None,
+        data_source=None,
         **kwargs,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估当前树各节点规则的效果。
@@ -2614,7 +2669,14 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         **参数**
 
-        :param datasets: 待评估数据集，支持单个 DataFrame、DataFrame 列表、
+        :param date: 默认 None；日期字段，输出与模型报告同口径的样本时间分布。
+        :param freq: 默认 'M'；日期统计频率。
+        :param project_desc: 默认 None；项目目标和取样逻辑说明。
+        :param data_source: 默认 None；数据来源说明。
+        :param save: 默认 None；Excel 路径，输出基本信息、组合策略汇总和策略详情。
+        :param sheet: 默认 '组合策略汇总'；效果表名，默认配套基本信息和策略详情页，自定义名称时使用同名前缀。
+        :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
+        :param datasets: 默认 None 使用训练数据； 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
 
         :type datasets: Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]
@@ -2661,11 +2723,37 @@ class ManualTreeExtractor(ParallelizableMixin):
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
+        datasets = self._data if datasets is None else datasets
+        if save is not None or excel_writer is not None:
+            from ._tree_report import tree_report_excel
+
+            kwargs.pop("overdue_operator", None)
+            return tree_report_excel(
+                self,
+                datasets,
+                target=target,
+                overdue=overdue,
+                dpds=dpds,
+                del_grey=del_grey,
+                leaf_only=leaf_only,
+                feature_map=feature_map,
+                overdue_operator=overdue_operator,
+                save=save,
+                sheet=sheet,
+                excel_writer=excel_writer,
+                date=date,
+                freq=freq,
+                project_desc=project_desc,
+                data_source=data_source,
+                **kwargs,
+            )
+        if datasets is None:
+            raise InputValidationError("report 需要数据集，请传入 datasets 或先 fit 训练数据")
 
         if isinstance(datasets, dict):
             names = list(datasets)
             data_values = list(datasets.values())
-        elif isinstance(datasets, list):
+        elif isinstance(datasets, (list, tuple)):
             names = None
             data_values = list(datasets)
         else:
@@ -2701,11 +2789,13 @@ class ManualTreeExtractor(ParallelizableMixin):
                 has_parallel_children=True,
             ),
         )
-        if isinstance(datasets, dict):
-            return dict(zip(names, results))
-        if isinstance(datasets, list):
-            return results
-        return results[0]
+        result = (
+            dict(zip(names, results))
+            if isinstance(datasets, dict)
+            else (results if isinstance(datasets, (list, tuple)) else results[0])
+        )
+
+        return result
 
     def _report_one_dataset(
         self,
@@ -2736,9 +2826,10 @@ class ManualTreeExtractor(ParallelizableMixin):
             **report_kwargs,
         )
 
-    def get_rules(self) -> List[Rule]:
+    def get_rules(self, leaf_only: bool = True) -> List[Rule]:
         """将当前树的叶子节点规则转换为 Rule 对象列表。
 
+        :param leaf_only: 默认 True 仅返回叶节点；False 返回包括根节点的全部路径规则。
         :return: Rule 对象列表
 
         **参考样例**
@@ -2749,11 +2840,12 @@ class ManualTreeExtractor(ParallelizableMixin):
         """
         self._check_fitted()
         rules: List[Rule] = []
-        for _, row in self._df_rules[self._df_rules["if_leaf"]].iterrows():
+        if 0 not in self._df_rules["node"].values and (not leaf_only or self._df_rules.empty):
+            rules.append(Rule("True", name="TreeNode_0", description="全部样本"))
+        for _, row in (self._df_rules[self._df_rules["if_leaf"]] if leaf_only else self._df_rules).iterrows():
             rule = self._format_rule(row["rule_list"])
             if rule is None:
-                # 叶子节点必然带有规则路径，空规则（根节点）理论上不会出现，稳妥跳过
-                continue
+                rule = Rule("True", description="全部样本")
             rule.name = f"TreeNode_{int(row['node'])}"
             rules.append(rule)
         return rules

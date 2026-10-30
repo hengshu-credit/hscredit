@@ -1084,14 +1084,22 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
 
     def report(
         self,
-        datasets,
+        datasets=None,
         target=None,
         overdue=None,
         dpds=None,
         del_grey=False,
         leaf_only=False,
+        feature_map=None,
         *,
         overdue_operator=">",
+        save=None,
+        sheet="组合策略汇总",
+        excel_writer=None,
+        date=None,
+        freq="M",
+        project_desc=None,
+        data_source=None,
         **kwargs,
     ):
         """用 ``Rule.report`` 逐节点计算命中效果，支持金额、多标签和多数据集。
@@ -1099,7 +1107,15 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         每个节点仅保留其规则报告中的“命中”行，按节点编号排序；不会改变树结构或训练计数。
         0/1 训练标签默认直接作为坏样本标签；其他训练标签默认按各类别对其余类别生成多个二分类标签。
 
-        :param datasets: 待评估 DataFrame、DataFrame 列表/元组，或名称到 DataFrame 的字典。
+        :param date: 默认 None；日期字段，输出与模型报告同口径的样本时间分布。
+        :param freq: 默认 'M'；日期统计频率。
+        :param project_desc: 默认 None；项目目标和取样逻辑说明。
+        :param data_source: 默认 None；数据来源说明。
+        :param save: 默认 None；Excel 路径，输出基本信息、组合策略汇总和策略详情。
+        :param sheet: 默认 '组合策略汇总'；效果表名，默认配套基本信息和策略详情页，自定义名称时使用同名前缀。
+        :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
+        :param feature_map: 默认 None 沿用构造参数；字段含义映射，与手工二叉树一致。
+        :param datasets: 默认 None 使用训练数据； 待评估 DataFrame、DataFrame 列表/元组，或名称到 DataFrame 的字典。
             需包含路径规则使用的特征，以及目标、逾期、金额等本次报告所需字段。
         :type datasets: pandas.DataFrame or list or tuple or dict
         :param target: 默认 ``None`` 使用数据中的构造参数 target 列及上述标签规则。
@@ -1141,15 +1157,41 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         >>> reports = tree.report({'训练集': df_train, '测试集': df_test}, leaf_only=True)
         """
         self._check_fitted()
+        datasets = self._data if datasets is None else datasets
+        if save is not None or excel_writer is not None:
+            from ._tree_report import tree_report_excel
+
+            kwargs.pop("overdue_operator", None)
+            return tree_report_excel(
+                self,
+                datasets,
+                target=target,
+                overdue=overdue,
+                dpds=dpds,
+                del_grey=del_grey,
+                leaf_only=leaf_only,
+                feature_map=feature_map,
+                overdue_operator=overdue_operator,
+                save=save,
+                sheet=sheet,
+                excel_writer=excel_writer,
+                date=date,
+                freq=freq,
+                project_desc=project_desc,
+                data_source=data_source,
+                **kwargs,
+            )
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
-        if isinstance(datasets, dict):
-            return {
-                key: self.report(value, target, overdue, dpds, del_grey, leaf_only, **kwargs)
-                for key, value in datasets.items()
+        if isinstance(datasets, (dict, list, tuple)):
+            items = datasets.items() if isinstance(datasets, dict) else enumerate(datasets)
+            results = {
+                key: self.report(value, target, overdue, dpds, del_grey, leaf_only, feature_map, **kwargs)
+                for key, value in items
             }
-        if isinstance(datasets, (list, tuple)):
-            return [self.report(value, target, overdue, dpds, del_grey, leaf_only, **kwargs) for value in datasets]
+            result = results if isinstance(datasets, dict) else list(results.values())
+
+            return result
         if target is None and overdue is None:
             if set(self.classes_).issubset({0, 1}):
                 target = self.target
@@ -1161,7 +1203,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 for node, current in self.nodes_.items()
             ]
         )
-        feature_map = resolve_feature_map(kwargs.pop("feature_map", self.feature_map))
+        feature_map = resolve_feature_map(self.feature_map, feature_map)
         result = _node_hit_report(
             rules,
             self._format_rule,
@@ -1186,38 +1228,63 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             for index, name in enumerate(("入参字段", "字段含义")):
                 column = ("分箱详情", name) if multi else name
                 result[column] = result[node_col].map(lambda node: context[int(node)][index])
+
         return result
 
-    def get_rule_table(self, data=None, leaf_only=False, **kwargs):
-        """``report`` 的便捷入口，默认使用拟合时保存的训练数据。
+    def get_rule_table(
+        self,
+        datasets=None,
+        target=None,
+        overdue=None,
+        dpds=None,
+        del_grey=False,
+        leaf_only=False,
+        *,
+        overdue_operator=">",
+        data=None,
+        **kwargs,
+    ):
+        """按手工二叉树接口返回全树规则效果，默认使用训练数据。
 
-        :param data: 默认 ``None`` 使用训练数据；也可传入 ``report`` 接受的 DataFrame、
-            表格列表/元组或名称到表格的字典。
-        :type data: pandas.DataFrame or list or tuple or dict or None
-        :param leaf_only: 默认 ``False`` 包含全部节点；``True`` 仅输出叶节点。
-        :type leaf_only: bool
-        :param kwargs: 传给 ``report`` 的参数，例如 target、overdue、dpds、del_grey、
-            overdue_operator、amount、feature_map 和 round_digits。
-        :return: 与 ``report`` 相同的中文效果表或表格容器；默认返回训练集全部节点的 DataFrame。
-        :rtype: pandas.DataFrame or list[pandas.DataFrame] or dict
-        :raises NotFittedError: 尚未训练。
-
-        **参考样例**
-
-        >>> leaf_table = tree.get_rule_table(leaf_only=True)
-        >>> test_table = tree.get_rule_table(df_test, leaf_only=True)
+        :param datasets: 默认 None 使用训练数据；也支持 DataFrame、列表、元组或数据集字典。
+        :param target: 默认 None；标签列、数组、callable 或标签映射。
+        :param overdue: 默认 None；逾期字段或字段列表，与 dpds 同时提供。
+        :param dpds: 默认 None；逾期阈值或阈值列表。
+        :param del_grey: 默认 False；是否逐标签剔除灰样本。
+        :param leaf_only: 默认 False 包含全部节点；True 仅返回叶子。
+        :param overdue_operator: 默认 '>'；逾期比较符。
+        :param data: 默认 None；旧版 datasets 的关键字别名，不能同时提供。
+        :param kwargs: 传给 report 的参数，如 amount、round_digits、save、sheet 和 excel_writer。
+        :return: 与 report 相同的中文效果表或表格容器，指标来自 Rule.report。
         """
         self._check_fitted()
-        return self.report(self._data if data is None else data, leaf_only=leaf_only, **kwargs)
+        if data is not None:
+            if datasets is not None:
+                raise InputValidationError("datasets 与 data 不能同时提供")
+            datasets = data
+        if isinstance(target, (bool, np.bool_)):
+            # 兼容原 get_rule_table(data, leaf_only) 的第二个位置参数。
+            leaf_only, target = bool(target), None
+        return self.report(
+            datasets,
+            target=target,
+            overdue=overdue,
+            dpds=dpds,
+            del_grey=del_grey,
+            leaf_only=leaf_only,
+            overdue_operator=overdue_operator,
+            **kwargs,
+        )
 
     def get_node_table(self):
-        """查看当前树结构和训练计数，不重新评估外部数据。
+        """查看当前全树结构、分支语义和训练效果；二分类效果复用 get_rule_table。
 
         :return: 每节点一行的中文 DataFrame，按节点创建顺序排列。包含节点编号、父节点、深度、
             是否叶子、分裂特征、切分点、类别分组、子节点、缺失分支、缺失独立分支、样本总数、
-            规则表达式，以及按 ``classes_`` 展开的“类别_{标签}样本数”列。
+            指标含义、分支条件、分裂增益、人工分裂、未知类别分支、规则表达式，以及按 ``classes_`` 展开的“类别_{标签}样本数”列。
             根节点无父节点；叶节点无分裂特征、切点或子节点，其缺失分支字段不用于路由。
             内部节点的缺失分支是 ``子节点`` 列表中的位置；阈值为未舍入的数值。
+            二分类另含好坏样本数、样本占比、坏率、LIFT、坏账改善及风险拒绝比；多分类附各类别占比。
         :rtype: pandas.DataFrame
         :raises NotFittedError: 尚未训练。
 
@@ -1233,18 +1300,45 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 "父节点": current.parent,
                 "深度": current.depth,
                 "是否叶子": "否" if current.children else "是",
-                "分裂特征": current.feature,
-                "切分点": list(current.thresholds),
+                "分裂特征": current.feature if current.children else "",
+                "切分点": [float(value) for value in current.thresholds],
                 "类别分组": [list(g) for g in current.category_groups],
                 "子节点": list(current.children),
                 "缺失分支": current.missing_branch,
                 "缺失独立分支": "是" if getattr(current, "missing_separate", False) else "否",
                 "样本总数": int(current.counts.sum()),
                 "规则表达式": self._format_rule(current.path).expr,
+                "指标含义": self._format_rule(current.path).description,
+                "分支条件": current.path[-1].label(8) if current.path else "全部样本",
+                "分裂增益": current.gain,
+                "人工分裂": "是" if current.manual else "否",
+                "未知类别分支": current.unknown_branch,
             }
             row.update({f"类别_{label}样本数": int(count) for label, count in zip(self.classes_, current.counts)})
             rows.append(row)
-        return pd.DataFrame(rows)
+        table = pd.DataFrame(rows)
+        table["父节点"] = table["父节点"].astype("Int64")
+        table["未知类别分支"] = table["未知类别分支"].astype("Int64")
+        if set(self.classes_).issubset({0, 1}):
+            metrics = self.get_rule_table(round_digits=False)
+            fields = [
+                "节点编号",
+                "样本占比",
+                "好样本数",
+                "好样本占比",
+                "坏样本数",
+                "坏样本占比",
+                "坏样本率",
+                "LIFT值",
+                "坏账改善",
+                "风险拒绝比",
+            ]
+            table = table.merge(metrics[fields], on="节点编号", how="left", validate="one_to_one")
+        else:
+            table["样本占比"] = table["样本总数"] / self.nodes_[0].counts.sum()
+            for label in self.classes_:
+                table[f"类别_{label}占比"] = table[f"类别_{label}样本数"].div(table["样本总数"].replace(0, np.nan))
+        return table
 
     def evaluate(self, datasets=None, y=None):
         """评估整棵树的分类效果，每个数据集输出一行。
