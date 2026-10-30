@@ -273,9 +273,13 @@ def tree_report_excel(
     ]
     try:
         ws = writer.get_sheet_by_name(basic)
-        row, _ = writer.insert_value2sheet(ws, (2, 2), value="一、基本信息", style="header_middle")
+        row, _ = writer.insert_value2sheet(
+            ws, (2, 2), value="一、基本信息", style="header_middle", align={"horizontal": "left"}
+        )
         description = project_desc or "使用树规则划分客群，并比较各数据集的规则命中效果"
-        row, _ = writer.insert_value2sheet(ws, (row + 2, 2), value="1、项目目标", style="header_middle")
+        row, _ = writer.insert_value2sheet(
+            ws, (row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"}
+        )
         row, _ = writer.insert_value2sheet(
             ws, (row, 2), value=description, style="middle", align={"horizontal": "left"}
         )
@@ -720,7 +724,9 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
     left_col = 2
     right_col = left_col + len(left.columns) + 1
     end_col = right_col + len(right.columns) - 1 if right is not None else left_col + len(left.columns) - 1
-    writer.insert_value2sheet(ws, (row, left_col), value=title, style="header_middle", end_space=(row, end_col))
+    writer.insert_value2sheet(
+        ws, (row, left_col), value=title, style="header_middle", align={"horizontal": "left"}, end_space=(row, end_col)
+    )
     writer.insert_value2sheet(
         ws,
         (row + 1, left_col),
@@ -736,7 +742,12 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
         if table is None:
             continue
         writer.insert_value2sheet(
-            ws, (subtitle, col), value=label, style="header_middle", end_space=(subtitle, col + len(table.columns) - 1)
+            ws,
+            (subtitle, col),
+            value=label,
+            style="header_middle",
+            align={"horizontal": "left"},
+            end_space=(subtitle, col + len(table.columns) - 1),
         )
         if figures:
             path = figures[index]
@@ -822,7 +833,9 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
         del writer.workbook[name]
     ws = writer.get_sheet_by_name(name)
     if not features:
-        writer.insert_value2sheet(ws, "B2", value="当前最终树未使用分裂特征", style="header_middle")
+        writer.insert_value2sheet(
+            ws, "B2", value="当前最终树未使用分裂特征", style="header_middle", align={"horizontal": "left"}
+        )
         return name
     summaries, details = [], {}
     for dataset, (prepared, bound) in contexts.items():
@@ -916,7 +929,12 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
     row, col = end + 3, 2
     for dataset, table in details.items():
         writer.insert_value2sheet(
-            ws, (row, col), value=str(dataset), style="header_middle", end_space=(row, col + len(table.columns) - 1)
+            ws,
+            (row, col),
+            value=str(dataset),
+            style="header_middle",
+            align={"horizontal": "left"},
+            end_space=(row, col + len(table.columns) - 1),
         )
         write_filter_table(table, row + 2, col)
         col += len(table.columns) + 1
