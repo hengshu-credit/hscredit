@@ -284,6 +284,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             for name in selected
         }
         working.nodes_ = {}
+        working.edit_history_ = []
         working._next_id = 0
         working._new_node(None, 0, (), np.arange(len(frame)))
         working._grow(0)
@@ -638,7 +639,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         current.unknown_branch = None
         current.gain = 0.0
 
-    def _edit(self, operation):
+    def _edit(self, operation, *, action=None, node=0):
         self._check_fitted()
         working = copy.copy(self)
         working.nodes_ = copy.deepcopy(self.nodes_)
@@ -647,6 +648,20 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         self.nodes_ = working.nodes_
         self._next_id = working._next_id
         self.feature_importances_ = working.feature_importances_
+        if action is not None:
+            current = self.nodes_[node]
+            history = list(getattr(self, "edit_history_", []))
+            history.append(
+                {
+                    "序号": len(history) + 1,
+                    "操作": action,
+                    "节点编号": node,
+                    "分裂特征": current.feature or "",
+                    "切分点": [float(value) for value in current.thresholds],
+                    "类别分组": [list(group) for group in current.category_groups],
+                }
+            )
+            self.edit_history_ = history
         return self
 
     def manual_split(
@@ -730,7 +745,11 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             ]
             if not candidates:
                 raise InputValidationError("该节点没有满足样本约束的可用分裂")
-            return self._edit(lambda tree: tree._split_and_grow(node, candidates[0], grow))
+            return self._edit(
+                lambda tree: tree._split_and_grow(node, candidates[0], grow),
+                action="自动重选特征" if feature is None else "指定特征自动分裂",
+                node=node,
+            )
         if feature is None:
             raise InputValidationError("手工分裂必须指定 feature")
         positions = self._positions(node)
@@ -795,7 +814,11 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             enforce=False,
             missing_separate=separate,
         )
-        return self._edit(lambda tree: tree._split_and_grow(node, candidate, grow))
+        return self._edit(
+            lambda tree: tree._split_and_grow(node, candidate, grow),
+            action="指定阈值分裂" if thresholds is not None else "指定类别分组",
+            node=node,
+        )
 
     def _split_and_grow(self, node, candidate, grow):
         self._install_split(node, candidate, manual=True)
@@ -875,7 +898,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             tree._prune(node)
             tree.nodes_[node].manual = True
 
-        return self._edit(operation)
+        return self._edit(operation, action="剪枝", node=node)
 
     def delete_node(self, node=0):
         """``prune`` 的兼容入口：删除后代，保留指定节点并将其变为叶子。
@@ -909,7 +932,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         """
         self._node(node)
         self._validate_parameters()
-        return self._edit(lambda tree: tree._grow(node))
+        return self._edit(lambda tree: tree._grow(node), action="自动生长", node=node)
 
     def _refresh_importances(self):
         importance = np.zeros(len(self.features_))
@@ -1111,8 +1134,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         :param freq: 默认 'M'；日期统计频率。
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
         :param data_source: 默认 None；数据来源说明。
-        :param save: 默认 None；Excel 路径，输出基本信息、组合策略汇总和策略详情。
-        :param sheet: 默认 '组合策略汇总'；效果表名，默认配套基本信息和策略详情页，自定义名称时使用同名前缀。
+        :param save: 默认 None；Excel 路径，在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
+        :param sheet: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
         :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
         :param feature_map: 默认 None 沿用构造参数；字段含义映射，与手工二叉树一致。
         :param datasets: 默认 None 使用训练数据； 待评估 DataFrame、DataFrame 列表/元组，或名称到 DataFrame 的字典。
@@ -1204,6 +1227,14 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             ]
         )
         feature_map = resolve_feature_map(self.feature_map, feature_map)
+        adjusted_nodes = set()
+        for node, current in self.nodes_.items():
+            ancestor = current
+            while ancestor is not None:
+                if ancestor.manual:
+                    adjusted_nodes.add(node)
+                    break
+                ancestor = self.nodes_.get(ancestor.parent)
         result = _node_hit_report(
             rules,
             self._format_rule,
@@ -1213,6 +1244,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             dpds,
             del_grey,
             leaf_only,
+            adjusted_nodes=adjusted_nodes,
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
@@ -1248,6 +1280,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
 
         :param datasets: 默认 None 使用训练数据；也支持 DataFrame、列表、元组或数据集字典。
         :param target: 默认 None；支持标签列名、Series、ndarray、list、callable 或标签映射；
+            Series 按索引对齐，ndarray/list 按行位置对应，callable 接收完整数据集；
             与 overdue + dpds 互斥，未提供标签时使用训练目标。
         :param overdue: 默认 None；逾期字段或字段列表，与 dpds 同时提供。
         :param dpds: 默认 None；逾期阈值或阈值列表。

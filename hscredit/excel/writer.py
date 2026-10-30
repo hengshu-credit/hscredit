@@ -292,9 +292,45 @@ class ExcelWriter:
 
     @staticmethod
     def _set_column_width_preserving_style(worksheet: Worksheet, col_letter: str, width: float) -> None:
-        """设置列宽时保留模板列维度样式。"""
+        """拆分覆盖目标列的模板范围，单独调整列宽并保留两侧样式和宽度。"""
+        col_idx = column_index_from_string(col_letter)
+        col_letter = get_column_letter(col_idx)
         style_snapshot = ExcelWriter._get_column_dimension_style(worksheet, col_letter)
+        inherited_dimension = None
+        for key, dimension in list(worksheet.column_dimensions.items()):
+            start = dimension.min or column_index_from_string(dimension.index)
+            end = dimension.max or start
+            if start <= col_idx <= end:
+                if inherited_dimension is None or start == end:
+                    inherited_dimension = copy.copy(dimension)
+                del worksheet.column_dimensions[key]
+                for left, right in ((start, col_idx - 1), (col_idx + 1, end)):
+                    if left <= right:
+                        segments = [(left, right)]
+                        # 旧文件可能已有单列覆盖项，拆分大范围时不能覆盖这些列。
+                        for existing in worksheet.column_dimensions.values():
+                            existing_start = existing.min or column_index_from_string(existing.index)
+                            existing_end = existing.max or existing_start
+                            remaining = []
+                            for first, last in segments:
+                                if existing_end < first or existing_start > last:
+                                    remaining.append((first, last))
+                                else:
+                                    if first < existing_start:
+                                        remaining.append((first, existing_start - 1))
+                                    if existing_end < last:
+                                        remaining.append((existing_end + 1, last))
+                            segments = remaining
+                        for first, last in segments:
+                            part = copy.copy(dimension)
+                            part.index = get_column_letter(first)
+                            part.min, part.max = first, last
+                            worksheet.column_dimensions[part.index] = part
+        if inherited_dimension is not None:
+            inherited_dimension.index = col_letter
+            worksheet.column_dimensions[col_letter] = inherited_dimension
         column_dimension = worksheet.column_dimensions[col_letter]
+        column_dimension.min = column_dimension.max = col_idx
         if style_snapshot is not None:
             column_dimension._style = copy.copy(style_snapshot)
         column_dimension.width = width

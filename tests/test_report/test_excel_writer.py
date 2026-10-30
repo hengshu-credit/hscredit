@@ -283,6 +283,49 @@ class TestExcelWriter:
         assert adjusted_col.attrib.get("style") == "1"
         assert 'r="G3"' not in target_xml
 
+    def test_auto_width_splits_template_ranges_without_spreading_width(self):
+        """C:XFD 的模板列范围不得将 C 列宽度扩散到整张表。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("独立列宽")
+        original = ws.column_dimensions["C"]
+        original_width, original_style = original.width, original.style
+        assert original.min == 3 and original.max == 16384
+        ws["C1"] = "很长的规则表达式" * 12
+        ws["D1"] = "节点编号"
+        ws["D2"] = 1
+        ws["E1"] = "是否叶子"
+        ws["E2"] = "是"
+        writer.adjust_columns_width(ws)
+        # 重复调整中间列，覆盖左端、右端及中间拆分，不改变未写入列。
+        writer.set_column_width(ws, "H", 18)
+        writer.set_column_width(ws, "H", 16)
+        writer.save(self.test_file)
+        loaded = load_workbook(self.test_file)
+        dims = sorted(loaded["独立列宽"].column_dimensions.values(), key=lambda d: d.min)
+        assert all(left.max < right.min for left, right in zip(dims, dims[1:]))
+        assert loaded["独立列宽"].column_dimensions["C"].width == 50
+        assert loaded["独立列宽"].column_dimensions["D"].width < 20
+        assert loaded["独立列宽"].column_dimensions["E"].width < 20
+        for column in [6, 7, 9, 16384]:
+            dimension = next(d for d in dims if d.min <= column <= d.max)
+            assert dimension.width == original_width
+            assert dimension.style == original_style
+        loaded.close()
+
+    def test_split_legacy_overlapping_column_range_keeps_explicit_widths(self):
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("旧列范围")
+        ws.column_dimensions["D"].width = 12
+        ws.column_dimensions["E"].width = 18
+        writer.set_column_width(ws, "C", 50)
+        assert ws.column_dimensions["D"].width == 12
+        assert ws.column_dimensions["E"].width == 18
+        writer.save(self.test_file)
+        loaded = load_workbook(self.test_file)
+        dims = sorted(loaded["旧列范围"].column_dimensions.values(), key=lambda d: d.min)
+        assert all(left.max < right.min for left, right in zip(dims, dims[1:]))
+        loaded.close()
+
     def test_insert_value_with_merge(self):
         """测试合并单元格插入"""
         writer = ExcelWriter()

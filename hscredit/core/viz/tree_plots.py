@@ -1939,6 +1939,9 @@ def _extract_tree_data(tree_obj: Any, feature_names: Optional[List[str]] = None)
     """
     from ...report.mining.multiway_tree import MultiwayTreeExtractor
 
+    # 报告使用同一棵树的节点/边快照叠加数据集命中统计，不修改或重新训练模型。
+    if isinstance(tree_obj, dict) and {"nodes", "edges", "total_samples", "overall_bad_rate"} <= tree_obj.keys():
+        return tree_obj
     if isinstance(tree_obj, MultiwayTreeExtractor):
         return _extract_tree_from_multiway(tree_obj)
     if hasattr(tree_obj, "_check_fitted"):

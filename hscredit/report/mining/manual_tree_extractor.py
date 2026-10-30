@@ -757,6 +757,7 @@ def _node_hit_report(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
+    adjusted_nodes=None,
     **kwargs: Any,
 ) -> pd.DataFrame:
     """对单个数据集，汇总每个节点规则  :meth:`Rule.report`  中"命中"分箱的结果行。
@@ -832,6 +833,8 @@ def _node_hit_report(
 
     result = pd.concat(hit_frames, ignore_index=True)
     sort_col = ("分箱详情", "节点编号") if isinstance(result.columns, pd.MultiIndex) else "节点编号"
+    adjusted_col = ("分箱详情", "是否调整") if isinstance(result.columns, pd.MultiIndex) else "是否调整"
+    result.insert(2, adjusted_col, np.where(result[sort_col].isin(adjusted_nodes or ()), "是", "否"))
     resolved_map = resolve_feature_map(feature_map)
     if resolved_map is not None:
         node_context = {}
@@ -1058,6 +1061,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         self._is_fitted: bool = False
         self._dot_data: Optional[str] = None
         self.__tree_info_cache: Optional[_TreeInfo] = None
+        self.edit_history_ = []
         self._manual_split_nodes: set = set()  # 兼容 tree_viz._extract_tree_from_mte()
 
     @property
@@ -1183,7 +1187,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         df, self.features_ = _resolve_fit_data(X, y, resolved_features, self.target)
 
         # 过滤缺失数据
-        self._data = df.loc[df[self.target].notna(), self.features_ + [self.target]].copy()
+        self._data = df.loc[df[self.target].notna()].copy()
 
         # 合并参数：默认参数 → 构造参数 → 调用参数 → kwargs（优先级最高）
         params = {**self._default_params, **(self.tree_params or {})}
@@ -1359,8 +1363,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :param freq: 默认 'M'；日期统计频率。
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
         :param data_source: 默认 None；数据来源说明。
-        :param save: 默认 None；Excel 路径，输出基本信息、组合策略汇总和策略详情。
-        :param sheet: 默认 '组合策略汇总'；效果表名，默认配套基本信息和策略详情页，自定义名称时使用同名前缀。
+        :param save: 默认 None；Excel 路径，在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
+        :param sheet: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
         :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
         :param datasets: 默认 None 使用训练数据； 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
@@ -1506,6 +1510,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             del_grey=del_grey,
             leaf_only=leaf_only,
             feature_map=feature_map,
+            adjusted_nodes=self._manual_split_nodes,
             n_jobs=_effective_nested_n_jobs(self.n_jobs),
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
@@ -1949,6 +1954,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         self._is_fitted: bool = False
         self._sklearn_clf: Optional[DecisionTreeClassifier] = None
         # 追踪经 manual_split 人工修改过的节点 ID
+        self.edit_history_ = []
         self._manual_split_nodes: set = set()
 
     @classmethod
@@ -2004,6 +2010,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         instance._data = None
         instance._overall_badrate = 0.0
         instance._tree_info = _TreeInfo(features, n_classes)
+        instance.edit_history_ = []
         instance._manual_split_nodes = set()
         instance._is_fitted = True
         instance._sklearn_clf = clf
@@ -2125,7 +2132,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         df, self._feature_list = _resolve_fit_data(X, y, resolved_features, self.target)
 
         # 过滤缺失数据
-        self._data = df.loc[df[self.target].notna(), self._feature_list + [self.target]].copy()
+        self._data = df.loc[df[self.target].notna()].copy()
         self._n_total_samples = len(self._data)
         self._overall_badrate = self._data[self.target].mean()
 
@@ -2134,6 +2141,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         self._tree_info = _TreeInfo(self._feature_list, n_classes)
 
         # 重置人工修改节点记录
+        self.edit_history_ = []
         self._manual_split_nodes = set()
 
         # 训练 sklearn 决策树（优先级：kwargs > self._sklearn_kwargs > 显式参数 > 默认值）
@@ -2318,6 +2326,16 @@ class ManualTreeExtractor(ParallelizableMixin):
         # 记录人工修改过的节点（分裂节点 + 它的两个新子节点）
         new_node_ids = _find_subtree_node_ids(self._tree_info, node)
         self._manual_split_nodes.update(new_node_ids)
+        self.edit_history_ = list(getattr(self, "edit_history_", [])) + [
+            {
+                "序号": len(getattr(self, "edit_history_", [])) + 1,
+                "操作": "人工分裂",
+                "节点编号": node,
+                "分裂特征": feature,
+                "切分点": [float(threshold)],
+                "类别分组": [],
+            }
+        ]
 
         self._generate_rules()
         return self
@@ -2356,6 +2374,12 @@ class ManualTreeExtractor(ParallelizableMixin):
         >>> ext.delete_node(node=3)
         """
         self._check_fitted()
+        removed = set(_find_subtree_node_ids(self._tree_info, node)) - {node}
+        adjusted_nodes = {
+            old - sum(removed_node < old for removed_node in removed)
+            for old in self._manual_split_nodes | {node}
+            if old not in removed
+        }
 
         (
             self._tree_info.children_left,
@@ -2378,6 +2402,17 @@ class ManualTreeExtractor(ParallelizableMixin):
             missing_go_to_left=self._tree_info.missing_go_to_left,
         )
 
+        self._manual_split_nodes = adjusted_nodes
+        self.edit_history_ = list(getattr(self, "edit_history_", [])) + [
+            {
+                "序号": len(getattr(self, "edit_history_", [])) + 1,
+                "操作": "剪枝",
+                "节点编号": node,
+                "分裂特征": "",
+                "切分点": [],
+                "类别分组": [],
+            }
+        ]
         self._generate_rules()
         return self
 
@@ -2673,8 +2708,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         :param freq: 默认 'M'；日期统计频率。
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
         :param data_source: 默认 None；数据来源说明。
-        :param save: 默认 None；Excel 路径，输出基本信息、组合策略汇总和策略详情。
-        :param sheet: 默认 '组合策略汇总'；效果表名，默认配套基本信息和策略详情页，自定义名称时使用同名前缀。
+        :param save: 默认 None；Excel 路径，在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
+        :param sheet: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
         :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
         :param datasets: 默认 None 使用训练数据； 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
@@ -2820,6 +2855,7 @@ class ManualTreeExtractor(ParallelizableMixin):
             del_grey=del_grey,
             leaf_only=leaf_only,
             feature_map=feature_map,
+            adjusted_nodes=self._manual_split_nodes,
             n_jobs=_effective_nested_n_jobs(self.n_jobs),
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
