@@ -322,7 +322,7 @@ def tree_report_excel(
             "3、数据样本统计",
             orders,
             amounts,
-            "按各标签有效样本统计；AUC/KS 使用最终树预测，PSI 以首个数据集为参考。",
+            "按各标签有效样本统计；AUC/KS 使用最终树预测。",
         )
         if date is not None:
             grouped_orders, grouped_amounts = _distribution_tables(
@@ -335,7 +335,7 @@ def tree_report_excel(
                 "4、样本分布情况",
                 grouped_orders,
                 grouped_amounts,
-                "与数据样本统计使用相同指标，按日期分组计算；PSI 比较同组内各数据集。",
+                "与数据样本统计使用相同指标，按日期分组计算。",
             )
         training_data = tree._data if tree._data is not None else next(iter(frames.values()))
         if tree._data is None:
@@ -444,7 +444,7 @@ def _tree_score(tree, data, class_index=1):
 
 
 def _prediction_metrics(tree, frames, y_maps, amount):
-    """样本统计的 AUC/KS/PSI 直接复用 ModelReport，金额口径使用其 sample_weight。"""
+    """样本统计的 AUC/KS 直接复用 ModelReport，金额口径使用其 sample_weight。"""
     from ..model_report import ModelReport
 
     features = getattr(tree, "features_", None) or getattr(tree, "_feature_list", None)
@@ -472,9 +472,7 @@ def _prediction_metrics(tree, frames, y_maps, amount):
                     n_jobs=1,
                 )
                 metrics = report.get_metrics().set_index("统计项")
-            for metric in ["AUC", "KS", "PSI"]:
-                if basis == "金额" and metric == "PSI":
-                    continue
+            for metric in ["AUC", "KS"]:
                 if metric in metrics.index or metric in {"AUC", "KS"}:
                     values = [
                         metrics.loc[metric, name] if metric in metrics.index and name in metrics else np.nan
@@ -620,9 +618,9 @@ def _sample_tables(tree, frames, y_maps, amount_reports, amount, long_format, ta
     for table, basis in [(orders, "订单"), (amounts, "金额")]:
         if table is None:
             continue
-        for metric in ["AUC", "KS", "PSI"]:
+        for metric in ["AUC", "KS"]:
             for label in labels:
-                if (basis, label, metric) in performance or (basis == "订单" and metric == "PSI"):
+                if (basis, label, metric) in performance:
                     key = (metric, label) if isinstance(table.columns, pd.MultiIndex) else metric
                     table[key] = performance.get((basis, label, metric), [np.nan] * len(frames))
     rename = {
