@@ -7,6 +7,103 @@
 
 完整分步演示见仓库 ``examples/26_multiway_tree.ipynb``，使用 ``examples/hscredit_yyp.xlsx``。
 
+方法速查
+--------
+
+.. currentmodule:: hscredit.report.mining
+
+构造参数与所有方法的参数类型、返回值和参考样例见 :class:`MultiwayTreeExtractor`。
+下表按操作流程列出入口；调用示例中的 ``tree`` 为已训练实例，``df_train`` / ``df_test`` 为含所需字段的数据表。
+
+.. list-table:: 训练与节点编辑
+   :header-rows: 1
+   :widths: 28 42 30
+
+   * - 方法
+     - 用途
+     - 返回值与编辑范围
+   * - :meth:`MultiwayTreeExtractor.fit`
+     - 使用 DataFrame 中的目标列或显式 y 重新训练
+     - 当前实例；成功后替换整棵树，编号从 0 开始
+   * - :meth:`MultiwayTreeExtractor.get_split_candidates`
+     - 查看指定节点每个特征的最佳候选及统计量
+     - DataFrame；不修改模型，也不保证自动生长会采用候选
+   * - :meth:`MultiwayTreeExtractor.manual_split`
+     - 指定数值切点、类别分组，或选择最佳候选
+     - 当前实例；替换指定节点的全部后代
+   * - :meth:`MultiwayTreeExtractor.set_thresholds`
+     - 修改已有数值分裂节点的切点
+     - 当前实例；保留分裂字段，重建后代
+   * - :meth:`MultiwayTreeExtractor.grow`
+     - 按当前参数继续自动分裂叶节点
+     - 当前实例；保留已有分裂，递归处理所选子树
+   * - :meth:`MultiwayTreeExtractor.prune` / :meth:`MultiwayTreeExtractor.delete_node`
+     - 删除后代，将指定节点变为叶子
+     - 当前实例；保留节点自身和其他子树编号
+
+.. list-table:: 预测、规则与模型效果
+   :header-rows: 1
+   :widths: 28 42 30
+
+   * - 方法
+     - 用途
+     - 返回结构
+   * - :meth:`MultiwayTreeExtractor.get_leaf_node_ids`
+     - 获取当前叶节点编号，含空分支
+     - ``list[int]``，与叶节点规则列表顺序一致
+   * - :meth:`MultiwayTreeExtractor.apply`
+     - 返回每个样本到达的叶节点
+     - ``(样本数,)`` 整数数组
+   * - :meth:`MultiwayTreeExtractor.predict_proba`
+     - 返回各类别概率
+     - ``(样本数, 类别数)`` 数组，列顺序为 ``classes_``
+   * - :meth:`MultiwayTreeExtractor.predict`
+     - 返回最大概率类别
+     - ``(样本数,)`` 标签数组
+   * - :meth:`MultiwayTreeExtractor.get_rules`
+     - 导出叶节点或全部节点的路径规则
+     - ``list[Rule]``；仅叶节点规则互斥且完整覆盖
+   * - :meth:`MultiwayTreeExtractor.to_ruleset`
+     - 将选定叶节点或内部节点组合成风险策略
+     - OR ``RuleSet``；默认全叶会命中全部样本
+   * - :meth:`MultiwayTreeExtractor.get_node_table`
+     - 查看结构、切点、分支与各训练类别的计数
+     - 每节点一行的中文 DataFrame
+   * - :meth:`MultiwayTreeExtractor.get_rule_table`
+     - 便捷生成节点规则效果表，默认使用训练数据
+     - 同 ``report``；默认包含全部节点
+   * - :meth:`MultiwayTreeExtractor.report`
+     - 在指定数据集评估节点命中效果，支持多标签和金额
+     - DataFrame、表格列表或表格字典；多标签使用多层列
+   * - :meth:`MultiwayTreeExtractor.evaluate`
+     - 评估整棵树的准确率、交叉熵、AUC、KS
+     - 每个数据集一行的中文 DataFrame
+
+.. list-table:: 展示与持久化
+   :header-rows: 1
+   :widths: 28 42 30
+
+   * - 方法
+     - 用途
+     - 返回值
+   * - :meth:`MultiwayTreeExtractor.plot`
+     - 使用 matplotlib、pyecharts 或 graphviz 绘图
+     - 对应后端的图形对象；可通过 save 保存
+   * - :meth:`MultiwayTreeExtractor.display`
+     - 在 Notebook 展示树图和训练集全部节点规则表
+     - 当前实例；图表作为展示输出
+   * - :meth:`MultiwayTreeExtractor.save`
+     - 保存完整模型与编辑所需的训练数据
+     - 保存路径字符串
+   * - :meth:`MultiwayTreeExtractor.load`
+     - 从可信文件恢复模型，保留原有路由
+     - 新恢复的模型实例
+
+``get_params`` / ``set_params`` 沿用 sklearn 估计器接口；``set_params`` 只更新配置，
+已有分裂不会自动重建。需要整体应用新参数时重新 ``fit``，仅继续生长时调用 ``grow``。
+继承的 ``score(X, y)`` 返回准确率；完整模型效果使用 ``evaluate``。
+``save_artifact`` / ``load_artifact`` 提供额外的序列化引擎、压缩和元数据校验选项。
+
 训练与编辑
 ----------
 
@@ -101,11 +198,49 @@
 若减少普通分支后原来的合并序号越界，需明确提供新的 ``missing_branch``。
 编辑使用拟合时保存的数据；若需要改训练样本，请重新 ``fit``。
 
+节点编号与分支位置
+------------------
+
+``node`` 参数使用 ``get_node_table()`` 或 ``nodes_`` 中的节点编号。
+``missing_branch`` 使用当前节点 ``children`` 列表中的位置：
+
+.. code-block:: python
+
+   root = tree.nodes_[0]
+   missing_child_id = root.children[root.missing_branch]
+   child_to_edit = root.children[1]  # 根节点的第二个分支对应的节点编号
+
+二者不可以直接互换。编辑后新子节点使用新编号，编号可能不连续；应重新获取所需节点，
+不要保存旧的后代编号继续编辑。数值和类别分支均按 ``children`` 顺序从左到右绘制，
+``get_leaf_node_ids()`` 则按节点创建顺序返回，局部编辑后不保证等于图上的左右顺序。
+
 人工阈值允许产生空分支，其样本计数仍为 0，预测概率继承最近的非空祖先。
 已保存模型保留训练时的分支语义；更新库后需重新训练或重新分裂节点，才会使用新的默认路由。
 自动分裂执行 ``min_samples_split``、普通叶节点的 ``min_samples_leaf``、``max_depth`` 和 ``max_branches`` 约束。
 ``get_rules()`` 返回互斥且完整覆盖输入的叶子规则；``to_ruleset(nodes=[...])`` 可把选定节点合成
 风险策略。默认全叶 OR 规则集会命中所有样本，不能直接当作拒绝策略。
+
+报告与模型效果的输入输出
+------------------------
+
+``get_node_table()`` 展示训练时的节点结构和计数；``report`` 在给定数据上重新计算每个节点
+规则的命中效果；``evaluate`` 评估整棵树的预测。三者对应不同层次的结果：
+
+.. code-block:: python
+
+   structure = tree.get_node_table()
+   train_rules = tree.get_rule_table(leaf_only=True)
+   test_rules = tree.report(df_test, leaf_only=True)
+   reports = tree.report({"训练集": df_train, "测试集": df_test}, leaf_only=True)
+   train_report = reports["训练集"]  # report 保留输入字典的结构
+   effects = tree.evaluate({"训练集": df_train, "测试集": df_test})  # evaluate 汇总为一张表
+   external_y_effects = tree.evaluate(df_test[tree.features_], y=df_test["FPD"])
+
+``evaluate`` 的显式标签是第二个参数，不支持 ``evaluate((X, y))``；使用数据集字典时，
+每张表都应含构造参数 ``target`` 对应的列，外层 y 不参与评估。
+``report`` 的单标签结果使用单层中文列，多标签结果使用 MultiIndex 列；
+``report`` 和 ``get_rule_table`` 默认包含全部节点，父子节点命中存在重叠，不能直接相加计数。
+只需互斥叶节点结果时传 ``leaf_only=True``。
 
 分裂搜索与 SAS 的关系
 ----------------------------------------
