@@ -258,6 +258,8 @@ def plot_model_feature_importance(
     hatch: bool = True,
     *,
     dpi: int = 240,
+    shap_values: Optional[np.ndarray] = None,
+    feature_importance: Optional[pd.Series] = None,
 ):
     """绘制模型的 SHAP 特征重要性综合看板。
 
@@ -265,8 +267,8 @@ def plot_model_feature_importance(
     特征的依赖关系。柱状图和 Top N 排序默认使用模型原生特征重要性，可通过
     ``importance_source='shap'`` 改为平均绝对 SHAP 值；逻辑回归的模型重要性
     使用系数绝对值。SHAP 模式默认按标签同时展示各组平均绝对 SHAP 柱条，设置
-    ``shap_by_label=False`` 可只展示全样本平均柱条。没有 ``y`` 时仅支持绘制
-    模型原生特征重要性。
+    ``shap_by_label=False`` 可只展示全样本平均柱条。没有 ``y`` 时默认仅绘制
+    模型原生特征重要性；提供预计算 ``shap_values`` 时可绘制重要性与蜂群图。
     ``prediction_method`` 决定 SHAP 解释的模型输出，可传 ``'predict'`` 、
     ``'predict_score'`` 、 ``'predict_proba'`` 或接收 ``X`` 的 callable。
 
@@ -309,6 +311,11 @@ def plot_model_feature_importance(
     :type shap_by_label: bool
     :param hatch: 是否显示重要性柱斜线纹理，默认 True；标签 0/1 分别使用 ``/`` 和 ``\\``
     :type hatch: bool
+    :param shap_values: 已计算的二维 SHAP 值，须与 X 的行列顺序一致；提供后不重复解释模型。
+        未提供 y 时仍展示依赖图，但不按标签着色或绘制分标签柱条。
+    :type shap_values: Optional[np.ndarray]
+    :param feature_importance: 按原始字段名索引的原生重要性；用于已完成字段映射的 Pipeline 报告。
+    :type feature_importance: Optional[pd.Series]
     :return: matplotlib Figure
 
     **参考样例**
@@ -334,37 +341,48 @@ def plot_model_feature_importance(
     importance_source = _resolve_importance_source(importance_source)
     if not isinstance(shap_by_label, (bool, np.bool_)):
         raise TypeError("shap_by_label 必须是布尔值")
-    if y is None:
+    native_importance = None
+    if feature_importance is not None:
+        if not isinstance(feature_importance, pd.Series) or not feature_importance.index.is_unique:
+            raise ValueError("feature_importance 必须是具有唯一字段索引的 Series")
+        native_importance = feature_importance.reindex(names).astype(float)
+        if not np.isfinite(native_importance).all():
+            raise ValueError("feature_importance 必须覆盖 X 的全部字段且数值有限")
+    if y is None and shap_values is None:
         if importance_source == "shap":
             raise ValueError("importance_source='shap' 时必须提供 y")
         return _plot_native_importance(
-            _native_feature_importance(model, names), left_top_n, figsize, title, save, show, hatch
+            (
+                native_importance.sort_values(ascending=False)
+                if native_importance is not None
+                else _native_feature_importance(model, names)
+            ),
+            left_top_n,
+            figsize,
+            title,
+            save,
+            show,
+            hatch,
         )
 
-    y_values = np.asarray(y).ravel()
-    if len(y_values) != X_values.shape[0]:
+    y_values = None if y is None else np.asarray(y).ravel()
+    if y_values is not None and len(y_values) != X_values.shape[0]:
         raise ValueError(f"X 与 y 样本数不一致: {X_values.shape[0]} != {len(y_values)}")
-    if len(y_values) == 0:
+    if y_values is not None and len(y_values) == 0:
         raise ValueError("y 不能为空")
 
-    predict_function, method_name = _resolve_prediction_function(
-        model,
-        prediction_method,
-        class_index,
-        names,
-        isinstance(X, pd.DataFrame),
-    )
+    if shap_values is None:
+        predict_function, method_name = _resolve_prediction_function(
+            model, prediction_method, class_index, names, isinstance(X, pd.DataFrame)
+        )
+    else:
+        method_name = prediction_method if isinstance(prediction_method, str) else "自定义输出"
 
     if background_size is not None:
         if isinstance(background_size, bool) or not isinstance(background_size, (int, np.integer)):
             raise TypeError("background_size 必须是正整数或 None")
         if background_size <= 0:
             raise ValueError("background_size 必须是正整数或 None")
-
-    try:
-        import shap
-    except ImportError as exc:
-        raise ImportError("绘制 SHAP 特征重要性图需要安装 shap") from exc
 
     n_samples = X_values.shape[0]
     rng = np.random.default_rng(random_state)
@@ -374,25 +392,37 @@ def plot_model_feature_importance(
         background_indices = np.sort(rng.choice(n_samples, size=int(background_size), replace=False))
     background = X.iloc[background_indices] if isinstance(X, pd.DataFrame) else X_values[background_indices]
 
-    explainer = shap.Explainer(predict_function, background)
-    explanation = explainer(X)
-    shap_values = np.asarray(explanation.values, dtype=float)
+    if shap_values is None:
+        try:
+            import shap
+        except ImportError as exc:
+            raise ImportError("绘制 SHAP 特征重要性图需要安装 shap") from exc
+        explainer = shap.Explainer(predict_function, background)
+        explanation = explainer(X)
+        shap_values = explanation.values
+    shap_values = np.asarray(shap_values, dtype=float)
     if shap_values.ndim == 3:
         if not 0 <= class_index < shap_values.shape[2]:
             raise ValueError(f"class_index={class_index} 超出 SHAP 输出列范围 {shap_values.shape[2]}")
         shap_values = shap_values[:, :, class_index]
     if shap_values.ndim != 2 or shap_values.shape != X_values.shape:
         raise ValueError(f"SHAP 输出形状 {shap_values.shape} 与 X 形状 {X_values.shape} 不一致")
+    if not np.isfinite(shap_values).all():
+        raise ValueError("SHAP 值必须为有限数值")
 
     shap_importance = np.mean(np.abs(shap_values), axis=0)
     label_importances = []
     if importance_source == "raw":
-        selected_importance = _native_feature_importance(model, names).reindex(names).to_numpy(dtype=float)
+        selected_importance = (
+            native_importance
+            if native_importance is not None
+            else _native_feature_importance(model, names).reindex(names)
+        ).to_numpy(dtype=float)
         importance_axis_label = "模型原生特征重要性"
         panel_title = "模型原生特征重要性与 SHAP 分布"
     else:
         selected_importance = shap_importance
-        if shap_by_label:
+        if shap_by_label and y_values is not None:
             label_codes, label_values = pd.factorize(y_values, sort=True)
             if np.any(label_codes < 0):
                 raise ValueError("按标签展示 SHAP 重要性时 y 不能包含缺失值")
@@ -528,16 +558,18 @@ def plot_model_feature_importance(
         _style_colorbar(shap_colorbar)
 
     if dependence_axes:
-        y_numeric = pd.to_numeric(pd.Series(y_values), errors="coerce")
-        y_labels = None
-        if y_numeric.notna().sum() != len(y_values):
-            y_codes, y_uniques = pd.factorize(y_values, sort=True)
-            y_numeric = pd.Series(y_codes, dtype=float)
-            y_labels = [str(value) for value in y_uniques]
-        y_color = y_numeric.to_numpy(dtype=float)
-        y_min = float(np.nanmin(y_color))
-        y_max = float(np.nanmax(y_color))
-        y_norm = Normalize(vmin=y_min, vmax=y_max if y_max > y_min else y_min + 1.0)
+        y_labels = y_color = y_norm = None
+        if y_values is not None:
+            y_numeric = pd.to_numeric(pd.Series(y_values), errors="coerce")
+            y_labels = None
+            if y_numeric.notna().sum() != len(y_values):
+                y_codes, y_uniques = pd.factorize(y_values, sort=True)
+                y_numeric = pd.Series(y_codes, dtype=float)
+                y_labels = [str(value) for value in y_uniques]
+            y_color = y_numeric.to_numpy(dtype=float)
+            y_min = float(np.nanmin(y_color))
+            y_max = float(np.nanmax(y_color))
+            y_norm = Normalize(vmin=y_min, vmax=y_max if y_max > y_min else y_min + 1.0)
 
         dependence_scatter = None
         for rank_position, (ax, feature_index) in enumerate(zip(dependence_axes, ranking[:n_right]), start=1):
@@ -552,8 +584,8 @@ def plot_model_feature_importance(
             dependence_scatter = ax.scatter(
                 x_plot,
                 shap_values[:, feature_index],
-                c=y_color,
-                cmap=cmap,
+                c=y_color if y_color is not None else PRIMARY_COLORS[0],
+                cmap=cmap if y_color is not None else None,
                 norm=y_norm,
                 s=34,
                 alpha=0.72,
@@ -584,14 +616,15 @@ def plot_model_feature_importance(
             ax.grid(False)
             setup_axis_style(ax, PRIMARY_COLORS, hide_top_right=True)
 
-        label_colorbar = fig.colorbar(dependence_scatter, ax=dependence_axes, pad=0.025, fraction=0.04, aspect=28)
-        unique_y = np.unique(y_color[np.isfinite(y_color)])
-        if len(unique_y) <= 6:
-            label_colorbar.set_ticks(unique_y)
-            if y_labels is not None and len(y_labels) == len(unique_y):
-                label_colorbar.set_ticklabels(y_labels)
-        label_colorbar.set_label("真实标签")
-        _style_colorbar(label_colorbar)
+        if y_color is not None:
+            label_colorbar = fig.colorbar(dependence_scatter, ax=dependence_axes, pad=0.025, fraction=0.04, aspect=28)
+            unique_y = np.unique(y_color[np.isfinite(y_color)])
+            if len(unique_y) <= 6:
+                label_colorbar.set_ticks(unique_y)
+                if y_labels is not None and len(y_labels) == len(unique_y):
+                    label_colorbar.set_ticklabels(y_labels)
+            label_colorbar.set_label("真实标签")
+            _style_colorbar(label_colorbar)
 
     model_name = model.__class__.__name__
     fig.suptitle(title or f"SHAP 综合特征重要性：{model_name}（{method_name}）", fontsize=16, fontweight="bold")

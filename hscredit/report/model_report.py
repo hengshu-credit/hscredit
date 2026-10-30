@@ -1737,6 +1737,19 @@ class ModelReport(ModelContextMixin):
             raise ValueError("feature_contribution_label_max_features 必须是非负整数或 None")
         return int(value)
 
+    def _create_native_importance_figure(self):
+        """未启用解释时，仍使用统一入口展示 TOP32 原生重要性。"""
+        from ..core.viz import plot_model_feature_importance
+
+        importance = self._get_raw_feature_importance().dropna()
+        return plot_model_feature_importance(
+            self.model,
+            self._datasets[self._train_key].X[importance.index],
+            left_top_n=32,
+            feature_importance=importance,
+            show=False,
+        )
+
     def _create_feature_contribution_figure(
         self,
         table: pd.DataFrame,
@@ -2774,15 +2787,12 @@ class ModelReport(ModelContextMixin):
                 paths[f"model_{ds_key}"] = model_figs
 
         contribution_table = self._get_model_input_table()
-        if contribution_table["特征重要性%"].notna().any():
+        if contribution_table["特征重要性%"].notna().any() and not self.explain_config["enabled"]:
             p = str(output_dir / "feature_contribution.png")
             try:
                 from ..core.viz.utils import save_figure
 
-                figure = self._create_feature_contribution_figure(
-                    contribution_table,
-                    label_max_features=feature_contribution_label_max_features,
-                )
+                figure = self._create_native_importance_figure()
                 save_figure(figure, p)
                 _safe_close_plot_result(figure)
                 paths["feature_contribution"] = [p]
@@ -3041,7 +3051,7 @@ class ModelReport(ModelContextMixin):
             add_plot_group(f"模型图表:{ds.label}", render_model_group)
 
         contribution_table = self._get_model_input_table()
-        if contribution_table["特征重要性%"].notna().any():
+        if contribution_table["特征重要性%"].notna().any() and not self.explain_config["enabled"]:
 
             def render_contribution_group():
                 group_paths: Dict[str, List[str]] = {}
@@ -3049,10 +3059,7 @@ class ModelReport(ModelContextMixin):
                 try:
                     from ..core.viz.utils import save_figure
 
-                    figure = self._create_feature_contribution_figure(
-                        contribution_table,
-                        label_max_features=feature_contribution_label_max_features,
-                    )
+                    figure = self._create_native_importance_figure()
                     save_figure(figure, path)
                     _safe_close_plot_result(figure)
                     group_paths["feature_contribution"] = [path]
@@ -5058,11 +5065,15 @@ class ModelReport(ModelContextMixin):
         contribution_figures = plot_paths.get("feature_contribution", [])
         if contribution_figures:
             try:
+                from PIL import Image
+
+                with Image.open(contribution_figures[0]) as picture:
+                    contribution_size = (600, round(600 * picture.height / picture.width))
                 contribution_end_row, _ = writer.insert_pic2sheet(
                     ws,
                     contribution_figures[0],
                     (features_start_row, features_end_col + 1),
-                    figsize=(500, 300),
+                    figsize=contribution_size,
                 )
                 end_row = max(end_row, contribution_end_row)
             except Exception as exc:
@@ -5392,14 +5403,7 @@ class ModelReport(ModelContextMixin):
                     value="说明：模型贡献不等于因果关系，也不应单独作为审批或授信依据。",
                     style="middle",
                 )
-                if with_plots:
-                    figure = explanation["解释器"].plot_explanation_overview(explanation["解释结果"], show=False)
-                    try:
-                        end_row, _ = writer.insert_pic2sheet(ws, figure, (end_row + 2, 2), figsize=(800, 550))
-                    finally:
-                        import matplotlib.pyplot as plt
-
-                        plt.close(figure)
+                # 重要性与 SHAP 综合图统一放在变量分析页，完整解释页不重复绘制。
 
         # ============================================================
         # 保存

@@ -59,6 +59,8 @@ def test_new_report_plots_use_hscredit_axes_palette_and_export_defaults(tmp_path
         saved[Path(path).stem] = figure
         assert dpi == get_defaults()["dpi"]
         for axis in figure.axes:
+            if Path(path).stem == "shap_importance":
+                continue  # 综合看板含双轴和颜色条，由其专用契约逐项检查。
             assert axis.spines["left"].get_edgecolor() == to_rgba(PRIMARY_COLORS[0])
             assert not axis.spines["top"].get_visible()
             assert not axis.spines["right"].get_visible()
@@ -69,6 +71,9 @@ def test_new_report_plots_use_hscredit_axes_palette_and_export_defaults(tmp_path
             np.testing.assert_allclose(image.info["dpi"], [240, 240], atol=0.1)
 
     monkeypatch.setattr(utils, "save_figure", capture)
+    from hscredit.core.viz import model_plots
+
+    monkeypatch.setattr(model_plots, "save_figure", capture)
     X = pd.DataFrame({"变量甲": np.arange(12), "变量乙": np.arange(12) % 3})
     y = X["变量甲"] * 2 + X["变量乙"]
     report = ModelReport(
@@ -93,3 +98,6 @@ def test_new_report_plots_use_hscredit_axes_palette_and_export_defaults(tmp_path
     np.testing.assert_allclose(axis.lines[0].get_ydata(), [0.6, 0.5, 0.4])
     assert not axis.get_legend().get_frame_on()
     assert all(bar.get_hatch() == "/" for axis in saved["shap_importance"].axes for bar in axis.patches)
+    axes = {axis.get_label(): axis for axis in saved["shap_importance"].axes}
+    assert {"SHAP分布", "特征重要性", "SHAP依赖"} <= set(axes)
+    assert axes["SHAP分布"].spines["left"].get_edgecolor() == to_rgba(PRIMARY_COLORS[0])
