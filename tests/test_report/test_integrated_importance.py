@@ -99,11 +99,18 @@ def test_cached_plot_supports_unlabelled_categorical_data_and_rejects_bad_shapes
 
 
 def test_native_only_report_caps_top32_without_enabling_shap(monkeypatch):
+    from hscredit.core.viz.utils import _threaded_agg_rendering
+
     rng = np.random.default_rng(11)
     X = pd.DataFrame(rng.normal(size=(60, 40)), columns=[f"变量{i}" for i in range(40)])
     y = X.sum(axis=1)
     report = ModelReport(LinearRegression().fit(X, y), datasets={"训练": (X, y)}, n_jobs=1)
-    fig = report._create_native_importance_figure()
+    def reject_global_pyplot(*args, **kwargs):
+        raise AssertionError("并行报告不能使用全局 pyplot 画布")
+
+    monkeypatch.setattr(plt, "subplots", reject_global_pyplot)
+    with _threaded_agg_rendering():
+        fig = report._create_native_importance_figure()
     assert len(fig.axes[0].patches) == 32
     assert report._model_explanation_cache is None
     plt.close(fig)

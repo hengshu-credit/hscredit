@@ -206,7 +206,7 @@ def _plot_native_importance(
     n_left = _resolve_top_n(left_top_n, len(importance), "left_top_n")
     displayed = importance.head(n_left)
     figure_size = figsize or _figure_size(n_left, 0, False)
-    fig, ax = plt.subplots(figsize=figure_size, constrained_layout=True)
+    fig, ax = _create_subplots(figsize=figure_size, constrained_layout=True)
     ax.set_label("模型特征重要性")
 
     positions = np.arange(n_left)
