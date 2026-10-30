@@ -20,6 +20,7 @@ def reject_legacy_tree_keywords(kwargs):
         "data": "datasets",
         "excel_path": "save",
         "max_branches": "max_n_bins",
+        "max_prebins": "n_prebins",
         "date_col": "date",
         "date_freq": "freq",
         "group_col": "group",
@@ -30,7 +31,7 @@ def reject_legacy_tree_keywords(kwargs):
     for old, new in renamed.items():
         if old in kwargs:
             raise TypeError(f"参数 {old} 已移除，请使用 {new}")
-    for name in ("n_jobs", "parallel_backend", "parallel_config", "max_n_bins"):
+    for name in ("n_jobs", "parallel_backend", "parallel_config", "max_n_bins", "n_prebins"):
         if name in kwargs:
             raise TypeError(f"请在树初始化时设置 {name}，report/get_rule_table 不接受该参数")
     unknown = set(kwargs) - {

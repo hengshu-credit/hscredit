@@ -39,7 +39,11 @@ def test_report_and_rule_table_have_same_public_parameters():
             assert "amount" in signature.parameters and "feature_map" in signature.parameters
             assert not {"data", "sheet", "max_branches"}.intersection(signature.parameters)
     assert inspect.signature(MultiwayTreeExtractor).parameters["max_n_bins"].default == 4
+    assert inspect.signature(MultiwayTreeExtractor).parameters["n_prebins"].default == 12
     assert "max_branches" not in inspect.signature(MultiwayTreeExtractor).parameters
+    assert "max_prebins" not in inspect.signature(MultiwayTreeExtractor).parameters
+    with pytest.raises(TypeError, match="max_prebins"):
+        MultiwayTreeExtractor(max_prebins=12)
 
 
 @pytest.mark.parametrize("factory", [list, tuple, np.array, pd.Index])

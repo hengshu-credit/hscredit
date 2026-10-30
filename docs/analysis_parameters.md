@@ -8,6 +8,7 @@
 | 字段集合 | `features`，支持单字段自动转为列表 |
 | 二维字段 | `features=["a", "b"]` 或 `x1="a", x2="b"` |
 | 分箱方法、最大箱数 | `method`、`max_n_bins` |
+| 最大预分箱数 | `n_prebins`，用于候选切点生成，与最终箱数/普通分支数 `max_n_bins` 区分 |
 | 多方法比较 | `methods` |
 | 扩展分箱配置 | `bin_params` |
 | 时间、分组、金额 | `date`、`group`、`amount` |

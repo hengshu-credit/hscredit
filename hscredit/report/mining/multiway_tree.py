@@ -123,8 +123,10 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     :param adjust_pvalue: 是否按实际搜索方案数作 Bonferroni 调整，默认 True。
         这是明确的多重比较控制，不声称复刻 SAS 的 Kass/深度调整。
     :type adjust_pvalue: bool
-    :param max_prebins: 数值候选池的等频预分箱数，默认 12。
-    :type max_prebins: int
+    :param n_prebins: 数值特征的最大等频预分箱数，默认 12，至少 2，与分箱器参数同名。
+        通常产生至多 n_prebins - 1 个候选切点；重复值可能减少实际预箱数，缺失值不参与候选生成。
+        此参数控制候选池规模，最终普通分支数由 max_n_bins 限制。
+    :type n_prebins: int
     :param max_candidates: 穷举方案上限，默认 5000；超过时采用逐步增加切点的贪心搜索。
     :type max_candidates: int
     :param min_impurity_decrease: 自动生长时的最小加权不纯度下降，默认 0.0；
@@ -184,7 +186,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         criterion="chi2",
         alpha=0.05,
         adjust_pvalue=True,
-        max_prebins=12,
+        n_prebins=12,
         max_candidates=5000,
         min_impurity_decrease=0.0,
         feature_map=None,
@@ -203,7 +205,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         self.criterion = criterion
         self.alpha = alpha
         self.adjust_pvalue = adjust_pvalue
-        self.max_prebins = max_prebins
+        self.n_prebins = n_prebins
         self.max_candidates = max_candidates
         self.min_impurity_decrease = min_impurity_decrease
         self.feature_map = feature_map
@@ -232,7 +234,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             ("max_n_bins", 1),
             ("min_samples_split", 2),
             ("min_samples_leaf", 1),
-            ("max_prebins", 2),
+            ("n_prebins", 2),
             ("max_candidates", 1),
         ):
             value = getattr(self, name)
@@ -343,7 +345,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         # 复用等频分箱器的无监督切点计算；不构造虚假的二分类分箱统计表。
         values = pd.Series(finite)
         binner = QuantileBinning(
-            max_n_bins=self.max_prebins,
+            max_n_bins=self.n_prebins,
             min_n_bins=1,
             min_bin_size=None,
             force_numerical=True,
