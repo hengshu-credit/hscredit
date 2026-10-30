@@ -34,7 +34,10 @@
 
 数值分支为 ``(-inf, t1]``、``(t1, t2]``、……、``(tk, +inf)``，因此等于阈值时走左侧区间。
 ``thresholds`` 中的有限切点必须严格递增。类别用 ``category_groups`` 指定互不重复、完整覆盖节点训练类别的分组。
-``missing_branch`` 是从 0 开始的分支序号；未声明缺失策略时，自动比较合并方向，没有缺失时选择样本最多的分支。
+``missing_branch`` 是从 0 开始的分支序号。未声明缺失策略时，节点训练样本有缺失则自动比较合并方向；
+该节点分裂字段没有缺失时，生产中新出现的缺失默认走最左分支（0 号），与各分支样本量无关。
+此规则按每个节点实际收到的训练样本判断，适用于自动训练、手工分裂和继续生长；
+显式 ``missing_branch``、缺失标记或独立缺失配置在训练无缺失时仍然生效。
 
 缺失值声明与 binner 一致
 ----------------------------------------
@@ -50,6 +53,17 @@
    tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[0.12, np.nan, 0.18, 0.25])
    # 显式 missing_branch 优先，因此此处仍是四叉，缺失走 0 号分支
    tree.manual_split(feature="衡枢鉴真分老客版", thresholds=[0.12, 0.18, 0.25, np.nan], missing_branch=0)
+
+因此 ``[0.12, np.nan, 0.18, 0.25]`` 等价于有限切点配合 ``missing_branch=1``，
+不等价于 ``missing_branch=0``。切点与标记分开生成，便于调整目标分支后同步验证：
+
+.. code-block:: python
+
+   cuts = [0.12, 0.18, 0.25]
+   merge_branch = 1  # 可改为 0、1、2、3，分别对应从左到右的四个普通分支
+   marked_cuts = cuts.copy()
+   marked_cuts.insert(merge_branch, np.nan)
+   tree.manual_split(feature="衡枢鉴真分老客版", thresholds=marked_cuts)
 
 独立缺失分支由 ``missing_separate=True`` 指定，数值型追加在普通分支之后：
 
@@ -88,6 +102,7 @@
 编辑使用拟合时保存的数据；若需要改训练样本，请重新 ``fit``。
 
 人工阈值允许产生空分支，其样本计数仍为 0，预测概率继承最近的非空祖先。
+已保存模型保留训练时的分支语义；更新库后需重新训练或重新分裂节点，才会使用新的默认路由。
 自动分裂执行 ``min_samples_split``、普通叶节点的 ``min_samples_leaf``、``max_depth`` 和 ``max_branches`` 约束。
 ``get_rules()`` 返回互斥且完整覆盖输入的叶子规则；``to_ruleset(nodes=[...])`` 可把选定节点合成
 风险策略。默认全叶 OR 规则集会命中所有样本，不能直接当作拒绝策略。

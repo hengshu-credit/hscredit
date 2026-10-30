@@ -119,7 +119,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     :param parallel_backend: 规则报告的 joblib 后端。
     :param parallel_config: 规则报告的并行配置。
     :param missing_separate: 默认 False，自动学习缺失值合并方向；True 时保留独立缺失分支。
-        显式 missing_branch 或规则中的缺失标记优先于此默认配置。
+        节点训练样本无缺失时默认走最左分支；显式 missing_branch 或规则中的缺失标记优先。
 
     **属性**
 
@@ -338,7 +338,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             return None
         choices = range(count) if missing_branch is None and missing.any() else [missing_branch]
         if not missing.any() and missing_branch is None:
-            choices = [int(np.argmax(np.bincount(branches, minlength=count)))]
+            # 节点内没有缺失样本时无法学习方向，为未来缺失保留稳定的最左路由。
+            choices = [0]
         best = None
         for destination in choices:
             routed = branches.copy()
@@ -602,7 +603,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         未知类别在缺失合并模式下同路；独立缺失模式下走样本最多的普通类别分支。
         data 若传入，必须与拟合数据一致。
 
-        :param missing_branch: 从 0 开始的缺失合并分支序号；默认学习最优方向。
+        :param missing_branch: 从 0 开始的缺失合并分支序号；默认学习最优方向，节点训练样本无缺失时为 0。
         :param missing_separate: None 沿用构造配置，True 保留独立缺失分支（数值型追加在末尾）。
             独立分支计入 max_branches；显式分组中的 [np.nan] 保持声明位置。
         """

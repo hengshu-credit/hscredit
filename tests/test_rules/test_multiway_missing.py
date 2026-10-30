@@ -127,6 +127,138 @@ def test_future_missing_empty_leaf_inherits_parent_probability():
     assert_partition(tree, pd.DataFrame({"评分": [None, 0.5, 1.5]}))
 
 
+@pytest.mark.parametrize("categorical", [False, True])
+@pytest.mark.parametrize("method", ["fit", "manual", "automatic_edit", "grow"])
+@pytest.mark.parametrize("criterion", ["chi2", "gini", "entropy"])
+def test_future_missing_defaults_left_when_node_training_has_no_missing(categorical, method, criterion, tmp_path):
+    values = ["A", "B", "C"] if categorical else [0.5, 1.5, 2.5]
+    data = pd.DataFrame({"特征": np.repeat(values, [10, 20, 30]), "target": [0] * 10 + [1] * 50})
+    tree = MultiwayTreeExtractor(
+        max_depth=1 if method == "fit" else 0, min_samples_leaf=1, criterion=criterion, n_jobs=1
+    ).fit(data)
+    tree.set_params(max_depth=1)
+    if method == "manual":
+        kwargs = {"category_groups": [[value] for value in values]} if categorical else {"thresholds": [1.0, 2.0]}
+        tree.manual_split(feature="特征", **kwargs)
+    elif method == "automatic_edit":
+        tree.manual_split(feature="特征")
+    elif method == "grow":
+        tree.grow()
+    root = tree.nodes_[0]
+    assert len(root.children) >= 2
+    assert tree.nodes_[root.children[0]].counts.sum() < max(tree.nodes_[c].counts.sum() for c in root.children)
+    assert root.missing_branch == 0 and not root.missing_separate
+    assert tree.get_split_candidates()["缺失分支"].eq(0).all()
+    future = pd.DataFrame({"特征": pd.Series([None, np.nan, pd.NA], dtype="string" if categorical else "Float64")})
+    assert tree.apply(future).tolist() == [root.children[0]] * len(future)
+    # 最左分支来自原始 A / 0.5 行，标签全为 0，不能使用最大分支或父节点的概率。
+    np.testing.assert_array_equal(tree.predict_proba(future), [[1.0, 0.0]] * len(future))
+    assert_partition(tree, future)
+    matched, _ = tree.to_ruleset(nodes=[root.children[0]]).evaluate(future)
+    assert matched.all()
+    path = tmp_path / "训练无缺失.pkl"
+    tree.save(path)
+    restored = MultiwayTreeExtractor.load(path)
+    np.testing.assert_array_equal(restored.apply(future), tree.apply(future))
+    assert_partition(restored, future)
+
+
+@pytest.mark.parametrize("categorical", [False, True])
+@pytest.mark.parametrize("policy", ["marker", "explicit", "separate"])
+def test_future_missing_respects_explicit_policy_without_training_missing(categorical, policy):
+    values = ["A", "B", "C"] if categorical else [0.5, 1.5, 2.5]
+    data = pd.DataFrame({"特征": values * 10, "target": [0, 1, 0] * 10})
+    tree = MultiwayTreeExtractor(max_depth=1, n_jobs=1).fit(data)
+    kwargs = {"category_groups": [[v] for v in values]} if categorical else {"thresholds": [1.0, 2.0]}
+    if policy == "marker":
+        if categorical:
+            kwargs["category_groups"][1].append(np.nan)
+        else:
+            kwargs["thresholds"].insert(1, np.nan)
+    elif policy == "explicit":
+        kwargs["missing_branch"] = 1
+    else:
+        kwargs["missing_separate"] = True
+    tree.manual_split(feature="特征", **kwargs)
+    root = tree.nodes_[0]
+    destination = 3 if policy == "separate" else 1
+    future = pd.DataFrame({"特征": [None, np.nan]})
+    assert root.missing_branch == destination
+    assert tree.apply(future).tolist() == [root.children[destination]] * 2
+    np.testing.assert_allclose(tree.predict_proba(future), [[2 / 3, 1 / 3] if policy == "separate" else [0, 1]] * 2)
+    assert_partition(tree, future)
+
+
+@pytest.mark.parametrize("method", ["manual", "grow"])
+def test_missing_default_uses_local_node_rows_and_survives_edits(method):
+    data = pd.DataFrame(
+        {
+            "分组": ["节点"] * 60 + ["其他"] * 10,
+            "评分": [0.5] * 10 + [1.5] * 20 + [2.5] * 30 + [np.nan] * 10,
+            "target": [0] * 10 + [1] * 20 + [0] * 30 + [1] * 10,
+        }
+    )
+    tree = MultiwayTreeExtractor(max_depth=2, criterion="gini", min_samples_leaf=1).fit(data)
+    tree.manual_split(feature="分组", category_groups=[["节点"], ["其他"]])
+    node = tree.nodes_[0].children[0]
+    if method == "manual":
+        tree.manual_split(feature="评分", thresholds=[1.0, 2.0], node=node)
+    else:
+        tree.grow(node=node)
+    future = pd.DataFrame({"分组": ["节点"], "评分": [np.nan]})
+    for thresholds in (None, [0.9, 1.9]):
+        if thresholds is not None:
+            tree.set_thresholds(node, thresholds)
+        assert tree.nodes_[node].missing_branch == 0
+        assert tree.apply(future).tolist() == [tree.nodes_[node].children[0]]
+        np.testing.assert_array_equal(tree.predict_proba(future), [[1.0, 0.0]])
+        assert_partition(tree, future)
+
+
+def test_future_missing_in_empty_left_branch_uses_ancestor_probability():
+    data = numeric_data().dropna()
+    tree = MultiwayTreeExtractor(max_depth=1).fit(data).manual_split(feature="评分", thresholds=[0.0, 2.0])
+    root = tree.nodes_[0]
+    assert root.missing_branch == 0
+    assert tree.nodes_[root.children[0]].counts.sum() == 0
+    future = pd.DataFrame({"评分": [np.nan]})
+    assert tree.apply(future).tolist() == [root.children[0]]
+    np.testing.assert_allclose(tree.predict_proba(future), [[2 / 3, 1 / 3]])
+    assert_partition(tree, future)
+
+
+@pytest.mark.parametrize("categorical", [False, True])
+def test_training_missing_still_learns_nonleft_destination(categorical):
+    values = ["A", "B"] if categorical else [0.5, 1.5]
+    data = pd.DataFrame({"特征": values * 20 + [None] * 10, "target": [0, 1] * 20 + [1] * 10})
+    tree = MultiwayTreeExtractor(max_depth=1, criterion="gini").fit(data)
+    root = tree.nodes_[0]
+    assert root.missing_branch == 1
+    assert tree.nodes_[root.children[1]].counts.tolist() == [0, 30]
+    np.testing.assert_array_equal(tree.predict_proba(pd.DataFrame({"特征": [None]})), [[0, 1]])
+    assert_partition(tree, data)
+
+
+@pytest.mark.parametrize("destination", range(4))
+def test_screenshot_merge_marker_and_matching_explicit_branch_agree(destination):
+    data = pd.DataFrame({"评分": [0.1, 0.15, 0.2, 0.3, np.nan] * 10, "target": [0, 1, 0, 1, 1] * 10})
+    cuts = [0.12, 0.18, 0.25]
+    splits = cuts.copy()
+    splits.insert(destination, np.nan)
+    marked = MultiwayTreeExtractor(max_depth=1, missing_separate=True, max_branches=5).fit(data)
+    explicit = clone(marked).fit(data)
+    marked.manual_split(feature="评分", thresholds=splits)
+    explicit.manual_split(feature="评分", thresholds=cuts + [np.nan], missing_branch=destination)
+    assert marked.nodes_[0].missing_branch == explicit.nodes_[0].missing_branch == destination
+    np.testing.assert_array_equal(marked.predict_proba(data), explicit.predict_proba(data))
+    # 用原始行独立核算：指定普通区间的 10 行加上 10 行缺失。
+    selected = data["评分"].eq([0.1, 0.15, 0.2, 0.3][destination]) | data["评分"].isna()
+    child = marked.nodes_[0].children[destination]
+    assert marked.nodes_[child].counts.sum() == selected.sum() == 20
+    assert marked.nodes_[child].counts[1] == data.loc[selected, "target"].sum()
+    assert_partition(marked, data)
+
+
 def test_older_model_without_missing_config_keeps_merge_default(tmp_path):
     tree = MultiwayTreeExtractor().fit(numeric_data())
     del tree.__dict__["missing_separate"]
@@ -237,3 +369,28 @@ def test_real_data_missing_node_counts_and_amount_report():
     report = tree.report(data, overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额", leaf_only=True)
     assert not report.empty
     assert_partition(tree, data)
+
+
+def test_real_data_future_missing_predictions_rules_and_report():
+    path = Path(__file__).resolve().parents[2] / "examples/hscredit_yyp.xlsx"
+    if not path.exists():
+        pytest.skip("缺少 examples/hscredit_yyp.xlsx")
+    feature = "衡枢鉴真分老客版"
+    data = pd.read_excel(path).dropna(subset=[feature])
+    tree = MultiwayTreeExtractor(target="FPD", features=[feature], max_depth=1, n_jobs=1).fit(data)
+    tree.manual_split(feature=feature, thresholds=[0.12, 0.18, 0.25])
+    root = tree.nodes_[0]
+    assert root.missing_branch == 0
+    left_rows = data.loc[data[feature] <= 0.12]
+    np.testing.assert_array_equal(
+        tree.nodes_[root.children[0]].counts, [(left_rows.FPD == 0).sum(), (left_rows.FPD == 1).sum()]
+    )
+    production = data.iloc[:8].copy()
+    production[feature] = np.nan
+    assert tree.apply(production).tolist() == [root.children[0]] * len(production)
+    np.testing.assert_allclose(tree.predict_proba(production)[:, 1], left_rows.FPD.mean())
+    assert_partition(tree, production)
+    report = tree.get_rule_table(production, leaf_only=True).set_index("节点编号")
+    assert report.loc[root.children[0], "样本总数"] == len(production)
+    assert report.loc[root.children[0], "坏样本数"] == production.FPD.sum()
+    assert report.loc[root.children[1:], "样本总数"].sum() == 0

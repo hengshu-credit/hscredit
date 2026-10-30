@@ -56,3 +56,16 @@ def test_separate_missing_has_its_own_edge_in_every_backend(categorical):
     assert len(options["series"][0]["links"]) == 3
     source = plot_tree(tree, backend="graphviz").source
     assert source.count(" -> ") == 3 and "缺失" in source
+
+
+def test_future_missing_label_follows_leftmost_branch_without_training_missing():
+    data = pd.DataFrame({"评分": [0.5] * 10 + [1.5] * 30, "target": [0] * 10 + [1] * 30})
+    tree = MultiwayTreeExtractor(max_depth=1).fit(data)
+    adapted = _extract_tree_data(tree)
+    edges = adapted["edges"]
+    positions = _reingold_tilford_layout(adapted["nodes"], edges)
+    missing_edges = [edge for edge in edges if "或缺失" in edge["label"]]
+    assert len(missing_edges) == 1
+    missing_leaf = missing_edges[0]["target"]
+    assert positions[missing_leaf][0] == min(positions[edge["target"]][0] for edge in edges)
+    assert tree.apply(pd.DataFrame({"评分": [np.nan]})).tolist() == [missing_leaf]
