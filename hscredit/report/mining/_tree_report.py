@@ -22,7 +22,7 @@ def _report_metric_name(table, column):
     return column[0]
 
 
-def _write_report_table(data, excel_writer, *, amount_basis=False, **kwargs):
+def _write_report_table(data, excel_writer, *, amount_basis=False, merge_columns=None, **kwargs):
     """通过 dataframe2excel 写表，按指标含义设置格式，不舍入数值或调整列宽。"""
     from ...excel import dataframe2excel
     from openpyxl.utils import get_column_letter
@@ -84,7 +84,23 @@ def _write_report_table(data, excel_writer, *, amount_basis=False, **kwargs):
         if metric in counts and not amount_basis:
             for position in np.flatnonzero(currency_rows):
                 excel_writer.set_number_format(worksheet, f"{letter}{first_row+position}", "#,##0.00")
+    if merge_columns:
+        _merge_group_cells(data, excel_writer, worksheet, first_row, first_col, merge_columns)
     return end_row, end_col
+
+
+def _merge_group_cells(data, writer, worksheet, first_row, first_col, columns):
+    """按父分组限定连续合并范围，避免相同子组名称跨数据集合并。"""
+    keys = [c for name in columns for c in data if _report_metric_name(data, c) == name]
+    prefix = []
+    for column in keys:
+        prefix.append(column)
+        boundaries = data[prefix].ne(data[prefix].shift()).any(axis=1).to_numpy()
+        starts = np.flatnonzero(boundaries)
+        for start, end in zip(starts, list(starts[1:]) + [len(data)]):
+            if end - start > 1:
+                col = first_col + data.columns.get_loc(column)
+                writer.merge_cells(worksheet, (col, first_row + start), (col, first_row + end - 1))
 
 
 def _strategy_table(table, long_format=True):
@@ -161,10 +177,14 @@ def tree_report_excel(
     long_format=True,
     methods=("quantile", "uniform", "tree"),
     bin_params=None,
+    group=None,
+    apply_rule_filter=True,
     **kwargs,
 ):
     """标签只求值一次，在单页生成基本信息、挖掘摘要与订单/金额口径的树图及规则表。
 
+    :param group: 默认 None；分组字段或字段列表，可与 date 同时使用。
+    :param apply_rule_filter: 默认 True；应用初始化的规则筛选条件，False 输出完整规则。
     :param tree: 已拟合的树规则挖掘器。
     :param datasets: DataFrame、数据集列表/元组或名称到 DataFrame 的字典。
     :param target: 默认 None；支持标签列名、Series、ndarray、list、callable 或标签映射；
@@ -190,6 +210,7 @@ def tree_report_excel(
     :return: 与输入数据集结构对应的中文效果表、列表或字典。
     """
     from ...excel import ExcelWriter
+    from ._rule_filter import filter_rule_tables
 
     dataframe2excel = _write_report_table
 
@@ -233,6 +254,7 @@ def tree_report_excel(
             feature_map=feature_map,
             overdue_operator=overdue_operator,
             long_format=False,
+            apply_rule_filter=False,
             **kwargs,
         )
         order_reports[name] = (
@@ -245,6 +267,7 @@ def tree_report_excel(
                 feature_map=feature_map,
                 overdue_operator=overdue_operator,
                 long_format=False,
+                apply_rule_filter=False,
                 **{k: v for k, v in kwargs.items() if k != "amount"},
             )
         )
@@ -288,7 +311,14 @@ def tree_report_excel(
             {"统计项": "取样逻辑", "统计内容": project_desc or ""},
             {"统计项": "数据源", "统计内容": data_source or ""},
             {"统计项": "指标口径", "统计内容": "、".join(y_maps[0])},
-            {"统计项": "规则范围", "统计内容": "仅叶节点" if leaf_only else "全部节点（父子规则存在重叠）"},
+            {
+                "统计项": "规则范围",
+                "统计内容": (
+                    "按训练集订单指标筛选，条件见树的参数配置"
+                    if apply_rule_filter and getattr(tree, "rule_filter", None) is not None
+                    else ("仅叶节点" if leaf_only else "全部节点（父子规则存在重叠）")
+                ),
+            },
         ]
         if date is not None:
             dates = pd.concat([pd.to_datetime(frame[date]) for frame in frames.values()]).dropna()
@@ -303,7 +333,7 @@ def tree_report_excel(
             info.append(
                 {
                     "统计项": "金额口径",
-                    "统计内容": f"策略表按 {kwargs['amount']} 加权，命中数为金额；样本统计与分类指标按件数",
+                    "统计内容": f"金额维度按 {kwargs['amount']} 加权；样本总数、好坏样本数表示对应金额，AUC/KS 同样加权",
                 }
             )
         row, _ = dataframe2excel(
@@ -324,9 +354,9 @@ def tree_report_excel(
             amounts,
             "按各标签有效样本统计；AUC/KS 使用最终树预测。",
         )
-        if date is not None:
+        if date is not None or group is not None:
             grouped_orders, grouped_amounts = _distribution_tables(
-                tree, frames, contexts, date_values, amount, False, feature_map, overdue_operator, kwargs
+                tree, frames, contexts, date_values, amount, False, feature_map, overdue_operator, kwargs, group
             )
             row = _write_pair(
                 writer,
@@ -335,25 +365,31 @@ def tree_report_excel(
                 "4、样本分布情况",
                 grouped_orders,
                 grouped_amounts,
-                "与数据样本统计使用相同指标，按日期分组计算。",
+                "与数据样本统计使用相同指标，按日期及指定字段分组计算。",
+                merge_columns=["数据集", "数据分组"] + ([group] if isinstance(group, str) else list(group or [])),
             )
         training_data = tree._data if tree._data is not None else next(iter(frames.values()))
         if tree._data is None:
             training = next(iter(order_reports.values()))
             training_amount = next(iter(full_reports.values())) if amount else None
         else:
-            training = tree.get_rule_table(training_data, round_digits=False, long_format=False)
+            training = tree.get_rule_table(
+                training_data, round_digits=False, long_format=False, apply_rule_filter=False
+            )
             if amount and amount not in training_data:
                 raise ValueError(f"模型未保留训练集金额字段 {amount}，请使用包含该字段的训练数据重新 fit")
             training_amount = (
-                tree.get_rule_table(training_data, amount=amount, round_digits=False, long_format=False)
+                tree.get_rule_table(
+                    training_data, amount=amount, round_digits=False, long_format=False, apply_rule_filter=False
+                )
                 if amount
                 else None
             )
-        selected = _select_rules(training, leaf_only)
+        results = filter_rule_tables(tree, results, apply_rule_filter, training=training)
+        selected = _select_rules(filter_rule_tables(tree, training, apply_rule_filter, training=training), leaf_only)
         node_col = ("分箱详情", "节点编号") if isinstance(selected.columns, pd.MultiIndex) else "节点编号"
         node_order = selected[node_col].tolist()
-        row = _write_mining_summary(tree, writer, sheet, row + 2, training, training_amount)
+        row = _write_mining_summary(tree, writer, sheet, row + 2, training, training_amount, len(node_order))
         with TemporaryDirectory(prefix="hscredit-tree-report-") as temporary:
             train_label = "训练集" if tree._data is not None else "首数据集"
             row = _write_tree_pair(
@@ -383,9 +419,10 @@ def tree_report_excel(
                     plot_labels[name],
                 )
         feature_sheet = _write_feature_binning(
-            tree, writer, sheet, contexts, methods, bin_params, amount, del_grey, overdue_operator
+            tree, writer, sheet, contexts, methods, bin_params, amount, del_grey, overdue_operator, node_order
         )
         _fit_report_layout(writer, names + [feature_sheet])
+        writer.adjust_columns_width(writer.get_sheet_by_name(feature_sheet), max_width=25)
         if save is not None:
             images = [(image, image._data()) for ws in writer.workbook for image in ws._images]
             for image, payload in images:
@@ -520,7 +557,7 @@ def _tree_view(tree, table, amount=False):
     return view, label
 
 
-def _write_mining_summary(tree, writer, sheet, row, training, training_amount):
+def _write_mining_summary(tree, writer, sheet, row, training, training_amount, selected_count):
     dataframe2excel = _write_report_table
     from ...core.viz.tree_plots import _extract_tree_data
 
@@ -530,6 +567,7 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount):
         [
             {
                 "规则数（含根节点）": len(nodes),
+                "报告规则数": selected_count,
                 "叶子节点数": leaves,
                 "中间节点数": len(nodes) - leaves,
                 "树深度（根为0）": max(node["depth"] for node in nodes),
@@ -544,8 +582,12 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount):
     row, _ = dataframe2excel(summary, writer, sheet_name=sheet, title="二、规则挖掘摘要", start_row=row)
     model = tree if hasattr(tree, "get_params") else getattr(tree, "clf", getattr(tree, "_sklearn_clf", None))
     parameters = model.get_params(deep=False) if model is not None else {}
+    parameters["features"] = getattr(tree, "features_", None) or getattr(tree, "_feature_list", None)
+    parameters["rule_filter"] = getattr(tree, "rule_filter", None)
     params = pd.DataFrame([{"参数": name, "配置": str(value)} for name, value in parameters.items()])
-    row, _ = dataframe2excel(params, writer, sheet_name=sheet, title="树的参数配置", start_row=row + 2)
+    row, _ = dataframe2excel(
+        params, writer, sheet_name=sheet, title="树的参数配置", start_row=row + 2, left_cols=["配置"]
+    )
     history = getattr(tree, "edit_history_", [])
     if history:
         row, _ = dataframe2excel(
@@ -593,7 +635,7 @@ def _sample_tables(tree, frames, y_maps, amount_reports, amount, long_format, ta
     if target_specific_totals is not None:
         filtered = target_specific_totals
     orders, _ = build_sample_stats_table(
-        list(frames), y_maps, labels, flat_total_col="样本数", target_specific_totals=filtered, n_jobs=1
+        list(frames), y_maps, labels, flat_total_col="样本总数", target_specific_totals=filtered, n_jobs=1
     )
     amounts = orders.copy() if amount else None
     if amounts is not None:
@@ -609,9 +651,7 @@ def _sample_tables(tree, frames, y_maps, amount_reports, amount, long_format, ta
                         key = source
                     values.append(table[key].iloc[0])
                 key = (
-                    (("统计详情", source) if ("统计详情", source) in amounts else (source, label))
-                    if multi
-                    else ("样本数" if source == "样本总数" else source)
+                    (("统计详情", source) if ("统计详情", source) in amounts else (source, label)) if multi else source
                 )
                 amounts[key] = values
     performance = _prediction_metrics(tree, frames, y_maps, amount)
@@ -623,23 +663,6 @@ def _sample_tables(tree, frames, y_maps, amount_reports, amount, long_format, ta
                 if (basis, label, metric) in performance:
                     key = (metric, label) if isinstance(table.columns, pd.MultiIndex) else metric
                     table[key] = performance.get((basis, label, metric), [np.nan] * len(frames))
-    rename = {
-        "样本数": "样本金额",
-        "样本总数": "样本金额",
-        "好样本数": "好样本金额",
-        "坏样本数": "坏样本金额",
-        "坏样本率": "金额坏率",
-    }
-    if amounts is not None:
-        if isinstance(amounts.columns, pd.MultiIndex):
-            amounts.columns = pd.MultiIndex.from_tuples(
-                [
-                    (first, rename.get(second, second)) if first == "统计详情" else (rename.get(first, first), second)
-                    for first, second in amounts.columns
-                ]
-            )
-        else:
-            amounts = amounts.rename(columns=rename)
     return _stats_format(orders, labels, long_format), _stats_format(amounts, labels, long_format)
 
 
@@ -671,20 +694,32 @@ def _stats_format(table, labels, long_format, detail_group="统计详情", index
     )
 
 
-def _distribution_tables(tree, frames, contexts, date_values, amount, long_format, feature_map, operator, kwargs):
-    groups = [pd.Series(values).fillna("缺失").astype(str).to_numpy() for values in date_values]
+def _distribution_tables(
+    tree, frames, contexts, date_values, amount, long_format, feature_map, operator, kwargs, group=None
+):
+    group_columns = [group] if isinstance(group, str) else list(group or [])
+    if len(set(group_columns)) != len(group_columns) or any(c in {"数据集", "数据分组"} for c in group_columns):
+        raise ValueError("group 字段不能重复，也不能使用保留名称 数据集、数据分组")
+    names = (["数据分组"] if date_values else []) + group_columns
+    if not names:
+        raise ValueError("group 至少需要一个分组字段")
     order_tables, amount_tables = [], []
     filtered = any(bound.needs_filtering(prepared) for prepared, bound in contexts.values())
-    for group in sorted(set(value for values in groups for value in values)):
-        grouped_frames, y_maps, amount_reports = {}, [], {}
-        for (name, frame), values in zip(frames.items(), groups):
-            positions = np.flatnonzero(values == group)
-            if not len(positions):
-                continue
+    for ordinal, (name, frame) in enumerate(frames.items()):
+        missing = [c for c in group_columns if c not in frame]
+        if missing:
+            raise ValueError(f"数据集 {name} 缺少分组字段：{missing}")
+        groups = frame[group_columns].reset_index(drop=True).copy()
+        if date_values:
+            groups.insert(0, "数据分组", np.asarray(date_values[ordinal]))
+        groups = groups.astype(object).where(groups.notna(), "缺失")
+        for values, positions in groups.groupby(names, sort=True, observed=True).indices.items():
+            values = (values,) if len(names) == 1 else values
             prepared, bound = contexts[name]
             subset = prepared.iloc[positions]
-            grouped_frames[name] = frame.iloc[positions]
-            y_maps.append(bound.y_map(subset, style="at"))
+            grouped_frames = {name: frame.iloc[positions]}
+            y_maps = [bound.y_map(subset, style="at")]
+            amount_reports = {}
             if amount:
                 amount_reports[name] = tree.report(
                     subset,
@@ -692,16 +727,18 @@ def _distribution_tables(tree, frames, contexts, date_values, amount, long_forma
                     feature_map=feature_map,
                     overdue_operator=operator,
                     long_format=False,
+                    apply_rule_filter=False,
                     **kwargs,
                 )
-        orders, amounts = _sample_tables(
-            tree, grouped_frames, y_maps, amount_reports, amount, long_format, target_specific_totals=filtered
-        )
-        for table, outputs in [(orders, order_tables), (amounts, amount_tables)]:
-            if table is not None:
-                key = ("统计详情", "数据分组") if isinstance(table.columns, pd.MultiIndex) else "数据分组"
-                table.insert(1, key, group)
-                outputs.append(table)
+            orders, amounts = _sample_tables(
+                tree, grouped_frames, y_maps, amount_reports, amount, long_format, target_specific_totals=filtered
+            )
+            for table, outputs in [(orders, order_tables), (amounts, amount_tables)]:
+                if table is not None:
+                    for index, (column, value) in enumerate(zip(names, values), 1):
+                        key = ("统计详情", column) if isinstance(table.columns, pd.MultiIndex) else column
+                        table.insert(index, key, value)
+                    outputs.append(table)
 
     def combine(tables):
         if not tables:
@@ -713,7 +750,7 @@ def _distribution_tables(tree, frames, contexts, date_values, amount, long_forma
     return combine(order_tables), combine(amount_tables)
 
 
-def _write_pair(writer, sheet, row, title, left, right, description, figures=None):
+def _write_pair(writer, sheet, row, title, left, right, description, figures=None, merge_columns=None):
     """左右并列，中间留一个空列；上方统一标题和说明，下方保留一个空行。"""
     dataframe2excel = _write_report_table
     from PIL import Image
@@ -784,6 +821,7 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
                 condition_cols=["坏样本率", "金额坏率", "LIFT值"],
                 decimal=None,
                 left_cols=["指标含义", "组合策略"],
+                merge_columns=merge_columns,
             )
             end_row = max(end_row, end)
     return end_row + 1
@@ -815,7 +853,7 @@ def _write_tree_pair(
     return _write_pair(writer, sheet, row, title, tables[0], tables[1], description, paths)
 
 
-def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, amount, del_grey, operator):
+def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, amount, del_grey, operator, node_order):
     """复用 swap_out_report 使用的 feature_binning_summary，计算规则涉及的字段。"""
     from ..feature_analyzer import feature_binning_summary
 
@@ -824,7 +862,12 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
     from openpyxl.utils import get_column_letter
 
     features = list(
-        dict.fromkeys(feature for rule in tree.get_rules(leaf_only=False) for feature in rule.feature_names_in_)
+        dict.fromkeys(
+            feature
+            for rule in tree.get_rules(leaf_only=False)
+            if int(rule.name.rsplit("_", 1)[1].lstrip("N")) in node_order
+            for feature in rule.feature_names_in_
+        )
     )
     name = f"{sheet}_特征分箱"
     if name in writer.workbook.sheetnames:
@@ -832,7 +875,7 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
     ws = writer.get_sheet_by_name(name)
     if not features:
         writer.insert_value2sheet(
-            ws, "B2", value="当前最终树未使用分裂特征", style="header_middle", align={"horizontal": "left"}
+            ws, "B2", value="当前报告规则未使用分裂特征", style="header_middle", align={"horizontal": "left"}
         )
         return name
     summaries, details = [], {}
@@ -878,9 +921,22 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
                     parts.append(table)
         details[dataset] = pd.concat(parts, ignore_index=True)
     summary = pd.concat(summaries, ignore_index=True)
+    metadata_names = ["数据集", "统计口径", "指标名称", "分箱方法"]
+    metadata = [("分箱详情", column) for column in metadata_names]
+    # 数据集严格保持入参顺序；订单在金额前，其余按名称排序。
+    order = pd.DataFrame(
+        {
+            "dataset": summary[metadata[0]].map({name: i for i, name in enumerate(contexts)}),
+            "basis": summary[metadata[1]].map({"订单": 0, "金额": 1}),
+            "feature": summary[metadata[2]],
+            "method": summary[metadata[3]],
+        }
+    ).sort_values(["dataset", "basis", "feature", "method"], kind="stable")
+    summary = summary.loc[order.index].reset_index(drop=True)
     labels = [column[1] for column in summary if column[0] == "坏样本率"]
     summary = summary[
-        [column for column in summary if column[0] == "分箱详情"]
+        metadata
+        + [column for column in summary if column[0] == "分箱详情" and column not in metadata]
         + [
             (metric, label)
             for metric in ["KS", "AUC", "LIFT值", "指标IV值", "坏样本数", "坏样本率"]
@@ -901,6 +957,7 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
             percent_cols=["坏样本率", "样本占比", "好样本占比", "坏样本占比", "坏账改善"],
             condition_cols=["LIFT值", "指标IV值"],
             decimal=None,
+            merge_columns=metadata_names if wide else None,
         )
         # 宽表保留合并分层表头，使用工作表筛选；明细长表使用多个原生 Table。
         if wide:

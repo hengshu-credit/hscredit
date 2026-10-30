@@ -387,14 +387,14 @@ def test_group_statistics_share_overall_schema_and_raw_denominators(data, long_f
                     label = f"MOB1@{dpd}"
                     if long_format:
                         row = rows.loc[rows["目标标签"].eq(label)].iloc[0]
-                        total_col = "样本金额" if basis else "样本总数"
-                        bad_col = "坏样本金额" if basis else "坏样本数"
+                        total_col = "样本总数"
+                        bad_col = "坏样本数"
                         auc_col = "AUC"
                     else:
                         row = rows.iloc[0]
-                        count = "样本金额" if basis else "样本总数"
+                        count = "样本总数"
                         total_col = (count, label) if grey else ("统计详情", count)
-                        bad_col = ("坏样本金额" if basis else "坏样本数", label)
+                        bad_col = ("坏样本数", label)
                         auc_col = ("AUC", label)
                     assert row[total_col] == total
                     assert row[bad_col] == bad
@@ -407,7 +407,7 @@ def test_group_statistics_share_overall_schema_and_raw_denominators(data, long_f
                         assert row[auc_col] == pytest.approx(expected)
 
 
-def test_feature_sheet_reuses_strategy_binning_and_preserves_template_width(data, tmp_path, monkeypatch):
+def test_feature_sheet_reuses_strategy_binning_and_caps_width(data, tmp_path, monkeypatch):
     from openpyxl.utils.cell import range_boundaries
     import hscredit.report.feature_analyzer as module
 
@@ -419,11 +419,15 @@ def test_feature_sheet_reuses_strategy_binning_and_preserves_template_width(data
         calls.append((kwargs["features"], kwargs["methods"], kwargs["long_format"]))
         return original(*args, **kwargs)
 
-    def no_width_changes(*args, **kwargs):
-        raise AssertionError("报告不得自动调整列宽")
+    adjust_width = ExcelWriter.adjust_columns_width
+
+    def feature_width_only(writer, worksheet, **kwargs):
+        assert worksheet.title.endswith("_特征分箱")
+        assert kwargs["max_width"] == 25
+        return adjust_width(writer, worksheet, **kwargs)
 
     monkeypatch.setattr(module, "feature_binning_summary", capture)
-    monkeypatch.setattr(ExcelWriter, "adjust_columns_width", no_width_changes)
+    monkeypatch.setattr(ExcelWriter, "adjust_columns_width", feature_width_only)
     path = tmp_path / "特征页.xlsx"
     tree.report(
         {"训练": data, "验证": data.iloc[::2]},
@@ -438,6 +442,7 @@ def test_feature_sheet_reuses_strategy_binning_and_preserves_template_width(data
     assert all(features == ["评分"] and long for features, _, long in calls)
     book = load_workbook(path)
     sheet = book["组合策略汇总_特征分箱"]
+    assert all(d.width <= 25 for d in sheet.column_dimensions.values())
     tables = list(sheet.tables.values())
     assert len(tables) == 2
     summary_range = range_boundaries(sheet.auto_filter.ref)

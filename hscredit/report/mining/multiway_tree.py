@@ -141,6 +141,11 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     :param missing_separate: 默认 False，自动学习缺失值合并方向；True 时保留独立缺失分支。
         节点训练样本无缺失时默认走最左分支；显式 missing_branch 或规则中的缺失标记优先。
     :type missing_separate: bool
+    :param rule_filter: 默认 None 不筛选。显式字典支持 leaf_only（默认 True）、metric（默认 LIFT值，
+        也支持坏样本率）、threshold（默认 1）、operator（默认 >=，支持 >、>=、<、<=）、
+        min_samples 和 max_samples（整数为个数，[0, 1] 浮点数为比例）。
+        按训练集订单指标筛选 report/get_rule_table，完整树与 get_rules 的路由不变。
+    :type rule_filter: dict or None
 
     **属性**
 
@@ -164,6 +169,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
 
     # 旧版持久化对象没有此参数时，继续沿用原有的缺失合并策略。
     missing_separate = False
+    rule_filter = None
 
     def __init__(
         self,
@@ -184,6 +190,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         parallel_backend=None,
         parallel_config=None,
         missing_separate=False,
+        rule_filter=None,
     ):
         self.target = target
         self.features = features
@@ -202,8 +209,15 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
         self.missing_separate = missing_separate
+        from ._rule_filter import normalize_rule_filter
+
+        normalize_rule_filter(rule_filter)
+        self.rule_filter = rule_filter
 
     def _validate_parameters(self):
+        from ._rule_filter import normalize_rule_filter
+
+        normalize_rule_filter(getattr(self, "rule_filter", None))
         self._validate_missing_options(getattr(self, "missing_separate", False), None)
         if getattr(self, "missing_separate", False) is None:
             raise InputValidationError("构造参数 missing_separate 必须是布尔值")
@@ -1126,6 +1140,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         long_format=True,
         methods=("quantile", "uniform", "tree"),
         bin_params=None,
+        group=None,
+        apply_rule_filter=True,
         **kwargs,
     ):
         """用 ``Rule.report`` 逐节点计算命中效果，支持金额、多标签和多数据集。
@@ -1133,6 +1149,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         每个节点仅保留其规则报告中的“命中”行，按节点编号排序；不会改变树结构或训练计数。
         0/1 训练标签默认直接作为坏样本标签；其他训练标签默认按各类别对其余类别生成多个二分类标签。
 
+        :param apply_rule_filter: 默认 True；应用初始化配置的规则筛选，False 返回完整规则。
+        :param group: 默认 None；样本分布的分组字段或字段列表，可与 date 同时使用。
         :param methods: 默认等频、等距、决策树三种方法；用于规则特征分箱效果页。
         :param bin_params: 默认 None；复用 feature_binning_summary 的公共或按方法配置参数。
         :param long_format: 默认 True 按标签返回长表，False 保留多标签宽表；同样控制 Excel 展示。
@@ -1211,6 +1229,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 long_format=long_format,
                 methods=methods,
                 bin_params=bin_params,
+                group=group,
+                apply_rule_filter=apply_rule_filter,
                 **kwargs,
             )
         validate_overdue_operator(overdue_operator)
@@ -1219,7 +1239,16 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             items = datasets.items() if isinstance(datasets, dict) else enumerate(datasets)
             results = {
                 key: self.report(
-                    value, target, overdue, dpds, del_grey, leaf_only, feature_map, long_format=False, **kwargs
+                    value,
+                    target,
+                    overdue,
+                    dpds,
+                    del_grey,
+                    leaf_only,
+                    feature_map,
+                    long_format=False,
+                    apply_rule_filter=False,
+                    **kwargs,
                 )
                 for key, value in items
             }
@@ -1227,7 +1256,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
 
             from ._tree_report import format_rule_tables
 
-            return format_rule_tables(result, long_format)
+            from ._rule_filter import filter_rule_tables
+
+            return format_rule_tables(filter_rule_tables(self, result, apply_rule_filter), long_format)
         if target is None and overdue is None:
             if set(self.classes_).issubset({0, 1}):
                 target = self.target
@@ -1276,7 +1307,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
 
         from ._tree_report import format_rule_tables
 
-        return format_rule_tables(result, long_format)
+        from ._rule_filter import filter_rule_tables
+
+        return format_rule_tables(filter_rule_tables(self, result, apply_rule_filter), long_format)
 
     def get_rule_table(
         self,
@@ -1372,7 +1405,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         table["父节点"] = table["父节点"].astype("Int64")
         table["未知类别分支"] = table["未知类别分支"].astype("Int64")
         if set(self.classes_).issubset({0, 1}):
-            metrics = self.get_rule_table(round_digits=False)
+            metrics = self.get_rule_table(round_digits=False, apply_rule_filter=False)
             fields = [
                 "节点编号",
                 "样本占比",

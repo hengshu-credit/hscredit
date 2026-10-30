@@ -225,8 +225,110 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
 ``get_rules()`` 返回互斥且完整覆盖输入的叶子规则；``to_ruleset(nodes=[...])`` 可把选定节点合成
 风险策略。默认全叶 OR 规则集会命中所有样本，不能直接当作拒绝策略。
 
+初始化规则筛选与分裂参数
+------------------------
+
+``ManualTreeExtractor``、``MultiwayTreeExtractor`` 和 ``DecisionTreeAnalyzer`` 共用
+``rule_filter`` 配置与 ``report(..., save=...)`` 导出逻辑。
+默认 ``rule_filter=None`` 不筛选；显式传入字典后才启用筛选。
+
+.. code-block:: python
+
+   from hscredit.report.mining import ManualTreeExtractor, MultiwayTreeExtractor
+
+   rule_filter = {
+       "leaf_only": True,
+       "metric": "LIFT",        # 也支持“LIFT值”和“坏样本率”
+       "threshold": 1.5,
+       "operator": ">=",        # >、>=、<、<=
+       "min_samples": 0.02,     # 浮点数表示训练样本占比
+       "max_samples": 500,      # 整数表示订单个数
+   }
+   binary = ManualTreeExtractor(
+       target="FPD", features=features, max_depth=3,
+       min_samples_split=50, min_samples_leaf=25,
+       criterion="gini", rule_filter=rule_filter,
+   ).fit(df_train)
+   multiway = MultiwayTreeExtractor(
+       target="FPD", features=features, max_depth=3, max_branches=4,
+       min_samples_split=50, min_samples_leaf=25,
+       criterion="gini", rule_filter=rule_filter,
+   ).fit(df_train)
+   binary.report(datasets, target="FPD", amount="放款金额", save="二叉树策略挖掘.xlsx")
+   multiway.report(datasets, target="FPD", amount="放款金额", save="多叉树策略挖掘.xlsx")
+   selected = multiway.get_rule_table()
+   complete = multiway.get_rule_table(apply_rule_filter=False)
+
+显式空字典 ``{}`` 的默认条件为：仅叶节点、``LIFT值 >= 1``、样本量不设上下限。
+坏样本率阈值用小数表示，例如 0.2 表示 20%；样本量比例使用 [0, 1] 内的浮点数，
+整数 1 表示 1 单，浮点数 1.0 表示全部样本。上下限均包含边界。
+``leaf_only=False`` 允许筛选中间节点；根节点只作总体基准，不参与显式筛选。
+
+筛选使用当前最终树在保存的训练集上的、未舍入的订单指标与单一 0/1 训练目标。
+其他数据集、金额口径和其他评估标签沿用同一组节点及顺序，不在验证集上重新筛选。
+每次报告重新检查最终树，因此剪枝、重新分裂后筛选自动更新。
+筛选为空时输出空规则表，仍展示完整树；``apply_rule_filter=False`` 可临时关闭筛选。
+``get_rules``、``get_node_table``、预测与树结构始终保持完整。
+分裂参数继续使用已有构造参数，二叉树的其他 sklearn 参数通过关键字传入；
+``DecisionTreeAnalyzer`` 也保留已有的 ``tree_params`` 字典入口。
+
+2026-10-30 验证：Python 3.11.5（仓库验收解释器
+``.audit_tmp/defect-repairs/runtime/Scripts/python.exe``）。树报告、数据集传参、规则筛选、
+ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛选模块补充后单独运行 79 项通过。
+真实数据对两种手工树执行节点分裂后，按训练集 LIFT 与样本占比筛选，再核对三个数据集的
+多标签订单/金额结果、日期与商品类别分组、Excel 合并范围及数值格式。业务 Notebook 已完整执行。
+筛选与分组用例可运行 ``python -m pytest tests/test_report/test_tree_rule_filter.py -q --tb=short``。
+
 报告与模型效果的输入输出
 ------------------------
+
+数据集传参沿用 ``auto_model_report`` 的常用约定：每个 DataFrame 自带目标列，
+统一通过 ``datasets`` 传入字典或列表，通过 ``target`` 指定目标列名。
+
+.. list-table:: 数据集容器与命名
+   :header-rows: 1
+   :widths: 40 35 25
+
+   * - 传参
+     - 报告中的数据集名称
+     - 树 report 返回值
+   * - ``{"验证集": df_valid}``
+     - 保留字典键和插入顺序
+     - 单项字典
+   * - ``{"训练集": train, "验证集": valid, "测试集": test}``
+     - 保留全部名称和顺序，可继续增加数据集
+     - 同名表格字典
+   * - ``[df_valid]``
+     - 数据集1
+     - 单元素列表
+   * - ``[train, valid, test, oot1, oot2]``
+     - 数据集1 至 数据集5
+     - 同序表格列表
+
+.. code-block:: python
+
+   # 每张表均包含 FPD 以及规则使用的特征。
+   datasets = {"训练集": df_train, "验证集": df_valid, "测试集": df_test}
+   reports = tree.report(datasets=datasets, target="FPD", save="规则报告.xlsx")
+   valid_rules = reports["验证集"]
+
+   # 列表形式不需要额外命名，单数据集也按同一约定调用。
+   single = tree.report(datasets=[df_valid], target="FPD")
+   multiple = tree.report(datasets=[df_train, df_valid, df_test], target="FPD")
+
+``get_rule_table`` 使用相同的数据集约定。推荐显式传入 ``target``，避免依赖模型的默认目标列。
+已有的单个 DataFrame 便捷调用仍返回 DataFrame。
+若传入 ``amount``、``date`` 或 ``overdue``，每张表也应包含对应字段。
+``target='FPD'`` 是单标签；``overdue=['MOB1'], dpds=[7]`` 也是单标签，二者不混用。
+数据集数量与标签数量独立，单标签可以同时分析多个数据集。
+
+``auto_model_report`` 返回 ``ModelReport`` 对象，并使用 ``excel_path`` 保存；
+树报告返回表格容器，并使用 ``save`` 保存。数据集命名和目标列的传参约定一致。
+
+2026-10-30 验证：Python 3.11.5，三种树的 dict/list、单标签、1/2/5 个数据集共 48 项测试通过。
+使用 ``examples/hscredit_yyp.xlsx`` 实跑字典单集、列表单集、字典五集、列表五集，
+核对返回类型、名称与顺序、规则命中数、坏样本数和金额，以及 Excel 图表数量、规则顺序与筛选表。
+复现测试：``python -m pytest tests/test_report/test_tree_report_dataset_inputs.py -q --tb=short``。
 
 多叉树、手工二叉树和 ``DecisionTreeAnalyzer`` 使用一致的规则接口：
 ``get_rule_table(datasets=None, target=None, overdue=None, dpds=None, ...)`` 默认展示所有节点效果，
@@ -247,7 +349,11 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
 
 工作簿使用单张连续报告页，按“基本信息与模型性能、挖掘摘要、策略详情、最终树在各数据集上的应用”排列。
 基本信息复用模型报告的样本统计、日期分布和预测性能；AUC、KS 复用 ``ModelReport``。
-生成报告沿用模板列宽，不执行自动列宽调整，也不自动换行。
+主报告沿用模板列宽；仅特征分箱页自动调整列宽，最大 25，所有页面不自动换行。
+订单和金额的样本统计均按“样本总数、好样本数、坏样本数、坏样本率、AUC、KS”排列；
+金额维度前三列为相应金额，保留两位小数。``group="商品类别"`` 或字段列表可与日期分组组合，
+样本分布按“数据集、日期、其他分组”逐层合并相同单元格，不跨父分组合并。
+特征效果汇总保持宽表，按入参数据集顺序、订单/金额、指标名称、分箱方法排序并逐层合并元数据列。
 
 挖掘摘要包括规则总数（含根节点）、叶节点、中间节点（含非叶根节点）、树深度（根为 0）、参数配置，
 以及成功执行的人工修改记录。LIFT 按 ``[0,0.25)``、``[0.25,0.5)``、``[0.5,1)``、
@@ -334,13 +440,13 @@ API
 ``del_grey`` 沿用逐标签剔灰规则，订单与金额按相同的有效样本计算。
 主报告的统计与规则表采用订单维度在左、金额维度在右的布局，中间空一列；
 数据集为总标题，附简要口径说明。``long_format=False`` 可切换为宽表。
-样本分布与数据样本统计共用指标构造，区别仅为按日期分组后重新计算；两者固定使用多标签宽表，long_format 只控制规则表。
+样本分布与数据样本统计共用指标构造，区别仅为按日期和业务字段分组后重新计算；两者固定使用多标签宽表，long_format 只控制规则表。
 
 额外的“报告名_特征分箱”页复用 ``swap_out_report`` 使用的 ``feature_binning_summary``。
 只分析最终规则引用的特征，顶部是效果 summary，各数据集的明细左右排列；
-单个特征的多方法、多标签结果始终为长表。默认方法为等频、等距、决策树，
+单个特征的多方法、多标签分箱明细始终为长表。默认方法为等频、等距、决策树，
 可通过 ``methods`` 和 ``bin_params`` 配置；各数据集独立拟合分箱以比较方法效果，
-不修改最终树。summary 和每个数据集明细均使用原生 Excel Table 筛选按钮。
+不修改最终树。summary 使用工作表筛选，各数据集明细使用原生 Excel Table 筛选按钮。
 
 
 特征效果汇总使用多标签宽表；KS 和 AUC 分别直接调用 ``hscredit.core.metrics.ks`` / ``auc``，
@@ -351,4 +457,4 @@ API
 
 所有表格统一设置数值格式：比例与 KS 为 ``0.00%``，AUC/IV/WOE/LIFT 等为 ``0.0000``，
 计数为 ``#,##0``，金额为 ``#,##0.00``。金额口径中沿用“样本数”命名的权重列同样显示两位小数。
-显示格式不舍入中间值、不改变单元格数值，也不自动调整列宽。
+显示格式不舍入中间值、不改变单元格数值；主报告保留模板列宽，特征分箱页自适应列宽且最大为 25。

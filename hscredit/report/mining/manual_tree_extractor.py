@@ -998,6 +998,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
         feature_map: Optional[Dict[str, str]] = None,
+        rule_filter=None,
         **kwargs: Any,
     ):
         """初始化决策树训练器。
@@ -1024,6 +1025,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             并兼容不支持原生缺失的旧版 sklearn（例如训练前已将缺失填充为 -999，则传入
             ``missing=-999`` ）。
 
+        :param rule_filter: 默认 None 不筛选；显式字典配置 leaf_only、metric（默认 LIFT值）、
+            threshold（默认 1）、operator（默认 >=）、min_samples 和 max_samples。
+            样本量整数为个数、[0, 1] 浮点数为比例；仅按训练集订单口径筛选报告规则。
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`min_weight_fraction_leaf=0.1` 等。
         """
@@ -1035,6 +1039,10 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
         self.feature_map = feature_map
+        from ._rule_filter import normalize_rule_filter
+
+        normalize_rule_filter(rule_filter)
+        self.rule_filter = rule_filter
         self._sklearn_kwargs: Dict[str, Any] = kwargs
         self.features_: List[str] = []
 
@@ -1352,6 +1360,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         long_format=True,
         methods=("quantile", "uniform", "tree"),
         bin_params=None,
+        group=None,
+        apply_rule_filter=True,
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估决策树各节点规则的效果。
@@ -1362,6 +1372,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         **参数**
 
+        :param apply_rule_filter: 默认 True；应用初始化配置的规则筛选，False 返回完整规则。
+        :param group: 默认 None；样本分布的分组字段或字段列表，可与 date 同时使用。
         :param methods: 默认等频、等距、决策树三种方法；用于规则特征分箱效果页。
         :param bin_params: 默认 None；复用 feature_binning_summary 的公共或按方法配置参数。
         :param long_format: 默认 True 按标签返回长表，False 保留多标签宽表；同样控制 Excel 展示。
@@ -1444,6 +1456,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
                 long_format=long_format,
                 methods=methods,
                 bin_params=bin_params,
+                group=group,
+                apply_rule_filter=apply_rule_filter,
                 **kwargs,
             )
         if datasets is None:
@@ -1496,7 +1510,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         from ._tree_report import format_rule_tables
 
-        return format_rule_tables(result, long_format)
+        from ._rule_filter import filter_rule_tables
+
+        return format_rule_tables(filter_rule_tables(self, result, apply_rule_filter), long_format)
 
     def _report_one_dataset(
         self,
@@ -1927,6 +1943,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         parallel_config: Optional[Dict[str, Any]] = None,
         features: FeatureNames = None,
         feature_map: Optional[Dict[str, str]] = None,
+        rule_filter=None,
         **kwargs: Any,
     ):
         """初始化人工决策树提取器。
@@ -1942,6 +1959,9 @@ class ManualTreeExtractor(ParallelizableMixin):
             规则评估均将缺失等价为该数值，使规则命中样本数与决策树节点样本数完全一致，
             并兼容不支持原生缺失的旧版 sklearn。
 
+        :param rule_filter: 默认 None 不筛选；显式字典配置 leaf_only、metric（默认 LIFT值）、
+            threshold（默认 1）、operator（默认 >=）、min_samples 和 max_samples。
+            样本量整数为个数、[0, 1] 浮点数为比例；仅按训练集订单口径筛选报告规则。
         :param kwargs: sklearn DecisionTreeClassifier 的其他参数，直接透传给底层分类器。
             例如：`ccp_alpha=0.01`、`class_weight='balanced'`、`criterion='entropy'` 等。
         """
@@ -1956,6 +1976,10 @@ class ManualTreeExtractor(ParallelizableMixin):
         self.parallel_config = parallel_config
         self.features = features
         self.feature_map = feature_map
+        from ._rule_filter import normalize_rule_filter
+
+        normalize_rule_filter(rule_filter)
+        self.rule_filter = rule_filter
         self._sklearn_kwargs: Dict[str, Any] = kwargs
 
         # 内部状态
@@ -2714,6 +2738,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         long_format=True,
         methods=("quantile", "uniform", "tree"),
         bin_params=None,
+        group=None,
+        apply_rule_filter=True,
         **kwargs,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估当前树各节点规则的效果。
@@ -2724,6 +2750,8 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         **参数**
 
+        :param apply_rule_filter: 默认 True；应用初始化配置的规则筛选，False 返回完整规则。
+        :param group: 默认 None；样本分布的分组字段或字段列表，可与 date 同时使用。
         :param methods: 默认等频、等距、决策树三种方法；用于规则特征分箱效果页。
         :param bin_params: 默认 None；复用 feature_binning_summary 的公共或按方法配置参数。
         :param long_format: 默认 True 按标签返回长表，False 保留多标签宽表；同样控制 Excel 展示。
@@ -2806,6 +2834,8 @@ class ManualTreeExtractor(ParallelizableMixin):
                 long_format=long_format,
                 methods=methods,
                 bin_params=bin_params,
+                group=group,
+                apply_rule_filter=apply_rule_filter,
                 **kwargs,
             )
         if datasets is None:
@@ -2858,7 +2888,9 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         from ._tree_report import format_rule_tables
 
-        return format_rule_tables(result, long_format)
+        from ._rule_filter import filter_rule_tables
+
+        return format_rule_tables(filter_rule_tables(self, result, apply_rule_filter), long_format)
 
     def _report_one_dataset(
         self,
