@@ -36,11 +36,22 @@ def tree(request, data):
     return model
 
 
-def test_shared_rule_apis_and_excel(tree, data, tmp_path):
+@pytest.mark.parametrize("long_format", [True, False])
+def test_shared_rule_apis_and_excel(tree, data, tmp_path, long_format):
     datasets = {"训练集": data, "验证集": data.iloc[::2], "测试集": data.iloc[1::2]}
-    expected = tree.report(datasets, overdue=["MOB1"], dpds=[7, 3, 0], overdue_operator=">=", amount="金额")
+    expected = tree.report(
+        datasets, overdue=["MOB1"], dpds=[7, 3, 0], overdue_operator=">=", amount="金额", long_format=long_format
+    )
     path = tmp_path / "reports" / "挖掘.xlsx"
-    actual = tree.report(datasets, overdue=["MOB1"], dpds=[7, 3, 0], overdue_operator=">=", amount="金额", save=path)
+    actual = tree.report(
+        datasets,
+        overdue=["MOB1"],
+        dpds=[7, 3, 0],
+        overdue_operator=">=",
+        amount="金额",
+        save=path,
+        long_format=long_format,
+    )
     assert list(actual) == list(datasets)
     for key in datasets:
         pd.testing.assert_frame_equal(actual[key], expected[key])
@@ -51,50 +62,62 @@ def test_shared_rule_apis_and_excel(tree, data, tmp_path):
     assert all_rules[0].expr == "True"
     assert len(tree.get_rules()) == len(tree.get_rule_table(leaf_only=True))
     book = load_workbook(path)
-    assert book.sheetnames == ["组合策略汇总"]
+    assert book.sheetnames == ["组合策略汇总", "组合策略汇总_特征分箱"]
     assert len(book["组合策略汇总"]._images) == 8
     detail = book["组合策略汇总"]
     assert not any(c.value == "完整节点信息" for row in detail for c in row)
+    headings = ["节点编号", "指标含义", "组合策略", "是否叶子", "是否调整"]
     headers = [
-        r
+        (r, c)
         for r in range(1, detail.max_row + 1)
-        if [detail.cell(r, col).value for col in range(2, 5)] == ["节点编号", "是否叶子", "是否调整"]
+        for c in range(2, detail.max_column - 3)
+        if [detail.cell(r, c + j).value for j in range(5)] == headings
     ]
     assert len(headers) == 8
     node_ids = tree.get_rule_table()["节点编号"].tolist()
-    expressions = tree.get_rule_table()["指标名称"].tolist()
-    for header, image in zip(headers, detail._images):
+    expressions = tree.get_rule_table()["组合策略"].tolist()
+    for ordinal, ((header, column), image) in enumerate(zip(headers, detail._images)):
         image_start = image.anchor._from.row + 1
         assert image_start < header
+        assert image.anchor._from.col + 1 == column
         reserved_pixels = sum(
             (detail.row_dimensions[r].height or detail.sheet_format.defaultRowHeight or 15) / 0.75
             for r in range(image_start, header)
         )
         assert reserved_pixels >= image.anchor.ext.cy / 9525
-        assert [detail.cell(header + 1 + i, 2).value for i in range(len(node_ids))] == node_ids
-        assert [detail.cell(header + 1 + i, 5).value for i in range(len(node_ids))] == expressions
+        repetitions = 3 if long_format and ordinal >= 2 else 1
+        ids = np.repeat(node_ids, repetitions).tolist()
+        exprs = np.repeat(expressions, repetitions).tolist()
+        assert [detail.cell(header + 1 + i, column).value for i in range(len(ids))] == ids
+        assert [detail.cell(header + 1 + i, column + 2).value for i in range(len(ids))] == exprs
+        if ordinal % 2:
+            assert header == headers[ordinal - 1][0]
+            gap = column - 1
+            assert all(detail.cell(r, gap).value is None for r in range(image_start, header + len(ids) + 1))
     sheet = book["组合策略汇总"]
     values = [cell.value for row in sheet for cell in row]
-    assert sum(isinstance(v, str) and "最终树应用：" in v for v in values) == 6
+    assert sum(isinstance(v, str) and "最终树应用：" in v for v in values) == 3
     assert "MOB1>=7" in values
     assert "组合策略" in values and "命中数" in values and "命中率" in values
     assert "样本整体坏率" in values
     assert "节点编号" in values
     assert "是否调整" in values
     assert "规则数（含根节点）" in values and "树深度（根为0）" in values
-    assert "AUC" in values and "KS" in values and "金额AUC" in values and "金额KS" in values
+    assert "AUC" in values and "KS" in values and "订单维度" in values and "金额维度" in values
     assert "[0, 0.25)" in values and "[5, inf)" in values
     # 根节点金额按原始行直接核算，而非与另一个报告入口互相比较。
     first = actual["训练集"].iloc[0]
-    assert first[("分箱详情", "样本总数")] == data["金额"].sum()
-    assert first[("MOB1>=7", "坏样本数")] == data.loc[data.MOB1 >= 7, "金额"].sum()
+    count_key = "样本总数" if long_format else ("分箱详情", "样本总数")
+    bad_key = "坏样本数" if long_format else ("MOB1>=7", "坏样本数")
+    assert first[count_key] == data["金额"].sum()
+    assert first[bad_key] == data.loc[data.MOB1 >= 7, "金额"].sum()
     assert not any(c.data_type == "e" for ws in book for row in ws for c in row)
     assert all(not c.alignment.wrap_text for ws in book for row in ws for c in row if c.value is not None)
     assert all(dimension.width <= 50 for ws in book for dimension in ws.column_dimensions.values())
     for ws in book:
         dimensions = sorted(ws.column_dimensions.values(), key=lambda dim: dim.min)
         assert all(left.max < right.min for left, right in zip(dimensions, dimensions[1:]))
-    assert sum(d.width < 30 for d in sheet.column_dimensions.values()) > 5
+    assert sheet.column_dimensions["B"].width == ExcelWriter().style_sheet.column_dimensions["B"].width
     book.close()
 
 
@@ -197,8 +220,11 @@ def test_dataset_overview_and_grey_labels_match_model_report(tree, data, tmp_pat
     book = load_workbook(path)
     sheet = book["组合策略汇总"]
     title = next(c.row for row in sheet for c in row if c.value == "3、数据样本统计")
-    values = [sheet.cell(title + 4, col).value for col in range(3, 3 + len(stats.columns))]
+    header = title + 5
+    assert sheet.cell(header + 1, 2).value == "数据集"
+    values = [sheet.cell(header + 2, col).value for col in range(3, 3 + len(stats.columns))]
     np.testing.assert_allclose(values, stats.iloc[0].to_numpy(dtype=float))
+    assert "目标标签" not in [sheet.cell(header + 1, col).value for col in range(2, 3 + len(stats.columns))]
     assert any(c.value == "4、样本分布情况" for row in sheet for c in row)
     assert any(c.value == "样本区间" for row in sheet for c in row)
     assert any(c.value == "样本表" for row in sheet for c in row)
@@ -244,10 +270,10 @@ def test_rule_table_marks_adjusted_subtree_after_split_and_prune(cls, data):
         tree.manual_split(data, feature="评分", threshold=22, node=0)
         tree.delete_node(node=1)
     table = tree.get_rule_table()
-    assert list(table.columns[:3]) == ["节点编号", "是否叶子", "是否调整"]
+    assert list(table.columns[:5]) == ["节点编号", "指标含义", "组合策略", "是否叶子", "是否调整"]
     assert set(table["是否调整"]) == {"是"}
     multi = tree.report(data, overdue=["MOB1"], dpds=[7, 3, 0])
-    assert set(multi[("分箱详情", "是否调整")]) == {"是"}
+    assert set(multi["是否调整"]) == {"是"}
 
 
 def test_tree_views_reuse_final_routes_and_distinguish_count_and_amount(data):
@@ -319,4 +345,112 @@ def test_zero_amount_keeps_order_report_and_blank_weighted_auc(data, tmp_path):
     book = load_workbook(path)
     assert len(book.active._images) == 4
     assert not any(c.data_type == "e" for row in book.active for c in row)
+    book.close()
+
+
+@pytest.mark.parametrize("long_format", [True, False])
+@pytest.mark.parametrize("grey", [True, False])
+def test_group_statistics_share_overall_schema_and_raw_denominators(data, long_format, grey):
+    from sklearn.metrics import roc_auc_score
+    from hscredit.utils.targets import bind_targets
+    from hscredit.utils.dates import date_groups
+    from hscredit.report.mining._tree_report import _sample_tables, _distribution_tables
+
+    data = data.assign(日期=pd.date_range("2026-01-01", periods=len(data)))
+    tree = MultiwayTreeExtractor(target="FPD", features=["评分"], min_samples_leaf=2, n_jobs=1).fit(data)
+    tree.manual_split(feature="评分", thresholds=[15, 30])
+    frames = {"训练": data, "验证": data.iloc[::2]}
+    contexts, targets, days, reports = {}, [], [], {}
+    for name, frame in frames.items():
+        prepared, bound = bind_targets(frame, overdue="MOB1", dpds=[7, 3, 0], del_grey=grey)
+        contexts[name] = prepared, bound
+        targets.append(bound.y_map(prepared, style="at"))
+        days.append(date_groups(frame.日期, "M"))
+        reports[name] = tree.report(prepared, target=bound, amount="金额", long_format=False, round_digits=False)
+    overall = _sample_tables(tree, frames, targets, reports, "金额", long_format)
+    grouped = _distribution_tables(
+        tree, frames, contexts, days, "金额", long_format, None, ">", {"amount": "金额", "round_digits": False}
+    )
+    for basis, (full, table) in enumerate(zip(overall, grouped)):
+        group_col = "数据分组" if long_format else ("统计详情", "数据分组")
+        assert table.drop(columns=[group_col]).columns.tolist() == full.columns.tolist()
+        for name, frame in frames.items():
+            for month in date_groups(frame.日期, "M").unique():
+                subset = frame.loc[date_groups(frame.日期, "M").eq(month)]
+                for dpd in [7, 3, 0]:
+                    valid = subset.MOB1.eq(0) | subset.MOB1.gt(dpd) if grey else pd.Series(True, index=subset.index)
+                    selected = subset.loc[valid]
+                    total = selected["金额"].sum() if basis else len(selected)
+                    bad = selected.loc[selected.MOB1.gt(dpd), "金额"].sum() if basis else selected.MOB1.gt(dpd).sum()
+                    dataset_col = "数据集" if long_format else ("统计详情", "数据集")
+                    rows = table.loc[table[dataset_col].eq(name) & table[group_col].eq(month)]
+                    label = f"MOB1@{dpd}"
+                    if long_format:
+                        row = rows.loc[rows["目标标签"].eq(label)].iloc[0]
+                        total_col = "样本金额" if basis else "样本总数"
+                        bad_col = "坏样本金额" if basis else "坏样本数"
+                        auc_col = "AUC"
+                    else:
+                        row = rows.iloc[0]
+                        count = "样本金额" if basis else "样本总数"
+                        total_col = (count, label) if grey else ("统计详情", count)
+                        bad_col = ("坏样本金额" if basis else "坏样本数", label)
+                        auc_col = ("AUC", label)
+                    assert row[total_col] == total
+                    assert row[bad_col] == bad
+                    if selected.MOB1.gt(dpd).nunique() == 2:
+                        expected = roc_auc_score(
+                            selected.MOB1.gt(dpd),
+                            tree.predict_proba(selected)[:, 1],
+                            sample_weight=selected["金额"] if basis else None,
+                        )
+                        assert row[auc_col] == pytest.approx(expected)
+
+
+def test_feature_sheet_reuses_strategy_binning_and_preserves_template_width(data, tmp_path, monkeypatch):
+    from openpyxl.utils.cell import range_boundaries
+    import hscredit.report.feature_analyzer as module
+
+    tree = MultiwayTreeExtractor(target="FPD", features=["评分", "多头"], n_jobs=1).fit(data)
+    tree.manual_split(feature="评分", thresholds=[15, 30])
+    original, calls = module.feature_binning_summary, []
+
+    def capture(*args, **kwargs):
+        calls.append((kwargs["features"], kwargs["methods"], kwargs["long_format"]))
+        return original(*args, **kwargs)
+
+    def no_width_changes(*args, **kwargs):
+        raise AssertionError("报告不得自动调整列宽")
+
+    monkeypatch.setattr(module, "feature_binning_summary", capture)
+    monkeypatch.setattr(ExcelWriter, "adjust_columns_width", no_width_changes)
+    path = tmp_path / "特征页.xlsx"
+    tree.report(
+        {"训练": data, "验证": data.iloc[::2]},
+        overdue=["MOB1"],
+        dpds=[7, 3, 0],
+        amount="金额",
+        methods=["quantile", "uniform", "tree"],
+        del_grey=True,
+        save=path,
+    )
+    assert len(calls) == 4
+    assert all(features == ["评分"] and long for features, _, long in calls)
+    book = load_workbook(path)
+    sheet = book["组合策略汇总_特征分箱"]
+    tables = list(sheet.tables.values())
+    assert len(tables) == 3
+    ranges = [range_boundaries(table.ref) for table in tables]
+    assert ranges[0][3] < ranges[1][1] == ranges[2][1]
+    assert ranges[2][0] == ranges[1][2] + 2
+    for table, bounds in zip(tables, ranges):
+        assert table.autoFilter.ref == table.ref
+        assert table.tableStyleInfo.name is None
+        left, top, right, bottom = bounds
+        values = list(sheet.iter_rows(min_row=top, max_row=bottom, min_col=left, max_col=right, values_only=True))
+        frame = pd.DataFrame(values[1:], columns=values[0])
+        assert set(frame["指标名称"]) == {"评分"}
+        assert set(frame["分箱方法"]) == {"quantile", "uniform", "tree"}
+        assert set(frame["统计口径"]) == {"订单", "金额"}
+        assert "目标标签" in frame or "逾期标签" in frame
     book.close()

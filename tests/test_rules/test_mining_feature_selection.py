@@ -252,13 +252,16 @@ def test_multi_label_tree_report_keeps_feature_meaning_in_detail_group(feature_d
     data = feature_data.assign(MOB1=np.where(feature_data["target"].eq(1), 10, 0))
     tree = factory(features="score", feature_map={"score": "信用评分"}).fit(data)
 
-    report = tree.report(data, overdue="MOB1", dpds=[7, 3], leaf_only=True)
+    report = tree.report(data, overdue="MOB1", dpds=[7, 3], leaf_only=True, long_format=False)
 
     assert isinstance(report.columns, pd.MultiIndex)
     assert ("分箱详情", "入参字段") in report.columns
     assert ("分箱详情", "字段含义") in report.columns
     assert report[("分箱详情", "入参字段")].eq("score").all()
     assert report[("分箱详情", "字段含义")].eq("信用评分").all()
+    long_report = tree.report(data, overdue="MOB1", dpds=[7, 3], leaf_only=True)
+    assert long_report["入参字段"].eq("score").all()
+    assert long_report["字段含义"].eq("信用评分").all()
 
 
 def test_decision_tree_analyzer_save_load_preserves_feature_context(feature_data, tmp_path):

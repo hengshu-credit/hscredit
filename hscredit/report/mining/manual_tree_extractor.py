@@ -1349,6 +1349,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         freq="M",
         project_desc=None,
         data_source=None,
+        long_format=True,
+        methods=("quantile", "uniform", "tree"),
+        bin_params=None,
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估决策树各节点规则的效果。
@@ -1359,6 +1362,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         **参数**
 
+        :param methods: 默认等频、等距、决策树三种方法；用于规则特征分箱效果页。
+        :param bin_params: 默认 None；复用 feature_binning_summary 的公共或按方法配置参数。
+        :param long_format: 默认 True 按标签返回长表，False 保留多标签宽表；同样控制 Excel 展示。
         :param date: 默认 None；日期字段，输出与模型报告同口径的样本时间分布。
         :param freq: 默认 'M'；日期统计频率。
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
@@ -1435,6 +1441,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
                 freq=freq,
                 project_desc=project_desc,
                 data_source=data_source,
+                long_format=long_format,
+                methods=methods,
+                bin_params=bin_params,
                 **kwargs,
             )
         if datasets is None:
@@ -1485,7 +1494,9 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             else (results if isinstance(datasets, (list, tuple)) else results[0])
         )
 
-        return result
+        from ._tree_report import format_rule_tables
+
+        return format_rule_tables(result, long_format)
 
     def _report_one_dataset(
         self,
@@ -1561,6 +1572,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         leaf_only: bool = False,
         *,
         overdue_operator: str = ">",
+        long_format=True,
         **kwargs: Any,
     ) -> pd.DataFrame:
         """获取决策树所有节点（分裂节点+叶子节点）的规则效果表。
@@ -1572,6 +1584,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
         **参数**
 
+        :param long_format: 默认 True 按标签返回长表，False 保留原多标签宽表。
         :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
         :type datasets: Optional[pd.DataFrame]
         :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
@@ -1594,7 +1607,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :type leaf_only: bool
         :param kwargs: 其余传递给  :meth:`Rule.report`  的参数（如 ``amount`` 、 ``margins`` ）
         :return: 规则效果表，列结构与  :meth:`report`  一致（节点编号、是否叶子、
-            规则分类、指标名称、指标含义、分箱、样本总数、样本占比、好样本数、
+            指标含义、组合策略、是否调整、分箱、样本总数、样本占比、好样本数、
             坏样本数、坏样本率、LIFT值、坏账改善、风险拒绝比等）
 
         **参考样例**
@@ -1624,6 +1637,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             dpds=dpds,
             del_grey=del_grey,
             leaf_only=leaf_only,
+            long_format=long_format,
             **kwargs,
         )
 
@@ -2535,6 +2549,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         leaf_only: bool = False,
         *,
         overdue_operator: str = ">",
+        long_format=True,
         **kwargs: Any,
     ) -> pd.DataFrame:
         """获取当前树各节点规则在数据集上的效果表。
@@ -2546,6 +2561,7 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         **参数**
 
+        :param long_format: 默认 True 按标签返回长表，False 保留原多标签宽表。
         :param datasets: 用于计算规则效果的数据集，默认 None（使用 fit 时的训练数据）
         :type datasets: Optional[pd.DataFrame]
         :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
@@ -2568,7 +2584,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         :type leaf_only: bool
         :param kwargs: 其余传递给  :meth:`Rule.report`  的参数（如 ``amount`` 、 ``margins`` ）
         :return: 规则效果表，列结构与  :meth:`report`  一致（节点编号、是否叶子、
-            规则分类、指标名称、指标含义、分箱、样本总数、样本占比、好样本数、
+            指标含义、组合策略、是否调整、分箱、样本总数、样本占比、好样本数、
             坏样本数、坏样本率、LIFT值、坏账改善、风险拒绝比等）。其中（参考
             :meth:`Rule.report`  的口径，将命中节点的样本视为"拒绝"客群）：
 
@@ -2604,6 +2620,7 @@ class ManualTreeExtractor(ParallelizableMixin):
             dpds=dpds,
             del_grey=del_grey,
             leaf_only=leaf_only,
+            long_format=long_format,
             **kwargs,
         )
 
@@ -2694,6 +2711,9 @@ class ManualTreeExtractor(ParallelizableMixin):
         freq="M",
         project_desc=None,
         data_source=None,
+        long_format=True,
+        methods=("quantile", "uniform", "tree"),
+        bin_params=None,
         **kwargs,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估当前树各节点规则的效果。
@@ -2704,6 +2724,9 @@ class ManualTreeExtractor(ParallelizableMixin):
 
         **参数**
 
+        :param methods: 默认等频、等距、决策树三种方法；用于规则特征分箱效果页。
+        :param bin_params: 默认 None；复用 feature_binning_summary 的公共或按方法配置参数。
+        :param long_format: 默认 True 按标签返回长表，False 保留多标签宽表；同样控制 Excel 展示。
         :param date: 默认 None；日期字段，输出与模型报告同口径的样本时间分布。
         :param freq: 默认 'M'；日期统计频率。
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
@@ -2780,6 +2803,9 @@ class ManualTreeExtractor(ParallelizableMixin):
                 freq=freq,
                 project_desc=project_desc,
                 data_source=data_source,
+                long_format=long_format,
+                methods=methods,
+                bin_params=bin_params,
                 **kwargs,
             )
         if datasets is None:
@@ -2830,7 +2856,9 @@ class ManualTreeExtractor(ParallelizableMixin):
             else (results if isinstance(datasets, (list, tuple)) else results[0])
         )
 
-        return result
+        from ._tree_report import format_rule_tables
+
+        return format_rule_tables(result, long_format)
 
     def _report_one_dataset(
         self,

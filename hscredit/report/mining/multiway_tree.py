@@ -1123,6 +1123,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         freq="M",
         project_desc=None,
         data_source=None,
+        long_format=True,
+        methods=("quantile", "uniform", "tree"),
+        bin_params=None,
         **kwargs,
     ):
         """用 ``Rule.report`` 逐节点计算命中效果，支持金额、多标签和多数据集。
@@ -1130,6 +1133,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         每个节点仅保留其规则报告中的“命中”行，按节点编号排序；不会改变树结构或训练计数。
         0/1 训练标签默认直接作为坏样本标签；其他训练标签默认按各类别对其余类别生成多个二分类标签。
 
+        :param methods: 默认等频、等距、决策树三种方法；用于规则特征分箱效果页。
+        :param bin_params: 默认 None；复用 feature_binning_summary 的公共或按方法配置参数。
+        :param long_format: 默认 True 按标签返回长表，False 保留多标签宽表；同样控制 Excel 展示。
         :param date: 默认 None；日期字段，输出与模型报告同口径的样本时间分布。
         :param freq: 默认 'M'；日期统计频率。
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
@@ -1165,7 +1171,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             ``round_digits=False``、``prior_rules``；``feature_map`` 可覆盖构造时的字段含义映射。
             金额口径及指标定义遵循 :meth:`hscredit.core.rules.Rule.report`。
         :return: 单个 DataFrame 输入返回节点效果 DataFrame；列表/元组输入返回表格列表；
-            字典输入保留键并返回表格字典。单标签为单层列，多标签为 MultiIndex 列，
+            字典输入保留键并返回表格字典。默认 long_format=True 返回按标签展开的单层列长表；False 保留多标签 MultiIndex 宽表，
             包含节点编号、是否叶子、样本总数、坏样本数、坏样本率及规则效果指标。
         :rtype: pandas.DataFrame or list[pandas.DataFrame] or dict
         :raises NotFittedError: 尚未训练。
@@ -1202,6 +1208,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 freq=freq,
                 project_desc=project_desc,
                 data_source=data_source,
+                long_format=long_format,
+                methods=methods,
+                bin_params=bin_params,
                 **kwargs,
             )
         validate_overdue_operator(overdue_operator)
@@ -1209,12 +1218,16 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         if isinstance(datasets, (dict, list, tuple)):
             items = datasets.items() if isinstance(datasets, dict) else enumerate(datasets)
             results = {
-                key: self.report(value, target, overdue, dpds, del_grey, leaf_only, feature_map, **kwargs)
+                key: self.report(
+                    value, target, overdue, dpds, del_grey, leaf_only, feature_map, long_format=False, **kwargs
+                )
                 for key, value in items
             }
             result = results if isinstance(datasets, dict) else list(results.values())
 
-            return result
+            from ._tree_report import format_rule_tables
+
+            return format_rule_tables(result, long_format)
         if target is None and overdue is None:
             if set(self.classes_).issubset({0, 1}):
                 target = self.target
@@ -1261,7 +1274,9 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 column = ("分箱详情", name) if multi else name
                 result[column] = result[node_col].map(lambda node: context[int(node)][index])
 
-        return result
+        from ._tree_report import format_rule_tables
+
+        return format_rule_tables(result, long_format)
 
     def get_rule_table(
         self,
@@ -1273,11 +1288,13 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         leaf_only=False,
         *,
         overdue_operator=">",
+        long_format=True,
         data=None,
         **kwargs,
     ):
         """按手工二叉树接口返回全树规则效果，默认使用训练数据。
 
+        :param long_format: 默认 True 按标签返回长表，False 保留原多标签宽表。
         :param datasets: 默认 None 使用训练数据；也支持 DataFrame、列表、元组或数据集字典。
         :param target: 默认 None；支持标签列名、Series、ndarray、list、callable 或标签映射；
             Series 按索引对齐，ndarray/list 按行位置对应，callable 接收完整数据集；
@@ -1307,6 +1324,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             del_grey=del_grey,
             leaf_only=leaf_only,
             overdue_operator=overdue_operator,
+            long_format=long_format,
             **kwargs,
         )
 

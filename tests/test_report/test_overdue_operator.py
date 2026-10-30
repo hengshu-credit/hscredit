@@ -355,7 +355,9 @@ def test_tree_report_and_rule_table_forward_operator(data, op):
     )
     manual.manual_split(fit_data, feature="评分", threshold=3, node=0)
     for estimator in [tree, manual]:
-        params = dict(overdue="MOB 1", dpds=[3, 0], overdue_operator=op, del_grey=True, leaf_only=True)
+        params = dict(
+            overdue="MOB 1", dpds=[3, 0], overdue_operator=op, del_grey=True, leaf_only=True, long_format=False
+        )
         report = estimator.report({"样本": data}, **params)["样本"]
         assert report[(f"MOB 1{op}3", "坏样本数")].sum() == sum(LABELS[op])
         table = estimator.get_rule_table(data, **params)

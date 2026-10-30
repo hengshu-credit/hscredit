@@ -338,7 +338,7 @@ def test_tree_reports_parse_target_once_and_keep_explicit_names(frame):
         return current.target
 
     result = tree.report(data, target={"自定义_7+": label, "另一个@7": data.fit_target}, del_grey=True)
-    assert "自定义_7+" in result.columns.get_level_values(0)
+    assert "自定义_7+" in result["目标标签"].unique()
     assert calls == [1]
 
 

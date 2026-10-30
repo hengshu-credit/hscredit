@@ -170,7 +170,8 @@ def test_multiclass_models_reports_and_serialization(tmp_path):
     tree = MultiwayTreeExtractor(max_depth=2).fit(data)
     assert len(tree.nodes_[0].children) == 3
     assert tree.evaluate().iloc[0]["准确率"] == 1
-    assert isinstance(tree.get_rule_table().columns, pd.MultiIndex)
+    assert isinstance(tree.get_rule_table(long_format=False).columns, pd.MultiIndex)
+    assert "目标标签" in tree.get_rule_table().columns
     assert_rule_partition(tree, data)
     path = tmp_path / "多叉树.pkl"
     tree.save(path)
@@ -236,10 +237,11 @@ def test_real_loan_counts_amount_overdue_and_model_effects():
         mask = tree.apply(data) == node
         assert row.样本总数 == mask.sum()
         assert row.坏样本数 == data.loc[mask, "FPD"].sum()
-    report = tree.report(data, overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额", leaf_only=True)
+    report = tree.report(data, overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额", leaf_only=True, long_format=False)
     assert isinstance(report.columns, pd.MultiIndex)
     pd.testing.assert_frame_equal(
-        report, tree.get_rule_table(overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额", leaf_only=True)
+        report,
+        tree.get_rule_table(overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额", leaf_only=True, long_format=False),
     )
     assert set(tree.evaluate({"训练集": data, "验证集": data.iloc[:100]})["数据集"]) == {"训练集", "验证集"}
 
