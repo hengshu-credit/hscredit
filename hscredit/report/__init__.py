@@ -41,7 +41,7 @@ from .swap_analysis import (
 
 from .overdue_predictor import OverduePredictor, overdue_prediction_report
 from .model_report import ModelReport, QuickModelReport, auto_model_report, compare_models
-from .selection_report import save_selection_report, load_selection_report
+from .selection_report import auto_selection_report, save_selection_report, load_selection_report
 from .mining import (
     SingleFeatureRuleMiner,
     MultiFeatureRuleMiner,
@@ -62,6 +62,7 @@ __all__ = [
     "ReportResult",
     "ReportSectionResult",
     "ReportGenerationError",
+    "auto_selection_report",
     "save_selection_report",
     "load_selection_report",
     "dataframe2excel",

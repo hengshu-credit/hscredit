@@ -1,24 +1,29 @@
-"""筛选报告的安全、完整 JSON 和流式 Excel 发布适配。
+"""特征筛选报告的结果汇总、Excel 导出与 JSON 存取。
 
-保存结果位于不可变版本目录；消费者使用返回路径或 manifest 获取同一版本，
-而不是猜测根目录文件名。JSON 使用有类型的字段/单元格协议，禁止 pickle。
+``auto_selection_report`` 遵循报告模块的 ``excel_writer`` / ``return_result`` 约定；
+``save_selection_report`` 保留版本目录发布，用于完整快照归档和 JSON 往返。
+所有入口只读取已拟合结果，不重新筛选或计算指标。
 """
 
-from datetime import date, datetime
 import copy
+from datetime import date, datetime
 import json
-import math
 import logging
+import math
+from numbers import Integral
+from os import PathLike
 from pathlib import Path
 import re
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
+from openpyxl.utils import get_column_letter
 
-from ..exceptions import ValidationError
 from ..core.selectors.reporting import (
     SelectionReport,
+    collect_selection_report,
     SCHEMA_VERSION,
     DETAIL_COLUMNS,
     SUMMARY_COLUMNS,
@@ -28,28 +33,141 @@ from ..core.selectors.reporting import (
     _FLOAT_COLUMNS,
     _BOOL_COLUMNS,
 )
+from ..excel import ExcelWriter, dataframe2excel
+from ..exceptions import ValidationError
+from .result import ReportResult
 
 _TABLES = {"summary": "筛选汇总", "details": "特征决策", "metrics": "指标明细", "history": "迭代记录"}
+_Path = Union[str, PathLike]
+_ExcelPlan = Tuple[str, str, pd.DataFrame, int, int]
 logger = logging.getLogger(__name__)
 
 
-def to_report_result(report):
-    """将不可变协议快照适配为共享的 ReportResult 章节结果。"""
-    from .result import ReportResult
+def to_report_result(report: SelectionReport) -> ReportResult:
+    """将筛选快照转换为包含四张中文结果表的独立报告。
 
-    result = ReportResult(
-        mode="strict" if report._metadata.get("完整", True) else "best_effort", metadata=report.metadata
-    )
+    :param report: 筛选报告快照。
+    :return: 以筛选汇总、特征决策、指标明细、迭代记录为键的 ReportResult。
+        保留列顺序、数据类型和原始精度；修改结果不会影响快照或筛选器。
+    :raises ValidationError: 输入不是 SelectionReport。
+    """
+    if not isinstance(report, SelectionReport):
+        raise ValidationError("报告对象必须为 SelectionReport")
+    metadata = report.metadata
+    result = ReportResult(mode="strict" if metadata.get("完整", True) else "best_effort", metadata=metadata)
     for attribute, name in _TABLES.items():
         frame = getattr(report, attribute)
-        result.plan(name, input_rows=len(frame))
+        result.plan(name)
         result.success(name, frame)
-    if not report._metadata.get("完整", True):
-        result.failure("来源完整性", "；".join(map(str, report._metadata.get("诊断", []))) or "报告来源不完整")
+    if not metadata.get("完整", True):
+        result.failure("来源完整性", "；".join(map(str, metadata.get("诊断", []))) or "报告来源不完整")
     return result
 
 
-def _pack(value):
+def auto_selection_report(
+    source: Any,
+    excel_writer: Optional[Union[_Path, ExcelWriter]] = None,
+    *,
+    relation: str = "auto",
+    mode: str = "strict",
+    return_result: bool = False,
+    writer_params: Optional[Dict[str, Any]] = None,
+    by_selector: bool = False,
+    max_rows_per_sheet: int = 1048575,
+    max_excel_cells: int = 5000000,
+    max_sheets: int = 200,
+) -> Union[Dict[str, pd.DataFrame], ReportResult]:
+    """汇总已拟合筛选流程，可选写入 Excel。
+
+    :param source: 已拟合筛选器、Pipeline、筛选器列表或 SelectionReport 快照。
+        列表元素也可为 ``(名称, 筛选器)``，不会调用 fit。
+    :param excel_writer: 默认 None，只返回结果表；支持 .xlsx 路径或 HSCredit
+        ExcelWriter。传路径时保存到该路径，传写入器时由调用方统一保存。
+    :param relation: 默认 'auto'；列表默认独立比较。支持 'independent'、
+        'sequential'、'intersection'、'union'，含义与 collect_selection_report 相同。
+    :param mode: 默认 'strict'，拒绝不完整来源；'best_effort' 保留可用表及诊断。
+    :param return_result: 默认 False，返回中文表名字典；True 返回 ReportResult，
+        可读取章节状态、元数据、工作表映射和制品路径。
+    :param writer_params: 新建 ExcelWriter 的配置，如 theme_color、font；
+        传入已有写入器时不得另传配置。
+    :param by_selector: 默认 False；True 时额外按阶段导出特征决策表。
+    :param max_rows_per_sheet: 每表最多数据行数，默认 1048575，不含表头。
+    :param max_excel_cells: Excel 总单元格预算，默认 5000000，包含表头。
+    :param max_sheets: 本次最多生成工作表数，默认 200。
+    :return: 四张中文结果表；不改变数值精度，不添加指标状态列。
+    :raises ValidationError: 参数无效、来源不完整或 Excel 容量超限。
+    :raises ReportGenerationError: 严格模式下，传入的报告快照包含未完成章节。
+
+    **参考样例**
+
+    >>> tables = auto_selection_report(fitted_selector)
+    >>> tables['特征决策']
+    >>> result = auto_selection_report(fitted_pipeline, excel_writer='筛选报告.xlsx', return_result=True)
+    """
+    if not isinstance(mode, str) or mode not in {"strict", "best_effort"}:
+        raise ValidationError("mode 必须为 'strict' 或 'best_effort'")
+    _validate_bool(return_result, "return_result")
+    _validate_bool(by_selector, "by_selector")
+    if writer_params is not None and not isinstance(writer_params, dict):
+        raise ValidationError("writer_params 必须为字典或 None")
+    if isinstance(excel_writer, ExcelWriter) and writer_params is not None:
+        raise ValidationError("传入已有 ExcelWriter 时不能同时指定 writer_params")
+    output = None
+    if excel_writer is not None and not isinstance(excel_writer, ExcelWriter):
+        output = _validate_path(excel_writer)
+        if output.suffix.lower() != ".xlsx":
+            raise ValidationError("excel_writer 文件后缀必须为 .xlsx")
+    report = collect_selection_report(source, relation=relation, strict=mode == "strict")
+    result = to_report_result(report)
+    result.mode = mode
+    result.ensure_publishable()
+    if excel_writer is not None:
+        plans = _plan_excel(report, max_rows_per_sheet, max_excel_cells, max_sheets, by_selector)
+        writer = excel_writer if isinstance(excel_writer, ExcelWriter) else ExcelWriter(**(writer_params or {}))
+        used = {name.lower() for name in writer.workbook.sheetnames}
+        for name, label, frame, start, end in plans:
+            name = _sheet_name(name, used)
+            sheet = writer.get_sheet_by_name(name)
+            # 保留空值和原始数值；复杂对象转换为可安全展示的文本。
+            data = pd.DataFrame(
+                [
+                    [_excel_value(value) for value in row]
+                    for row in frame.iloc[start:end].itertuples(index=False, name=None)
+                ],
+                columns=frame.columns,
+                dtype=object,
+            )
+            for row in data.itertuples(index=False, name=None):
+                if any(isinstance(value, str) and len(value) > 32767 for value in row):
+                    raise ValidationError("Excel 单元格文本超出 32767 字符；请使用 JSON 保存完整报告")
+            dataframe2excel(data, writer, sheet_name=sheet, start_row=1, start_col=1, index=False, decimal=None)
+            # ExcelWriter 负责统一样式；用户字段名及参数不能被解释为公式。
+            for row in sheet.iter_rows():
+                for cell in row:
+                    if isinstance(cell.value, str):
+                        cell.data_type = "s"
+            sheet.freeze_panes = "A2"
+            sheet.auto_filter.ref = f"A1:{get_column_letter(len(frame.columns))}{len(data) + 1}"
+            result.sheet_mapping[name if start or end < len(frame) else label] = name
+        if output is not None:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            writer.save(str(output))
+            result.artifacts.append({"类型": "Excel", "路径": str(output), "完整": result.complete})
+    return result if return_result else dict(result)
+
+
+def _validate_bool(value: bool, name: str) -> None:
+    if not isinstance(value, bool):
+        raise ValidationError(f"{name} 必须为布尔值")
+
+
+def _validate_path(path: _Path) -> Path:
+    if not isinstance(path, (str, PathLike)) or not str(path).strip():
+        raise ValidationError("文件路径必须为非空字符串或路径对象")
+    return Path(path).expanduser().resolve()
+
+
+def _pack(value: Any) -> Any:
     if value is pd.NA or value is pd.NaT:
         return {"类型": "空值"}
     if isinstance(value, np.generic):
@@ -73,12 +191,12 @@ def _pack(value):
     if isinstance(value, list):
         return [_pack(item) for item in value]
     if isinstance(value, dict):
-        # Preserve integer/string keys, and avoid ambiguity with type-tag-like user dictionaries.
+        # 保留整数/字符串键，并避免用户字典与类型标记冲突。
         return {"类型": "映射", "值": [[_pack(key), _pack(item)] for key, item in value.items()]}
     raise ValidationError(f"筛选报告含不支持的 JSON 类型：{type(value).__name__}")
 
 
-def _unpack(value):
+def _unpack(value: Any) -> Any:
     if isinstance(value, list):
         return [_unpack(item) for item in value]
     if not isinstance(value, dict):
@@ -101,8 +219,8 @@ def _unpack(value):
     raise ValidationError("无法识别筛选报告 JSON 类型标记")
 
 
-def _write_json(report, path, run_id, sheet_mapping):
-    # Stream rows; do not materialize every table as a second full list of dictionaries.
+def _write_json(report: SelectionReport, path: _Path, run_id: str, sheet_mapping: List[Dict[str, Any]]) -> None:
+    # 逐行写入，避免再构造全部表的字典列表副本。
     with Path(path).open("w", encoding="utf-8") as handle:
         handle.write('{"格式":"hscredit.selection-report","协议版本":')
         handle.write(str(SCHEMA_VERSION))
@@ -131,10 +249,26 @@ def _write_json(report, path, run_id, sheet_mapping):
         handle.write("}}")
 
 
-def load_selection_report(path):
-    """读取本模块保存的完整、非可执行 JSON 报告。"""
-    with Path(path).open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
+def load_selection_report(path: _Path) -> SelectionReport:
+    """读取筛选报告 JSON，恢复列顺序、字段类型、数值精度及元数据。
+
+    :param path: save_selection_report 返回的 ``结果['路径']['json']``，支持路径对象。
+    :return: 独立的 SelectionReport 快照，不执行代码或重新拟合。
+    :raises ValidationError: JSON 内容损坏、类型标记错误或协议结构不兼容。
+    :raises OSError: 文件不存在或不可读取。
+    """
+    path = _validate_path(path)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return _report_from_payload(payload)
+    except ValidationError:
+        raise
+    except (ValueError, TypeError, KeyError, OverflowError) as error:
+        raise ValidationError("筛选报告 JSON 内容或字段类型无效") from error
+
+
+def _report_from_payload(payload: Any) -> SelectionReport:
     if (
         not isinstance(payload, dict)
         or payload.get("格式") != "hscredit.selection-report"
@@ -189,7 +323,7 @@ def load_selection_report(path):
     return SelectionReport(metadata=metadata, **values)
 
 
-def _sheet_name(name, used):
+def _sheet_name(name: str, used: Set[str]) -> str:
     cleaned = re.sub(r"[\\/*?:\[\]]", "_", str(name)).strip("'") or "报告"
     base = cleaned[:31]
     candidate, suffix = base, 1
@@ -200,7 +334,7 @@ def _sheet_name(name, used):
     return candidate
 
 
-def _excel_value(value):
+def _excel_value(value: Any) -> Any:
     if value is pd.NA or value is pd.NaT or value is None:
         return None
     if isinstance(value, np.generic):
@@ -216,15 +350,20 @@ def _excel_value(value):
     return value
 
 
-def _plan_excel(report, max_rows_per_sheet, max_excel_cells, max_sheets, by_selector):
+def _plan_excel(
+    report: SelectionReport, max_rows_per_sheet: int, max_excel_cells: int, max_sheets: int, by_selector: bool
+) -> List[_ExcelPlan]:
     if (
-        not isinstance(max_rows_per_sheet, int)
+        not isinstance(max_rows_per_sheet, Integral)
         or isinstance(max_rows_per_sheet, bool)
         or not 1 <= max_rows_per_sheet <= 1048575
     ):
         raise ValidationError("max_rows_per_sheet 必须为 1 至 1048575 的整数（不含表头）")
-    if not isinstance(max_excel_cells, int) or max_excel_cells < 1 or not isinstance(max_sheets, int) or max_sheets < 1:
-        raise ValidationError("max_excel_cells 和 max_sheets 必须为正整数")
+    for name, value in (("max_excel_cells", max_excel_cells), ("max_sheets", max_sheets)):
+        if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
+            raise ValidationError(f"{name} 必须为正整数")
+    _validate_bool(by_selector, "by_selector")
+    max_rows_per_sheet = int(max_rows_per_sheet)
     frames = [(name, getattr(report, "_" + attribute)) for attribute, name in _TABLES.items()]
     status = pd.DataFrame(
         [
@@ -235,10 +374,10 @@ def _plan_excel(report, max_rows_per_sheet, max_excel_cells, max_sheets, by_sele
     snapshots = report._metadata.get("阶段快照", {})
     parameters = pd.DataFrame(
         [
-            {"阶段路径": stage, "参数": snapshot.get("拟合参数", {}), "fit_id": snapshot.get("fit_id")}
+            {"阶段路径": stage, "参数": snapshot.get("拟合参数", {}), "拟合标识": snapshot.get("fit_id")}
             for stage, snapshot in snapshots.items()
         ],
-        columns=["阶段路径", "参数", "fit_id"],
+        columns=["阶段路径", "参数", "拟合标识"],
     )
     frames = [("执行状态", status)] + frames + [("参数说明", parameters)]
     if by_selector:
@@ -263,11 +402,10 @@ def _plan_excel(report, max_rows_per_sheet, max_excel_cells, max_sheets, by_sele
     return plans
 
 
-def _write_excel(plans, path, run_id=None):
+def _write_excel(plans: Sequence[_ExcelPlan], path: _Path, run_id: Optional[str] = None) -> None:
     from openpyxl import Workbook
     from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Font, PatternFill, Alignment
-    from openpyxl.utils import get_column_letter
 
     workbook = Workbook(write_only=True)
     workbook.properties.identifier = run_id
@@ -292,7 +430,7 @@ def _write_excel(plans, path, run_id=None):
         "参数": 64,
         "补充信息": 64,
         "候选子集": 48,
-        "fit_id": 36,
+        "拟合标识": 36,
         "内容": 64,
     }
     try:
@@ -313,7 +451,7 @@ def _write_excel(plans, path, run_id=None):
                         raise ValidationError("Excel 单元格文本超出 32767 字符；请仅保存 JSON，不会静默截断")
                     cell = WriteOnlyCell(sheet, value=value)
                     if isinstance(value, str):
-                        cell.data_type = "s"  # Includes =, +, -, @: never interpret user text as a formula.
+                        cell.data_type = "s"  # 字符串始终按文本写入，不能执行用户提供的公式。
                     cell.alignment = text_alignment if isinstance(value, str) else number_alignment
                     if header:
                         cell.font = header_font
@@ -326,8 +464,7 @@ def _write_excel(plans, path, run_id=None):
                 sheet.append(cells(row))
         workbook.save(path)
     except BaseException:
-        # Flush/close write-only XML generators before removing their private temporary files.
-        # Cleanup must not replace the original serialization or IO error.
+        # 关闭流式 XML 生成器后清理临时文件；不能用清理异常覆盖原始错误。
         for sheet in workbook.worksheets:
             try:
                 if not sheet.closed:
@@ -343,17 +480,17 @@ def _write_excel(plans, path, run_id=None):
 
 
 def save_selection_report(
-    report,
-    path,
+    report: SelectionReport,
+    path: _Path,
     *,
-    formats=("xlsx", "json"),
-    overwrite=False,
-    max_rows_per_sheet=1048575,
-    max_excel_cells=5000000,
-    max_sheets=200,
-    by_selector=False,
-    allow_incomplete=False,
-):
+    formats: Union[str, Sequence[str]] = ("xlsx", "json"),
+    overwrite: bool = False,
+    max_rows_per_sheet: int = 1048575,
+    max_excel_cells: int = 5000000,
+    max_sheets: int = 200,
+    by_selector: bool = False,
+    allow_incomplete: bool = False,
+) -> Dict[str, Any]:
     """将完整报告保存为同一版本制品，返回实际路径、校验摘要和映射。
 
     **参数**
@@ -362,6 +499,14 @@ def save_selection_report(
     :param path: 输出名称或带 .xlsx/.json 后缀的期望名称；实际文件位于版本目录。
     :param formats: 支持 xlsx/json，默认同时生成。
     :param overwrite: 默认值为 ``False`` 。是否允许更新同名发布清单，不删除旧版本
+    :param max_rows_per_sheet: 每个工作表最多数据行数，默认 1048575，不含表头。
+    :param max_excel_cells: Excel 总单元格预算，默认 5000000，包含表头。
+    :param max_sheets: 本次最多生成工作表数，默认 200。
+    :param by_selector: 默认 False；是否额外按筛选阶段导出特征决策表。
+    :param allow_incomplete: 默认 False；是否允许归档带诊断的不完整快照。
+    :return: 含路径、清单、协议版本、制品、工作表映射、表行数、完整、诊断的字典；
+        run_id 是版本标识。始终使用返回路径定位文件；直接导出请用 auto_selection_report。
+    :raises ValidationError: 参数无效、报告不完整或超过 Excel 容量预算。
 
     **参考样例**
 
@@ -370,13 +515,20 @@ def save_selection_report(
     """
     if not isinstance(report, SelectionReport):
         raise ValidationError("保存对象必须为 SelectionReport")
+    for name, value in (("overwrite", overwrite), ("by_selector", by_selector), ("allow_incomplete", allow_incomplete)):
+        _validate_bool(value, name)
     if not report._metadata.get("完整", True) and not allow_incomplete:
         raise ValidationError("报告不完整，默认拒绝保存；如需诊断文档请显式设置 allow_incomplete=True")
     if isinstance(formats, str):
         formats = (formats,)
-    if not formats or any(item not in {"xlsx", "json"} for item in formats) or len(set(formats)) != len(formats):
+    if (
+        not isinstance(formats, (list, tuple))
+        or not formats
+        or any(not isinstance(item, str) or item not in {"xlsx", "json"} for item in formats)
+        or len(set(formats)) != len(formats)
+    ):
         raise ValidationError("formats 只能包含不重复的 xlsx 和 json")
-    output = Path(path).expanduser().resolve()
+    output = _validate_path(path)
     if output.suffix and output.suffix.lower() not in {".xlsx", ".json"}:
         raise ValidationError("筛选报告文件后缀只支持 .xlsx 或 .json，也可不指定后缀")
     name = output.stem if output.suffix else output.name
@@ -387,7 +539,7 @@ def save_selection_report(
         {"工作表": sheet, "来源": source, "起始行": start, "结束行": end, "行数": end - start}
         for sheet, source, _, start, end in plans
     ]
-    # Core never imports this module; reuse the existing publication primitive only at save time.
+    # 仅在归档时加载发布事务，常规报告不依赖制品运行时。
     from ..skills_runtime.artifacts import ArtifactTransaction
 
     transaction = ArtifactTransaction({"directory": str(output.parent), "name": name, "overwrite": overwrite})
@@ -432,4 +584,4 @@ def save_selection_report(
     }
 
 
-__all__ = ["save_selection_report", "load_selection_report", "to_report_result"]
+__all__ = ["auto_selection_report", "save_selection_report", "load_selection_report", "to_report_result"]

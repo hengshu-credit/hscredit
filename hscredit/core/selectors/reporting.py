@@ -213,17 +213,89 @@ class SelectionReport:
                 )
         return _table(rows, TRACE_COLUMNS)
 
-    def save(self, path, **kwargs):
-        """延迟加载保存适配器，以版本目录及原子清单发布完整报告。"""
+    def save(
+        self,
+        path,
+        *,
+        formats=("xlsx", "json"),
+        overwrite=False,
+        max_rows_per_sheet=1048575,
+        max_excel_cells=5000000,
+        max_sheets=200,
+        by_selector=False,
+        allow_incomplete=False,
+    ):
+        """以版本目录及原子清单归档快照，参数与 save_selection_report 一致。
+
+        :param path: 归档名称或带 .xlsx/.json 后缀的路径；实际文件位于版本目录。
+        :param formats: 默认 ('xlsx', 'json')，也支持单个格式字符串。
+        :param overwrite: 默认 False；是否更新同名发布清单，旧版本仍保留。
+        :param max_rows_per_sheet: 每表最大数据行数，默认 1048575，不含表头。
+        :param max_excel_cells: 总单元格预算，默认 5000000，包含表头。
+        :param max_sheets: 最多工作表数，默认 200。
+        :param by_selector: 默认 False；是否额外按阶段导出特征决策表。
+        :param allow_incomplete: 默认 False；是否允许归档不完整快照。
+        :return: 包含实际路径、清单、制品、工作表映射及完整性的字典。
+        """
         from ...report.selection_report import save_selection_report
 
-        return save_selection_report(self, path, **kwargs)
+        return save_selection_report(
+            report=self,
+            path=path,
+            formats=formats,
+            overwrite=overwrite,
+            max_rows_per_sheet=max_rows_per_sheet,
+            max_excel_cells=max_excel_cells,
+            max_sheets=max_sheets,
+            by_selector=by_selector,
+            allow_incomplete=allow_incomplete,
+        )
 
     def to_report_result(self):
         """显式转换为报告层公共结果；仅此调用复制各章节表。"""
         from ...report.selection_report import to_report_result
 
         return to_report_result(self)
+
+    def to_excel(
+        self,
+        excel_writer,
+        *,
+        mode="strict",
+        return_result=False,
+        writer_params=None,
+        by_selector=False,
+        max_rows_per_sheet=1048575,
+        max_excel_cells=5000000,
+        max_sheets=200,
+    ):
+        """将快照写入 Excel，参数与 auto_selection_report 一致。
+
+        :param excel_writer: .xlsx 文件路径或 HSCredit ExcelWriter；已有写入器由调用方保存。
+        :param mode: 默认 'strict' 拒绝不完整快照；'best_effort' 保留诊断。
+        :param return_result: 默认 False 返回四张中文结果表；True 返回 ReportResult。
+        :param writer_params: 新建写入器配置，默认 None；不与已有写入器同时使用。
+        :param by_selector: 默认 False；是否额外按阶段导出特征决策表。
+        :param max_rows_per_sheet: 每表最大数据行数，默认 1048575，不含表头。
+        :param max_excel_cells: 总单元格预算，默认 5000000，包含表头。
+        :param max_sheets: 本次最多工作表数，默认 200。
+        :return: 中文表名字典或 ReportResult；直接保存到指定文件路径。
+        """
+        from ...report.selection_report import auto_selection_report
+
+        if excel_writer is None:
+            raise ValidationError("to_excel 必须提供 Excel 文件路径或 ExcelWriter")
+        return auto_selection_report(
+            source=self,
+            excel_writer=excel_writer,
+            mode=mode,
+            return_result=return_result,
+            writer_params=writer_params,
+            by_selector=by_selector,
+            max_rows_per_sheet=max_rows_per_sheet,
+            max_excel_cells=max_excel_cells,
+            max_sheets=max_sheets,
+        )
 
 
 # 指标名称、方向、比较符、判定方式。主指标和有效阈值必须属于同一统计量。

@@ -87,6 +87,39 @@ TabPFN 的混合精度推理可能产生批量相关的数值差异；加总校�
    :show-inheritance:
    :class-doc-from: both
 
+特征筛选报告
+------------
+
+``auto_selection_report`` 直接读取已拟合筛选器、Pipeline、筛选器列表或
+``SelectionReport`` 快照，不重复拟合。默认返回四张中文结果表：筛选汇总、
+特征决策、指标明细和迭代记录，保留字段顺序、数据类型和原始指标精度。
+``return_result=True`` 返回兼容字典的 ``ReportResult``，另含元数据和章节状态。
+
+.. code-block:: python
+
+   from hscredit.core.selectors import NullSelector, collect_selection_report
+   from hscredit.report import auto_selection_report, ExcelWriter, load_selection_report
+
+   selector = NullSelector(target="FPD", n_jobs=1).fit(data)
+   tables = auto_selection_report(source=selector)
+   details = tables["特征决策"]
+   result = auto_selection_report(selector, excel_writer="筛选报告.xlsx", return_result=True)
+
+   # 与其他报告复用同一个写入器；由调用方统一保存。
+   writer = ExcelWriter(theme_color="2639E9")
+   auto_selection_report(selector, excel_writer=writer)
+   writer.save("综合报告.xlsx")
+
+   snapshot = collect_selection_report(selector)
+   snapshot.to_excel("筛选快照.xlsx")
+   archived = snapshot.save("归档/筛选快照", formats="json")
+   restored = load_selection_report(archived["路径"]["json"])
+
+直接 Excel 导出写入指定文件路径，不创建版本目录；归档 ``save`` 保留原有版本目录、
+原子发布清单和类型化 JSON 协议，读取时使用返回的实际路径。列表默认独立比较，
+需要串行或交并集口径时通过 ``relation`` 明确指定。不完整来源默认拒绝导出，
+诊断时可使用 ``mode='best_effort', return_result=True``。
+
 .. automethod:: hscredit.report.ModelReport.get_training_process
 
 .. note::

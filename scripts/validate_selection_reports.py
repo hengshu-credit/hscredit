@@ -23,7 +23,7 @@ from sklearn.pipeline import Pipeline
 
 from hscredit.core import selectors as s
 from hscredit.core.selectors.reporting import DETAIL_COLUMNS, METRIC_COLUMNS, SUMMARY_COLUMNS, HISTORY_COLUMNS
-from hscredit.report import load_selection_report
+from hscredit.report import auto_selection_report, load_selection_report
 
 NUMERIC = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"]
 CATEGORY, TARGET = "商品类别", "FPD"
@@ -159,6 +159,13 @@ def validate(input_path, directory):
         )
     all_report = s.collect_selection_report(fitted)
     assert "最终字段" not in all_report.metadata
+    direct_path = directory / "筛选报告.xlsx"
+    direct = auto_selection_report(all_report, excel_writer=direct_path, return_result=True)
+    assert direct.complete and direct_path.is_file()
+    for attribute, name in zip(
+        ("summary", "details", "metrics", "history"), ("筛选汇总", "特征决策", "指标明细", "迭代记录")
+    ):
+        pd.testing.assert_frame_equal(direct[name], getattr(all_report, attribute))
     artifacts = all_report.save(directory / "全部筛选器明细", by_selector=True, max_rows_per_sheet=200)
     restored = load_selection_report(artifacts["路径"]["json"])
     for attribute in ("summary", "details", "metrics", "history"):
@@ -173,6 +180,7 @@ def validate(input_path, directory):
         "筛选器验收": records,
         "Pipeline阶段数": len(pipeline_report.summary),
         "保存重载": "四表逐项等价",
+        "直接导出": str(direct_path),
         "报告产物": artifacts,
     }
 
