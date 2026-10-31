@@ -17,6 +17,7 @@ from hscredit.core.selectors.reporting import (
     SUMMARY_COLUMNS,
     METRIC_COLUMNS,
     HISTORY_COLUMNS,
+    PROCESS_COLUMNS,
     SelectionReport,
     collect_selection_report,
 )
@@ -105,6 +106,67 @@ def test_all_selectors_share_full_details_and_metric_schema(name, data):
     ):
         assert frame.dtypes.equals(empty.dtypes)
     assert "[SUMMARY]" not in report.details["特征"].tolist()
+    summary, details = fitted.report()
+    assert summary.columns.tolist() == SUMMARY_COLUMNS
+    assert details.columns.tolist() == PROCESS_COLUMNS
+    empty_summary, empty_details = SelectionReport().report()
+    assert summary.dtypes.equals(empty_summary.dtypes)
+    assert details.dtypes.equals(empty_details.dtypes)
+    decisions = details.loc[(details["阶段路径"] == "selector") & (details["记录类型"] == "特征决策")]
+    assert decisions["特征"].tolist() == X.columns.tolist()
+    assert decisions.loc[decisions["筛选结果"] == "保留", "特征"].tolist() == fitted.selected_features_
+    assert decisions.loc[decisions["特征"] == "强保", "决策来源"].item() == "强制保留"
+    assert decisions.loc[decisions["特征"] == "强删", "决策来源"].item() == "强制剔除"
+    assert summary.iloc[0]["输入特征数"] == X.shape[1]
+    assert summary.iloc[0]["剔除特征数"] == X.shape[1] - len(fitted.selected_features_)
+    assert len(details) == len(report.details) + len(report.metrics) + len(report.history)
+    for kind, expected in (("特征决策", report.details), ("指标明细", report.metrics), ("迭代事件", report.history)):
+        actual = details.loc[details["记录类型"] == kind, expected.columns].reset_index(drop=True)
+        pd.testing.assert_frame_equal(actual, expected)
+
+
+def test_all_exported_selector_classes_have_native_report():
+    from hscredit.core.selectors.base import BaseFeatureSelector
+
+    exported = {
+        name
+        for name in selectors.__all__
+        if isinstance(getattr(selectors, name), type)
+        and issubclass(getattr(selectors, name), BaseFeatureSelector)
+        and name != "BaseFeatureSelector"
+    }
+    assert exported == set(_NAMES)
+    assert all(callable(getattr(getattr(selectors, name), "report", None)) for name in exported)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "VarianceSelector",
+        "FTestSelector",
+        "RFESelector",
+        "TypeSelector",
+        "CorrSelector",
+        "BorutaSelector",
+        "PSISelector",
+        "StabilityAwareSelector",
+    ],
+)
+def test_derived_selectors_keep_algorithm_specific_report_semantics(name, data):
+    X, y = data
+    configured = make_selector(name)
+    if "random_state" in configured.get_params(deep=False):
+        configured.set_params(random_state=42)
+    derived_class = type("Business" + name, (type(configured),), {})
+    derived = derived_class(**configured.get_params(deep=False)).fit(X, y)
+    baseline = configured.fit(X, y)
+    assert derived.selected_features_ == baseline.selected_features_
+    summary, details = derived.report()
+    assert summary.iloc[0]["筛选器"] == derived_class.__name__
+    columns = ["特征", "指标名称", "指标值", "有效阈值", "比较符", "判定方式", "筛选结果", "关联特征"]
+    actual = details.loc[details["记录类型"] == "特征决策", columns].reset_index(drop=True)
+    expected = baseline.report()[1].query("记录类型 == '特征决策'")[columns].reset_index(drop=True)
+    pd.testing.assert_frame_equal(actual, expected)
 
 
 def test_snapshot_remains_fit_configuration_and_is_fully_detached(data):

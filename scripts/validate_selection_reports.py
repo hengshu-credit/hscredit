@@ -93,7 +93,9 @@ def validate(input_path, directory):
         try:
             selector.fit(data, target)
             report = s.collect_selection_report(selector)
-            summary, process = selection_report(selector)
+            summary, process = selector.report()
+            for direct, aggregated in zip((summary, process), selection_report(selector)):
+                pd.testing.assert_frame_equal(direct, aggregated)
             pd.testing.assert_frame_equal(summary, report.summary)
             assert len(process) == len(report.details) + len(report.metrics) + len(report.history)
             detail = selector.get_selection_report_df()
@@ -149,6 +151,8 @@ def validate(input_path, directory):
     scorecard = s.ScorecardFeatureSelection(corr_threshold=None, n_jobs=1).fit(X, y)
     for selector in [composite, scorecard]:
         report = s.collect_selection_report(selector)
+        for direct, aggregated in zip(selector.report(), selection_report(selector)):
+            pd.testing.assert_frame_equal(direct, aggregated)
         assert report.details.columns.tolist() == DETAIL_COLUMNS
         assert report.metadata["完整"]
         records.append(

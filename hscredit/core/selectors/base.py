@@ -4,7 +4,7 @@
 所有筛选器都继承此类,确保API的一致性。
 
 报告系统设计:
-1. 单个筛选器报告: 每个筛选器实现 get_selection_report(),返回标准化报告
+1. 单个/组合筛选器报告: 统一通过 report() 返回汇总和具体明细两个 DataFrame
 2. 全局报告收集器: SelectionReportCollector 手动聚合多个筛选器的结果
 3. 报告格式: 统一的中文格式,包含统计信息、选中/剔除特征、得分等
 
@@ -2165,6 +2165,34 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                 }
 
         return copy.deepcopy(report)
+
+    def report(self, *, strict: bool = True) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """返回当前筛选器的汇总与具体明细，所有筛选器使用相同中文表头。
+
+        只读取 fit 保存的真实决策，不重新 fit/transform，不根据当前参数重算。
+        组合筛选器和评分卡筛选器同时包含根决策与实际子步骤；根节点和子节点
+        的计数不能相加作为唯一特征数。不同算法保留各自的指标和实际判定条件。
+
+        :param strict: 默认 True，拒绝未拟合或不完整来源；False 保留可用结果，
+            完整性及诊断保存在两张表各自的 attrs 中。
+        :return: ``(summary, details)`` 两个独立 DataFrame。summary 包含阶段路径、
+            输入/选中/剔除特征数及保留率；details 通过“记录类型”区分特征决策、
+            指标明细和迭代事件，包含原始指标、阈值、比较符、筛选结果及原因。
+            所有筛选器列顺序和 dtype 一致；无记录的字段留空，不补造历史、不写文件。
+        :raises NotFittedError: 严格模式下尚未拟合。
+        :raises ValidationError: 参数无效或严格模式下来源不完整。
+
+        **参考样例**
+
+        >>> selector = VarianceSelector(threshold=0.1).fit(data)
+        >>> summary, details = selector.report()
+        >>> decisions = details.loc[details['记录类型'] == '特征决策']
+        """
+        if not isinstance(strict, bool):
+            raise ValidationError("strict 必须为布尔值")
+        from .reporting import collect_selection_report
+
+        return collect_selection_report(self, strict=strict).report(strict=strict)
 
     def get_selection_result(self):
         """返回与模型状态隔离的完整报告；读取报告不重新拟合或计算指标。"""

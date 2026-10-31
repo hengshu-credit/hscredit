@@ -26,8 +26,8 @@
 >>> selector = VarianceSelector(threshold=0.01)
 >>> selector.fit(X, y)
 VarianceSelector(...)
->>> report = selector.get_selection_report()
->>> print(f"输入特征数: {report['输入特征数']}, 选中特征数: {report['选中特征数']}")
+>>> summary, details = selector.report()
+>>> summary[['输入特征数', '选中特征数']]
 """
 
 from typing import Union, List, Dict, Optional, Any, Callable

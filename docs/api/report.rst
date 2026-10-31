@@ -91,6 +91,8 @@ TabPFN 的混合精度推理可能产生批量相关的数值差异；加总校�
 
 ``summary, process = selection_report(selector=...)`` 是模型报告中的数据生成环节，
 固定返回筛选汇总和具体过程两个 DataFrame，不接受 Excel 输出参数，也不写入文件。
+双表整理与固定表头由筛选器核心层实现；单个筛选器直接使用 ``selector.report()``，
+组合筛选器同样使用 ``composite.report()``。本函数负责列表、Pipeline 等来源的收集与汇总。
 输入为用户已配置并拟合的单筛选器、组合筛选器、Pipeline 或这些对象组成的列表。
 列表元素可用 ``(名称, 筛选器)`` 命名，也可直接传入已保存的 ``SelectionReport`` 快照。
 
@@ -98,7 +100,8 @@ TabPFN 的混合精度推理可能产生批量相关的数值差异；加总校�
 
    from hscredit.report import selection_report
 
-   summary, process = selection_report(selector=fitted_selector)
+   summary, process = fitted_selector.report()
+   summary, process = fitted_composite.report()
    summary, process = selection_report(selector=fitted_pipeline)
 
    # 实际串行拟合过的多个单筛选器，字段必须前后衔接。

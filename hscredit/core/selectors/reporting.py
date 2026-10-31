@@ -7,6 +7,7 @@
 import copy
 from datetime import datetime, timezone
 from uuid import uuid4
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -85,6 +86,7 @@ HISTORY_COLUMNS = [
     "原因",
     "补充信息",
 ]
+PROCESS_COLUMNS = list(dict.fromkeys(["记录类型"] + DETAIL_COLUMNS + METRIC_COLUMNS + HISTORY_COLUMNS))
 TRACE_COLUMNS = ["阶段路径", "阶段名称", "特征", "筛选结果", "评估状态", "筛选原因"]
 _INT_COLUMNS = {
     "阶段编号",
@@ -174,6 +176,42 @@ class SelectionReport:
     @property
     def metadata(self):
         return copy.deepcopy(self._metadata)
+
+    def report(self, *, strict: bool = True) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """按统一中文表头返回筛选汇总和具体明细两张表。
+
+        :param strict: 默认 True，拒绝不完整快照；False 保留已有记录和 attrs 诊断。
+        :return: ``(summary, details)``，列顺序分别为 SUMMARY_COLUMNS、PROCESS_COLUMNS。
+            明细用“记录类型”区分特征决策、指标明细、迭代事件，保留不同算法的
+            判定指标、阈值、条件、关联特征与轮次。同阶段按上述类型排列，类型内
+            保持原始记录顺序。返回独立副本，不舍入、不重算、不生成文件。
+        :raises ValidationError: strict 不是布尔值或严格模式下快照不完整。
+        """
+        if not isinstance(strict, bool):
+            raise ValidationError("strict 必须为布尔值")
+        metadata = self.metadata
+        if strict and not metadata.get("完整", True):
+            raise ValidationError("筛选报告不完整：" + "；".join(map(str, metadata.get("诊断", []))))
+        summary = self.summary
+        stage_info = summary.set_index("阶段路径")
+        parts = []
+        for attribute, kind in (("details", "特征决策"), ("metrics", "指标明细"), ("history", "迭代事件")):
+            frame = getattr(self, attribute)
+            if frame.empty:
+                continue
+            frame.insert(0, "记录类型", kind)
+            for column in ("阶段编号", "阶段名称", "筛选器"):
+                if column not in frame:
+                    frame[column] = frame["阶段路径"].map(stage_info[column])
+            parts.append(frame)
+        process = _table(pd.concat(parts, ignore_index=True, sort=False) if parts else [], PROCESS_COLUMNS)
+        if not process.empty:
+            stage_order = {path: index for index, path in enumerate(summary["阶段路径"])}
+            order = process["阶段路径"].map(stage_order).fillna(len(stage_order)).sort_values(kind="stable").index
+            process = process.loc[order].reset_index(drop=True)
+        summary.attrs = copy.deepcopy(metadata)
+        process.attrs = copy.deepcopy(metadata)
+        return summary, process
 
     def copy(self):
         return SelectionReport(self.summary, self.details, self.metrics, self.history, self.metadata)
@@ -390,8 +428,16 @@ def _parameters(value, seen=None, depth=0):
         seen.remove(id(value))
 
 
+def _selector_family(selector):
+    """按继承链选择算法口径，派生类保留真实类名并继承其筛选逻辑。"""
+    return next(
+        (base.__name__ for base in type(selector).__mro__ if base.__name__ in _ADAPTERS),
+        type(selector).__name__,
+    )
+
+
 def _main_values(selector, features):
-    cls = type(selector).__name__
+    cls = _selector_family(selector)
     name, direction, comparison, mode = _ADAPTERS.get(cls, ("筛选得分", "由筛选器定义", "", "自定义筛选"))
     name = getattr(selector, "score_name_", name)
     direction = getattr(selector, "score_direction_", direction)
@@ -437,6 +483,7 @@ def _single_report(selector):
     included = set(getattr(selector, "include_", []) or [])
     excluded = set(getattr(selector, "exclude_", []) or []) | set(getattr(selector, "forced_dropped_", []) or [])
     cls = type(selector).__name__
+    family = _selector_family(selector)
     is_composite = hasattr(selector, "selectors") or hasattr(selector, "stage_selectors_")
     relation = getattr(selector, "strategy", "sequential" if hasattr(selector, "stage_selectors_") else "single")
     metric_name, direction, comparison, mode, threshold, values = _main_values(selector, features)
@@ -475,7 +522,7 @@ def _single_report(selector):
         )
         if feature in values and valid == "缺失":
             evaluated = "无效"
-            if cls in {"StepwiseSelector", "SequentialFeatureSelector"} and not kept:
+            if family in {"StepwiseSelector", "SequentialFeatureSelector"} and not kept:
                 evaluated = "未计算"
             if feature not in calculated_features:
                 evaluated = "未计算"
@@ -530,7 +577,7 @@ def _single_report(selector):
         for condition, passed in feature_conditions.items():
             condition_value, condition_threshold, operator = numeric, threshold, comparison
             scope = "实际判定条件"
-            if cls == "StabilityAwareSelector":
+            if family == "StabilityAwareSelector":
                 if "IV" in condition:
                     condition_value, condition_threshold, operator = (
                         condition_values["iv_scores_"].get(feature),
@@ -543,7 +590,7 @@ def _single_report(selector):
                         selector.psi_threshold,
                         "<=",
                     )
-            if cls in {"Chi2Selector", "FTestSelector"}:
+            if family in {"Chi2Selector", "FTestSelector"}:
                 if "数量" in condition:
                     condition_value = condition_values["ranks_"].get(feature)
                     condition_threshold = selector.k if selector.k != "all" else len(selector.ranks_)
@@ -559,7 +606,7 @@ def _single_report(selector):
                         operator, scope = "", "未限制百分位"
                 elif "阈值" in condition:
                     condition_value = condition_values["scores_"].get(feature)
-                    scope = "实际筛选统计量（原始NaN归0）" if cls == "FTestSelector" else scope
+                    scope = "实际筛选统计量（原始NaN归0）" if family == "FTestSelector" else scope
             metrics.append(
                 {
                     "阶段路径": path,
@@ -576,18 +623,18 @@ def _single_report(selector):
     for attr, label in _SERIES_METRICS.items():
         mapping = _mapping(getattr(selector, attr, None), features)
         if attr == "scores_":
-            label = metric_name if cls != "BorutaSelector" else "命中比例"
-            if cls not in {"BorutaSelector", "VarianceSelector", "FTestSelector"}:
+            label = metric_name if family != "BorutaSelector" else "命中比例"
+            if family not in {"BorutaSelector", "VarianceSelector", "FTestSelector"}:
                 continue
-            if cls == "VarianceSelector":
+            if family == "VarianceSelector":
                 label = "筛选方差"
-            if cls == "FTestSelector":
+            if family == "FTestSelector":
                 label = "实际F筛选统计量（原始NaN归0）"
         for feature, value in mapping.items():
             if feature not in feature_set:
                 continue
             extra = {}
-            if cls == "StabilityAwareSelector" and attr in {"iv_scores_", "psi_scores_", "combined_scores_"}:
+            if family == "StabilityAwareSelector" and attr in {"iv_scores_", "psi_scores_", "combined_scores_"}:
                 extra = {
                     "阈值": {
                         "iv_scores_": selector.iv_threshold,
@@ -634,7 +681,7 @@ def _single_report(selector):
                         "有效性": _validity(value),
                     }
                 )
-    if cls == "PSISelector":
+    if family == "PSISelector":
         for attr, label in (("reference_counts_", "基准样本数"), ("comparison_counts_", "比较样本数")):
             counts = getattr(selector, attr, None)
             if isinstance(counts, pd.Series):

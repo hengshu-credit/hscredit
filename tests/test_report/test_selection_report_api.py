@@ -87,6 +87,34 @@ def test_report_returns_two_frames_without_fit_transform_or_files(selector, monk
     assert not list(tmp_path.iterdir())
 
 
+def test_native_report_is_independent_of_report_facade_and_keeps_fit_snapshot(selector, monkeypatch):
+    expected = selection_report(selector)
+    facade = import_module("hscredit.report.selection_report")
+    monkeypatch.setattr(facade, "selection_report", lambda *a, **k: pytest.fail("核心筛选器不依赖报告层"))
+    monkeypatch.setattr(NullSelector, "fit", lambda *a, **k: pytest.fail("不得重新拟合"))
+    monkeypatch.setattr(NullSelector, "transform", lambda *a, **k: pytest.fail("不得重新转换"))
+    selector.set_params(threshold=0.9)
+    summary, details = selector.report()
+    for actual, original in zip((summary, details), expected):
+        pd.testing.assert_frame_equal(actual, original)
+    summary.attrs["阶段快照"].clear()
+    details.loc[:, "筛选结果"] = "修改副本"
+    assert selector.report()[0].attrs["阶段快照"]
+    assert selector.selected_features_ == ["评分", "常量"]
+
+
+def test_native_report_handles_unfitted_and_invalid_options():
+    selector = NullSelector()
+    with pytest.raises(NotFittedError):
+        selector.report()
+    summary, details = selector.report(strict=False)
+    assert summary.attrs["完整"] is False and summary.attrs["诊断"]
+    assert details.empty
+    for source in (selector, SelectionReport()):
+        with pytest.raises(ValidationError, match="strict"):
+            source.report(strict="False")
+
+
 def test_independent_selectors_keep_separate_counts(data):
     items = [
         ("宽松", NullSelector(threshold=0.6, n_jobs=1).fit(data)),

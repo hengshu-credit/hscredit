@@ -31,13 +31,11 @@ from ..core.selectors.reporting import (
     _INT_COLUMNS,
     _FLOAT_COLUMNS,
     _BOOL_COLUMNS,
-    _table as _selection_table,
 )
 from ..exceptions import ValidationError
 from .result import ReportResult
 
 _TABLES = {"summary": "筛选汇总", "details": "特征决策", "metrics": "指标明细", "history": "迭代记录"}
-_PROCESS_COLUMNS = list(dict.fromkeys(["记录类型"] + DETAIL_COLUMNS + METRIC_COLUMNS + HISTORY_COLUMNS))
 _Path = Union[str, PathLike]
 _ExcelPlan = Tuple[str, str, pd.DataFrame, int, int]
 logger = logging.getLogger(__name__)
@@ -70,7 +68,7 @@ def selection_report(
     relation: str = "auto",
     strict: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """读取用户已拟合的筛选流程，返回汇总和具体过程两张表。
+    """聚合筛选器核心层的 report 输出，返回汇总和具体过程两张表。
 
     :param selector: 已拟合的单筛选器、组合筛选器、Pipeline、筛选器列表或
         SelectionReport 快照。列表可混合上述筛选流程，也可使用 ``(名称, 筛选器)``
@@ -102,29 +100,7 @@ def selection_report(
     if not isinstance(relation, str):
         raise ValidationError("relation 必须为筛选关系名称字符串")
     report = collect_selection_report(selector, relation=relation, strict=strict)
-    metadata = report.metadata
-    if strict and not metadata.get("完整", True):
-        raise ValidationError("筛选报告不完整：" + "；".join(map(str, metadata.get("诊断", []))))
-    summary = report.summary
-    stage_info = summary.set_index("阶段路径")
-    parts = []
-    for attribute, kind in (("details", "特征决策"), ("metrics", "指标明细"), ("history", "迭代事件")):
-        frame = getattr(report, attribute)
-        if frame.empty:
-            continue
-        frame.insert(0, "记录类型", kind)
-        for column in ("阶段编号", "阶段名称", "筛选器"):
-            if column not in frame:
-                frame[column] = frame["阶段路径"].map(stage_info[column])
-        parts.append(frame)
-    process = _selection_table(pd.concat(parts, ignore_index=True, sort=False) if parts else [], _PROCESS_COLUMNS)
-    if not process.empty:
-        stage_order = {path: index for index, path in enumerate(summary["阶段路径"])}
-        order = process["阶段路径"].map(stage_order).fillna(len(stage_order)).sort_values(kind="stable").index
-        process = process.loc[order].reset_index(drop=True)
-    summary.attrs = copy.deepcopy(metadata)
-    process.attrs = copy.deepcopy(metadata)
-    return summary, process
+    return report.report(strict=strict)
 
 
 def _validate_bool(value: bool, name: str) -> None:
