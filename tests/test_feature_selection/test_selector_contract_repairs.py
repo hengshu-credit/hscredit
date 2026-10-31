@@ -352,25 +352,17 @@ def test_boruta_exposes_statistical_decisions_across_all_iterations():
     assert "信号" in selector.selected_features_
 
 
-def test_empty_report_summary_is_printable(capsys):
-    collector = SelectionReportCollector()
-
-    collector.print_summary()
-
-    assert "无筛选记录" in capsys.readouterr().out
+def test_empty_report_preserves_diagnostics_without_printing():
+    with pytest.raises(ValidationError, match="无筛选记录"):
+        SelectionReportCollector().report()
+    summary, details = SelectionReportCollector(strict=False).report()
+    assert summary.empty and details.empty
+    assert summary.attrs["诊断"] == ["无筛选记录"]
 
 
 def test_feature_trace_preserves_first_appearance_order():
-    collector = SelectionReportCollector()
-    collector.reports = [
-        {
-            "stage_name": "阶段1",
-            "筛选器": "测试",
-            "选中特征": ["乙", "甲"],
-            "剔除特征": ["丙"],
-            "特征得分": {},
-            "剔除原因": ["测试"],
-        }
-    ]
+    frame = pd.DataFrame({"乙": [1, 2], "甲": [3, 4], "丙": [np.nan, np.nan]})
+    selector = selectors.NullSelector(n_jobs=1).fit(frame)
+    collector = SelectionReportCollector(source=selector)
 
     assert collector.get_feature_trace()["特征"].tolist() == ["乙", "甲", "丙"]

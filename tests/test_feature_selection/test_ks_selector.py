@@ -40,14 +40,14 @@ def test_raw_ks_threshold_and_chinese_report(sample_df):
     pd.testing.assert_frame_equal(result, sample_df[["正向", "反向", "边界", "目标"]])
     assert selector.get_support().tolist() == [True, True, True, False, False]
     assert selector.get_feature_names_out().tolist() == selector.selected_features_ + ["目标"]
-    report = selector.get_selection_report()
-    assert report["输入特征数"] == 5
-    assert report["选中特征数"] == 3
-    assert report["筛选方法"] == "KS值筛选"
+    summary, details = selector.report()
+    assert summary.iloc[0]["输入特征数"] == 5
+    assert summary.iloc[0]["选中特征数"] == 3
+    assert details.query("记录类型 == '特征决策'")["筛选方法"].eq("KS值筛选").all()
     assert set(selector.dropped_.columns) == {"特征", "剔除原因", "KS值", "阈值"}
     assert all("< 阈值" in reason for reason in selector.dropped_["剔除原因"])
-    collector = SelectionReportCollector().add_report(selector)
-    assert collector.get_summary()["最终特征数"] == 3
+    collector = SelectionReportCollector().add_source(selector)
+    assert collector.report()[0].iloc[0]["选中特征数"] == 3
 
 
 def test_tied_values_are_invariant_to_row_order(sample_df):

@@ -113,7 +113,7 @@ class KSSelector(BaseFeatureSelector):
     ['评分']
     >>> selector.fit(df.drop(columns='FPD'), df['FPD'])  # sklearn 风格
     KSSelector(...)
-    >>> report = selector.get_selection_report()
+    >>> summary, details = selector.report()
 
     同时传入含目标列的数据框与外部 y 时，使用外部 y，目标列始终不参与筛选。
     ``transform`` 仅选择原始列，不输出类别坏样本率或分箱索引。

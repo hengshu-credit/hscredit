@@ -23,7 +23,6 @@
 """
 
 from typing import Union, List, Optional, Dict, Any
-import copy
 import numpy as np
 import pandas as pd
 
@@ -561,21 +560,3 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
                 "rm_reason": self.dropped_["筛选阶段"] if len(self.dropped_) > 0 else pd.Series(dtype=object),
             }
         )
-
-    def get_selection_report(self) -> Dict[str, Any]:
-        """获取包含阶段明细的筛选报告。"""
-        if hasattr(self, "_selection_report_dict_"):
-            return copy.deepcopy(self._selection_report_dict_)
-        report = super().get_selection_report()
-        if report.get("状态") == "未拟合":
-            return report
-
-        report["阈值"] = {
-            "null_threshold": self.null_threshold,
-            "iv_threshold": self.iv_threshold,
-            "corr_threshold": self.corr_threshold,
-            "mode_threshold": self.mode_threshold,
-        }
-        if hasattr(self, "stage_reports_"):
-            report["阶段明细"] = copy.deepcopy(self.stage_reports_)
-        return report

@@ -64,8 +64,12 @@ def test_raw_scorecard_tuning_refits_cloned_binning_inside_each_fold(cls, data, 
     assert not report._scorecard_points_table().empty
     assert not report._scorecard_formula_table().empty
     process = report.get_training_process()
-    assert "特征筛选记录" in process and "预处理步骤" in process
-    assert process["特征筛选记录"].iloc[0]["选中特征数"] == 2
+    assert "筛选汇总" in process and "预处理步骤" in process
+    assert process["筛选汇总"].iloc[0]["选中特征数"] == 2
+    assert "筛选明细" in process
+    summary, details = best.named_steps["筛选"].report()
+    pd.testing.assert_frame_equal(process["筛选汇总"].drop(columns="步骤"), summary)
+    pd.testing.assert_frame_equal(process["筛选明细"].drop(columns="步骤"), details)
     assert np.isfinite(best.predict_proba(X)).all()
 
 

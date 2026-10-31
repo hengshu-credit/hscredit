@@ -34,8 +34,14 @@ from typing import Union, List, Dict, Optional, Any, Callable
 import numpy as np
 import pandas as pd
 
-from .base import BaseFeatureSelector, CompositeFeatureSelector, SelectionReportCollector
-from .reporting import SelectionReport, collect_selection_report
+from .base import (
+    BaseFeatureSelector,
+    CompositeFeatureSelector,
+    SelectionReportCollector,
+    SelectionReport,
+    collect_selection_report,
+    selection_report,
+)
 from .variance_selector import VarianceSelector
 from .null_selector import NullSelector
 from .mode_selector import ModeSelector
@@ -67,6 +73,7 @@ __all__ = [
     "SelectionReportCollector",
     "SelectionReport",
     "collect_selection_report",
+    "selection_report",
     # 过滤法 - 基础筛选
     "TypeSelector",
     "RegexSelector",

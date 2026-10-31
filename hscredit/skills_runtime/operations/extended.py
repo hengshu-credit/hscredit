@@ -312,7 +312,8 @@ def _selector_fit(context) -> dict:
     selected = selector.fit_transform(X, y)
     selected = selected if isinstance(selected, pd.DataFrame) else pd.DataFrame(selected)
     _write_table(context, selected, "筛选结果")
-    report = selector.get_selection_report() if hasattr(selector, "get_selection_report") else {}
+    summary, details = selector.report()
+    report = {"筛选汇总": summary.to_dict("records"), "筛选明细": details.to_dict("records")}
     report_path = context.artifacts.write_json(f"{context.request.output.name}-report.json", report)
     context.artifacts.publish(report_path, f"{context.request.output.name}-report.json", artifact_type="json")
     return {"summary": {"selector": name, "selected": list(selected.columns), "report": report}}

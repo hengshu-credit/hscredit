@@ -52,7 +52,7 @@ selector = CompositeFeatureSelector(
     n_jobs=1,
 ).fit(X_train, y_train)
 
-selection_details = selector.get_selection_report_df()
+selection_details = selector.get_selection_details()
 selection_report = collect_selection_report(selector)
 display(selection_details)
 display(selection_report.summary)
@@ -265,7 +265,7 @@ def main():
         "规则评估保留多 DPD 及金额口径。数据准备代码如下，后续代码按顺序运行。\n",
         "<details>\n<summary>本节公共数据准备</summary>\n\n" + _code(DATA_CODE) + "\n</details>\n",
         "#### 多个筛选器组合与完整过程报告\n",
-        "依次应用缺失率、集中度、IV 和相关性筛选。`get_selection_report_df()` 返回包含各子步骤的完整决策，"
+        "依次应用缺失率、集中度、IV 和相关性筛选。`get_selection_details()` 返回包含各子步骤的完整决策，"
         "`collect_selection_report()` 直接收集已拟合步骤的汇总、逐特征决策、指标明细和迭代事件；"
         "下面保留每张表的全部行列，未将多阶段结果改写为手工摘要。\n",
         _code(SELECTION_CODE + "\n" + SELECTION_STYLE_CODE),

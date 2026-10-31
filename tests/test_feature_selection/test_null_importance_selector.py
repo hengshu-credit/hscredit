@@ -111,10 +111,11 @@ def test_null_importance_normalizes_mean_totals_before_scoring(
     scores = selector.get_scores_df().set_index("特征")
     np.testing.assert_allclose(scores.loc[X.columns, "得分"], [0.5, -0.5])
     assert scores.loc[selected, "状态"].eq("选中").all()
-    report = selector.get_selection_report()
-    assert report["特征得分"] == selector.scores_.to_dict()
+    summary, details = selector.report()
+    decisions = details.query("记录类型 == '特征决策'").set_index("特征")
+    assert decisions["指标值"].to_dict() == selector.scores_.to_dict()
     if not dropped.empty:
-        pd.testing.assert_frame_equal(pd.DataFrame(report["剔除详情"]), selector.get_dropped_df())
+        assert decisions.query("筛选结果 == '剔除'").index.tolist() == selector.get_dropped_df()["特征"].tolist()
 
 
 @pytest.mark.parametrize(

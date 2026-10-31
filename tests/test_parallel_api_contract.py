@@ -180,7 +180,7 @@ PUBLIC_PARALLEL_ENTRIES = {
 
 NON_BATCH_EXPORTS = {
     binning: {"CustomObjectives", "BinSpec"},
-    selectors: {"SelectionReportCollector", "SelectionReport", "collect_selection_report"},
+    selectors: {"SelectionReportCollector", "SelectionReport", "collect_selection_report", "selection_report"},
     encoders: set(),
     rules: {
         "RuleArtifact",

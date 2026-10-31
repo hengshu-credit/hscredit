@@ -19,14 +19,14 @@
 >>> y = pd.Series(np.random.randint(0, 2, 100))
 >>> selector = VarianceSelector(threshold=0.1)
 >>> selector.fit(X, y)
->>> report = selector.get_selection_report()
->>> print(f"选中特征数: {report['选中特征数']}")
+>>> summary, details = selector.report()
+>>> summary["选中特征数"]
 """
 
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import Union, List, Dict, Optional, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import copy
 import inspect
 from time import perf_counter
@@ -52,6 +52,1171 @@ from ...utils.parallel import (
     resolve_n_jobs,
     validate_parallel_config,
 )
+
+SCHEMA_VERSION = 1
+DETAIL_COLUMNS = [
+    "阶段编号",
+    "阶段路径",
+    "阶段名称",
+    "筛选器",
+    "筛选方法",
+    "特征",
+    "输入顺序",
+    "计算域",
+    "评估状态",
+    "筛选结果",
+    "决策来源",
+    "指标名称",
+    "指标值",
+    "指标方向",
+    "判定方式",
+    "比较符",
+    "有效阈值",
+    "决策轮次",
+    "关联特征",
+    "筛选原因",
+]
+SUMMARY_COLUMNS = [
+    "阶段编号",
+    "阶段路径",
+    "父路径",
+    "阶段名称",
+    "筛选器",
+    "关系类型",
+    "执行状态",
+    "输入特征数",
+    "选中特征数",
+    "剔除特征数",
+    "保留率",
+    "耗时秒",
+    "停止原因",
+]
+METRIC_COLUMNS = [
+    "阶段路径",
+    "特征",
+    "轮次",
+    "折号",
+    "指标名称",
+    "数值",
+    "文本值",
+    "统计口径",
+    "比较符",
+    "阈值",
+    "条件结果",
+    "有效性",
+]
+HISTORY_COLUMNS = [
+    "阶段路径",
+    "事件编号",
+    "轮次",
+    "特征",
+    "动作",
+    "候选标识",
+    "候选子集",
+    "指标名称",
+    "指标值",
+    "基准分",
+    "候选分",
+    "改善量",
+    "有效阈值",
+    "是否有效",
+    "是否采纳",
+    "关联特征",
+    "原因",
+    "补充信息",
+]
+PROCESS_COLUMNS = list(dict.fromkeys(["记录类型"] + DETAIL_COLUMNS + METRIC_COLUMNS + HISTORY_COLUMNS))
+TRACE_COLUMNS = ["阶段路径", "阶段名称", "特征", "筛选结果", "评估状态", "筛选原因"]
+_INT_COLUMNS = {
+    "阶段编号",
+    "输入顺序",
+    "决策轮次",
+    "输入特征数",
+    "选中特征数",
+    "剔除特征数",
+    "轮次",
+    "折号",
+    "事件编号",
+}
+_FLOAT_COLUMNS = {"指标值", "有效阈值", "保留率", "耗时秒", "数值", "阈值", "基准分", "候选分", "改善量"}
+_BOOL_COLUMNS = {"条件结果", "是否有效", "是否采纳"}
+
+
+def _table(records, columns):
+    frame = pd.DataFrame(records, columns=columns, dtype=object)
+    for name in columns:
+        if name in _INT_COLUMNS:
+            frame[name] = pd.array(frame[name], dtype="Int64")
+        elif name in _FLOAT_COLUMNS:
+            frame[name] = pd.array(pd.to_numeric(frame[name], errors="coerce"), dtype="Float64")
+        elif name in _BOOL_COLUMNS:
+            frame[name] = pd.array(frame[name], dtype="boolean")
+        else:
+            frame[name] = pd.Series([copy.deepcopy(value) for value in frame[name]], index=frame.index, dtype=object)
+    return frame
+
+
+def _detached_frame(frame):
+    # pandas deep=True does not isolate nested mutable objects in object columns.
+    result = frame.copy(deep=True)
+    for name in result.select_dtypes(include="object").columns:
+        result[name] = pd.Series([copy.deepcopy(value) for value in result[name]], index=result.index, dtype=object)
+    return result
+
+
+class SelectionReport:
+    """完整筛选报告快照。
+
+    **参数**
+
+    :param summary: 默认值为 ``None`` 。固定结构的阶段汇总
+    :param details: 默认值为 ``None`` 。每阶段每个输入字段的决策明细
+    :param metrics: 默认值为 ``None`` 。多指标长表
+    :param history: 默认值为 ``None`` 。迭代事件表
+    :param metadata: 默认值为 ``None`` 。拟合快照和诊断，不含逐行训练样本
+
+    **属性**
+
+    所有公开表和元数据属性均返回隔离副本，编辑报告不会改写模型。
+
+    **参考样例**
+
+    >>> report = collect_selection_report(fitted_selector)
+    >>> report.details
+    >>> report.save('筛选报告')
+    """
+
+    def __init__(self, summary=None, details=None, metrics=None, history=None, metadata=None):
+        self._summary = _table([] if summary is None else summary, SUMMARY_COLUMNS)
+        self._details = _table([] if details is None else details, DETAIL_COLUMNS)
+        self._metrics = _table([] if metrics is None else metrics, METRIC_COLUMNS)
+        self._history = _table([] if history is None else history, HISTORY_COLUMNS)
+        self._metadata = copy.deepcopy(metadata or {})
+        self._metadata.setdefault("schema_version", SCHEMA_VERSION)
+        self._metadata.setdefault("完整", True)
+        self._metadata.setdefault("诊断", [])
+
+    @property
+    def summary(self):
+        return _detached_frame(self._summary)
+
+    @property
+    def details(self):
+        return _detached_frame(self._details)
+
+    @property
+    def metrics(self):
+        return _detached_frame(self._metrics)
+
+    @property
+    def history(self):
+        return _detached_frame(self._history)
+
+    @property
+    def metadata(self):
+        return copy.deepcopy(self._metadata)
+
+    def report(self, *, strict: bool = True) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """按统一中文表头返回筛选汇总和具体明细两张表。
+
+        :param strict: 默认 True，拒绝不完整快照；False 保留已有记录和 attrs 诊断。
+        :return: ``(summary, details)``，列顺序分别为 SUMMARY_COLUMNS、PROCESS_COLUMNS。
+            明细用“记录类型”区分特征决策、指标明细、迭代事件，保留不同算法的
+            判定指标、阈值、条件、关联特征与轮次。同阶段按上述类型排列，类型内
+            保持原始记录顺序。返回独立副本，不舍入、不重算、不生成文件。
+        :raises ValidationError: strict 不是布尔值或严格模式下快照不完整。
+        """
+        if not isinstance(strict, bool):
+            raise ValidationError("strict 必须为布尔值")
+        metadata = self.metadata
+        if strict and not metadata.get("完整", True):
+            raise ValidationError("筛选报告不完整：" + "；".join(map(str, metadata.get("诊断", []))))
+        summary = self.summary
+        stage_info = summary.set_index("阶段路径")
+        parts = []
+        for attribute, kind in (("details", "特征决策"), ("metrics", "指标明细"), ("history", "迭代事件")):
+            frame = getattr(self, attribute)
+            if frame.empty:
+                continue
+            frame.insert(0, "记录类型", kind)
+            for column in ("阶段编号", "阶段名称", "筛选器"):
+                if column not in frame:
+                    frame[column] = frame["阶段路径"].map(stage_info[column])
+            parts.append(frame)
+        process = _table(pd.concat(parts, ignore_index=True, sort=False) if parts else [], PROCESS_COLUMNS)
+        if not process.empty:
+            stage_order = {path: index for index, path in enumerate(summary["阶段路径"])}
+            order = process["阶段路径"].map(stage_order).fillna(len(stage_order)).sort_values(kind="stable").index
+            process = process.loc[order].reset_index(drop=True)
+        summary.attrs = copy.deepcopy(metadata)
+        process.attrs = copy.deepcopy(metadata)
+        return summary, process
+
+    def copy(self):
+        return SelectionReport(self.summary, self.details, self.metrics, self.history, self.metadata)
+
+    def to_dict(self):
+        """返回完整 Python 报告；JSON 类型协议由保存适配器处理。"""
+        return {
+            "阶段汇总": self.summary.to_dict("records"),
+            "特征决策": self.details.to_dict("records"),
+            "指标明细": self.metrics.to_dict("records"),
+            "迭代事件": self.history.to_dict("records"),
+            "元数据": self.metadata,
+        }
+
+    def get_feature_trace(self, *, max_rows=1000000):
+        """按需展开全字段追踪；提前预算，避免阶段数乘字段数失控。"""
+        features = list(dict.fromkeys(self._details["特征"].tolist()))
+        if len(features) * len(self._summary) > max_rows:
+            raise ValidationError("完整特征追踪超出 max_rows 预算，请使用稀疏特征决策表或提高预算")
+        rows = []
+        for _, stage in self._summary.iterrows():
+            part = self._details[self._details["阶段路径"] == stage["阶段路径"]]
+            mapping = {row["特征"]: row for row in part.to_dict("records")}
+            for feature in features:
+                source = mapping.get(feature)
+                rows.append(
+                    {
+                        "阶段路径": stage["阶段路径"],
+                        "阶段名称": stage["阶段名称"],
+                        "特征": feature,
+                        "筛选结果": (
+                            source["筛选结果"] if source else ("未执行" if stage["执行状态"] != "已完成" else "未进入")
+                        ),
+                        "评估状态": source["评估状态"] if source else "未计算",
+                        "筛选原因": source["筛选原因"] if source else stage["停止原因"],
+                    }
+                )
+        return _table(rows, TRACE_COLUMNS)
+
+    def save(
+        self,
+        path,
+        *,
+        formats=("xlsx", "json"),
+        overwrite=False,
+        max_rows_per_sheet=1048575,
+        max_excel_cells=5000000,
+        max_sheets=200,
+        by_selector=False,
+        allow_incomplete=False,
+    ):
+        """以版本目录及原子清单归档快照，参数与 save_selection_report 一致。
+
+        :param path: 归档名称或带 .xlsx/.json 后缀的路径；实际文件位于版本目录。
+        :param formats: 默认 ('xlsx', 'json')，也支持单个格式字符串。
+        :param overwrite: 默认 False；是否更新同名发布清单，旧版本仍保留。
+        :param max_rows_per_sheet: 每表最大数据行数，默认 1048575，不含表头。
+        :param max_excel_cells: 总单元格预算，默认 5000000，包含表头。
+        :param max_sheets: 最多工作表数，默认 200。
+        :param by_selector: 默认 False；是否额外按阶段导出特征决策表。
+        :param allow_incomplete: 默认 False；是否允许归档不完整快照。
+        :return: 包含实际路径、清单、制品、工作表映射及完整性的字典。
+        """
+        from ...report.selection_report import save_selection_report
+
+        return save_selection_report(
+            report=self,
+            path=path,
+            formats=formats,
+            overwrite=overwrite,
+            max_rows_per_sheet=max_rows_per_sheet,
+            max_excel_cells=max_excel_cells,
+            max_sheets=max_sheets,
+            by_selector=by_selector,
+            allow_incomplete=allow_incomplete,
+        )
+
+    def to_report_result(self):
+        """显式转换为报告层公共结果；仅此调用复制各章节表。"""
+        from ...report.selection_report import to_report_result
+
+        return to_report_result(self)
+
+
+# 指标名称、方向、比较符、判定方式。主指标和有效阈值必须属于同一统计量。
+_ADAPTERS = {
+    "NullSelector": ("缺失率", "越小越优", "<", "数值阈值"),
+    "ModeSelector": ("众数占比", "越小越优", "<", "数值阈值"),
+    "CardinalitySelector": ("唯一值数", "越小越优", "<=", "数值阈值"),
+    "TypeSelector": ("类型匹配", "不适用", "", "类型条件"),
+    "RegexSelector": ("最终匹配", "不适用", "", "正则条件"),
+    "VarianceSelector": ("总体方差", "越大越优", ">", "数值阈值"),
+    "Chi2Selector": ("卡方统计量", "越大越优", ">=", "多条件"),
+    "FTestSelector": ("F统计量", "越大越优", ">=", "多条件"),
+    "MutualInfoSelector": ("互信息", "越大越优", ">=", "数值阈值"),
+    "IVSelector": ("IV", "越大越优", ">=", "数值阈值"),
+    "KSSelector": ("KS", "越大越优", ">=", "数值阈值"),
+    "LiftSelector": ("方向改善量", "越大越优", ">=", "数值阈值"),
+    "PSISelector": ("PSI", "越小越优", "<", "数值阈值"),
+    "StabilityAwareSelector": ("综合分", "越大越优", ">=", "多条件"),
+    "CorrSelector": ("保留优先权重", "越大越优", "", "相关冲突"),
+    "VIFSelector": ("VIF", "越小越优", "<=", "迭代阈值"),
+    "FeatureImportanceSelector": ("模型重要性", "越大越优", ">=", "重要性条件"),
+    "NullImportanceSelector": ("零重要性得分", "越大越优", ">", "数值阈值"),
+    "RFESelector": ("消除排名", "越小越优", "<=", "排名数量"),
+    "SequentialFeatureSelector": ("选择标志", "不适用", "", "候选择优"),
+    "BorutaSelector": ("显著性p值", "越小越优", "<=", "统计显著性"),
+    "StepwiseSelector": ("1-p值", "越大越优", "", "候选模型准则"),
+}
+_SERIES_METRICS = {
+    "scores_": "筛选得分",
+    "valid_counts_": "有效样本数",
+    "missing_counts_": "缺失数",
+    "total_counts_": "总样本数",
+    "mode_values_": "众数值",
+    "mode_counts_": "众数计数",
+    "cardinalities_": "唯一值数",
+    "dtypes_": "原始类型",
+    "matches_": "原始匹配",
+    "variances_": "总体方差",
+    "ranges_": "极差",
+    "p_values_": "p值",
+    "ranks_": "排名",
+    "test_methods_": "检验方法",
+    "category_counts_": "类别数",
+    "metric_methods_": "计算口径",
+    "psi_std_": "PSI标准差",
+    "psi_max_": "PSI最大值",
+    "reference_counts_": "基准样本数",
+    "comparison_counts_": "比较样本数",
+    "iv_scores_": "IV",
+    "psi_scores_": "PSI",
+    "combined_scores_": "综合分",
+    "hits_": "命中次数",
+    "support_": "强支持",
+    "support_weak_": "弱支持",
+    "decision_": "统计决策",
+    "importance_scores_": "平均重要性",
+    "actual_importances_": "真实重要性均值",
+    "null_importances_": "随机重要性均值",
+    "decision_vif_": "决策时VIF",
+    "elimination_round_": "淘汰轮次",
+    "candidate_scores_": "最近候选子集评分",
+    "ranking_": "排名",
+    "decision_importances_": "决策时重要性",
+    "decision_correlations_": "冲突相关系数",
+    "association_features_": "关联特征",
+    "selection_reasons_": "决策解释",
+    "raw_scores_": "原始检验统计量",
+    "discrete_features_": "离散特征判定",
+}
+
+
+def _scalar(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _number(value):
+    value = _scalar(value)
+    return value if isinstance(value, (int, float, bool)) else None
+
+
+def _validity(value):
+    number = _number(value)
+    if number is None:
+        return "文本" if value is not None and value is not pd.NA else "缺失"
+    if np.isnan(number):
+        return "缺失"
+    if np.isposinf(number):
+        return "正无穷"
+    if np.isneginf(number):
+        return "负无穷"
+    return "有效"
+
+
+def _mapping(value, features):
+    if isinstance(value, pd.Series):
+        return value.to_dict()
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, (np.ndarray, list, tuple)) and len(value) == len(features):
+        return dict(zip(features, value))
+    return {}
+
+
+def _parameters(value, seen=None, depth=0):
+    """不保留样本或已训练模型的参数描述；容器递归和估计器循环受控。"""
+    seen = set() if seen is None else seen
+    value = _scalar(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (pd.DataFrame, pd.Series, np.ndarray)):
+        result = {"对象类型": type(value).__name__, "形状": tuple(value.shape), "数据内容": "未保存"}
+        if isinstance(value, pd.DataFrame):
+            result["字段"] = list(value.columns)
+        return result
+    if id(value) in seen or depth > 6:
+        return {"对象类型": type(value).__name__, "内容": "循环引用或超出深度"}
+    seen.add(id(value))
+    try:
+        if isinstance(value, dict):
+            return {copy.deepcopy(k): _parameters(v, seen, depth + 1) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_parameters(v, seen, depth + 1) for v in value]
+        if hasattr(value, "get_params"):
+            return {
+                "对象类型": f"{type(value).__module__}.{type(value).__name__}",
+                "参数": _parameters(value.get_params(deep=False), seen, depth + 1),
+            }
+        return {"对象类型": f"{type(value).__module__}.{type(value).__name__}", "内容": "未保存"}
+    finally:
+        seen.remove(id(value))
+
+
+def _selector_family(selector):
+    """按继承链选择算法口径，派生类保留真实类名并继承其筛选逻辑。"""
+    return next(
+        (base.__name__ for base in type(selector).__mro__ if base.__name__ in _ADAPTERS),
+        type(selector).__name__,
+    )
+
+
+def _main_values(selector, features):
+    cls = _selector_family(selector)
+    name, direction, comparison, mode = _ADAPTERS.get(cls, ("筛选得分", "由筛选器定义", "", "自定义筛选"))
+    name = getattr(selector, "score_name_", name)
+    direction = getattr(selector, "score_direction_", direction)
+    direction = {"越大越好": "越大越优", "越小越好": "越小越优", "候选子集评分越大越好": "越大越优"}.get(
+        direction, direction
+    )
+    values = _mapping(getattr(selector, "scores_", None), features)
+    threshold = getattr(
+        selector, "effective_threshold_", getattr(selector, "threshold_", getattr(selector, "threshold", None))
+    )
+    if cls == "VarianceSelector" and hasattr(selector, "variances_"):
+        values = _mapping(selector.variances_, features)
+    if cls == "FTestSelector" and hasattr(selector, "raw_scores_"):
+        values = _mapping(selector.raw_scores_, features)
+    if cls == "BorutaSelector":
+        values = _mapping(getattr(selector, "p_values_", None), features)
+        name, direction = "显著性p值", "越小越优"
+        threshold = getattr(selector, "corrected_alpha_", float(selector.alpha) / max(1, len(values)))
+    if cls == "StabilityAwareSelector":
+        threshold = getattr(selector, "score_threshold", threshold)
+    if cls == "RFESelector":
+        threshold = 1
+    if cls in {"TypeSelector", "RegexSelector", "CorrSelector", "SequentialFeatureSelector", "StepwiseSelector"}:
+        threshold = None
+    if cls == "FeatureImportanceSelector" and getattr(selector, "selection_mode_", None) == "前K个":
+        threshold, comparison, mode = None, "", "排名数量"
+    # VIF 的最终 scores 可能只有幸存字段；优先用拟合时保存的原始淘汰值补齐。
+    if cls == "VIFSelector":
+        values = dict(values)
+        values.update(_mapping(getattr(selector, "decision_vif_", None), features))
+        dropped = getattr(selector, "dropped_", None)
+        if isinstance(dropped, pd.DataFrame) and "VIF值" in dropped:
+            values.update(dict(zip(dropped["特征"], dropped["VIF值"])))
+    return name, direction, comparison, mode, _number(threshold), values
+
+
+def _single_report(selector):
+    if not bool(getattr(selector, "_is_fitted", False)):
+        raise NotFittedError("筛选器尚未拟合，无法取得筛选报告")
+    features = list(getattr(selector, "_feature_names", getattr(selector, "feature_names_in_", [])))
+    feature_set = set(features)
+    selected = set(getattr(selector, "selected_features_", []))
+    included = set(getattr(selector, "include_", []) or [])
+    excluded = set(getattr(selector, "exclude_", []) or []) | set(getattr(selector, "forced_dropped_", []) or [])
+    cls = type(selector).__name__
+    family = _selector_family(selector)
+    is_composite = hasattr(selector, "selectors") or hasattr(selector, "stage_selectors_")
+    relation = getattr(selector, "strategy", "sequential" if hasattr(selector, "stage_selectors_") else "single")
+    metric_name, direction, comparison, mode, threshold, values = _main_values(selector, features)
+    dropped = getattr(selector, "dropped_", None)
+    dropped_map = (
+        {row["特征"]: row for row in dropped.to_dict("records")}
+        if isinstance(dropped, pd.DataFrame) and "特征" in dropped
+        else {}
+    )
+    conditions = getattr(selector, "condition_results_", None)
+    condition_map = conditions.to_dict("index") if isinstance(conditions, pd.DataFrame) else {}
+    reason_map = _mapping(getattr(selector, "selection_reasons_", None), features)
+    association_map = _mapping(getattr(selector, "association_features_", None), features)
+    round_map = _mapping(getattr(selector, "elimination_round_", None), features)
+    condition_values = {
+        name: _mapping(getattr(selector, name, None), features)
+        for name in ("iv_scores_", "psi_scores_", "ranks_", "percentile_values_", "scores_")
+    }
+    details, metrics, history = [], [], []
+    domain = "分箱结果" if getattr(selector, "_binner_instance", None) is not None else "原始值"
+    path = "selector"
+    calculated_features = set(getattr(selector, "selection_input_features_", features))
+    for position, feature in enumerate(features):
+        raw = values.get(feature)
+        numeric = _number(raw)
+        valid = _validity(raw)
+        kept = feature in selected
+        source = "组合规则" if is_composite else "算法"
+        reason = str(
+            reason_map.get(
+                feature, dropped_map.get(feature, {}).get("剔除原因", "满足筛选条件" if kept else "不满足筛选条件")
+            )
+        )
+        evaluated = (
+            "已计算" if feature in values and valid not in {"缺失"} else ("不适用" if is_composite else "未计算")
+        )
+        if feature in values and valid == "缺失":
+            evaluated = "无效"
+            if family in {"StepwiseSelector", "SequentialFeatureSelector"} and not kept:
+                evaluated = "未计算"
+            if feature not in calculated_features:
+                evaluated = "未计算"
+        if feature in included and kept:
+            source, reason = "强制保留", "用户强制保留"
+        if feature in excluded and not kept:
+            source = "强制剔除"
+            reason = "强制剔除覆盖强制保留" if feature in included else "用户强制剔除"
+        feature_conditions = condition_map.get(feature, {})
+        failed = [name for name, ok in feature_conditions.items() if isinstance(ok, (bool, np.bool_)) and not ok]
+        if failed and not kept and source == "算法":
+            reason = "未通过条件：" + "、".join(map(str, failed))
+        details.append(
+            {
+                "阶段编号": 1,
+                "阶段路径": path,
+                "阶段名称": cls,
+                "筛选器": cls,
+                "筛选方法": getattr(selector, "method_name", cls),
+                "特征": feature,
+                "输入顺序": position,
+                "计算域": domain,
+                "评估状态": evaluated,
+                "筛选结果": "保留" if kept else "剔除",
+                "决策来源": source,
+                "指标名称": metric_name if not is_composite else None,
+                "指标值": numeric,
+                "指标方向": direction if not is_composite else None,
+                "判定方式": mode if not is_composite else relation,
+                "比较符": comparison,
+                "有效阈值": threshold,
+                "决策轮次": round_map.get(feature),
+                "关联特征": association_map.get(feature, dropped_map.get(feature, {}).get("相关特征")),
+                "筛选原因": reason,
+            }
+        )
+        if feature in values:
+            metrics.append(
+                {
+                    "阶段路径": path,
+                    "特征": feature,
+                    "指标名称": metric_name,
+                    "数值": numeric,
+                    "文本值": None if numeric is not None else raw,
+                    "统计口径": domain,
+                    "比较符": comparison,
+                    "阈值": threshold,
+                    "条件结果": None,
+                    "有效性": valid,
+                }
+            )
+        for condition, passed in feature_conditions.items():
+            condition_value, condition_threshold, operator = numeric, threshold, comparison
+            scope = "实际判定条件"
+            if family == "StabilityAwareSelector":
+                if "IV" in condition:
+                    condition_value, condition_threshold, operator = (
+                        condition_values["iv_scores_"].get(feature),
+                        selector.iv_threshold,
+                        ">=",
+                    )
+                elif "PSI" in condition:
+                    condition_value, condition_threshold, operator = (
+                        condition_values["psi_scores_"].get(feature),
+                        selector.psi_threshold,
+                        "<=",
+                    )
+            if family in {"Chi2Selector", "FTestSelector"}:
+                if "数量" in condition:
+                    condition_value = condition_values["ranks_"].get(feature)
+                    condition_threshold = selector.k if selector.k != "all" else len(selector.ranks_)
+                    operator, scope = "<=", "按分数降序、同分保持输入顺序的排名"
+                elif "百分位" in condition:
+                    condition_value = condition_values["percentile_values_"].get(feature)
+                    condition_threshold = getattr(selector, "percentile_cutoff_", None)
+                    operator, scope = (
+                        ">或边界平局",
+                        f"稠密序号百分位；边界名额={getattr(selector, 'percentile_tie_slots_', None)}；配置百分比={selector.percentile}",
+                    )
+                    if selector.percentile in {None, 100}:
+                        operator, scope = "", "未限制百分位"
+                elif "阈值" in condition:
+                    condition_value = condition_values["scores_"].get(feature)
+                    scope = "实际筛选统计量（原始NaN归0）" if family == "FTestSelector" else scope
+            metrics.append(
+                {
+                    "阶段路径": path,
+                    "特征": feature,
+                    "指标名称": condition,
+                    "数值": _number(condition_value),
+                    "比较符": operator,
+                    "阈值": _number(condition_threshold),
+                    "条件结果": passed if isinstance(passed, (bool, np.bool_)) else None,
+                    "统计口径": scope,
+                    "有效性": _validity(condition_value),
+                }
+            )
+    for attr, label in _SERIES_METRICS.items():
+        mapping = _mapping(getattr(selector, attr, None), features)
+        if attr == "scores_":
+            label = metric_name if family != "BorutaSelector" else "命中比例"
+            if family not in {"BorutaSelector", "VarianceSelector", "FTestSelector"}:
+                continue
+            if family == "VarianceSelector":
+                label = "筛选方差"
+            if family == "FTestSelector":
+                label = "实际F筛选统计量（原始NaN归0）"
+        for feature, value in mapping.items():
+            if feature not in feature_set:
+                continue
+            extra = {}
+            if family == "StabilityAwareSelector" and attr in {"iv_scores_", "psi_scores_", "combined_scores_"}:
+                extra = {
+                    "阈值": {
+                        "iv_scores_": selector.iv_threshold,
+                        "psi_scores_": selector.psi_threshold,
+                        "combined_scores_": selector.score_threshold,
+                    }[attr],
+                    "比较符": "<=" if attr == "psi_scores_" else ">=",
+                }
+            metrics.append(
+                {
+                    "阶段路径": path,
+                    "特征": feature,
+                    "指标名称": label,
+                    "数值": _number(value),
+                    "文本值": None if _number(value) is not None else str(value),
+                    "统计口径": "拟合时保存",
+                    "有效性": _validity(value),
+                    **extra,
+                }
+            )
+    for attr in ("lift_detail_", "importance_details_", "fold_scores_"):
+        frame = getattr(selector, attr, None)
+        if not isinstance(frame, pd.DataFrame):
+            continue
+        if "特征" in frame:
+            frame = frame.set_index("特征")
+        for feature, row in frame.iterrows():
+            if feature not in feature_set:
+                continue
+            for column, value in row.items():
+                metrics.append(
+                    {
+                        "阶段路径": path,
+                        "特征": feature,
+                        "指标名称": "PSI" if attr == "fold_scores_" else str(column),
+                        "折号": list(frame.columns).index(column) + 1 if attr == "fold_scores_" else None,
+                        "数值": _number(value),
+                        "文本值": None if _number(value) is not None else str(value),
+                        "统计口径": {
+                            "lift_detail_": "LIFT方向及覆盖",
+                            "importance_details_": "真实及随机重要性",
+                            "fold_scores_": "交叉验证分折",
+                        }[attr],
+                        "有效性": _validity(value),
+                    }
+                )
+    if family == "PSISelector":
+        for attr, label in (("reference_counts_", "基准样本数"), ("comparison_counts_", "比较样本数")):
+            counts = getattr(selector, attr, None)
+            if isinstance(counts, pd.Series):
+                for fold, (fold_name, count) in enumerate(counts.items()):
+                    metrics.append(
+                        {
+                            "阶段路径": path,
+                            "特征": None,
+                            "折号": fold + 1,
+                            "指标名称": label,
+                            "数值": _number(count),
+                            "统计口径": str(fold_name),
+                            "有效性": _validity(count),
+                        }
+                    )
+    for feature, row in dropped_map.items():
+        for column, value in row.items():
+            if column in {"特征", "剔除原因", "阈值", "筛选器", "筛选器类型", "筛选轮次", "筛选阶段", "筛选阶段名称"}:
+                continue
+            metrics.append(
+                {
+                    "阶段路径": path,
+                    "特征": feature,
+                    "指标名称": column,
+                    "数值": _number(value),
+                    "文本值": None if _number(value) is not None else str(value),
+                    "统计口径": "淘汰时记录",
+                    "阈值": _number(row.get("阈值")),
+                    "有效性": _validity(value),
+                }
+            )
+    events = getattr(selector, "selection_events_", [])
+    for number, event in enumerate(events):
+        record = {name: copy.deepcopy(event.get(name)) for name in HISTORY_COLUMNS}
+        record.update({"阶段路径": path, "事件编号": number + 1})
+        record["轮次"] = event.get("轮次", event.get("迭代"))
+        history.append(record)
+    final_events = {}
+    for event in history:
+        feature = event.get("特征")
+        if feature in selected or feature in dropped_map:
+            final_events[feature] = event
+    for record in details:
+        event = final_events.get(record["特征"])
+        if event:
+            record["决策轮次"] = event["轮次"]
+            if event.get("关联特征") is not None:
+                record["关联特征"] = event["关联特征"]
+    stop = getattr(selector, "selection_stopping_reason_", "筛选完成")
+    summary = [
+        {
+            "阶段编号": 1,
+            "阶段路径": path,
+            "父路径": None,
+            "阶段名称": cls,
+            "筛选器": cls,
+            "关系类型": relation,
+            "执行状态": "已完成",
+            "输入特征数": len(features),
+            "选中特征数": len(selected),
+            "剔除特征数": len(features) - len(selected),
+            "保留率": len(selected) / len(features) if features else None,
+            "耗时秒": getattr(selector, "fit_duration_seconds_", None),
+            "停止原因": stop,
+        }
+    ]
+    snapshot = {
+        "拟合参数": _parameters(selector.get_params(deep=False)),
+        "输入字段": copy.deepcopy(features),
+        "输出字段": [feature for feature in features if feature in selected],
+        "拟合时间": datetime.now(timezone.utc).isoformat(),
+        "fit_id": getattr(selector, "fit_id_", uuid4().hex),
+        "算法指标": metric_name,
+        "计算域": domain,
+        "有效阈值": threshold,
+        "样本数": getattr(selector, "n_samples_in_", None),
+        "实际计算字段": list(getattr(selector, "selection_input_features_", values.keys())),
+        "原始字段类型": {key: str(value) for key, value in getattr(selector, "input_dtypes_", {}).items()},
+        "历史采集": "已采集" if hasattr(selector, "selection_events_") else "未采集",
+        "原始得分": copy.deepcopy(
+            _mapping(
+                getattr(selector, "scores_", None),
+                getattr(selector, "feature_names_", getattr(selector, "selection_input_features_", features)),
+            )
+        ),
+        "剔除明细列": list(dropped.columns) if isinstance(dropped, pd.DataFrame) else ["特征", "剔除原因"],
+        "剔除明细": copy.deepcopy(dropped.to_dict("records")) if isinstance(dropped, pd.DataFrame) else [],
+    }
+    # 筛选特征与实际 DataFrame 边界分别记录；透传目标不是一次特征选择。
+    target = getattr(selector, "target", None)
+    target_present = bool(getattr(selector, "target_present_at_fit_", False))
+    input_columns = getattr(selector, "input_columns_at_fit_", None)
+    transform_input = list(features if input_columns is None else input_columns)
+    if target_present and target not in transform_input:
+        transform_input.append(target)
+    transform_output = list(snapshot["输出字段"])
+    if target_present and not getattr(selector, "target_rm", False) and target not in transform_output:
+        transform_output.append(target)
+    snapshot.update(
+        {
+            "目标列": target,
+            "拟合输入含目标": target_present,
+            "目标列移除": bool(getattr(selector, "target_rm", False)),
+            "目标字段": [target] if target_present else [],
+            "转换输入字段": transform_input,
+            "转换输出字段": transform_output,
+        }
+    )
+    for attr in (
+        "iv_normalizer_",
+        "psi_normalizer_",
+        "comparison_mode_",
+        "corrected_alpha_",
+        "report_events_truncated_",
+        "report_events_bytes_",
+        "report_candidates_truncated_",
+        "report_decisions_truncated_",
+        "decision_criteria_",
+        "vif_history_truncated_",
+        "vif_history_bytes_",
+        "history_truncated_",
+        "history_bytes_",
+        "importance_runs_total_",
+        "importance_runs_stored_",
+        "importance_runs_truncated_",
+        "selection_history_truncated_",
+        "selection_history_bytes_",
+        "converged_",
+        "unresolved_features_",
+        "n_cv_splits_",
+        "candidate_failures_",
+        "initial_criterion_",
+        "final_criterion_",
+    ):
+        if hasattr(selector, attr):
+            snapshot[attr] = _parameters(getattr(selector, attr))
+    snapshot["历史策略"] = getattr(selector, "report_history", "未配置")
+    snapshot["历史截断条数"] = int(getattr(selector, "report_events_truncated_", 0))
+    snapshot["候选历史完整"] = (
+        hasattr(selector, "selection_events_") and snapshot["历史策略"] == "full" and snapshot["历史截断条数"] == 0
+    )
+    return SelectionReport(
+        summary, details, metrics, history, {"阶段快照": {path: snapshot}, "关系类型": relation, "明细完整": True}
+    )
+
+
+def _rebase(report, path, name=None, parent=None):
+    result = report.copy()
+    old_root = result._metadata.get("根路径") or (
+        result._summary.iloc[0]["阶段路径"] if len(result._summary) else "selector"
+    )
+
+    def replace(value):
+        if value is None or value is pd.NA:
+            return value
+        return path + str(value)[len(old_root) :] if str(value).startswith(old_root) else value
+
+    for frame in (result._summary, result._details, result._metrics, result._history):
+        frame["阶段路径"] = frame["阶段路径"].map(replace)
+    result._summary["父路径"] = result._summary["父路径"].map(replace)
+    root_mask = result._summary["阶段路径"] == path
+    result._summary.loc[root_mask, "父路径"] = parent
+    if name is not None:
+        result._summary.loc[root_mask, "阶段名称"] = str(name)
+        result._details.loc[result._details["阶段路径"] == path, "阶段名称"] = str(name)
+    result._metadata["阶段快照"] = {replace(k): v for k, v in result._metadata.get("阶段快照", {}).items()}
+    for boundary in result._metadata.get("字段边界", []):
+        boundary["阶段路径"] = replace(boundary["阶段路径"])
+    result._metadata["根路径"] = path
+    return result
+
+
+def _combine(reports, relation):
+    records = {"summary": [], "details": [], "metrics": [], "history": []}
+    metadata = {"关系类型": relation, "阶段快照": {}, "字段边界": [], "完整": True, "诊断": []}
+    for report in reports:
+        for name in records:
+            records[name].extend(getattr(report, "_" + name).to_dict("records"))
+        metadata["阶段快照"].update(report._metadata.get("阶段快照", {}))
+        metadata["完整"] = metadata["完整"] and report._metadata.get("完整", True)
+        metadata["诊断"].extend(report._metadata.get("诊断", []))
+        metadata["字段边界"].extend(copy.deepcopy(report._metadata.get("字段边界", [])))
+    positions = {row["阶段路径"]: index + 1 for index, row in enumerate(records["summary"])}
+    for name in ("summary", "details"):
+        for row in records[name]:
+            row["阶段编号"] = positions[row["阶段路径"]]
+    return SelectionReport(metadata=metadata, **records)
+
+
+def _skipped(selector, path, name, parent, reason, *, incomplete=False, selector_type=None):
+    summary = [
+        {
+            "阶段编号": 1,
+            "阶段路径": path,
+            "父路径": parent,
+            "阶段名称": str(name),
+            "筛选器": selector_type or type(selector).__name__,
+            "关系类型": "single",
+            "执行状态": "未拟合" if incomplete else "未执行",
+            "停止原因": reason,
+        }
+    ]
+    return SelectionReport(summary=summary, metadata={"完整": not incomplete, "诊断": [reason] if incomplete else []})
+
+
+def _children(selector):
+    if hasattr(selector, "selectors"):
+        return [
+            (str(item[0]), item[1]) if isinstance(item, tuple) and len(item) == 2 else (type(item).__name__, item)
+            for item in selector.selectors
+        ]
+    if hasattr(selector, "stage_selectors_"):
+        planned = getattr(selector, "planned_stages_", None)
+        if planned is not None:
+            return [(item["name"], selector.stage_selectors_.get(item["key"])) for item in planned]
+        return list(selector.stage_selectors_.items())
+    return []
+
+
+def capture_selection_report(selector):
+    """拟合完成时捕获结果；供基类在候选对象提交前调用。"""
+    root = _single_report(selector)
+    children = _children(selector)
+    if not children:
+        return root
+    reports = [root]
+    skipped = getattr(selector, "skipped_stages_", {})
+    executed = getattr(selector, "executed_stages_", None)
+    for position, (name, child) in enumerate(children):
+        path = f"selector/{position + 1:02d}_{name}"
+        reason = skipped.get(position) if isinstance(skipped, dict) else None
+        if reason is not None or (executed is not None and position not in executed):
+            planned = getattr(selector, "planned_stages_", None)
+            selector_type = planned[position].get("selector") if planned is not None else None
+            reports.append(
+                _skipped(child, path, name, "selector", reason or "上游无剩余特征，未执行", selector_type=selector_type)
+            )
+        elif bool(getattr(child, "_is_fitted", False)):
+            child_report = getattr(child, "selection_report_", None)
+            if not isinstance(child_report, SelectionReport):
+                raise ValidationError(f"子筛选器 {name} 缺少拟合报告快照，请重新调用 fit")
+            reports.append(_rebase(child_report, path, name, "selector"))
+        else:
+            # 子步骤既无拟合快照又无明确跳过记录，不能视为成功。
+            reports.append(
+                _skipped(child, path, name, "selector", "子筛选器未拟合，缺少明确的未执行记录", incomplete=True)
+            )
+    return _combine(reports, root._metadata["关系类型"])
+
+
+def _selector_report(selector, strict):
+    report = getattr(selector, "selection_report_", None)
+    if isinstance(report, SelectionReport):
+        return report.copy()
+    if bool(getattr(selector, "_is_fitted", False)):
+        reason = "筛选器缺少拟合报告快照，请重新调用 fit"
+        if strict:
+            raise ValidationError(reason)
+        return _skipped(selector, "selector", type(selector).__name__, None, reason, incomplete=True)
+    if strict:
+        raise NotFittedError(f"{type(selector).__name__} 尚未拟合，无法取得筛选报告")
+    return _skipped(selector, "selector", type(selector).__name__, None, "筛选器尚未拟合", incomplete=True)
+
+
+def collect_selection_report(source, relation="auto", strict=True):
+    """直接读取单筛选器、收集器、Pipeline、组合器或列表的完整报告，不执行 fit。
+
+    列表默认独立比较。显式 sequential 必须满足字段链；intersection/union
+    产生独立根决策，不把每个子报告的淘汰次数当唯一淘汰数量。
+    """
+    if relation not in {"auto", "independent", "sequential", "intersection", "union"}:
+        raise ValidationError("relation 必须为 auto、independent、sequential、intersection 或 union")
+    if isinstance(source, SelectionReportCollector):
+        source = source.get_report()
+    if isinstance(source, SelectionReport):
+        return source.copy()
+    if isinstance(source, BaseFeatureSelector) or hasattr(source, "selected_features_"):
+        result = _selector_report(source, strict)
+        if strict and not result._metadata.get("完整", True):
+            raise ValidationError("筛选报告不完整：" + "；".join(result._metadata.get("诊断", [])))
+        return result
+    is_pipeline = hasattr(source, "steps") and isinstance(source.steps, (list, tuple))
+    if is_pipeline:
+        items, effective = source.steps, "sequential"
+        prefix = "pipeline"
+    elif isinstance(source, (list, tuple)):
+        items, effective = source, "independent" if relation == "auto" else relation
+        prefix = "list"
+    else:
+        raise ValidationError("报告来源必须是筛选器、已拟合 Pipeline 或筛选器列表")
+    reports, top, diagnostics, boundaries = [], [], [], []
+    previous = None
+    transform_input = None
+    target_fields = set()
+    for position, item in enumerate(items):
+        name, child = item if isinstance(item, tuple) and len(item) == 2 else (type(item).__name__, item)
+        if (
+            isinstance(child, SelectionReport)
+            and not (isinstance(item, tuple) and len(item) == 2)
+            and len(child._summary)
+        ):
+            name = child._summary.iloc[0]["筛选器"]
+        path = f"{prefix}/{position + 1:02d}_{name}"
+        if child is None or (isinstance(child, str) and child == "passthrough"):
+            continue
+        is_selector = (
+            isinstance(child, SelectionReport)
+            or isinstance(child, BaseFeatureSelector)
+            or hasattr(child, "selected_features_")
+        )
+        if not is_selector and not hasattr(child, "steps"):
+            if not is_pipeline:
+                raise ValidationError("筛选器列表包含非筛选器对象")
+            # Models terminate the chain. Transformations require an explicit field boundary.
+            if hasattr(child, "transform"):
+                incoming = list(getattr(child, "feature_names_in_", []))
+                if transform_input is None:
+                    transform_input = incoming
+                try:
+                    outgoing = list(child.get_feature_names_out())
+                except (AttributeError, ValueError, TypeError):
+                    outgoing = None
+                if previous is not None and incoming and previous != incoming:
+                    diagnostics.append(f"{path} 的输入字段与上游输出不一致")
+                if outgoing is None:
+                    diagnostics.append(f"{path} 变换后的字段边界无法验证")
+                boundaries.append({"阶段路径": path, "类型": "变换", "输入字段": incoming, "输出字段": outgoing})
+                previous = outgoing
+            else:
+                incoming = list(getattr(child, "feature_names_in_", []))
+                if previous is not None and incoming and previous != incoming:
+                    diagnostics.append(f"{path} 模型实际输入字段与上游转换输出不一致")
+                count = getattr(child, "n_features_in_", None)
+                if not incoming and count is None:
+                    diagnostics.append(f"{path} 模型没有已拟合输入字段或数量，无法验证实际入模边界")
+                if previous is not None and count is not None and count != len(previous):
+                    diagnostics.append(f"{path} 模型实际输入数量与上游报告输出不一致")
+                boundaries.append(
+                    {
+                        "阶段路径": path,
+                        "类型": "模型",
+                        "输入字段": incoming,
+                        "输入数量": count,
+                        "非筛选字段": [field for field in incoming if field in target_fields],
+                    }
+                )
+            continue
+        part = collect_selection_report(child, strict=strict)
+        part = _rebase(part, path, name)
+        stage = part._summary.iloc[0] if len(part._summary) else None
+        snapshot = part._metadata.get("阶段快照", {}).get(path, {})
+        incoming, outgoing = snapshot.get("输入字段"), snapshot.get("输出字段")
+        actual_input = snapshot.get("转换输入字段", incoming)
+        actual_output = snapshot.get("转换输出字段", outgoing)
+        target_fields.update(snapshot.get("目标字段", []))
+        if transform_input is None:
+            transform_input = actual_input
+        if effective == "sequential" and previous is not None and actual_input is not None and previous != actual_input:
+            diagnostics.append(f"{path} 的输入字段不是上一阶段输出，不能解释为顺序筛选")
+        previous = actual_output
+        reports.append(part)
+        top.append((stage, incoming, outgoing))
+    if not reports:
+        diagnostics.append("来源中没有可收集的筛选器报告")
+    if diagnostics and strict:
+        raise ValidationError("；".join(diagnostics))
+    result = _combine(reports, effective)
+    result._metadata["根路径"] = prefix
+    result._metadata["字段边界"].extend(boundaries)
+    result._metadata["诊断"].extend(diagnostics)
+    result._metadata["完整"] = result._metadata["完整"] and not diagnostics
+    if effective in {"intersection", "union"} and top:
+        inputs = [entry[1] for entry in top]
+        if any(item is None for item in inputs) or any(item != inputs[0] for item in inputs[1:]):
+            raise ValidationError("集合组合要求每个筛选器有相同且可验证的原始输入字段")
+        outputs = [set(entry[2] or []) for entry in top]
+        final = set.intersection(*outputs) if effective == "intersection" else set.union(*outputs)
+        features = inputs[0]
+        details = [
+            {
+                "阶段编号": 1,
+                "阶段路径": "list",
+                "阶段名称": "列表集合决策",
+                "筛选器": "集合组合",
+                "筛选方法": effective,
+                "特征": f,
+                "输入顺序": i,
+                "评估状态": "不适用",
+                "筛选结果": "保留" if f in final else "剔除",
+                "决策来源": "组合规则",
+                "判定方式": effective,
+                "筛选原因": "按声明的集合规则组合",
+            }
+            for i, f in enumerate(features)
+        ]
+        summary = [
+            {
+                "阶段编号": 1,
+                "阶段路径": "list",
+                "阶段名称": "列表集合决策",
+                "筛选器": "集合组合",
+                "关系类型": effective,
+                "执行状态": "已完成",
+                "输入特征数": len(features),
+                "选中特征数": len(final),
+                "剔除特征数": len(features) - len(final),
+                "保留率": len(final) / len(features) if features else None,
+            }
+        ]
+        root = SelectionReport(
+            summary,
+            details,
+            metadata={"阶段快照": {"list": {"输入字段": features, "输出字段": [f for f in features if f in final]}}},
+        )
+        result._summary.loc[result._summary["父路径"].isna(), "父路径"] = "list"
+        result = _combine([root, result], effective)
+    if effective != "independent" and top:
+        result._metadata["最终字段"] = (
+            [f for f in top[0][1] if f in final] if effective in {"intersection", "union"} else top[-1][2]
+        )
+    if effective == "sequential" and top:
+        incoming = (
+            [field for field in transform_input if field not in target_fields] if transform_input is not None else None
+        )
+        outgoing = [field for field in previous if field not in target_fields] if previous is not None else None
+        comparable = incoming is not None and outgoing is not None and set(outgoing).issubset(incoming)
+        result._metadata["阶段快照"][prefix] = {
+            "输入字段": incoming,
+            "输出字段": outgoing,
+            "转换输入字段": transform_input,
+            "转换输出字段": previous,
+            "目标字段": [field for field in transform_input or [] if field in target_fields],
+        }
+        # A flow node makes nested pipelines rebase as one subtree. It is not a selector decision stage.
+        root_summary = [
+            {
+                "阶段编号": 1,
+                "阶段路径": prefix,
+                "阶段名称": "顺序流程",
+                "筛选器": "流程",
+                "关系类型": effective,
+                "执行状态": "已完成" if result._metadata["完整"] else "不完整",
+                "输入特征数": len(incoming) if incoming is not None else None,
+                "选中特征数": len(outgoing) if outgoing is not None else None,
+                "剔除特征数": len(incoming) - len(outgoing) if comparable else None,
+                "保留率": len(outgoing) / len(incoming) if incoming and comparable else None,
+            }
+        ]
+        result._summary.loc[result._summary["父路径"].isna(), "父路径"] = prefix
+        result = _combine([SelectionReport(summary=root_summary), result], effective)
+        result._metadata["根路径"] = prefix
+        result._metadata["最终字段"] = outgoing
+        result._metadata["最终转换字段"] = previous
+    return result
+
+
+def selection_report(
+    selector: Any,
+    *,
+    relation: str = "auto",
+    strict: bool = True,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """统一收集筛选器、收集器或 Pipeline 的报告，返回汇总和具体过程两张表。
+
+    :param selector: 已拟合的单筛选器、组合筛选器、Pipeline、筛选器列表或
+        SelectionReport 快照。列表可混合上述筛选流程，也可使用 ``(名称, 筛选器)``
+        为每个流程命名；不会创建筛选器，也不会调用 fit 或 transform。
+    :param relation: 默认 'auto'，列表按独立筛选结果汇总，Pipeline 按实际步骤串行收集。
+        串行列表须显式指定 'sequential' 并满足输入/输出字段连续；
+        'intersection' / 'union' 按共同输入字段生成交集/并集根决策。
+        'independent' 表示独立比较，不合成最终特征数。
+    :param strict: 默认 True，拒绝未拟合或不完整的来源；False 保留已有记录，
+        完整性及诊断写入两张表各自的 attrs，不添加诊断列。
+    :return: ``(summary, process)`` 两个独立 DataFrame。
+        summary 按阶段给出路径、父路径、筛选器、输入/选中/剔除特征数及保留率；
+        根流程汇总与子阶段分别呈现，不能再次累加为唯一特征数量。
+        process 用“记录类型”区分“特征决策”“指标明细”“迭代事件”，包含特征、
+        指标值、阈值、筛选结果、原因及迭代轮次等原始字段。按汇总阶段顺序排列，
+        同阶段按上述记录类型排列，各类型内部保持原始顺序；不做多对多拼接，
+        不重复计算指标，不舍入，不修改筛选器。未记录的历史不会被补造。
+        两表列名为中文，空表也保留固定列结构及 dtype。
+    :raises ValidationError: 参数无效、字段链不连续或严格模式下来源不完整。
+    :raises NotFittedError: 严格模式下筛选器尚未拟合。
+
+    **参考样例**
+
+    >>> summary, process = selection_report(selector=fitted_selector)
+    >>> summary, process = selection_report([('缺失', null_selector), ('相关性', corr_selector)], relation='sequential')
+    >>> summary, process = selection_report(fitted_pipeline)
+    """
+    if not isinstance(strict, bool):
+        raise ValidationError("strict 必须为布尔值")
+    if not isinstance(relation, str):
+        raise ValidationError("relation 必须为筛选关系名称字符串")
+    report = collect_selection_report(selector, relation=relation, strict=strict)
+    return report.report(strict=strict)
 
 
 def _fit_intersection_selector(task):
@@ -155,579 +1320,76 @@ def get_feature_importances(estimator) -> np.ndarray:
 
 
 class SelectionReportCollector:
-    """特征筛选报告收集器.
-
-    聚合多个已拟合筛选器的结果并生成汇总报告。
-    支持从已拟合筛选器、Pipeline、组合筛选器或报告快照采集；采集操作不会触发重新拟合。
-
-    **属性**
-
-    - ``reports`` ：已采集的阶段报告副本。
-
-    - ``created_at`` ：收集器创建时间。
-
-    **参考样例**
-
-    ::
-
-        >>> from hscredit.core.selectors import (
-        ...     SelectionReportCollector,
-        ...     VarianceSelector,
-        ...     CorrSelector
-        ... )
-        >>> collector = SelectionReportCollector()
-        >>>
-        >>> # 方式1: 手动添加筛选器
-        >>> selector1 = VarianceSelector(threshold=0.1)
-        >>> selector1.fit(X)
-        >>> collector.add_report(selector1)
-        >>>
-        >>> selector2 = CorrSelector(threshold=0.8)
-        >>> selector2.fit(X, y)
-        >>> collector.add_report(selector2)
-        >>>
-        >>> # 获取汇总报告
-        >>> summary = collector.get_summary()
-        >>> print(summary)
-        >>>
-        >>> # 导出为DataFrame
-        >>> df = collector.to_dataframe()
+    """收集已拟合筛选流程，并以基类的统一结构输出报告。
 
     **参数**
 
-    :param source: 可选的已拟合筛选器、Pipeline、列表或完整筛选报告；默认 ``None`` ，稍后调用 ``add_source`` 。
-    :param relation: 来源关系，默认 ``"auto"`` 自动识别； ``"independent"`` 独立比较，
-        ``"sequential"`` 顺序筛选， ``"intersection"`` 取交集， ``"union"`` 取并集。
-        普通列表默认按独立来源比较，不能据此推断逐步剔除漏斗。
+    :param name: 流程名称，默认 '特征筛选流程'。
+    :param source: 初始筛选器、组合器、Pipeline、列表或快照，默认 None。
+    :param relation: 默认 'auto'，多个来源独立比较；串行需指定 'sequential'。
+    :param strict: 默认 True，拒绝未拟合及不完整来源。
 
-    :param strict: 默认 ``True`` ，严格校验来源的报告完整性； ``False`` 允许保留不完整报告及其诊断信息。
+    **属性**
 
-    :param name: 流程名称，用于报告中显示，默认值为 "特征筛选流程"
-    :type name: str
+    :ivar name: 流程名称。
+    :ivar created_at: 收集器创建时间。
+
+    **参考样例**
+
+    >>> collector = SelectionReportCollector(relation='sequential')
+    >>> collector.add_source(fitted_null, stage_name='缺失').add_source(fitted_iv, stage_name='IV')
+    >>> summary, details = collector.report()
     """
 
     def __init__(self, name: str = "特征筛选流程", *, source=None, relation="auto", strict=True):
-        """初始化报告收集器。
-
-        **参数**
-
-        :param name: 流程名称，用于报告中显示，默认值为 "特征筛选流程"
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors.base import SelectionReportCollector
-        >>> collector = SelectionReportCollector(name="我的筛选流程")
-        """
         if not isinstance(name, str):
-            if source is not None:
-                raise ValidationError("请只通过一个参数提供报告来源")
-            source, name = name, "特征筛选流程"
-        if relation not in {"auto", "independent", "sequential", "intersection", "union"}:
+            raise ValidationError("name 必须为字符串；报告来源请通过 source 传入")
+        if not isinstance(relation, str) or relation not in {
+            "auto",
+            "independent",
+            "sequential",
+            "intersection",
+            "union",
+        }:
             raise ValidationError("未知筛选报告关系类型")
-        self.name = name
-        self.relation = relation
-        self.strict = strict
-        self._snapshots = []
-        self.reports: List[Dict[str, Any]] = []
+        if not isinstance(strict, bool):
+            raise ValidationError("strict 必须为布尔值")
+        self.name, self.relation, self.strict = name, relation, strict
         self.created_at = datetime.now()
-        self._feature_origin_count: Optional[int] = None
+        self._snapshots = []
         if source is not None:
-            self.add_report(source)
-
-    def add_report(
-        self, selector: "BaseFeatureSelector", stage_name: Optional[str] = None
-    ) -> "SelectionReportCollector":
-        """添加筛选器报告。
-
-        将已拟合的筛选器结果添加到收集器中，并生成阶段名称。阶段名称默认为"阶段{序号}"。
-
-        **参数**
-
-        :param selector: 已拟合的筛选器对象，必须实现 `get_selection_report()` 方法
-        :type selector: 'BaseFeatureSelector'
-        :param stage_name: 阶段名称，如 '粗筛'、'精筛' 等，默认根据已有报告数量自动生成
-        :type stage_name: Optional[str]
-
-        :returns: self（支持链式调用）
-
-        :raises ValidationError: 当 selector 未实现 `get_selection_report()` 方法时
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors.base import SelectionReportCollector
-        >>> from hscredit.core.selectors import VarianceSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
-        >>> y = pd.Series(np.random.randint(0, 2, 100))
-        >>> collector = SelectionReportCollector()
-        >>> selector = VarianceSelector(threshold=0.1)
-        >>> selector.fit(X, y)
-        >>> collector.add_report(selector, stage_name="粗筛")
-        SelectionReportCollector(name='特征筛选流程', stages=1)
-        """
-        from .reporting import collect_selection_report
-
-        snapshot = collect_selection_report(selector, relation=self.relation, strict=self.strict)
-        if hasattr(selector, "get_selection_report"):
-            report = copy.deepcopy(selector.get_selection_report())
-        else:
-            summary = snapshot.summary
-            roots = summary[summary["父路径"].isna()]
-            report = {"筛选器": type(selector).__name__, "输入特征数": 0, "选中特征数": 0}
-            if len(roots) == 1:
-                row = roots.iloc[0]
-                report.update({"输入特征数": row["输入特征数"], "选中特征数": row["选中特征数"]})
-
-        # 添加阶段名称
-        if stage_name:
-            report["stage_name"] = stage_name
-        else:
-            report["stage_name"] = f"阶段{len(self.reports) + 1}"
-
-        # 记录第一个筛选器的输入特征数作为原始特征数
-        if self._feature_origin_count is None and len(self.reports) == 0:
-            self._feature_origin_count = report.get("输入特征数")
-
-        self.reports.append(copy.deepcopy(report))
-        self._snapshots.append((report["stage_name"], snapshot.copy()))
-        return self
+            self.add_source(source)
 
     def add_source(self, source, stage_name=None):
-        """添加已拟合单项、Pipeline、列表或完整报告，保存隔离快照。
+        """保存来源的隔离快照并返回自身；不会重新拟合。
 
-        **参数**
-
-        :param source: 已拟合筛选器、Pipeline、列表或完整筛选报告；与构造参数 ``source`` 相同。
-        :param stage_name: 阶段名称，默认 ``None`` 时自动编号。
-
-        :return: 收集器自身，支持链式调用。
+        :param source: 已拟合筛选器、组合器、Pipeline、列表或 SelectionReport。
+        :param stage_name: 来源名称；None 时使用阶段序号。
+        :return: 收集器自身，可链式添加来源。
         """
-        return self.add_report(source, stage_name=stage_name)
+        if stage_name is not None and not isinstance(stage_name, str):
+            raise ValidationError("stage_name 必须为字符串或 None")
+        snapshot = collect_selection_report(source, relation=self.relation, strict=self.strict)
+        snapshot.report(strict=self.strict)
+        self._snapshots.append((stage_name or f"阶段{len(self._snapshots) + 1}", snapshot))
+        return self
 
-    def get_report(self):
-        """返回完整统一报告，列表默认独立比较而非伪造顺序漏斗。"""
-        from .reporting import collect_selection_report, SelectionReport
-
+    def get_report(self) -> SelectionReport:
+        """返回完整的隔离快照；空收集器返回标记为不完整的空快照。"""
         if not self._snapshots:
             return SelectionReport(metadata={"关系类型": "independent", "完整": False, "诊断": ["无筛选记录"]})
-        if len(self._snapshots) == 1:
-            return self._snapshots[0][1].copy()
         return collect_selection_report(self._snapshots, relation=self.relation, strict=self.strict)
 
-    def get_details(self):
-        return self.get_report().details
-
-    def get_summary(self) -> Dict[str, Any]:
-        """获取汇总报告。
-
-        汇总报告包含筛选流程的整体统计信息和各阶段的筛选详情。
-
-        **返回字典键值说明**
-
-        - **流程名称**  (`str`): 筛选流程名称
-
-        - **创建时间**  (`str`): 报告创建时间，格式为 YYYY-MM-DD HH:MM:SS
-
-        - **筛选轮次**  (`int`): 执行的筛选阶段总数
-
-        - **原始特征数**  (`int`): 第一阶段输入的特征数量
-
-        - **最终特征数**  (`int`): 最后一个阶段输出的特征数量
-
-        - **累计剔除特征数**  (`int`): 所有阶段累计剔除的特征总数
-
-        - **特征保留率**  (`str`): 特征保留比例，格式为 "XX.XX%"，无记录时为 "N/A"
-
-        - **筛选器列表**  (`List[Dict]`): 各阶段的筛选器详情列表，每项包含阶段、筛选器、输入、输出、剔除、阈值
-
-        :returns: 包含汇总统计和阶段详情的字典，无记录时返回包含 "状态" 和 "message" 的字典
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors.base import SelectionReportCollector
-        >>> from hscredit.core.selectors import VarianceSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
-        >>> y = pd.Series(np.random.randint(0, 2, 100))
-        >>> collector = SelectionReportCollector()
-        >>> selector = VarianceSelector(threshold=0.1)
-        >>> selector.fit(X, y)
-        >>> collector.add_report(selector)
-        >>> summary = collector.get_summary()
-        >>> print(f"原始特征数: {summary['原始特征数']}, 最终特征数: {summary['最终特征数']}")
-        原始特征数: 5, 最终特征数: ...
-
-        独立来源之间不可相减时，整体特征数与累计剔除数返回 ``None`` ，保留率为“不适用”；请读取各阶段明细。
-        """
-        if len(self.reports) == 0:
-            return {"状态": "无筛选记录", "message": "请先添加筛选器报告"}
-
-        if self._snapshots:
-            current = self.get_report()
-            stages = current.summary
-            roots = stages[stages["父路径"].isna()]
-            relation = current.metadata.get("关系类型", "independent")
-            single = len(roots) == 1
-            sequential = relation == "sequential"
-            comparable = single or sequential or relation in {"intersection", "union"}
-            first = roots.iloc[0] if len(roots) else None
-            last = roots.iloc[-1] if len(roots) else None
-            original = None if first is None or pd.isna(first["输入特征数"]) else int(first["输入特征数"])
-            final_row = first if single or relation in {"intersection", "union"} else last
-            final = (
-                None
-                if not comparable or final_row is None or pd.isna(final_row["选中特征数"])
-                else int(final_row["选中特征数"])
-            )
-            counts_comparable = original is not None and final is not None and final <= original
-            if single and pd.isna(first["剔除特征数"]):
-                counts_comparable = False
-            return {
-                "流程名称": self.name,
-                "创建时间": self.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                "关系类型": relation,
-                "状态": "完整" if current.metadata.get("完整", True) else "不完整",
-                "筛选轮次": len(stages),
-                "原始特征数": original if comparable else None,
-                "最终特征数": final,
-                "累计剔除特征数": original - final if counts_comparable else None,
-                "特征保留率": f"{final / original * 100:.2f}%" if original and counts_comparable else "不适用",
-                "筛选器列表": [
-                    {
-                        "阶段": row["阶段名称"],
-                        "筛选器": row["筛选器"],
-                        "输入": row["输入特征数"],
-                        "输出": row["选中特征数"],
-                        "剔除": row["剔除特征数"],
-                        "执行状态": row["执行状态"],
-                    }
-                    for _, row in stages.iterrows()
-                ],
-            }
-
-        # 计算统计信息
-        total_selected = self.reports[-1].get("选中特征数", 0) if self.reports else 0
-        total_dropped = sum(r.get("输入特征数", 0) - r.get("选中特征数", 0) for r in self.reports)
-
-        summary = {
-            "流程名称": self.name,
-            "创建时间": self.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-            "筛选轮次": len(self.reports),
-            "原始特征数": self._feature_origin_count,
-            "最终特征数": total_selected,
-            "累计剔除特征数": total_dropped,
-            "特征保留率": (
-                f"{total_selected / self._feature_origin_count * 100:.2f}%" if self._feature_origin_count else "N/A"
-            ),
-            "筛选器列表": [
-                {
-                    "阶段": r.get("stage_name", f"阶段{i+1}"),
-                    "筛选器": r.get("筛选器", r.get("筛选方法", "Unknown")),
-                    "输入": r.get("输入特征数", 0),
-                    "输出": r.get("选中特征数", 0),
-                    "剔除": r.get("输入特征数", 0) - r.get("选中特征数", 0),
-                    "阈值": r.get("阈值", "N/A"),
-                }
-                for i, r in enumerate(self.reports)
-            ],
-        }
-
-        return summary
-
-    def get_feature_trace(self) -> pd.DataFrame:
-        """获取特征追踪表。
-
-        记录每个特征在每个筛选阶段的状态变化，包括选中、剔除或未处理。
-
-        **返回 DataFrame 列说明**
-
-        - **特征**  (`str`): 特征名称
-
-        - **阶段**  (`str`): 筛选阶段的名称
-
-        - **筛选器**  (`str`): 该阶段使用的筛选器类名
-
-        - **状态**  (`str`): 特征在当前阶段的状态，取值为 '选中'、'剔除' 或 '未处理'
-
-        - **得分/原因**  (`Any`): 选中特征的得分，或剔除特征的原因
-
-        :returns: 特征追踪 DataFrame，无记录时返回空 DataFrame
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors.base import SelectionReportCollector
-        >>> from hscredit.core.selectors import VarianceSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
-        >>> y = pd.Series(np.random.randint(0, 2, 100))
-        >>> collector = SelectionReportCollector()
-        >>> selector = VarianceSelector(threshold=0.1)
-        >>> selector.fit(X, y)
-        >>> collector.add_report(selector)
-        >>> trace = collector.get_feature_trace()
-        >>> print(trace.head())
-        """
-        if self._snapshots:
-            return self.get_report().get_feature_trace()
-        if len(self.reports) == 0:
-            return pd.DataFrame()
-
-        # 收集所有特征，按首次出现顺序稳定输出。
-        all_features = []
-        seen_features = set()
-        for r in self.reports:
-            for feature in list(r.get("选中特征", [])) + list(r.get("剔除特征", [])):
-                if feature not in seen_features:
-                    all_features.append(feature)
-                    seen_features.add(feature)
-
-        # 构建追踪表
-        trace_data = []
-
-        for i, r in enumerate(self.reports):
-            stage = r.get("stage_name", f"阶段{i+1}")
-            selected = set(r.get("选中特征", []))
-            dropped_list = r.get("剔除特征", [])
-            dropped_set = set(dropped_list)
-            scores = r.get("特征得分", {})
-            dropped_reasons = r.get("剔除原因", [])
-            reason_by_feature = dict(zip(dropped_list, dropped_reasons))
-
-            for feat in all_features:
-                status = "选中" if feat in selected else ("剔除" if feat in dropped_set else "未处理")
-
-                # 获取得分或剔除原因
-                if status == "选中":
-                    score_value = scores.get(feat, "N/A")
-                elif status == "剔除":
-                    score_value = reason_by_feature.get(feat, "N/A")
-                else:
-                    score_value = "N/A"
-
-                trace_data.append(
-                    {
-                        "特征": feat,
-                        "阶段": stage,
-                        "筛选器": r.get("筛选器", "Unknown"),
-                        "状态": status,
-                        "得分/原因": score_value,
-                    }
-                )
-
-        return pd.DataFrame(trace_data)
-
-    def get_dropped_summary(self) -> pd.DataFrame:
-        """获取被剔除特征的汇总表。
-
-        汇总所有筛选阶段中被剔除的特征及其剔除原因。
-
-        **返回 DataFrame 列说明**
-
-        - **特征**  (`str`): 被剔除的特征名称
-
-        - **阶段**  (`str`): 该特征被剔除的阶段名称
-
-        - **筛选器**  (`str`): 该阶段使用的筛选器类名
-
-        - **剔除原因**  (`str`): 特征被剔除的原因描述
-
-        - **得分**  (`Any`): 特征在筛选器中的得分，无得分时为 'N/A'
-
-        :returns: 剔除特征汇总 DataFrame，无记录时返回空 DataFrame
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors.base import SelectionReportCollector
-        >>> from hscredit.core.selectors import VarianceSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
-        >>> y = pd.Series(np.random.randint(0, 2, 100))
-        >>> collector = SelectionReportCollector()
-        >>> selector = VarianceSelector(threshold=0.1)
-        >>> selector.fit(X, y)
-        >>> collector.add_report(selector)
-        >>> dropped = collector.get_dropped_summary()
-        >>> print(f"共剔除 {len(dropped)} 个特征")
-        """
-        if self._snapshots:
-            details = self.get_report().details
-            dropped = details.loc[
-                details["筛选结果"] == "剔除", ["特征", "阶段路径", "筛选器", "筛选原因", "指标值"]
-            ].copy()
-            return dropped.rename(columns={"阶段路径": "阶段", "筛选原因": "剔除原因", "指标值": "得分"})
-        if len(self.reports) == 0:
-            return pd.DataFrame()
-
-        dropped_records = []
-        for i, r in enumerate(self.reports):
-            dropped_features = r.get("剔除特征", [])
-            dropped_reasons = r.get("剔除原因", [])
-
-            for j, feat in enumerate(dropped_features):
-                reason = dropped_reasons[j] if j < len(dropped_reasons) else "Unknown"
-                dropped_records.append(
-                    {
-                        "特征": feat,
-                        "阶段": r.get("stage_name", f"阶段{i+1}"),
-                        "筛选器": r.get("筛选器", "Unknown"),
-                        "剔除原因": reason,
-                        "得分": r.get("特征得分", {}).get(feat, "N/A"),
-                    }
-                )
-
-        return pd.DataFrame(dropped_records)
-
-    def to_dataframe(self, kind: str = "summary") -> pd.DataFrame:
-        """转换为 DataFrame 格式。
-
-        将收集到的各筛选阶段报告汇总为一个 DataFrame，每行对应一个筛选阶段。
-
-        **返回 DataFrame 列说明**
-
-        - **阶段**  (`str`): 筛选阶段的名称
-
-        - **筛选器**  (`str`): 该阶段使用的筛选器类名
-
-        - **阈值**  (`Any`): 该阶段使用的筛选阈值
-
-        - **输入特征数**  (`int`): 该阶段输入的特征数量
-
-        - **选中特征数**  (`int`): 该阶段输出的特征数量
-
-        - **剔除特征数**  (`int`): 该阶段剔除的特征数量
-
-        :param kind: 返回表种类： ``"summary"`` （默认）返回阶段摘要， ``"details"`` 返回逐特征明细。
-
-        :returns: 筛选结果汇总 DataFrame，无记录时返回空 DataFrame
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors.base import SelectionReportCollector
-        >>> from hscredit.core.selectors import VarianceSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
-        >>> y = pd.Series(np.random.randint(0, 2, 100))
-        >>> collector = SelectionReportCollector()
-        >>> selector = VarianceSelector(threshold=0.1)
-        >>> selector.fit(X, y)
-        >>> collector.add_report(selector)
-        >>> df = collector.to_dataframe()
-        >>> print(df)
-        """
-        if kind not in {"summary", "details"}:
-            raise ValidationError("kind 必须为 summary 或 details")
-        if self._snapshots or kind == "details":
-            result = self.get_report()
-            return result.summary if kind == "summary" else result.details
-        if len(self.reports) == 0:
-            return pd.DataFrame()
-
-        rows = []
-        for i, r in enumerate(self.reports):
-            row = {
-                "阶段": r.get("stage_name", f"阶段{i+1}"),
-                "筛选器": r.get("筛选器", r.get("筛选方法", "Unknown")),
-                "阈值": r.get("阈值", "N/A"),
-                "输入特征数": r.get("输入特征数", 0),
-                "选中特征数": r.get("选中特征数", 0),
-                "剔除特征数": r.get("输入特征数", 0) - r.get("选中特征数", 0),
-            }
-            rows.append(row)
-
-        return pd.DataFrame(rows)
-
-    def to_excel(self, filepath: str, **kwargs):
-        """以版本目录和完成清单发布完整Excel/JSON，返回实际产物路径与状态。
-
-        :param filepath: 筛选报告 Excel 输出路径，父目录应可写。
-        """
-        return self.get_report().save(filepath, formats=("xlsx", "json"), **kwargs)
-
-    def print_summary(self) -> None:
-        """打印汇总报告到控制台。
-
-        以格式化的方式打印筛选流程的整体统计信息和各阶段详情。
-
-        **打印内容**
-
-        - 筛选流程名称和创建时间
-
-        - 筛选轮次、原始/最终特征数、累计剔除数、特征保留率
-
-        - 各阶段筛选器详情（阶段名、筛选器名称、输入/输出/剔除特征数）
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors.base import SelectionReportCollector
-        >>> from hscredit.core.selectors import VarianceSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
-        >>> y = pd.Series(np.random.randint(0, 2, 100))
-        >>> collector = SelectionReportCollector()
-        >>> selector = VarianceSelector(threshold=0.1)
-        >>> selector.fit(X, y)
-        >>> collector.add_report(selector)
-        >>> collector.print_summary()  # doctest: +SKIP
-        """
-        summary = self.get_summary()
-
-        if summary.get("状态") == "无筛选记录":
-            print(summary["状态"])
-            print(summary["message"])
-            return
-
-        print("=" * 60)
-        print(f"特征筛选报告 - {summary['流程名称']}")
-        print("=" * 60)
-        print(f"创建时间: {summary['创建时间']}")
-        print(f"筛选轮次: {summary['筛选轮次']}")
-        print(f"原始特征数: {summary['原始特征数']}")
-        print(f"最终特征数: {summary['最终特征数']}")
-        print(f"累计剔除: {summary['累计剔除特征数']}")
-        print(f"特征保留率: {summary['特征保留率']}")
-        print()
-        print("筛选详情:")
-        print("-" * 60)
-
-        def _cjk_ljust(s: str, width: int) -> str:
-            import unicodedata
-
-            display_w = sum(2 if unicodedata.east_asian_width(c) in ("F", "W") else 1 for c in s)
-            return s + " " * max(0, width - display_w)
-
-        print(f"{_cjk_ljust('阶段', 10)} {_cjk_ljust('筛选器', 20)} {'输入':>6} {'输出':>6} {'剔除':>6}")
-        print("-" * 60)
-        for item in summary["筛选器列表"]:
-            print(
-                f"{_cjk_ljust(str(item['阶段']), 10)} {_cjk_ljust(str(item['筛选器']), 20)} {str(item['输入']):>6} {str(item['输出']):>6} {str(item['剔除']):>6}"
-            )
-        print("=" * 60)
-
-    def __len__(self) -> int:
-        """返回已添加的筛选器数量。
-
-        :returns: 已收集的报告数量
-        """
-        return len(self.reports)
-
-    def __repr__(self) -> str:
-        """返回收集器的字符串表示。
-
-        :returns: 形如 ``SelectionReportCollector(name='...', stages=N)`` 的字符串
-        """
-        return f"SelectionReportCollector(name='{self.name}', stages={len(self.reports)})"
+    def report(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """返回统一的汇总和明细两张表，使用构造时的 relation、strict 配置。"""
+        return selection_report(self, strict=self.strict)
+
+    def get_feature_trace(self, *, max_rows=1000000) -> pd.DataFrame:
+        """按输入顺序返回跨阶段的字段追踪表；max_rows 限制展开后的行数。"""
+        return self.get_report().get_feature_trace(max_rows=max_rows)
+
+    def __repr__(self):
+        return f"SelectionReportCollector(name={self.name!r}, stages={len(self._snapshots)})"
 
 
 class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, ABC):
@@ -828,9 +1490,8 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         >>> selector = IVSelector(threshold=0.02, target='target')
         >>> selector.fit(df)
         IVSelector(...)
-        >>> report = selector.get_selection_report()
-        >>> print(f"输入: {report['输入特征数']}, 输出: {report['选中特征数']}")
-        输入: 2, 输出: 1
+        >>> summary, details = selector.report()
+        >>> print(summary[["输入特征数", "选中特征数"]])
 
     **引用**
 
@@ -1066,9 +1727,6 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         candidate._finalize_fit()
         candidate.fit_id_ = uuid4().hex
         candidate.fit_duration_seconds_ = perf_counter() - started
-        candidate._selection_dropped_columns_ = list(getattr(candidate, "dropped_", pd.DataFrame()).columns)
-        candidate._selection_report_dict_ = copy.deepcopy(candidate.get_selection_report())
-        from .reporting import capture_selection_report
 
         candidate.selection_report_ = capture_selection_report(candidate)
         self._adopt_fitted_candidate(candidate)
@@ -2019,153 +2677,6 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             output.append(self.target)
         return np.fromiter(iter(output), dtype=object, count=len(output))
 
-    def get_selection_report(self) -> Dict[str, Any]:
-        """获取中文筛选报告。
-
-        报告包含筛选器的基础信息、统计信息、选中/剔除特征列表及特征得分。
-
-        **返回字典键值说明**
-
-        - **筛选器**  (`str`): 筛选器类名
-
-        - **筛选方法**  (`str`): 筛选方法名称
-
-        - **时间戳**  (`str`): 报告生成时间，格式为 YYYY-MM-DD HH:MM:SS
-
-        - **阈值**  (`Any`): 筛选阈值
-
-        - **参数**  (`Dict`): 筛选器初始化参数（过滤后的有效参数）
-
-        - **强制操作**  (`Dict` | `None`): 强制保留/剔除的特征信息
-
-        - **输入特征数**  (`int`): fit 时的输入特征数量
-
-        - **选中特征数**  (`int`): 选中的特征数量
-
-        - **剔除特征数**  (`int`): 被剔除的特征数量
-
-        - **特征保留率**  (`str`): 保留比例，格式为 "XX.XX%"
-
-        - **选中特征**  (`List[str]`): 选中特征名称列表
-
-        - **剔除特征**  (`List[str]`，可选): 被剔除特征名称列表
-
-        - **剔除原因**  (`List[str]`，可选): 各剔除特征对应的原因
-
-        - **剔除详情**  (`List[Dict]`，可选): 剔除特征的详细信息
-
-        - **特征得分**  (`Dict`): 各特征得分的字典
-
-        - **得分统计**  (`Dict`，可选): 得分的统计摘要（最大值、最小值、平均值、中位数）
-
-        :returns: 包含筛选结果的字典，未拟合时返回包含 "状态" 和 "message" 的字典
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors import VarianceSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
-        >>> y = pd.Series(np.random.randint(0, 2, 100))
-        >>> selector = VarianceSelector(threshold=0.1)
-        >>> selector.fit(X, y)
-        VarianceSelector(...)
-        >>> report = selector.get_selection_report()
-        >>> print(f"输入: {report['输入特征数']}, 选中: {report['选中特征数']}")
-        输入: 5, 选中: ...
-        """
-        if hasattr(self, "_selection_report_dict_"):
-            return copy.deepcopy(self._selection_report_dict_)
-        if not getattr(self, "_is_fitted", False):
-            return {"状态": "未拟合", "message": "请先调用fit方法"}
-
-        # 收集参数
-        params = {}
-        for key, value in self.__dict__.items():
-            if not key.startswith("_") and key not in [
-                "n_features_in_",
-                "selected_features_",
-                "removed_features_",
-                "scores_",
-                "dropped_",
-            ]:
-                if isinstance(value, (str, int, float, bool, type(None))):
-                    params[key] = value
-
-        # 处理threshold参数（可能名称不同）
-        if hasattr(self, "threshold") and self.threshold != 0.0:
-            params["threshold"] = self.threshold
-
-        # 添加强制保留/剔除的特征信息
-        force_info = {}
-        if hasattr(self, "include_") and self.include_:
-            force_info["强制保留"] = [feature for feature in self.include_ if feature in self.selected_features_]
-        if hasattr(self, "forced_dropped_") and self.forced_dropped_:
-            force_info["强制剔除"] = self.forced_dropped_
-
-        # 构建报告
-        report = {
-            # 基础信息
-            "筛选器": self.__class__.__name__,
-            "筛选方法": getattr(self, "method_name", self.__class__.__name__),
-            "时间戳": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            # 参数信息
-            "阈值": self.threshold,
-            "参数": params,
-            # 强制保留/剔除信息
-            "强制操作": force_info if force_info else None,
-            # 统计信息
-            "输入特征数": self.n_features_in_,
-            "选中特征数": len(self.selected_features_),
-            "剔除特征数": self.n_features_in_ - len(self.selected_features_),
-            "特征保留率": (
-                f"{len(self.selected_features_) / self.n_features_in_ * 100:.2f}%" if self.n_features_in_ > 0 else "0%"
-            ),
-            # 特征列表
-            "选中特征": list(self.selected_features_),
-        }
-
-        # 添加dropped信息（DataFrame格式,便于后续分析）
-        if hasattr(self, "dropped_") and len(self.dropped_) > 0:
-            report["剔除特征"] = self.dropped_["特征"].tolist()
-            report["剔除原因"] = self.dropped_["剔除原因"].tolist()
-            report["剔除详情"] = self.dropped_.to_dict("records")
-
-        # 添加scores信息
-        if hasattr(self, "scores_") and self.scores_ is not None:
-            scores_raw = self.scores_
-            if isinstance(scores_raw, pd.Series):
-                raw_dict = scores_raw.to_dict()
-            elif isinstance(scores_raw, np.ndarray):
-                feature_names = getattr(self, "feature_names_", None)
-                if feature_names is None:
-                    feature_names = getattr(self, "selection_input_features_", self._feature_names)
-                raw_dict = dict(zip(feature_names, scores_raw))
-            elif isinstance(scores_raw, dict):
-                raw_dict = scores_raw
-            else:
-                raw_dict = {}
-            scores_dict = {}
-            for k, v in raw_dict.items():
-                if isinstance(v, (np.integer, np.floating)):
-                    scores_dict[k] = float(v)
-                else:
-                    scores_dict[k] = v
-            report["特征得分"] = scores_dict
-
-            # 添加得分统计
-            valid_scores = [v for v in scores_dict.values() if isinstance(v, (int, float)) and np.isfinite(v)]
-            if valid_scores:
-                report["得分统计"] = {
-                    "最大值": max(valid_scores),
-                    "最小值": min(valid_scores),
-                    "平均值": sum(valid_scores) / len(valid_scores),
-                    "中位数": float(np.median(valid_scores)),
-                }
-
-        return copy.deepcopy(report)
-
     def report(self, *, strict: bool = True) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """返回当前筛选器的汇总与具体明细，所有筛选器使用相同中文表头。
 
@@ -2190,87 +2701,21 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         """
         if not isinstance(strict, bool):
             raise ValidationError("strict 必须为布尔值")
-        from .reporting import collect_selection_report
 
-        return collect_selection_report(self, strict=strict).report(strict=strict)
+        return selection_report(self, strict=strict)
 
     def get_selection_result(self):
         """返回与模型状态隔离的完整报告；读取报告不重新拟合或计算指标。"""
         if not getattr(self, "_is_fitted", False):
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
-        from .reporting import capture_selection_report
 
-        report = getattr(self, "selection_report_", None)
-        if report is None:
-            report = capture_selection_report(self)
-        return report.copy()
+        return _selector_report(self, strict=True)
 
     def get_selection_details(self) -> pd.DataFrame:
         """统一逐特征决策表，含强制操作和未计算指标，所有筛选器列结构一致。"""
         if not getattr(self, "_is_fitted", False):
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
-        report = getattr(self, "selection_report_", None)
-        return report.details if report is not None else self.get_selection_result().details
-
-    def get_selection_report_df(self, kind: str = "details") -> pd.DataFrame:
-        """获取固定列明细；kind='summary'兼容原有单行汇总。
-
-        适用于快速查看和导出到 Excel 等场景。
-
-        **summary 模式返回列说明**
-
-        - **筛选器**  (`str`): 筛选器类名
-
-        - **筛选方法**  (`str`): 筛选方法名称
-
-        - **阈值**  (`Any`): 筛选阈值
-
-        - **输入特征数**  (`int`): 输入特征数量
-
-        - **选中特征数**  (`int`): 选中特征数量
-
-        - **剔除特征数**  (`int`): 剔除特征数量
-
-        - **保留率**  (`str`): 特征保留比例
-
-        :param kind: 默认值为 ``'details'`` 。details返回完整逐特征决策表，summary返回单行统计
-        :type kind: str
-        :returns: 与其它筛选器相同结构的明细，或显式选择的单行汇总
-
-        **参考样例**
-
-        >>> from hscredit.core.selectors import VarianceSelector
-        >>> import pandas as pd
-        >>> import numpy as np
-        >>> np.random.seed(42)
-        >>> X = pd.DataFrame(np.random.randn(100, 5), columns=[f'f{i}' for i in range(5)])
-        >>> y = pd.Series(np.random.randint(0, 2, 100))
-        >>> selector = VarianceSelector(threshold=0.1)
-        >>> selector.fit(X, y)
-        VarianceSelector(...)
-        >>> report_df = selector.get_selection_report_df()
-        >>> print(report_df)
-        """
-        if kind == "details":
-            return self.get_selection_details()
-        if kind != "summary":
-            raise ValidationError("kind 必须为 details 或 summary")
-        if not getattr(self, "_is_fitted", False):
-            raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
-        report = self.get_selection_report()
-
-        # 提取关键信息
-        row = {
-            "筛选器": report.get("筛选器", ""),
-            "筛选方法": report.get("筛选方法", ""),
-            "阈值": report.get("阈值", ""),
-            "输入特征数": report.get("输入特征数", 0),
-            "选中特征数": report.get("选中特征数", 0),
-            "剔除特征数": report.get("剔除特征数", 0),
-            "保留率": report.get("特征保留率", ""),
-        }
-
-        return pd.DataFrame([row])
+        return self.get_selection_result().details
 
     def get_scores_df(self) -> pd.DataFrame:
         """获取特征得分的 DataFrame。
@@ -2303,12 +2748,12 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         """
         if not getattr(self, "_is_fitted", False):
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
-        report = self.get_selection_report()
-        scores = report.get("特征得分", {})
-        selected = set(report.get("选中特征", []))
+        snapshot = self.get_selection_result().metadata["阶段快照"]["selector"]
+        scores = snapshot["原始得分"]
+        selected = set(snapshot["输出字段"])
 
         records = []
-        for feat in getattr(self, "_selection_input_names_", self._feature_names):
+        for feat in snapshot["输入字段"]:
             score = scores.get(feat, np.nan)
             # 转换numpy类型
             if isinstance(score, (np.integer, np.floating)):
@@ -2345,14 +2790,10 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         >>> dropped_df = selector.get_dropped_df()
         >>> print(f"共剔除 {len(dropped_df)} 个特征")
         """
-        if hasattr(self, "_selection_report_dict_"):
-            return pd.DataFrame(
-                copy.deepcopy(self._selection_report_dict_.get("剔除详情", [])),
-                columns=self._selection_dropped_columns_,
-            )
-        if hasattr(self, "dropped_"):
-            return self.dropped_.copy(deep=True)
-        return pd.DataFrame(columns=["特征", "剔除原因"])
+        if not getattr(self, "_is_fitted", False):
+            return pd.DataFrame(columns=["特征", "剔除原因"])
+        snapshot = self.get_selection_result().metadata["阶段快照"]["selector"]
+        return pd.DataFrame(snapshot["剔除明细"], columns=snapshot["剔除明细列"])
 
     def _get_feature_names(self, X: pd.DataFrame) -> List[str]:
         """获取特征名称列表。
@@ -2679,12 +3120,3 @@ class CompositeFeatureSelector(BaseFeatureSelector):
         每项配置独立解析：子筛选器的非默认值优先，未配置项才继承父级。
         """
         self._bind_parallel_config_to_child(selector)
-
-    def get_selection_report_df(self, kind: str = "details") -> pd.DataFrame:
-        """与单项筛选器相同的固定列明细；完整子步骤使用collect_selection_report。
-
-        **参数**
-
-        :param kind: 默认值为 ``'details'`` 。details返回完整逐特征决策表，summary返回单行统计
-        """
-        return super().get_selection_report_df(kind=kind)

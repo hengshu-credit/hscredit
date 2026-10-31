@@ -54,6 +54,38 @@ def test_selection_report_public_signature_and_unfitted_input():
         selection_report(selector=NullSelector())
 
 
+def test_base_is_the_only_report_implementation_and_legacy_api_is_removed():
+    import importlib.util
+    import hscredit.core.selectors as selectors
+    import hscredit.core.selectors.base as base
+
+    assert selectors.selection_report is selection_report is base.selection_report
+    assert selectors.SelectionReport is base.SelectionReport
+    assert selectors.collect_selection_report is base.collect_selection_report
+    assert base.SelectionReport.__module__ == base.__name__
+    assert base.selection_report.__module__ == base.__name__
+    assert importlib.util.find_spec("hscredit.core.selectors.reporting") is None
+    for name in ("get_selection_report", "get_selection_report_df"):
+        assert not hasattr(NullSelector(), name)
+    collector = base.SelectionReportCollector()
+    for name in ("add_report", "get_summary", "to_dataframe", "to_excel", "reports"):
+        assert not hasattr(collector, name)
+
+
+def test_missing_fitted_snapshot_is_not_reconstructed(selector, monkeypatch):
+    import hscredit.core.selectors.base as base
+
+    del selector.selection_report_
+    monkeypatch.setattr(base, "capture_selection_report", lambda *a: pytest.fail("不能重建旧版报告"))
+    with pytest.raises(ValidationError, match="缺少拟合报告快照"):
+        selector.report()
+    with pytest.raises(ValidationError, match="缺少拟合报告快照"):
+        selector.get_selection_result()
+    summary, details = selector.report(strict=False)
+    assert summary.attrs["完整"] is False
+    assert details.empty
+
+
 @pytest.mark.parametrize(
     "option", ["excel_writer", "writer_params", "return_result", "mode", "max_sheets", "by_selector"]
 )

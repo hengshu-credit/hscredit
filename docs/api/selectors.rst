@@ -8,7 +8,8 @@
 .. rubric:: 统一筛选报告接口
 
 全部单筛选器、``CompositeFeatureSelector`` 和 ``ScorecardFeatureSelection``
-均实现 ``summary, details = selector.report()``。报告能力由筛选器核心层提供，
+均实现 ``summary, details = selector.report()``。固定表头、快照、算法适配、收集器和
+``selection_report`` 全部定义在 ``hscredit.core.selectors.base``，
 只读取拟合时保存的真实决策，不重新筛选、不重算指标、不生成文件。
 
 .. code-block:: python
@@ -21,7 +22,7 @@
    combined_summary, combined_details = composite.report()
 
 两张表的列顺序和 dtype 对所有筛选器一致；汇总使用 ``SUMMARY_COLUMNS``，
-明细使用 ``PROCESS_COLUMNS``（定义在 ``hscredit.core.selectors.reporting``）。
+明细使用 ``PROCESS_COLUMNS``（定义在 ``hscredit.core.selectors.base``）。
 汇总包含阶段、父阶段、输入/选中/剔除特征数和保留率。明细用“记录类型”区分
 特征决策、指标明细和迭代事件，保留算法特有的实际判定条件：
 
@@ -34,7 +35,18 @@
 组合报告包含根节点与子阶段，不能将其计数重复相加。
 返回值是隔离副本，修改表和 attrs 不影响筛选器；修改构造参数也不会改写已有拟合快照。
 默认未拟合时报错；``strict=False`` 可读取诊断，完整性与诊断存放在两表的 attrs。
-原 ``get_selection_report()`` 字典接口仍可使用。
+本次为不兼容升级：移除 ``get_selection_report()``、``get_selection_report_df()``、
+``hscredit.core.selectors.reporting`` 旧路径及收集器的旧字典/导出入口。
+缺少拟合快照的旧对象必须重新 ``fit``，不再从当前参数推测历史报告。
+
+.. code-block:: python
+
+   from hscredit.core.selectors.base import SelectionReportCollector, selection_report
+
+   collector = SelectionReportCollector(relation="sequential")
+   collector.add_source(fitted_null, stage_name="缺失")
+   collector.add_source(fitted_iv, stage_name="IV")
+   summary, details = collector.report()
 
 多个筛选器或已拟合 Pipeline 使用 ``hscredit.report.selection_report(...)`` 聚合，
 与各筛选器的 ``report()`` 共用核心层的输出结构，参见 :doc:`report`。

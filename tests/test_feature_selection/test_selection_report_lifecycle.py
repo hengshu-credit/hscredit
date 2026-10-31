@@ -21,7 +21,7 @@ from hscredit.core.selectors import (
     VarianceSelector,
     collect_selection_report,
 )
-from hscredit.core.selectors.reporting import DETAIL_COLUMNS, SUMMARY_COLUMNS
+from hscredit.core.selectors.base import DETAIL_COLUMNS, SUMMARY_COLUMNS
 from hscredit.exceptions import NotFittedError, ValidationError
 
 
@@ -198,9 +198,10 @@ def test_pipeline_target_is_not_an_input_to_native_model():
 def test_report_snapshot_does_not_mutate_model_and_keeps_fitted_threshold():
     frame = pd.DataFrame({"a": [1, 2, 3, 4], "b": [1, np.nan, 3, np.nan]})
     selector = NullSelector(threshold=0.3, n_jobs=1).fit(frame)
-    legacy = selector.get_selection_report()
-    assert legacy["得分统计"]["中位数"] == 0.25
-    legacy["选中特征"].clear()
+    summary, process = selector.report()
+    decisions = process.query("记录类型 == '特征决策'")
+    assert decisions["指标值"].median() == 0.25
+    process.loc[:, "特征"] = "修改副本"
     selector.get_dropped_df().loc[:, "特征"] = "已修改"
     details = selector.get_selection_details()
     details.loc[:, "特征"] = "已修改"
@@ -210,7 +211,7 @@ def test_report_snapshot_does_not_mutate_model_and_keeps_fitted_threshold():
     assert selector.selected_features_ == ["a"]
     assert selector.get_dropped_df()["特征"].tolist() == ["b"]
     selector.set_params(threshold=0.9)
-    assert selector.get_selection_report()["阈值"] == 0.3
+    assert selector.report()[1].query("记录类型 == '特征决策'")["有效阈值"].tolist() == [0.3, 0.3]
     assert selector.get_selection_details()["有效阈值"].tolist() == [0.3, 0.3]
     assert selector.get_selection_result().metadata["阶段快照"]
 
@@ -218,16 +219,17 @@ def test_report_snapshot_does_not_mutate_model_and_keeps_fitted_threshold():
 def test_forced_only_report_has_all_features_and_fixed_schema():
     frame = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
     selector = NullSelector(include=["a"], exclude=["b"], n_jobs=1).fit(frame)
-    details = selector.get_selection_report_df()
+    details = selector.get_selection_details()
     assert details.columns.tolist() == DETAIL_COLUMNS
     assert details["特征"].tolist() == ["a", "b"]
     assert details["评估状态"].tolist() == ["未计算", "未计算"]
     assert details["决策来源"].tolist() == ["强制保留", "强制剔除"]
     assert details["指标值"].isna().all()
     assert selector.get_scores_df()["特征"].tolist() == ["a", "b"]
-    assert selector.get_selection_report_df(kind="summary").shape == (1, 7)
+    assert selector.report()[0].columns.tolist() == SUMMARY_COLUMNS
+    assert selector.report()[0].shape == (1, len(SUMMARY_COLUMNS))
     with pytest.raises(NotFittedError):
-        NullSelector().get_selection_report_df()
+        NullSelector().get_selection_details()
 
 
 def test_conflicting_forced_operations_report_effective_decision():
@@ -235,7 +237,7 @@ def test_conflicting_forced_operations_report_effective_decision():
     row = selector.get_selection_details().set_index("特征").loc["a"]
     assert row["决策来源"] == "强制剔除"
     assert "覆盖" in row["筛选原因"]
-    assert "a" not in selector.get_selection_report()["强制操作"]["强制保留"]
+    assert "a" not in selector.report()[1].query("决策来源 == '强制保留'")["特征"].tolist()
 
 
 def test_composite_parent_forced_operations_and_mixed_labels():
@@ -287,15 +289,16 @@ def test_scorecard_disabled_and_forced_stages_preserve_execution_status():
 def test_collector_independent_sources_do_not_invent_final_set():
     frame = pd.DataFrame({"a": [1.0, 2.0], "b": [2.0, 3.0], "c": [4.0, 4.0]})
     first, second = [VarianceSelector(n_jobs=1).fit(frame) for _ in range(2)]
-    collector = SelectionReportCollector().add_report(first).add_report(second)
-    assert collector.get_summary()["最终特征数"] is None
-    assert collector.get_summary()["累计剔除特征数"] is None
-    assert collector.to_dataframe().columns.tolist() == SUMMARY_COLUMNS
-    assert len(collector.get_details()) == 6
-    collector.reports[0]["选中特征"].clear()
+    collector = SelectionReportCollector().add_source(first).add_source(second)
+    summary, details = collector.report()
+    assert "最终字段" not in summary.attrs
+    assert summary["剔除特征数"].tolist() == [1, 1]
+    assert summary.columns.tolist() == SUMMARY_COLUMNS
+    assert len(details.query("记录类型 == '特征决策'")) == 6
+    details.loc[:, "特征"] = "修改副本"
     assert first.selected_features_ == ["a", "b"]
     first.fit(frame[["a"]])
-    assert len(collector.get_details()) == 6
+    assert len(collector.report()[1].query("记录类型 == '特征决策'")) == 6
 
 
 def test_collector_accepts_pipeline_and_declared_sequential_list_without_refit():
@@ -303,15 +306,15 @@ def test_collector_accepts_pipeline_and_declared_sequential_list_without_refit()
     pipeline = Pipeline([("缺失", NullSelector(n_jobs=1)), ("方差", VarianceSelector(n_jobs=1))]).fit(frame)
     with patch.object(pipeline[0], "fit", side_effect=AssertionError("读取报告不能fit")):
         collector = SelectionReportCollector(source=pipeline)
-        assert collector.get_summary()["最终特征数"] == 1
-        assert len(collector.get_details()) == 4
-    sequential = SelectionReportCollector(relation="sequential").add_report(pipeline[0]).add_report(pipeline[1])
-    assert sequential.get_summary()["累计剔除特征数"] == 1
+        assert collector.report()[0].iloc[0]["选中特征数"] == 1
+        assert len(collector.report()[1].query("记录类型 == '特征决策'")) == 4
+    sequential = SelectionReportCollector(relation="sequential").add_source(pipeline[0]).add_source(pipeline[1])
+    assert sequential.report()[0].iloc[0]["剔除特征数"] == 1
 
 
 def test_collector_rejects_unfitted_by_default():
     with pytest.raises(NotFittedError):
-        SelectionReportCollector().add_report(NullSelector())
+        SelectionReportCollector().add_source(NullSelector())
     partial = SelectionReportCollector(source=NullSelector(), strict=False)
     assert not partial.get_report().metadata["完整"]
 

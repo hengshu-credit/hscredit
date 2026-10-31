@@ -43,17 +43,9 @@ def process_tables(report):
     if not relation.empty:
         overview["与搜索的关系"] = relation.iloc[0]["配置值"]
     result = {"训练概览": pd.DataFrame(overview.items(), columns=["项目", "内容"])}
-    for name in ("预处理步骤", "特征筛选记录", "特征筛选阶段"):
+    for name in ("预处理步骤", "筛选汇总", "筛选明细"):
         if name in raw and not raw[name].empty:
             table = raw[name].copy()
-            if name == "特征筛选阶段":
-                table = table[
-                    [
-                        column
-                        for column in ("步骤", "阶段名称", "输入特征数", "选中特征数", "剔除特征数", "阈值")
-                        if column in table
-                    ]
-                ]
             for column in table:
                 table[column] = table[column].map(
                     lambda v: "、".join(map(str, v)) if isinstance(v, (list, tuple)) else v

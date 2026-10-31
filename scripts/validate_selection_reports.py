@@ -22,7 +22,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
 from hscredit.core import selectors as s
-from hscredit.core.selectors.reporting import DETAIL_COLUMNS, METRIC_COLUMNS, SUMMARY_COLUMNS, HISTORY_COLUMNS
+from hscredit.core.selectors.base import DETAIL_COLUMNS, METRIC_COLUMNS, SUMMARY_COLUMNS, HISTORY_COLUMNS
 from hscredit.report import selection_report, load_selection_report
 
 NUMERIC = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"]
@@ -98,7 +98,7 @@ def validate(input_path, directory):
                 pd.testing.assert_frame_equal(direct, aggregated)
             pd.testing.assert_frame_equal(summary, report.summary)
             assert len(process) == len(report.details) + len(report.metrics) + len(report.history)
-            detail = selector.get_selection_report_df()
+            detail = selector.get_selection_details()
             assert detail.columns.tolist() == DETAIL_COLUMNS
             assert report.metrics.columns.tolist() == METRIC_COLUMNS
             assert report.summary.columns.tolist() == SUMMARY_COLUMNS

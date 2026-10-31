@@ -20,9 +20,9 @@ import numpy as np
 import pandas as pd
 from openpyxl.utils import get_column_letter
 
-from ..core.selectors.reporting import (
+from ..core.selectors.base import (
+    selection_report,
     SelectionReport,
-    collect_selection_report,
     SCHEMA_VERSION,
     DETAIL_COLUMNS,
     SUMMARY_COLUMNS,
@@ -60,47 +60,6 @@ def to_report_result(report: SelectionReport) -> ReportResult:
     if not metadata.get("完整", True):
         result.failure("来源完整性", "；".join(map(str, metadata.get("诊断", []))) or "报告来源不完整")
     return result
-
-
-def selection_report(
-    selector: Any,
-    *,
-    relation: str = "auto",
-    strict: bool = True,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """聚合筛选器核心层的 report 输出，返回汇总和具体过程两张表。
-
-    :param selector: 已拟合的单筛选器、组合筛选器、Pipeline、筛选器列表或
-        SelectionReport 快照。列表可混合上述筛选流程，也可使用 ``(名称, 筛选器)``
-        为每个流程命名；不会创建筛选器，也不会调用 fit 或 transform。
-    :param relation: 默认 'auto'，列表按独立筛选结果汇总，Pipeline 按实际步骤串行收集。
-        串行列表须显式指定 'sequential' 并满足输入/输出字段连续；
-        'intersection' / 'union' 按共同输入字段生成交集/并集根决策。
-        'independent' 表示独立比较，不合成最终特征数。
-    :param strict: 默认 True，拒绝未拟合或不完整的来源；False 保留已有记录，
-        完整性及诊断写入两张表各自的 attrs，不添加诊断列。
-    :return: ``(summary, process)`` 两个独立 DataFrame。
-        summary 按阶段给出路径、父路径、筛选器、输入/选中/剔除特征数及保留率；
-        根流程汇总与子阶段分别呈现，不能再次累加为唯一特征数量。
-        process 用“记录类型”区分“特征决策”“指标明细”“迭代事件”，包含特征、
-        指标值、阈值、筛选结果、原因及迭代轮次等原始字段。按汇总阶段顺序排列，
-        同阶段按上述记录类型排列，各类型内部保持原始顺序；不做多对多拼接，
-        不重复计算指标，不舍入，不修改筛选器。未记录的历史不会被补造。
-        两表列名为中文，空表也保留固定列结构及 dtype。
-    :raises ValidationError: 参数无效、字段链不连续或严格模式下来源不完整。
-    :raises NotFittedError: 严格模式下筛选器尚未拟合。
-
-    **参考样例**
-
-    >>> summary, process = selection_report(selector=fitted_selector)
-    >>> summary, process = selection_report([('缺失', null_selector), ('相关性', corr_selector)], relation='sequential')
-    >>> summary, process = selection_report(fitted_pipeline)
-    """
-    _validate_bool(strict, "strict")
-    if not isinstance(relation, str):
-        raise ValidationError("relation 必须为筛选关系名称字符串")
-    report = collect_selection_report(selector, relation=relation, strict=strict)
-    return report.report(strict=strict)
 
 
 def _validate_bool(value: bool, name: str) -> None:

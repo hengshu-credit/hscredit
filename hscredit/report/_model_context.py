@@ -332,18 +332,14 @@ class ModelContextMixin:
                     config = configuration_table(_fit_parameter_snapshot(_constructor_params(step)))
                     config.insert(0, "步骤", path)
                     preprocessing_params.append(config)
-                if callable(getattr(step, "get_selection_report", None)):
-                    info = step.get_selection_report()
-                    selections.append(
-                        {
-                            "步骤": path,
-                            **{
-                                key: info.get(key)
-                                for key in ("筛选方法", "输入特征数", "选中特征数", "剔除特征数", "选中特征")
-                            },
-                        }
-                    )
-                    stages.extend({"步骤": path, **item} for item in info.get("阶段明细", []))
+                from ..core.selectors.base import BaseFeatureSelector
+
+                if isinstance(step, BaseFeatureSelector):
+                    summary, details = step.report()
+                    summary.insert(0, "步骤", path)
+                    details.insert(0, "步骤", path)
+                    selections.append(summary)
+                    stages.append(details)
                 if getattr(step, "steps", None):
                     collect_steps(step, path + "__")
 
@@ -353,9 +349,9 @@ class ModelContextMixin:
         if preprocessing_params:
             result["预处理参数"] = pd.concat(preprocessing_params, ignore_index=True)
         if selections:
-            result["特征筛选记录"] = pd.DataFrame(selections)
+            result["筛选汇总"] = pd.concat(selections, ignore_index=True)
         if stages:
-            result["特征筛选阶段"] = pd.DataFrame(stages)
+            result["筛选明细"] = pd.concat(stages, ignore_index=True)
         availability = []
         for method, label in (
             ("get_training_history", "训练记录"),

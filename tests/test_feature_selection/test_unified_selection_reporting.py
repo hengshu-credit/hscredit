@@ -12,7 +12,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 
 import hscredit.core.selectors as selectors
-from hscredit.core.selectors.reporting import (
+from hscredit.core.selectors.base import (
     DETAIL_COLUMNS,
     SUMMARY_COLUMNS,
     METRIC_COLUMNS,
@@ -413,7 +413,7 @@ def test_target_passthrough_does_not_disable_model_boundary_validation():
 
 
 def test_safe_parameter_snapshot_never_calls_arbitrary_repr(data):
-    from hscredit.core.selectors.reporting import _parameters
+    from hscredit.core.selectors.base import _parameters
 
     class PrivateObject:
         def __str__(self):
