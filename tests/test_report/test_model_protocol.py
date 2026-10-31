@@ -69,9 +69,10 @@ def test_overdue_labels_and_basic_definitions_match_independent_rows(operator, d
     report.to_excel(path, with_plots=False, include_sample_records=False, mode="strict")
     book = load_workbook(path)
     basic = [c.value for row in book["1-基本信息"] for c in row]
-    assert {"标签定义与剔灰规则", "操作符", "灰样本定义", "实际剔除规则", "MOB1@3"} <= set(
+    assert {"配置项", "配置值", "标签来源", "操作符", "灰样本定义", "剔灰配置", "MOB1@3"} <= set(
         v for v in basic if isinstance(v, str)
     )
+    assert "标签定义与剔灰规则" not in basic and "实际剔除规则" not in basic
     performance = [c.value for row in book["2-模型性能"] for c in row]
     assert "MOB1@3" in performance
     assert not any(

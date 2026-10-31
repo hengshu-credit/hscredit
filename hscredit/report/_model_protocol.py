@@ -91,3 +91,26 @@ def label_definition_table(report):
                 }
             )
     return pd.DataFrame(rows)
+
+
+def label_configuration_table(report):
+    """将标签口径合并为数据样本描述中的四项配置，同一口径不重复列数据集。"""
+    definitions = label_definition_table(report)
+    rows = []
+    for field in ("标签来源", "操作符", "灰样本定义", "剔灰配置"):
+        groups = {}
+        for dataset, block in definitions.groupby("数据集", sort=False):
+            values = list(dict.fromkeys(block[field].astype(str)))
+            if field == "灰样本定义" and len(values) > 1:
+                pairs = block[["标签", field]].drop_duplicates()
+                value = "；".join(f"{label}：{rule}" for label, rule in pairs.itertuples(index=False, name=None))
+            else:
+                value = "；".join(values)
+            groups.setdefault(value, []).append(dataset)
+        content = (
+            next(iter(groups))
+            if len(groups) == 1
+            else "；".join(f"{'、'.join(datasets)}：{value}" for value, datasets in groups.items())
+        )
+        rows.append({"配置项": field, "配置值": content})
+    return pd.DataFrame(rows)

@@ -84,38 +84,6 @@ def record_identifier(value):
     return str(value)
 
 
-def fit_label_definitions(worksheet, first_row, last_row, last_column):
-    """标签规则长文本限制列宽并换行，保持基本信息页其他表格的主题样式。"""
-    merged = {
-        cell.coordinate
-        for area in worksheet.merged_cells.ranges
-        for row in worksheet.iter_rows(
-            min_row=area.min_row, max_row=area.max_row, min_col=area.min_col, max_col=area.max_col
-        )
-        for cell in row
-    }
-
-    def width(value):
-        return sum(2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1 for char in value)
-
-    for column in range(2, last_column + 1):
-        dimension = worksheet.column_dimensions[get_column_letter(column)]
-        dimension.width = min(dimension.width, 32)
-    for row in worksheet.iter_rows(min_row=first_row, max_row=last_row, min_col=2, max_col=last_column):
-        height = worksheet.row_dimensions[row[0].row].height or 15
-        for cell in row:
-            if isinstance(cell, MergedCell) or cell.coordinate in merged or not isinstance(cell.value, str):
-                continue
-            available = max(8, worksheet.column_dimensions[cell.column_letter].width - 2)
-            lines = sum(max(1, math.ceil(width(line) / available)) for line in cell.value.splitlines() or [""])
-            alignment = copy.copy(cell.alignment)
-            alignment.wrap_text = True
-            alignment.vertical = "center"
-            cell.alignment = alignment
-            height = max(height, lines * ((cell.font.sz or 10) + 3) + 3)
-        worksheet.row_dimensions[row[0].row].height = min(409, height)
-
-
 def configuration_table(mapping):
     """按配置路径逐项展示嵌套信息，避免把整个模型字典写进一个单元格。"""
     rows = []

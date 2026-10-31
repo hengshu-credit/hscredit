@@ -964,6 +964,8 @@ class ModelReport(ModelContextMixin):
         self._dataset_target_sources = state.get("_dataset_target_sources", {})
         self.explain_config = normalize_explain_config(state.get("explain_config"))
         self._label_prediction_cache = {}
+        # 旧报告可能缓存联合标签的月度结果，恢复后按当前首标签口径重算。
+        self._monthly_metrics_cache = {}
         if not hasattr(self, "task_type_"):
             from ._regression_model import is_regression
 
@@ -2707,25 +2709,28 @@ class ModelReport(ModelContextMixin):
         return result
 
     def _compute_monthly_metrics(self, date: str) -> pd.DataFrame:
-        """分月计算 KS/AUC 及评分分布（均值/标准差/极值/分位数）."""
+        """按首标签有效样本分月计算 KS/AUC 及评分分布，权重同步筛选。"""
         from ..core.metrics import ks, auc
 
         q_cols = [f"{int(round(q * 100))}%" for q in self._SCORE_DIST_QUANTILES]
 
         rows: List[Dict[str, Any]] = []
+        label = self._label_names[0] if self._label_names else None
         for ds_key in self._datasets:
-            ds = self._primary_dataset_view(ds_key)
+            ds = self._datasets[ds_key]
             if date not in ds.X.columns:
                 continue
-            dates = pd.to_datetime(ds.X[date])
+            valid = self._get_target_valid_mask(ds_key, label)
+            y, prediction = self._get_valid_target_arrays(ds_key, label)
+            weights = self._metric_weight(ds_key, label)
+            dates = pd.to_datetime(ds.X.loc[valid, date])
             months = dates.dt.to_period("M")
-            for month in sorted(months.unique()):
-                mask = months == month
-                y_m = ds.y[mask.values]
-                proba_m = ds.y_proba[mask.values]
-                score_m = np.asarray(ds.score)[mask.values]
-                weights = self._metric_weight(ds_key)
-                weights = None if weights is None else weights[mask.values]
+            for month in sorted(months.dropna().unique()):
+                mask = (months == month).to_numpy()
+                y_m = y[mask]
+                proba_m = prediction[mask]
+                score_m = proba_m
+                month_weights = None if weights is None else weights[mask]
                 if len(y_m) == 0:
                     continue
                 try:
@@ -2733,10 +2738,10 @@ class ModelReport(ModelContextMixin):
                         "数据集": ds.label,
                         "月份": str(month),
                         "样本数": len(y_m),
-                        "坏样本率": float(np.average(y_m, weights=weights)),
-                        "KS": _safe_binary_metric(ks, y_m, proba_m, sample_weight=weights),
+                        "坏样本率": float(np.average(y_m, weights=month_weights)),
+                        "KS": _safe_binary_metric(ks, y_m, proba_m, sample_weight=month_weights),
                         "AUC": _safe_binary_metric(
-                            auc, y_m, proba_m, score_direction=self.score_direction, sample_weight=weights
+                            auc, y_m, proba_m, score_direction=self.score_direction, sample_weight=month_weights
                         ),
                         "均值": float(np.nanmean(score_m)),
                         "标准差": float(np.nanstd(score_m)),
@@ -4073,16 +4078,6 @@ class ModelReport(ModelContextMixin):
                 "统计内容": self.prediction_method if isinstance(self.prediction_method, str) else "自定义函数",
             },
         ]
-        if is_multi:
-            chart_target = (
-                "任一逾期标签为1则为1；全部标签均无效时剔除"
-                if self._is_overdue_cfg()
-                else f"首标签：{self._label_names[0]}"
-            )
-            if "explicit_y" in self._dataset_target_sources.values():
-                chart_target += "；显式y的数据集使用外部标签"
-            fixed_rows.append({"统计项": "默认图表标签", "统计内容": chart_target})
-
         # ---- Step 4: 各数据集描述行（与整体样本同一张表，多标签逐标签展示坏样本率） ----
         ds_rows: List[Dict[str, Any]] = []
         for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
@@ -4110,24 +4105,17 @@ class ModelReport(ModelContextMixin):
                 content = f"样本数: {n_samples}, {label_text}: {bad_rate}%"
             ds_rows.append({"统计项": ds_label, "统计内容": content})
 
-        desc_df = pd.DataFrame(fixed_rows + ds_rows)
-        end_row, _ = dataframe2excel(
-            desc_df, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["统计项", "统计内容"]
-        )
-        from ._model_protocol import label_definition_table
+        from ._model_protocol import label_configuration_table
 
-        definitions = label_definition_table(self)
-        label_definition_start_row = end_row + 2
-        end_row, label_definition_end_col = dataframe2excel(
-            definitions,
+        desc_df = pd.DataFrame(fixed_rows + ds_rows).rename(columns={"统计项": "配置项", "统计内容": "配置值"})
+        desc_df = pd.concat([desc_df, label_configuration_table(self)], ignore_index=True)
+        end_row, _ = dataframe2excel(
+            desc_df,
             writer,
             sheet_name=ws,
-            start_row=label_definition_start_row,
-            title="标签定义与剔灰规则",
-            index=False,
-            left_cols=[column for column in definitions if not column.endswith("样本数")],
+            start_row=end_row + 1,
+            left_cols=["配置项", "配置值"],
         )
-        label_definition_end_row = end_row
 
         # 1.3 数据样本统计
         end_row, _ = writer.insert_value2sheet(
@@ -4334,7 +4322,7 @@ class ModelReport(ModelContextMixin):
                 end_row, _ = writer.insert_value2sheet(
                     ws,
                     (end_row + 2, 2),
-                    value=f"{section_idx}、分月模型效果",
+                    value=f"{section_idx}、分月模型效果" + (f"（{self._label_names[0]}）" if is_multi else ""),
                     style="header_middle",
                     align={"horizontal": "left"},
                 )
@@ -4486,7 +4474,15 @@ class ModelReport(ModelContextMixin):
                     style="header_middle",
                     align={"horizontal": "left"},
                 )
-                end_row, _ = dataframe2excel(psi_matrix, writer, sheet_name=ws, start_row=end_row + 1, index=True)
+                end_row, _ = dataframe2excel(
+                    psi_matrix,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row + 1,
+                    index=True,
+                    percent_cols=list(psi_matrix.columns),
+                    decimal=None,
+                )
                 section_idx += 1
 
         # 2.5 各数据集评分排序性
@@ -5510,14 +5506,7 @@ class ModelReport(ModelContextMixin):
         for sheet_name in ("5-模型参数", "6-模型部署需求", training_name):
             if sheet_name in writer.workbook:
                 fit_metadata_sheet(writer.workbook[sheet_name], writer.style_sheet.column_dimensions["C"].width)
-        from ._model_layout import fit_report_titles, fit_label_definitions
-
-        fit_label_definitions(
-            writer.workbook["1-基本信息"],
-            label_definition_start_row,
-            label_definition_end_row,
-            label_definition_end_col,
-        )
+        from ._model_layout import fit_report_titles
 
         # 表格全部写入后列宽才稳定，所有数据集和特征的同一组图采用相同排布。
         from openpyxl.utils import get_column_letter

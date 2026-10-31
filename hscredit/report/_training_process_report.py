@@ -5,6 +5,49 @@ import numpy as np
 import pandas as pd
 
 
+def compact_selection_details(details, summary):
+    """Excel 只展示特征决策及其依据，完整指标/迭代记录保留在原始过程表。"""
+    table = details.copy()
+    if "记录类型" in table:
+        table = table.loc[table["记录类型"] == "特征决策"].copy()
+    if table.empty:
+        return table
+    # 顺序组合的总决策已由各实际阶段覆盖；并行组合的总决策仍有独立含义。
+    if {"阶段路径", "关系类型"}.issubset(summary) and "阶段路径" in table:
+        for item in summary.loc[summary["关系类型"] == "sequential"].to_dict("records"):
+            same_step = table["步骤"].eq(item.get("步骤")) if "步骤" in table else pd.Series(True, index=table.index)
+            path = str(item["阶段路径"])
+            if (same_step & table["阶段路径"].astype(str).str.startswith(path + "/")).any():
+                table = table.loc[~(same_step & table["阶段路径"].eq(item["阶段路径"]))].copy()
+
+    def present(value):
+        if isinstance(value, (list, tuple, dict)):
+            return bool(value)
+        return bool(str(value).strip()) if isinstance(value, str) else not pd.isna(value)
+
+    def condition(row):
+        threshold = row.get("有效阈值")
+        if present(threshold):
+            operator = row.get("比较符")
+            return f"{operator} {threshold}" if present(operator) else str(threshold)
+        method = row.get("判定方式")
+        return method if present(method) else None
+
+    table["筛选条件"] = table.apply(condition, axis=1)
+    columns = ["阶段名称", "特征", "筛选结果", "指标名称", "指标值", "筛选条件", "关联特征", "筛选原因"]
+    if "步骤" in table and table["步骤"].nunique(dropna=False) > 1:
+        columns.insert(0, "步骤")
+    if {"阶段名称", "阶段路径"}.issubset(table):
+        keys = (["步骤"] if "步骤" in table else []) + ["阶段名称"]
+        stages = table[keys + ["阶段路径"]].drop_duplicates()
+        if stages.duplicated(keys).any():
+            columns.insert(0, "阶段编号" if "阶段编号" in table else "阶段路径")
+    if "决策轮次" in table and (pd.to_numeric(table["决策轮次"], errors="coerce") > 1).any():
+        columns.append("决策轮次")
+    columns = [column for column in columns if column in table and table[column].map(present).any()]
+    return table[columns].reset_index(drop=True)
+
+
 def process_sheet_name(report, index=None):
     full = report.explain_config["enabled"] and report.explain_config["scope"] == "full"
     if index is None:
@@ -46,6 +89,10 @@ def process_tables(report):
     for name in ("预处理步骤", "筛选汇总", "筛选明细"):
         if name in raw and not raw[name].empty:
             table = raw[name].copy()
+            if name == "筛选明细":
+                table = compact_selection_details(table, raw.get("筛选汇总", pd.DataFrame()))
+                if table.empty:
+                    continue
             for column in table:
                 table[column] = table[column].map(
                     lambda v: "、".join(map(str, v)) if isinstance(v, (list, tuple)) else v
@@ -117,7 +164,9 @@ def write_process(report, writer, filepath, with_plots, sheet_name=None):
             for cells in sheet.iter_rows(min_row=row + 3, max_row=end - 1, min_col=column, max_col=column):
                 cell = cells[0]
                 if isinstance(cell.value, (float, np.floating)):
-                    cell.number_format = "General" if str(name).startswith("参数：") else "0.0000"
+                    cell.number_format = (
+                        "General" if title == "筛选明细" or str(name).startswith("参数：") else "0.0000"
+                    )
         row = end + 3
 
     for title, table in process_tables(report).items():

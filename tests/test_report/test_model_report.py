@@ -1475,8 +1475,8 @@ class TestModelReportRegression:
         assert _merged_range_for_row(basic, 2).max_col != 35
 
         desc_row = _row_for_value(basic, "2、数据样本描述")
-        # 数据样本描述新增12列标签定义表，标题应覆盖该表完整宽度。
-        assert _merged_range_for_row(basic, desc_row).max_col == 13
+        # 标签配置已并入两列数据样本描述。
+        assert _merged_range_for_row(basic, desc_row).max_col == 3
 
         parent_row = _row_for_value(feature_sheet, "3、入模变量有效性分析")
         child_row = _row_for_value(feature_sheet, "3.1、f0 有效性分析")
