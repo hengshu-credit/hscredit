@@ -40,7 +40,7 @@ hscredit（衡枢真信）将数据探索、分箱编码、特征筛选、评分
 | [`core/encoders`](https://github.com/hengshu-credit/hscredit/tree/v0.1.3/hscredit/core/encoders) | 9 种编码器 | WOE、Target、Count、OneHot、Ordinal、Quantile、CatBoost、GBM、Cardinality |
 | [`core/selectors`](https://github.com/hengshu-credit/hscredit/tree/v0.1.3/hscredit/core/selectors) | 23 个筛选器 + 1 个组合器 | 缺失率、IV/KS/PSI、相关性、VIF、模型重要性、递归与组合筛选 |
 | [`core/metrics`](https://github.com/hengshu-credit/hscredit/tree/v0.1.3/hscredit/core/metrics) | 43 个指标函数 + 3 个统计组件 | 分类、回归、区分度、稳定性、分箱统计与增量累计 |
-| [`core/models`](https://github.com/hengshu-credit/hscredit/tree/v0.1.3/hscredit/core/models) | 6 个经典 + 4 个 Boosting + 4 个神经网络模型 | 逻辑回归、随机森林、SVM、XGBoost、LightGBM、CatBoost、NGBoost、ResNet、FTTransformer、TabM、TabPFN |
+| [`core/models`](https://github.com/hengshu-credit/hscredit/tree/v0.1.3/hscredit/core/models) | 6 个经典 + 4 个 Boosting + 5 个神经网络模型 | 逻辑回归、随机森林、SVM、XGBoost、LightGBM、CatBoost、NGBoost、ResNet、FTTransformer、TabM、TabPFN、TabNet |
 | [`core/models/scorecard`](https://github.com/hengshu-credit/hscredit/tree/v0.1.3/hscredit/core/models/scorecard) | 3 个评分卡 + 4 个分数转换器 + 1 个漂移校准器 | 标准、整分、概率评分卡，分值转换与漂移调整 |
 | [`core/models/losses`](https://github.com/hengshu-credit/hscredit/tree/v0.1.3/hscredit/core/models/losses) | 16 种损失 + 12 种注册指标 | Focal、成本、利润、审批率、坏账、排序、头部捕获 |
 | [`core/models/calibration`](https://github.com/hengshu-credit/hscredit/tree/v0.1.3/hscredit/core/models/calibration) | 4 种校准方法 | Platt、Isotonic、Beta、Histogram |

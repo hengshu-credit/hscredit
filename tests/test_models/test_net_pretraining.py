@@ -9,7 +9,7 @@ from numpy.testing import assert_allclose
 from sklearn.base import clone
 from sklearn.exceptions import NotFittedError
 
-from hscredit import ResNet, FTTransformer, TabM, TabPFN
+from hscredit import ResNet, FTTransformer, TabM, TabPFN, TabNet
 from hscredit.core.models.net._pretraining import random_mask
 from .test_net_models import FakeClassifier, FakeRegressor
 
@@ -48,10 +48,13 @@ def model(cls, **kwargs):
     )
     if cls is TabM:
         params["k"] = 3
+    if cls is TabNet:
+        params.update(n_d=params.pop("d_block"), n_steps=params.pop("n_blocks"))
+        params.pop("dropout")
     return cls(**{**params, **kwargs})
 
 
-@pytest.mark.parametrize("cls", [ResNet, FTTransformer, TabM])
+@pytest.mark.parametrize("cls", [ResNet, FTTransformer, TabM, TabNet])
 def test_pretrain_updates_encoder_without_labels_and_reuses_weights(cls, frame, runtime, monkeypatch, tmp_path):
     m = model(cls)
     initial = {}

@@ -15,7 +15,7 @@ from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 
-from hscredit import ResNet, FTTransformer, TabPFN
+from hscredit import ResNet, FTTransformer, TabPFN, TabNet
 
 
 @pytest.fixture
@@ -59,18 +59,18 @@ import sys
 from importlib.abc import MetaPathFinder
 class Block(MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'torch', 'tabpfn', 'tabm', 'rtdl_num_embeddings', 'rtdl_revisiting_models'}:
+        if fullname.split('.')[0] in {'torch', 'tabpfn', 'tabm', 'pytorch_tabnet', 'rtdl_num_embeddings', 'rtdl_revisiting_models'}:
             raise ImportError(fullname)
 sys.meta_path.insert(0, Block())
 import hscredit
 from hscredit.core import models
 from hscredit.core.models import net
-for name in ['ResNet', 'FTTransformer', 'TabM', 'TabPFN']:
+for name in ['ResNet', 'FTTransformer', 'TabM', 'TabPFN', 'TabNet']:
     assert getattr(hscredit, name) is getattr(models, name) is getattr(net, name)
     getattr(net, name)()
-assert not any(name in sys.modules for name in ['torch', 'tabpfn', 'tabm', 'rtdl_num_embeddings', 'rtdl_revisiting_models'])
+assert not any(name in sys.modules for name in ['torch', 'tabpfn', 'tabm', 'pytorch_tabnet', 'rtdl_num_embeddings', 'rtdl_revisiting_models'])
 from hscredit.exceptions import DependencyError
-for cls in [net.ResNet, net.FTTransformer, net.TabM, net.TabPFN]:
+for cls in [net.ResNet, net.FTTransformer, net.TabM, net.TabPFN, net.TabNet]:
     try:
         cls().fit([[1], [2], [3], [4], [5], [6], [7], [8]], [0, 1] * 4)
     except DependencyError:

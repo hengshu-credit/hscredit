@@ -622,7 +622,7 @@ class ModelTuner(ArtifactSerializableMixin):
             None 按 store_models 保持旧行为；disk 必须指定 artifact_dir，按需读取且不常驻折模型。
 
         :param loss: 训练损失，与搜索指标 metric 分开。提升树接收 BaseLoss；
-            ResNet、FTTransformer、TabM 还支持损失名称、PyTorch 损失及逐行张量函数；
+            ResNet、FTTransformer、TabM、TabNet 还支持损失名称、PyTorch 损失及逐行张量函数；
             TabPFN 为预训练推理，不接收此参数。例如
             ``ModelTuner(XGBoost, loss=FocalLoss(), metric='auc')`` 。
             ``metric=None`` 时使用该损失的配套指标（越小越好）。
@@ -803,7 +803,7 @@ class ModelTuner(ArtifactSerializableMixin):
         if not model_module.startswith("hscredit.") or model_name not in {"XGBoost", "LightGBM", "CatBoost", "NGBoost"}:
             raise ValueError(
                 "该模型训练器不支持自定义 loss；XGBoost、LightGBM、CatBoost、NGBoost 支持此入口，"
-                "ResNet、FTTransformer、TabM 支持梯度训练；TabPFN 当前仅支持预训练推理，"
+                "ResNet、FTTransformer、TabM、TabNet 支持梯度训练；TabPFN 当前仅支持预训练推理，"
                 "其他模型请用 metric=loss.metric() 选模；Pipeline 请预配置最终模型的损失"
             )
         if any(key in self._explicit_fixed_params for key in ("objective", "loss_function")):
@@ -860,6 +860,7 @@ class ModelTuner(ArtifactSerializableMixin):
         import functools
         import types
         from joblib import hash as stable_hash
+        from ..net.base import BaseNetModel
 
         active = set()
 
@@ -882,6 +883,15 @@ class ModelTuner(ArtifactSerializableMixin):
                 return ("循环引用", type(value).__module__, type(value).__qualname__)
             active.add(id(value))
             try:
+                if isinstance(value, BaseNetModel) and hasattr(value, "_pretrained_state_"):
+                    # from_pretrained 消费快照；官方预训练器还持有以 Parameter 为键的优化器状态。
+                    # 仅对实际迁移内容和配置散列，避免 joblib 排序张量键并比较无关训练历史。
+                    return (
+                        type(value).__module__,
+                        type(value).__qualname__,
+                        normalize(value.get_params(deep=False)),
+                        normalize(value._pretrained_state_),
+                    )
                 if isinstance(value, dict):
                     return {key: normalize(item) for key, item in value.items()}
                 if isinstance(value, (tuple, list)):
@@ -3652,7 +3662,7 @@ class AutoTuner:
 
             - 'decisiontree' / 'dt'
 
-            - 'resnet' / 'fttransformer' / 'ft_transformer' / 'tabm' / 'tabpfn'
+            - 'resnet' / 'fttransformer' / 'ft_transformer' / 'tabm' / 'tabnet' / 'tabpfn'
 
         :type model_type: str
         :param metric: 默认 None 按任务选择 KS 或 RMSE，也可传指标字符串、函数或列表
@@ -3710,6 +3720,7 @@ class AutoTuner:
             "fttransformer": "FTTransformer",
             "ft_transformer": "FTTransformer",
             "tabm": "TabM",
+            "tabnet": "TabNet",
             "tabpfn": "TabPFN",
         }
 

@@ -7,7 +7,7 @@ net 的无标签预训练使用 ``pretrain``；业务分类/回归仍使用 ``fi
 仅用 X 的 net 预训练
 --------------------
 
-ResNet、FTTransformer、TabM、TabPFN 都提供 ``pretrain(X, ...)``，不会读取外部业务标签。
+ResNet、FTTransformer、TabM、TabNet、TabPFN 都提供 ``pretrain(X, ...)``，不会读取外部业务标签。
 如果 X 中有已配置的 target 列，会直接删除该列。预训练返回当前模型，并允许
 ``get_embeddings``、``transform``、``get_native_model`` 和 ``save``；
 业务 ``predict/predict_proba`` 只有在监督 fit 完成后才可调用，避免输出未经训练的业务预测头。
@@ -28,7 +28,7 @@ ResNet、FTTransformer、TabM、TabPFN 都提供 ``pretrain(X, ...)``，不会�
 ``from_pretrained`` 的语义：None 自动使用本实例已有快照；True 要求本实例有快照；
 False 忽略快照重新训练；也可传入已 pretrain 的同类模型。复制权重不会修改来源模型。
 接续时冻结预训练的填补、标准化和类别字典，字段及网络结构必须兼容。
-ResNet/FTTransformer/TabM 可跨二分类和回归迁移编码器，TabPFN 则要求基础网络任务类型相同。
+ResNet/FTTransformer/TabM/TabNet 可跨二分类和回归迁移编码器，TabPFN 则要求基础网络任务类型相同。
 重新调用 pretrain 会产生新快照；重新 fit 从选定快照开始，不表示接续上一次监督训练。
 
 普通网络的掩码重建
@@ -44,6 +44,30 @@ TabM 分别计算每个成员的重建损失后平均。优化器及其参数沿
 可在 pretrain 中覆盖，None 沿用构造器配置；validation_fraction=0 关闭自动留出。
 也可提供无标签矩阵、列表或具名字典作为 eval_set。预处理仅在实际训练子集拟合，
 验证掩码固定，按重建损失早停并恢复最佳编码器。可用 get_learning_curve 查询逐轮重建损失。
+
+TabNet 的官方半监督预训练
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+TabNet 对外提供相同的 ``pretrain`` / ``from_pretrained``，底层调用官方
+``pytorch_tabnet.pretraining.TabNetPretrainer.fit``，保留官方随机掩码、编码器、解码器、
+``UnsupervisedLoss`` 和训练循环。监督训练复制其 embedder 和 encoder 权重，预测头独立初始化。
+``pretrainer_`` 保留真实后端及解码器，预训练制品也可 save/load。
+
+数据先经过仅在训练行拟合的 hscredit 填补、标准化及类别编码。官方重建目标为嵌入空间的
+方差归一化重建误差，因此包含填补后的数值和类别 embedding，与上述普通网络的掩码损失不同。
+``sample_weight`` 对应官方的采样权重，零权重行在预处理前剔除；监督 fit 仍按损失加权。
+第一份验证集用于早停并恢复官方最佳编码器和解码器，验证集至少需要两行以计算方差。
+末尾单行训练批次/虚拟批次会与前一批合并，不丢弃采样行。loss/loss_params 只作用于监督 fit。
+
+.. code-block:: python
+
+   from hscredit import TabNet
+
+   model = TabNet(n_d=16, n_a=16, max_epochs=30, random_state=42)
+   model.pretrain(X_unlabeled, eval_set=[X_valid], pretraining_ratio=0.5)
+   model.fit(X_train, y_train)  # 自动使用官方预训练编码器快照
+   probability = model.predict_proba(X_test)[:, 1]
+   embedding = model.get_embeddings(X_test)
 
 TabPFN 的字段预测式预训练
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

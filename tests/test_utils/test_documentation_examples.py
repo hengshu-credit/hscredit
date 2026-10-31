@@ -31,6 +31,7 @@ def test_model_notebooks_are_self_contained_and_valid():
         "single_validation_workflow",
         "net_models",
         "net_training_tuning",
+        "tabnet_workflow",
         "pretraining_and_continuation",
         "all_model_workflow_validation",
     ):

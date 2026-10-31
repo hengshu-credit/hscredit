@@ -6,6 +6,17 @@ from numbers import Integral
 
 def net_search_space(model_class, params):
     name = getattr(model_class, "_network_kind", model_class.__name__)
+    if name == "TabNet":
+        return {
+            "n_d": {"type": "categorical", "choices": [8, 16, 32, 64]},
+            "n_a": {"type": "categorical", "choices": [8, 16, 32, 64]},
+            "n_steps": {"type": "int", "low": 3, "high": 6},
+            "gamma": {"type": "float", "low": 1.0, "high": 2.0},
+            "lambda_sparse": {"type": "float", "low": 1e-6, "high": 1e-2, "log": True},
+            "learning_rate": {"type": "float", "low": 1e-3, "high": 3e-2, "log": True},
+            "weight_decay": {"type": "float", "low": 1e-6, "high": 1e-3, "log": True},
+            "batch_size": {"type": "categorical", "choices": [64, 128, 256]},
+        }
     if name == "TabPFN":
         if params.get("finetune"):
             return {

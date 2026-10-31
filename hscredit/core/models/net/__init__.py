@@ -2,8 +2,14 @@
 
 from importlib import import_module
 
-__all__ = ["ResNet", "FTTransformer", "TabM", "TabPFN"]
-_MODULES = {"ResNet": ".resnet", "FTTransformer": ".ft_transformer", "TabM": ".tabm", "TabPFN": ".tabpfn"}
+__all__ = ["ResNet", "FTTransformer", "TabM", "TabPFN", "TabNet"]
+_MODULES = {
+    "ResNet": ".resnet",
+    "FTTransformer": ".ft_transformer",
+    "TabM": ".tabm",
+    "TabPFN": ".tabpfn",
+    "TabNet": ".tabnet",
+}
 
 
 def __getattr__(name):

@@ -1,4 +1,4 @@
-"""ResNet、FTTransformer 与 TabM 共用的训练、早停和分批推理。"""
+"""表格神经网络共用的训练、早停和分批推理。"""
 
 from numbers import Integral, Real
 
@@ -18,7 +18,8 @@ class TorchTabularModel(BaseNetModel):
     _supports_gradient_training = True
 
     def _validate_options(self):
-        for name in ("d_block", "n_blocks", "max_epochs", "batch_size"):
+        architecture = () if self._network_kind == "TabNet" else ("d_block", "n_blocks")
+        for name in (*architecture, "max_epochs", "batch_size"):
             value = getattr(self, name)
             if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral) or value < 1:
                 raise ValidationError(f"{name} 必须为正整数")
@@ -50,7 +51,10 @@ class TorchTabularModel(BaseNetModel):
                 raise ValidationError("num_embedding_params 必须是字典或 None")
             if self.num_embeddings is None and self.num_embedding_params:
                 raise ValidationError("num_embedding_params 需要同时指定 num_embeddings")
-        for name, lower, upper in (("dropout", 0, 1), ("learning_rate", 0, np.inf), ("weight_decay", 0, np.inf)):
+        rates = [("learning_rate", 0, np.inf), ("weight_decay", 0, np.inf)]
+        if self._network_kind != "TabNet":
+            rates.append(("dropout", 0, 1))
+        for name, lower, upper in rates:
             value = getattr(self, name)
             if not isinstance(value, Real) or not np.isfinite(value) or not lower <= value < upper:
                 raise ValidationError(f"{name} 必须是 [{lower}, {upper}) 内的有限数值")
@@ -119,8 +123,8 @@ class TorchTabularModel(BaseNetModel):
             self.eval_names_ = ["验证集"]
         train_X, train_y = take_rows(X, indices), y[indices]
         self._validate_y(train_y, training=True)
-        if self._network_kind == "ResNet" and len(indices) < 2:
-            raise ValidationError("ResNet 至少需要两个正权重训练样本")
+        if self._network_kind in ("ResNet", "TabNet") and len(indices) < 2:
+            raise ValidationError(f"{self._network_kind} 至少需要两个正权重训练样本")
         train_weight = np.ones(len(indices)) if weight is None else weight[indices]
         train_weight = train_weight / train_weight.mean()
         self.preprocessor_ = (
@@ -283,6 +287,7 @@ class TorchTabularModel(BaseNetModel):
                 numeric, categorical, target, weight = (value[indices].to(self.device_) for value in tensors)
                 self.optimizer_.zero_grad()
                 loss = (loss_values(self, self._model(numeric, categorical), target) * weight).mean()
+                loss = loss + self._training_regularization()
                 if not torch.isfinite(loss):
                     raise ValidationError("训练损失出现非有限值，请检查数据尺度或降低 learning_rate")
                 loss.backward()
@@ -329,6 +334,10 @@ class TorchTabularModel(BaseNetModel):
         if best_state is not None:
             self._model.load_state_dict(best_state)
 
+    def _training_regularization(self):
+        """可选结构正则项；验证早停仍使用任务损失。"""
+        return 0.0
+
     def _infer_arrays(self, numeric, categorical, *, embeddings=False):
         import torch
 
@@ -374,7 +383,7 @@ class TorchTabularModel(BaseNetModel):
         return prediction * self.target_scale_ + self.target_mean_
 
     def get_embeddings(self, X, aggregate="mean"):
-        """返回预测头之前的表示；默认 (样本数, d_block)，None 保留 (成员数, 样本数, d_block)。"""
+        """返回预测头前的表示；默认 (样本数, embedding_dim_)，None 保留成员轴。"""
         if aggregate not in ("mean", None):
             raise ValidationError("aggregate 必须为 mean 或 None")
         values = self._inference(X, embeddings=True)

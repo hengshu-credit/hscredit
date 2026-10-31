@@ -99,6 +99,7 @@ _LAZY_MODEL_NAMES = (
     "FTTransformer",
     "TabM",
     "TabPFN",
+    "TabNet",
     "ModelTuner",
     "AutoTuner",
     "TuningObjective",

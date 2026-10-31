@@ -1,7 +1,7 @@
 神经网络 ``hscredit.core.models.net``
 ==================================================================
 
-``hscredit.core.models.net`` 提供 ``ResNet``、``FTTransformer``、``TabM``、``TabPFN``，
+``hscredit.core.models.net`` 提供 ``ResNet``、``FTTransformer``、``TabM``、``TabPFN``、``TabNet``，
 也可直接从 ``hscredit`` 或 ``hscredit.core.models`` 导入。模型类和后端均按需加载。
 
 .. rubric:: 安装与运行
@@ -10,16 +10,16 @@
 
    pip install "hscredit[net]"
 
-``net`` 统一安装 PyTorch、``rtdl-revisiting-models``、``tabm``、官方 TabPFN 及既有 TabNet 依赖，
-覆盖四种模型；``all`` 通过包含 ``net`` 安装这些依赖。调参额外安装 ``hscredit[net,tune]``。
+``net`` 统一安装 PyTorch、``rtdl-revisiting-models``、``tabm``、官方 TabPFN 及 ``pytorch-tabnet>=4.1,<5``，
+覆盖五种模型；``all`` 通过包含 ``net`` 安装这些依赖。调参额外安装 ``hscredit[net,tune]``。
 TabPFN 普通推理兼容 2.0.9；微调和 X-only 预训练需要 Python 3.10+、TabPFN 9.2+。
 ``net`` 在 Python 3.10+ 安装该新版后端，Python 3.9 保留普通推理能力。
 首次使用 TabPFN 时，官方库可能下载预训练权重，也可通过 ``model_path`` 指定本地文件。
 默认权重由安装的 TabPFN 版本决定，使用范围及许可请查阅对应官方权重说明。
 
-.. rubric:: 预训练能力核对（2026-10-29）
+.. rubric:: 预训练能力核对（2026-10-31）
 
-本节按当前正式导出的四个模型核对，分类沿用信贷的 0/1 二分类。
+本节按当前正式导出的五个模型核对，分类沿用信贷的 0/1 二分类。
 “官方预训练权重”指发布方已经训练好的权重；``save/load`` 是完整已拟合模型的保存与复用，
 不表示再次调用 ``fit`` 会继续训练。现已提供 ``pretrain``、``from_pretrained`` 及 TabPFN 的
 ``finetune`` 开关，完整说明见 :doc:`training_lifecycle`。
@@ -48,13 +48,18 @@ TabPFN 普通推理兼容 2.0.9；微调和 X-only 预训练需要 Python 3.10+�
      - 支持
      - 支持
      - 成员表示或其均值
+   * - TabNet
+     - 通过统一 pretrain 调用官方 TabNetPretrainer 半监督预训练
+     - 支持
+     - 支持
+     - 各决策步表示求和，维度为 n_d
    * - TabPFN
      - 支持官方预训练权重，使用 model_path 选择
      - 支持
      - 支持
      - 使用后端真实表示；后端明确不支持时可单独跳过
 
-ResNet、FTTransformer、TabM 没有预训练来源时，``fit`` 新建网络和预处理状态；
+ResNet、FTTransformer、TabM、TabNet 没有预训练来源时，``fit`` 新建网络和预处理状态；
 已有 ``pretrain`` 快照时默认复制快照进行监督训练。加载已监督拟合模型后可直接
 调用 ``predict``、``predict_proba``（仅二分类）和 ``get_embeddings``。
 这里的 ResNet 是表格架构，不加载图像 ResNet 的 ImageNet 权重。
@@ -76,9 +81,10 @@ TabPFN 默认 ``fit`` 建立训练上下文；``finetune=True`` 调用官方梯�
 ``model_path="auto"`` 使用所安装版本的官方默认权重，可能下载权重；版本不同默认权重也可能不同，
 不能把“已验证 v2 权重”解读为所有未来权重版本均已验证。
 
-依赖中的 ``pytorch-tabnet`` 原生支持 ``TabNetPretrainer`` 无监督预训练与
-``from_unsupervised`` 初始化分类器/回归器，但当前 HSCredit 没有导出 TabNet 模型封装，
-因此不把安装该依赖算作已经接入的 net 模型。
+TabNet 使用官方 ``pytorch_tabnet.tab_network.TabNet`` 网络和注意力机制。
+``pretrain`` 调用官方 ``TabNetPretrainer``，保留官方随机遮盖、编码器、解码器和无监督重建损失。
+监督迁移复制官方预训练器的 embedder/encoder，入口统一为 ``from_pretrained``；
+``pretrainer_`` 可查看实际官方预训练器，不直接接收外部 ``from_unsupervised`` 对象。
 
 核对来源：`rtdl 官方架构与训练示例 <https://github.com/yandex-research/rtdl-revisiting-models/tree/main/package>`_、
 `TabM 官方训练说明 <https://github.com/yandex-research/tabm#training>`_、
@@ -125,11 +131,12 @@ TabPFN 使用明确指定的本地 v2 分类/回归预训练权重，未把其�
      - 准确率
      - R²
 
-四个模型都支持 ``target``、显式 y 优先、DataFrame 字段对齐、sklearn clone/Pipeline、
+五个模型都支持 ``target``、显式 y 优先、DataFrame 字段对齐、sklearn clone/Pipeline、
 训练历史和 ``save/load``。保存为 ``.pkl`` 或 ``.joblib`` 会保留预处理及网络；
 TabPFN 制品还包含推理所需的训练上下文，加载时需要相应后端和设备环境。
-现有风控完整报告、概率评分卡仅适用于二分类；回归请使用 ``evaluate``。
-这些网络没有树增益重要性，可通过 ``sklearn.inspection.permutation_importance`` 分析。
+二分类和回归均可通过 ``model_report`` 输出完整报告，概率评分卡仅用于二分类。
+TabNet 的 ``get_feature_importances()`` / ``feature_importances_`` 输出注意力重要性；
+其余 net 模型可使用 SHAP 或 ``sklearn.inspection.permutation_importance``。
 
 .. code-block:: python
 
@@ -148,7 +155,7 @@ TabPFN 制品还包含推理所需的训练上下文，加载时需要相应后�
 
 .. rubric:: 训练和表示语义
 
-ResNet/FTTransformer/TabM 仅在实际训练子集拟合中位数填补、标准化及类别字典，
+ResNet/FTTransformer/TabM/TabNet 仅在实际训练子集拟合中位数填补、标准化及类别字典，
 全空数值列保留，类别缺失及未知值编码为 0。类别字段可自动识别或通过
 ``categorical_features`` 指定字段名/列位置。回归目标在训练子集标准化，预测时还原。
 训练支持 ``sample_weight``，零权重行不参与预处理及梯度更新。
@@ -180,9 +187,24 @@ TabPFN 复用官方数据处理和推理；不支持训练权重的后端会明�
 后端返回 bfloat16 张量时转换为 float32 NumPy 数组。
 监督训练行的表示不是折外特征；将 embedding 用于下游模型时，应在每一折内训练网络并提取验证行表示。
 
+.. rubric:: TabNet 的训练、重要性和报告
+
+``get_embeddings(X)`` 返回 ``(样本数, n_d)``，是官方各决策步输出之和，
+可经原生预测头还原 logit 或标准化回归值。``aggregate=None`` 保留长度为 1 的成员轴。
+``batch_size`` 和 ``virtual_batch_size`` 至少为 2；末尾单行合并到前一批，不丢弃样本。
+监督训练损失包含 ``lambda_sparse`` 注意力熵正则；验证曲线及早停只使用任务损失。
+
+原生重要性由实际训练行的决策贡献加权注意力汇总而来，类别 embedding 各维求和后还原为
+原始字段，再按训练样本权重加权并归一化；不使用验证/测试行。全零注意力时保留全零结果。
+统一接口的 ``importance_type="gain"`` 是 ``"attention"`` 的兼容别名，不表示树增益。
+报告可将原生注意力和 SHAP 合并为 TOP32 重要性与 TOP10 依赖图，参数和训练/调参历史沿用统一格式。
+
+完整可执行示例：:download:`tabnet_workflow.ipynb <../../examples/tabnet_workflow.ipynb>`，
+包含真实数据的无标签预训练、二分类/回归、调参、embedding、保存恢复，以及分类多标签和回归报告。
+
 .. rubric:: 损失、优化器和常规参数
 
-ResNet、FTTransformer、TabM 使用相同训练配置：
+ResNet、FTTransformer、TabM、TabNet 使用相同训练配置：
 
 .. list-table::
    :header-rows: 1
@@ -196,6 +218,8 @@ ResNet、FTTransformer、TabM 使用相同训练配置：
      - adamw、adam、sgd、rmsprop、adagrad 或 PyTorch 优化器类；不接收已绑定其他网络的实例，不支持闭包式 LBFGS
    * - ``optimizer_params``
      - momentum、betas、eps 等额外参数；学习率和衰减只通过 learning_rate、weight_decay 配置，避免调参被字典覆盖
+   * - ``n_d`` / ``n_a`` / ``n_steps`` / ``lambda_sparse``
+     - TabNet 的决策宽度、注意力宽度、决策步数和注意力熵正则强度；不使用 d_block、n_blocks、dropout
    * - ``d_block`` / ``n_blocks`` / ``dropout``
      - 表示宽度、网络深度、丢弃概率；FTTransformer 的 d_block 必须被 n_heads 整除
    * - ``k`` / ``arch_type``
@@ -318,8 +342,26 @@ TabPFN 默认搜索 ``n_estimators``、``softmax_temperature`` 等推理参数�
    :members:
    :inherited-members:
 
+.. autoclass:: hscredit.core.models.net.TabNet
+   :members:
+   :inherited-members:
+
 .. autoclass:: hscredit.core.models.losses.TorchLossAdapter
    :members:
+
+.. rubric:: TabNet 验收记录（2026-10-31）
+
+使用既有验收解释器 ``.audit_tmp/defect-repairs/runtime/Scripts/python.exe``，
+Python 3.11.5、PyTorch 2.5.1+cu124、pytorch-tabnet 4.1.0。
+在无验证留出的对照用例中，相同数据、配置和种子下，封装与直接调用官方 TabNetPretrainer
+的逐轮损失及编码器权重完全一致。
+专项覆盖二分类/回归、官方预训练与迁移、样本权重、类别字段、注意力重要性独立核算、
+原生损失公式、调参及配置快照、保存恢复；另实测 CUDA 预训练与推理。
+
+模型及相关报告/文档回归共 1,848 项通过。两个 Notebook 使用 970 行真实数据，
+完成预训练、特征筛选、模型对比、调参、预测和报告，重新打开并核验 6 份工作簿；
+其中包括 target 多标签、overdue+dpds 多标签以及回归报告。测试数量不代表覆盖率，
+少量训练轮数及单次数据划分不构成效果基准。
 
 .. rubric:: 验收记录（2026-10-27）
 

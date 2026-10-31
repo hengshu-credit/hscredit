@@ -63,8 +63,8 @@ def make_loss(model, device):
     return loss.to(device)
 
 
-def make_optimizer(model, parameters=None):
-    """每次 fit 为当前网络新建优化器，拒绝已绑定其他网络的优化器实例。"""
+def optimizer_config(model):
+    """解析统一优化器配置，供本地训练和官方 TabNetPretrainer 共用。"""
     import torch
 
     if model.optimizer_params is not None and not isinstance(model.optimizer_params, dict):
@@ -78,11 +78,15 @@ def make_optimizer(model, parameters=None):
         raise ValidationError("optimizer 必须为 adamw、adam、sgd、rmsprop、adagrad 或 torch.optim.Optimizer 子类")
     if issubclass(optimizer, torch.optim.LBFGS):
         raise ValidationError("当前小批次训练循环不支持需要闭包的 LBFGS 优化器")
+    return optimizer, dict(lr=model.learning_rate, weight_decay=model.weight_decay, **params)
+
+
+def make_optimizer(model, parameters=None):
+    """每次 fit 为当前网络新建优化器，拒绝已绑定其他网络的优化器实例。"""
+    optimizer, params = optimizer_config(model)
     try:
         return optimizer(
             model._model.parameters() if parameters is None else parameters,
-            lr=model.learning_rate,
-            weight_decay=model.weight_decay,
             **params,
         )
     except (TypeError, ValueError) as exc:

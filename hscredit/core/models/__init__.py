@@ -137,7 +137,7 @@ from .base import BaseRiskModel
 
 # 导入提升树模型 (boosting/, 可选重依赖 xgboost/lightgbm/catboost/ngboost，懒加载)
 _LAZY_BOOSTING_MODELS = ("XGBoost", "LightGBM", "CatBoost", "NGBoost")
-_LAZY_NET_MODELS = ("ResNet", "FTTransformer", "TabM", "TabPFN")
+_LAZY_NET_MODELS = ("ResNet", "FTTransformer", "TabM", "TabPFN", "TabNet")
 
 # 导入经典模型 (classical/)
 from .classical import (
