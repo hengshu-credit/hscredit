@@ -127,8 +127,8 @@ def test_model_report_multilabel_counts_labels_and_config_roundtrip(data, op):
         n_jobs=1,
     )
     expected = expected_target(data, op, True)
-    label = f"MOB 1{op}3"
-    display = "MOB 1@3" if op == ">" else label
+    label = "MOB 1@3"
+    display = label
     summary = report.summary()
     assert summary.loc[display, ("样本数", "样本")] == len(expected)
     assert summary.loc[display, ("坏样本率", "样本")] == pytest.approx(expected.mean())
@@ -524,7 +524,7 @@ def test_legacy_model_report_restores_default_operator(data):
     assert_frame_equal(restored.summary(), expected)
     restored.add_dataset(key="新增", label="新增", X=data)
     table = restored.get_bin_table("新增", labels=restored._label_names, margins=True, max_n_bins=2)
-    assert table.iloc[-1][("MOB 1>3", "坏样本数")] == 2
+    assert table.iloc[-1][("MOB 1@3", "坏样本数")] == 2
 
 
 def test_legacy_predictor_can_be_refitted_after_restore(data):
@@ -567,9 +567,9 @@ def test_model_report_normalizes_threshold_containers(data, dpds):
         overdue_operator=">=",
         n_jobs=1,
     )
-    assert report._label_names == ["MOB 1>=3", "MOB 1>=0"]
+    assert report._label_names == ["MOB 1@3", "MOB 1@0"]
     table = report.get_bin_table("样本", labels=report._label_names, margins=True, max_n_bins=2)
-    assert table.iloc[-1][("MOB 1>=3", "坏样本数")] == 3
+    assert table.iloc[-1][("MOB 1@3", "坏样本数")] == 3
 
 
 @pytest.mark.parametrize("op", [">=", "<="])
@@ -742,7 +742,7 @@ def test_real_loan_data_eda_model_rules_and_category_share_overdue_definition(lo
             valid = ~((days > 0) & (days < dpd))
         count, bad_count = int(valid.sum()), int((valid & bad).sum())
         label = f"MOB1{op}{dpd}"
-        display = f"MOB1@{dpd}" if op == ">" else label
+        display = f"MOB1@{dpd}"
         assert summary.loc[display, ("样本数", "放款数据")] == count
         assert summary.loc[display, ("坏样本率", "放款数据")] == pytest.approx(bad_count / count)
         row = overall.loc[overall["标签"] == label].iloc[0]

@@ -720,6 +720,7 @@ class StandardScoreTransformer(BaseScoreTransformer):
         B = round(float(self.B_), decimal)
         return {
             "公式": f"Score = {A} - {B} × ln(P / (1 - P))",
+            "概率预处理": f"P = clip(P, {np.finfo(float).eps}, {1 - np.finfo(float).eps})",
             "A": A,
             "B": B,
             "base_odds": self.base_odds,
@@ -829,6 +830,26 @@ class LinearScoreTransformer(BaseScoreTransformer):
             scores = lower + (upper - lower) * proba
 
         return scores
+
+    def score_formula(self, decimal: int = 4) -> dict:
+        """返回实际线性转换公式。
+
+        :param decimal: 公式参数的展示精度，默认 4。
+        :return: 公式及已拟合方向、上下界。
+
+        >>> transformer.score_formula()
+        """
+        check_is_fitted(self)
+        return {
+            "公式": (
+                "Score = upper - (upper - lower) × P"
+                if self.direction_ == "descending"
+                else "Score = lower + (upper - lower) × P"
+            ),
+            "lower": self.lower if self.lower is not None else 0,
+            "upper": self.upper if self.upper is not None else 100,
+            "direction": self.direction_,
+        }
 
     def inverse_transform(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """将评分反向转换为概率.
@@ -970,6 +991,29 @@ class QuantileScoreTransformer(BaseScoreTransformer):
             scores = lower + (upper - lower) * quantile_ranks / (self.n_quantiles - 1)
 
         return scores
+
+    def score_formula(self, decimal: int = 4) -> dict:
+        """返回分位点查表与评分映射公式。
+
+        :param decimal: 展示精度参数，分位点以已拟合 quantile_values_ 为准。
+        :return: 分位点排名和评分转换公式。
+
+        >>> transformer.score_formula()
+        """
+        check_is_fitted(self)
+        return {
+            "分位点排名": "r = clip(searchsorted(quantile_values_, P, side='right') - 1, 0, n_quantiles - 1)",
+            "公式": (
+                "Score = upper - (upper - lower) × r / (n_quantiles - 1)"
+                if self.direction_ == "descending"
+                else "Score = lower + (upper - lower) × r / (n_quantiles - 1)"
+            ),
+            "lower": self.lower if self.lower is not None else 0,
+            "upper": self.upper if self.upper is not None else 100,
+            "n_quantiles": self.n_quantiles,
+            "direction": self.direction_,
+            "分位点参数": "quantile_values_（评分转换分位点表）",
+        }
 
     def inverse_transform(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """将评分反向转换为概率(近似值).
@@ -1241,6 +1285,34 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
             scores = lower + (upper - lower) * z_norm
 
         return scores
+
+    def score_formula(self, decimal: int = 4) -> dict:
+        """返回实际 Box-Cox、区间缩放和评分转换公式。
+
+        :param decimal: 公式参数的展示精度，默认 4。
+        :return: 公式、已拟合 lambda 及变换值域。
+
+        >>> transformer.score_formula()
+        """
+        check_is_fitted(self)
+        return {
+            "概率预处理": "P = clip(P, 1e-10, 1 - 1e-10)",
+            "几率": "x = P / (1 - P) + shift",
+            "Box-Cox变换": "z = ln(x)" if abs(self.lmbda_) < 1e-12 else "z = (x ** lmbda - 1) / lmbda",
+            "归一化": "u = clip((z - z_min) / (z_max - z_min), 0, 1)",
+            "公式": (
+                "Score = upper - (upper - lower) × u"
+                if self.direction_ == "descending"
+                else "Score = lower + (upper - lower) × u"
+            ),
+            "lmbda": round(float(self.lmbda_), decimal),
+            "shift": self.shift,
+            "z_min": round(float(self.z_min_), decimal),
+            "z_max": round(float(self.z_max_), decimal),
+            "lower": self.lower if self.lower is not None else 300,
+            "upper": self.upper if self.upper is not None else 1000,
+            "direction": self.direction_,
+        }
 
     def inverse_transform(self, scores: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """将评分反向转换为概率。

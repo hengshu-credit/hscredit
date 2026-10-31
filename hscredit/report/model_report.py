@@ -250,21 +250,21 @@ def _normalize_prediction(model, result, expected_length: int, probability: bool
     return values
 
 
-def _invoke_named_prediction(model, X, method: str) -> np.ndarray:
+def _invoke_named_prediction(model, X, method: str, prediction_kwargs=None) -> np.ndarray:
     """调用一次已校验的模型方法。"""
     method_name = "predict_proba" if method == "predict_prob" else method
-    result = getattr(model, method_name)(X)
+    result = getattr(model, method_name)(X, **(prediction_kwargs or {}))
     return _normalize_prediction(model, result, len(X), probability=method_name == "predict_proba")
 
 
 def _build_report_dataset(task):
     """准备数据，并在字符串 method 路径于共享 worker 中执行唯一预测。"""
-    *base_task, method = task
+    *base_task, method, prediction_kwargs = task
     prepared = _prepare_report_dataset(tuple(base_task))
     if method is None:
         return prepared
     key, label, X, y, y_dict, X_for_pred = prepared
-    prediction = _invoke_named_prediction(base_task[0], X_for_pred, method)
+    prediction = _invoke_named_prediction(base_task[0], X_for_pred, method, prediction_kwargs)
     return ReportDataset(name=key, label=label, X=X, y=y, prediction=prediction, y_dict=y_dict)
 
 
@@ -499,9 +499,9 @@ class ModelReport(ModelContextMixin):
     :param y_test: 默认值为 ``None`` 。测试集标签，None 时从 X_test 中通过 target / overdue+dpds 构建
     :param X_oot: 默认值为 ``None`` 。跨时间验证集特征（命名为 跨时间验证集）
     :param y_oot: 默认值为 ``None`` 。跨时间验证集标签，None 时从 X_oot 中通过 target / overdue+dpds 构建
-    :param prediction_method: 默认 None 按任务选择：分类 predict_proba，回归 predict。也支持显式方法名或 callable。
+    :param prediction_method: 默认 None：分类模型 predict_proba，纯评分转换器 transform，回归模型 predict；显式方法名或 callable 优先。
     :type prediction_method: Union[str, Callable]
-    :param prediction_kwargs: 默认值为 ``None`` 。callable 同名参数的显式覆盖字典
+    :param prediction_kwargs: 默认值为 ``None`` 。推理方法的参数字典；同时支持方法名和 callable
     :type prediction_kwargs: Optional[Dict[str, Any]]
     :param explain_config: 默认值为 ``None`` 。可选模型解释配置；None 不生成可选解释章节，由 normalize_explain_config 校验
     :type explain_config: Optional[Dict[str, Any]]
@@ -678,8 +678,8 @@ class ModelReport(ModelContextMixin):
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
-        :param prediction_method: 默认 None 自动选择分类 predict_proba 或回归 predict；分类还支持 predict_prob/predict_score/transform/callable。
-        :param prediction_kwargs: callable 同名参数的显式覆盖字典
+        :param prediction_method: 默认 None：分类模型 predict_proba，纯评分转换器 transform，回归模型 predict；也支持任意已实现的方法名或 callable。
+        :param prediction_kwargs: 推理方法的参数字典；同时支持方法名和 callable
         :param explain_config: 可选模型解释配置；None 不生成可选解释章节，由 normalize_explain_config 校验。
         :param score_direction: higher_risk/higher_safe；默认按预测方法和评分刻度确定，不按标签反转概率。
         :param metrics: get_metric/ loss.metric() 等统一指标对象或名称，附加到性能表与Excel。
@@ -714,9 +714,9 @@ class ModelReport(ModelContextMixin):
         if self.task_type_ == "regression" and (overdue is not None or dpds is not None or del_grey):
             raise ValidationError("回归报告不使用逾期二分类或剔灰配置，请直接提供连续目标")
         if prediction_method is None:
-            prediction_method = "predict" if self.task_type_ == "regression" else "predict_proba"
-        if self.task_type_ == "regression" and prediction_method != "predict" and not callable(prediction_method):
-            raise ValidationError("回归报告需要连续预测值，请使用 prediction_method='predict' 或 callable")
+            from ._model_protocol import default_prediction_method
+
+            prediction_method = default_prediction_method(model, self.task_type_)
         self.explain_config = normalize_explain_config(explain_config)
         if self.task_type_ == "regression" and self.explain_config["enabled"]:
             if self.explain_config["scope"] != "importance":
@@ -729,13 +729,11 @@ class ModelReport(ModelContextMixin):
             raise ValidationError("prediction_method 必须是方法名字符串或 callable")
         if isinstance(prediction_method, str):
             normalized_method = "predict_proba" if prediction_method == "predict_prob" else prediction_method
-            allowed_methods = {"predict_proba", "predict", "predict_score", "transform"}
-            if normalized_method not in allowed_methods:
-                raise ValidationError(
-                    f"不支持的 prediction_method: {prediction_method!r}，可选: {sorted(allowed_methods)}"
-                )
             if not callable(getattr(model, normalized_method, None)):
-                raise ValidationError(f"模型 {type(model).__name__} 不支持方法 {normalized_method}")
+                prefix = "回归报告需要连续预测值；" if self.task_type_ == "regression" else ""
+                raise ValidationError(
+                    f"{prefix}prediction_method={normalized_method!r}：模型 {type(model).__name__} 不支持该方法"
+                )
         if prediction_kwargs is not None and not isinstance(prediction_kwargs, dict):
             raise ValidationError("prediction_kwargs 必须是字典或 None")
         self.prediction_method = prediction_method
@@ -794,6 +792,8 @@ class ModelReport(ModelContextMixin):
         # 多标签指标名列表（用于多标签报告），按构建顺序从第一个数据集获取
         # 当 overdue/dpds 产生多指标时填充，如 ['dpds_m1>15', 'dpds_m1>7', 'dpds_m1>0', ...]
         self._label_names: List[str] = []
+        self._label_aliases = {}
+        self._dataset_target_sources = {}
 
         # 所有缓存仅在完整计算成功后提交。
         self.report_warnings_ = []
@@ -960,6 +960,8 @@ class ModelReport(ModelContextMixin):
         target_payload = state.pop("_target_payload", None)
         metrics_payload = state.pop("_metrics_payload", None)
         self.__dict__.update(state)
+        self._label_aliases = state.get("_label_aliases", {})
+        self._dataset_target_sources = state.get("_dataset_target_sources", {})
         self.explain_config = normalize_explain_config(state.get("explain_config"))
         self._label_prediction_cache = {}
         if not hasattr(self, "task_type_"):
@@ -1044,7 +1046,7 @@ class ModelReport(ModelContextMixin):
         if callable(self.prediction_method):
             return self._normalize_method_result(self._call_custom_method(X), X, probability=False)
 
-        return _invoke_named_prediction(self.model, X, self.prediction_method)
+        return _invoke_named_prediction(self.model, X, self.prediction_method, self.prediction_kwargs)
 
     def _dataset_from_prepared(self, prepared) -> ReportDataset:
         """在主进程调用 method，并在成功后构建数据集。"""
@@ -1065,7 +1067,7 @@ class ModelReport(ModelContextMixin):
         max_columns = max((spec[3].shape[1] for spec in specs), default=1)
         data_bytes = sum(int(spec[3].memory_usage(deep=True).sum()) for spec in specs)
         worker_method = None if callable(self.prediction_method) else self.prediction_method
-        tasks = [(*spec, worker_method) for spec in specs]
+        tasks = [(*spec, worker_method, self.prediction_kwargs) for spec in specs]
         prepared = parallel_execute(
             _build_report_dataset,
             tasks,
@@ -1107,12 +1109,21 @@ class ModelReport(ModelContextMixin):
         self._datasets_info = {dataset.name: dataset.label for dataset in results}
 
     def _resolve_target_name(self, target) -> str:
-        """显式标签保持名称；逾期配置始终通过独立参数传入。"""
-        if isinstance(target, str):
-            return target
-        if isinstance(target, dict) and target:
-            return next(iter(target))
-        return getattr(target, "name", None) or "target"
+        """解析报告展示名；阈值式标签使用字段@阈值，逾期配置通过独立参数传入。"""
+        from ._model_protocol import display_label
+
+        if self._is_overdue_cfg():
+            columns, thresholds = self._overdue_dpds()
+            if len(columns) == len(thresholds) == 1:
+                return f"{columns[0]}@{thresholds[0]}"
+        name = (
+            target
+            if isinstance(target, str)
+            else (
+                next(iter(target)) if isinstance(target, dict) and target else getattr(target, "name", None) or "target"
+            )
+        )
+        return name if self.task_type_ == "regression" else display_label(name)
 
     def _build_y(self, X: pd.DataFrame, target_cfg, *, dataset_name=None):
         """在本数据集上解析标签；显式多标签默认使用首标签作单标签视图。"""
@@ -1125,7 +1136,23 @@ class ModelReport(ModelContextMixin):
         frame, targets = bind_targets(
             X, target_cfg, self.overdue, self.dpds, self.del_grey, self.overdue_operator, dataset_name=dataset_name
         )
-        values = targets.y_map(frame, "plain")
+        from ._model_protocol import display_label
+
+        values = {}
+        for definition in targets.labels:
+            name = (
+                f"{definition.overdue}@{definition.dpd}"
+                if definition.overdue is not None
+                else display_label(definition.name)
+            )
+            if name in values:
+                raise ValidationError(f"标签展示名重复: {name}，请为不同标签指定不同名称")
+            values[name] = frame[definition.column]
+            self._label_aliases[definition.name] = name
+            if definition.overdue is not None:
+                self._label_aliases[
+                    overdue_label(definition.overdue, definition.dpd, self.overdue_operator, style="plain")
+                ] = name
         y_dict = {name: value.to_numpy(dtype=float) for name, value in values.items()}
         if targets.mode == "overdue" and len(targets) > 1:
             indicators = pd.DataFrame(y_dict, index=X.index)
@@ -1196,6 +1223,9 @@ class ModelReport(ModelContextMixin):
         specs: List[Tuple[Any, ...]] = []
         candidate_labels: List[str] = []
         for name, (X_raw, y_raw) in normalized.items():
+            self._dataset_target_sources[name] = (
+                "explicit_y" if y_raw is not None else "overdue" if self._is_overdue_cfg() else "target"
+            )
             X_df = _ensure_dataframe(X_raw, features=self._feature_names)
             if y_raw is None:
                 y_s, y_dict = self._build_y(X_df, self._target_cfg, dataset_name=name)
@@ -1230,7 +1260,7 @@ class ModelReport(ModelContextMixin):
         worker_method = None if callable(self.prediction_method) else self.prediction_method
         prepared = parallel_execute(
             _build_report_dataset,
-            [(*spec, worker_method)],
+            [(*spec, worker_method, self.prediction_kwargs)],
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
@@ -1274,6 +1304,7 @@ class ModelReport(ModelContextMixin):
         :type features: Optional[List[str]]
         """
         X = _ensure_dataframe(X, features=_normalize_feature_names(features) or self.feature_names)
+        source = "explicit_y" if y is not None else "overdue" if self._is_overdue_cfg() else "target"
         # y=None 时从 X 中通过 overdue+dpds 自动构建标签（scorecardpipeline 风格）
         if y is None:
             y, y_dict = self._build_y(X, self._target_cfg, dataset_name=key)
@@ -1287,6 +1318,7 @@ class ModelReport(ModelContextMixin):
                 y = target_values(X, y, self._target_name)
         y = _ensure_series(y, name=self._target_name)
         self._add_dataset(key, label, X, y, y_dict)
+        self._dataset_target_sources[key] = source
         if y_dict and not self._label_names:
             self._label_names = list(y_dict)
 
@@ -1302,6 +1334,7 @@ class ModelReport(ModelContextMixin):
         """
         ds = self._datasets[dataset_key]
         if label is not None:
+            label = getattr(self, "_label_aliases", {}).get(label, label)
             if label not in self._label_names:
                 raise ValueError(f"数据集 '{dataset_key}' 不存在标签 '{label}'")
             if ds.y_dict is None:
@@ -1377,16 +1410,12 @@ class ModelReport(ModelContextMixin):
         columns = [self.overdue] if isinstance(self.overdue, str) else list(self.overdue or [])
         return columns, normalize_dpd_values(self.dpds) if self.dpds is not None else []
 
-    def _overdue_label_map(self, separator: str = ">") -> Dict[str, str]:
+    def _overdue_label_map(self, separator: str = "@") -> Dict[str, str]:
         """返回内部标签到报告展示标签的映射。"""
         if not self._is_overdue_cfg():
             return {name: name for name in self._label_names}
         overdue_cols, dpds_vals = self._overdue_dpds()
-        display = [
-            overdue_label(col, dpd, self.overdue_operator, style="at" if separator == "@" else "plain")
-            for col in overdue_cols
-            for dpd in dpds_vals
-        ]
+        display = [f"{col}@{dpd}" for col in overdue_cols for dpd in dpds_vals]
         return dict(zip(self._label_names, display))
 
     def _normalize_overdue_bin_columns(self, table: pd.DataFrame) -> pd.DataFrame:
@@ -1995,13 +2024,16 @@ class ModelReport(ModelContextMixin):
 
     def _get_score_conversion_sections(self) -> Optional[Dict[str, pd.DataFrame]]:
         """返回普通模型已拟合概率评分转换器的选型、参数与公式。"""
-        if self.prediction_method != "predict_score" or self._is_scorecard_model():
+        from ._model_protocol import is_score_transformer
+
+        direct = is_score_transformer(self.model) and self.prediction_method in ("transform", "predict")
+        if (self.prediction_method != "predict_score" and not direct) or self._is_scorecard_model():
             return None
 
         owner = getattr(self._report_model, "scorecard_", None)
         if owner is None and hasattr(self._report_model, "transformer_"):
             owner = self._report_model
-        converter = getattr(self._report_model, "score_transformer_", None)
+        converter = self._report_model if direct else getattr(self._report_model, "score_transformer_", None)
         if converter is None and owner is not None:
             converter = getattr(owner, "transformer_", None)
         if converter is None:
@@ -2017,6 +2049,7 @@ class ModelReport(ModelContextMixin):
             return None
 
         selection = {
+            "报告推理方法": self.prediction_method if isinstance(self.prediction_method, str) else "自定义函数",
             "转换入口": type(converter).__name__,
             "转换方法": getattr(converter, "method", getattr(owner, "method", None)),
             "实际转换器": type(actual_converter).__name__,
@@ -2028,43 +2061,66 @@ class ModelReport(ModelContextMixin):
                 params.update(owner.get_params_info())
             except Exception:
                 pass
-        if not params:
-            for name in (
-                "method",
-                "direction_",
-                "direction",
-                "lower",
-                "upper",
-                "decimal",
-                "clip",
-                "base_odds",
-                "base_score",
-                "pdo",
-                "rate",
-                "A_",
-                "B_",
-            ):
-                for candidate in (converter, actual_converter):
-                    if hasattr(candidate, name):
-                        params[name.rstrip("_")] = getattr(candidate, name)
-                        break
+        for name in (
+            "method",
+            "direction_",
+            "direction",
+            "lower",
+            "upper",
+            "decimal",
+            "clip",
+            "base_odds",
+            "base_score",
+            "pdo",
+            "rate",
+            "A_",
+            "B_",
+            "n_quantiles",
+            "lmbda_",
+            "shift",
+            "z_min_",
+            "z_max_",
+        ):
+            for candidate in (converter, actual_converter):
+                if hasattr(candidate, name):
+                    params.setdefault(name, getattr(candidate, name))
+                    break
 
         formula: Dict[str, Any] = {}
         for candidate in (owner, converter, actual_converter):
             if candidate is None or not callable(getattr(candidate, "score_formula", None)):
                 continue
             try:
-                result = candidate.score_formula()
+                parameters = inspect.signature(candidate.score_formula).parameters
+                result = candidate.score_formula(decimal=15) if "decimal" in parameters else candidate.score_formula()
                 formula = result if isinstance(result, dict) else {"公式": str(result)}
                 break
             except Exception:
                 continue
 
+        if formula:
+            formula.setdefault("输入概率", "P 为原始模型预测的坏样本概率（类别1）")
+            if direct and self.prediction_method == "transform":
+                formula["推理输出"] = "直接使用 transform 输出；不额外执行 predict 的截断和四舍五入"
+            elif (direct and self.prediction_method == "predict") or self.prediction_method == "predict_score":
+                formula["推理输出"] = "按转换器 clip/lower/upper 配置截断，再按 decimal 四舍五入"
+            else:
+                formula["推理输出"] = "使用指定推理方法的返回值"
+
         return {
             "selection": self._mapping_table(selection),
             "params": self._mapping_table(params),
             "formula": self._mapping_table(formula, key_name="公式项", value_name="公式内容"),
+            "knots": self._score_conversion_knots(actual_converter),
         }
+
+    @staticmethod
+    def _score_conversion_knots(converter):
+        converter = getattr(converter, "transformer_", converter)
+        values = getattr(converter, "quantile_values_", None)
+        if values is None:
+            return pd.DataFrame()
+        return pd.DataFrame({"分位点序号": np.arange(len(values)), "分位点概率": np.asarray(values)})
 
     def _scorecard_lr_summary(self) -> pd.DataFrame:
         """优先读取 LR summary，不支持时按系数构造统一表。"""
@@ -2178,7 +2234,8 @@ class ModelReport(ModelContextMixin):
         """统一评分卡概率转评分公式。"""
         if callable(getattr(self._report_model, "score_formula", None)):
             try:
-                formula = self._report_model.score_formula()
+                method = self._report_model.score_formula
+                formula = method(decimal=15) if "decimal" in inspect.signature(method).parameters else method()
                 if isinstance(formula, dict):
                     return self._mapping_table(formula, key_name="公式项", value_name="公式内容")
                 return self._mapping_table({"公式": str(formula)}, key_name="公式项", value_name="公式内容")
@@ -2768,38 +2825,42 @@ class ModelReport(ModelContextMixin):
             except Exception as exc:
                 self._report_warning("生成模型评分分箱图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
 
-            p = str(output_dir / f"ks_{ds_key}.png")
-            try:
-                ks_plot(
-                    ds.score,
-                    ds.y,
-                    title=f"{tag} KS曲线",
-                    save=p,
-                    figsize=(12, 7),
-                    score_direction=self.score_direction,
-                    sample_weight=self._metric_weight(ds_key),
-                )
-                _safe_close_figs()
-                model_figs.append(p)
-            except Exception as exc:
-                self._report_warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
-
-            if show_lift:
-                p = str(output_dir / f"lift_{ds_key}.png")
+            if pd.Series(ds.y).nunique() == 2:
+                p = str(output_dir / f"ks_{ds_key}.png")
                 try:
-                    lift_plot(
+                    ks_plot(
+                        ds.score,
                         ds.y,
-                        self._risk_values(ds.y_proba),
-                        n_bins=20,
-                        title=f"{tag} LIFT曲线",
+                        title=f"{tag} KS曲线",
                         save=p,
                         figsize=(12, 7),
+                        score_direction=self.score_direction,
                         sample_weight=self._metric_weight(ds_key),
                     )
                     _safe_close_figs()
                     model_figs.append(p)
                 except Exception as exc:
-                    self._report_warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
+                    self._report_warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
+
+                if show_lift:
+                    p = str(output_dir / f"lift_{ds_key}.png")
+                    try:
+                        lift_plot(
+                            ds.y,
+                            self._risk_values(ds.y_proba),
+                            n_bins=20,
+                            title=f"{tag} LIFT曲线",
+                            save=p,
+                            figsize=(12, 7),
+                            sample_weight=self._metric_weight(ds_key),
+                        )
+                        _safe_close_figs()
+                        model_figs.append(p)
+                    except Exception as exc:
+                        self._report_warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, p, exc)
+
+            else:
+                self._report_not_applicable("模型 KS/LIFT 图", f"{tag} 的默认图表标签不足两个类别")
 
             p = str(output_dir / f"hist_{ds_key}.png")
             try:
@@ -3023,38 +3084,42 @@ class ModelReport(ModelContextMixin):
                 except Exception as exc:
                     self._report_warning("生成模型评分分箱图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
 
-                path = str(output_dir / f"ks_{ds_key}.png")
-                try:
-                    figure = ks_plot(
-                        ds.score,
-                        ds.y,
-                        title=f"{tag} KS曲线",
-                        save=path,
-                        figsize=(12, 7),
-                        score_direction=self.score_direction,
-                        sample_weight=self._metric_weight(ds_key),
-                    )
-                    _safe_close_plot_result(figure)
-                    model_figs.append(path)
-                except Exception as exc:
-                    self._report_warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
-
-                if show_lift:
-                    path = str(output_dir / f"lift_{ds_key}.png")
+                if pd.Series(ds.y).nunique() == 2:
+                    path = str(output_dir / f"ks_{ds_key}.png")
                     try:
-                        figure = lift_plot(
+                        figure = ks_plot(
+                            ds.score,
                             ds.y,
-                            self._risk_values(ds.y_proba),
-                            n_bins=20,
-                            title=f"{tag} LIFT曲线",
-                            sample_weight=self._metric_weight(ds_key),
+                            title=f"{tag} KS曲线",
                             save=path,
                             figsize=(12, 7),
+                            score_direction=self.score_direction,
+                            sample_weight=self._metric_weight(ds_key),
                         )
                         _safe_close_plot_result(figure)
                         model_figs.append(path)
                     except Exception as exc:
-                        self._report_warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+                        self._report_warning("生成模型 KS 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+
+                    if show_lift:
+                        path = str(output_dir / f"lift_{ds_key}.png")
+                        try:
+                            figure = lift_plot(
+                                ds.y,
+                                self._risk_values(ds.y_proba),
+                                n_bins=20,
+                                title=f"{tag} LIFT曲线",
+                                sample_weight=self._metric_weight(ds_key),
+                                save=path,
+                                figsize=(12, 7),
+                            )
+                            _safe_close_plot_result(figure)
+                            model_figs.append(path)
+                        except Exception as exc:
+                            self._report_warning("生成模型 LIFT 图失败 [数据集=%s, 文件=%s]: %s", tag, path, exc)
+
+                else:
+                    self._report_not_applicable("模型 KS/LIFT 图", f"{tag} 的默认图表标签不足两个类别")
 
                 path = str(output_dir / f"hist_{ds_key}.png")
                 try:
@@ -3969,6 +4034,8 @@ class ModelReport(ModelContextMixin):
             for values in (ds.y_dict or {"target": ds.y}).values()
         )
         overall_n = sum(len(self._datasets[k].y) for k in ds_keys_list)
+        if target_specific_totals and not is_multi:
+            overall_n = sum(int(np.isfinite(np.asarray(self._datasets[k].y, dtype=float)).sum()) for k in ds_keys_list)
         if overall_n > 0:
             if is_multi:
                 display_labels = self._overdue_label_map(separator="@")
@@ -4001,12 +4068,27 @@ class ModelReport(ModelContextMixin):
             {"统计项": "模型名称", "统计内容": model_name or "N/A"},
             {"统计项": "取样逻辑", "统计内容": project_desc or "N/A"},
             {"统计项": "数据源", "统计内容": data_source_str},
+            {
+                "统计项": "推理方法",
+                "统计内容": self.prediction_method if isinstance(self.prediction_method, str) else "自定义函数",
+            },
         ]
+        if is_multi:
+            chart_target = (
+                "任一逾期标签为1则为1；全部标签均无效时剔除"
+                if self._is_overdue_cfg()
+                else f"首标签：{self._label_names[0]}"
+            )
+            if "explicit_y" in self._dataset_target_sources.values():
+                chart_target += "；显式y的数据集使用外部标签"
+            fixed_rows.append({"统计项": "默认图表标签", "统计内容": chart_target})
 
         # ---- Step 4: 各数据集描述行（与整体样本同一张表，多标签逐标签展示坏样本率） ----
         ds_rows: List[Dict[str, Any]] = []
         for ds_key, ds_label in zip(ds_keys_list, dataset_labels):
             n_samples = len(self._datasets[ds_key].y)
+            if target_specific_totals and not is_multi:
+                n_samples = int(np.isfinite(np.asarray(self._datasets[ds_key].y, dtype=float)).sum())
             if is_multi:
                 display_labels = self._overdue_label_map(separator="@")
                 label_parts = []
@@ -4032,6 +4114,20 @@ class ModelReport(ModelContextMixin):
         end_row, _ = dataframe2excel(
             desc_df, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["统计项", "统计内容"]
         )
+        from ._model_protocol import label_definition_table
+
+        definitions = label_definition_table(self)
+        label_definition_start_row = end_row + 2
+        end_row, label_definition_end_col = dataframe2excel(
+            definitions,
+            writer,
+            sheet_name=ws,
+            start_row=label_definition_start_row,
+            title="标签定义与剔灰规则",
+            index=False,
+            left_cols=[column for column in definitions if not column.endswith("样本数")],
+        )
+        label_definition_end_row = end_row
 
         # 1.3 数据样本统计
         end_row, _ = writer.insert_value2sheet(
@@ -5079,7 +5175,11 @@ class ModelReport(ModelContextMixin):
                 ("评分转换器选型", "selection"),
                 ("评分转换基础参数配置", "params"),
                 ("概率转评分公式", "formula"),
+                ("评分转换分位点", "knots"),
             ):
+                section_table = score_conversion_sections[key]
+                if section_table.empty:
+                    continue
                 end_row, _ = writer.insert_value2sheet(
                     ws,
                     (end_row + 2, 2),
@@ -5087,7 +5187,6 @@ class ModelReport(ModelContextMixin):
                     style="header_middle",
                     align={"horizontal": "left"},
                 )
-                section_table = score_conversion_sections[key]
                 if not section_table.empty:
                     end_row, _ = dataframe2excel(
                         section_table,
@@ -5095,6 +5194,7 @@ class ModelReport(ModelContextMixin):
                         sheet_name=ws,
                         start_row=end_row + 1,
                         left_cols=list(section_table.columns),
+                        decimal=None,
                     )
                 param_section += 1
 
@@ -5166,6 +5266,17 @@ class ModelReport(ModelContextMixin):
                     start_row=end_row + 1,
                     left_cols=list(scorecard_formula.columns),
                 )
+                knots = self._score_conversion_knots(getattr(self._report_model, "transformer_", None))
+                if not knots.empty:
+                    end_row, _ = dataframe2excel(
+                        knots,
+                        writer,
+                        sheet_name=ws,
+                        start_row=end_row + 2,
+                        title="评分转换分位点",
+                        index=False,
+                        decimal=None,
+                    )
             param_section += 1
 
             sc_points = self._scorecard_points_table(feature_map)
@@ -5399,7 +5510,14 @@ class ModelReport(ModelContextMixin):
         for sheet_name in ("5-模型参数", "6-模型部署需求", training_name):
             if sheet_name in writer.workbook:
                 fit_metadata_sheet(writer.workbook[sheet_name], writer.style_sheet.column_dimensions["C"].width)
-        from ._model_layout import fit_report_titles
+        from ._model_layout import fit_report_titles, fit_label_definitions
+
+        fit_label_definitions(
+            writer.workbook["1-基本信息"],
+            label_definition_start_row,
+            label_definition_end_row,
+            label_definition_end_col,
+        )
 
         # 表格全部写入后列宽才稳定，所有数据集和特征的同一组图采用相同排布。
         from openpyxl.utils import get_column_letter
@@ -5627,9 +5745,9 @@ def auto_model_report(
     :param include_sample_records: 是否输出逐行订单/模型分数测试用例，默认True；False标记该章节不适用
     :type include_sample_records: bool
     :param training_sheet_index: 默认 None 自动连续编号；可显式指定训练过程页的未占用编号。
-    :param prediction_method: 数据集唯一预测方法，默认 None 自动选择分类 predict_proba 或回归 predict，也支持 callable
+    :param prediction_method: 数据集唯一推理方法，默认分类模型 predict_proba、纯评分转换器 transform、回归模型 predict；支持显式方法名或 callable
     :type prediction_method: Union[str, Callable]
-    :param prediction_kwargs: 默认值为 ``None`` 。callable 同名参数的显式覆盖字典
+    :param prediction_kwargs: 默认值为 ``None`` 。推理方法的参数字典；同时支持方法名和 callable
     :type prediction_kwargs: Optional[Dict[str, Any]]
     :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
         正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。

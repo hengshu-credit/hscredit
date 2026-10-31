@@ -723,8 +723,8 @@ class TestModelReportOverdueDpdsSeparate:
             labels=report._label_names,
         )
         total = score_table.loc[score_table[("分箱详情", "分箱标签")] == "合计"].iloc[0]
-        assert total[("MOB1>1", "样本总数")] == 12
-        assert total[("MOB1>3", "样本总数")] == 9
+        assert total[("MOB1@1", "样本总数")] == 12
+        assert total[("MOB1@3", "样本总数")] == 9
 
     def test_del_grey_filters_single_overdue_target_dataset(self):
         """单个 overdue/DPD 口径若只支持多目标删灰，本测试必须失败。"""
@@ -787,7 +787,11 @@ class TestModelReportOverdueDpdsSeparate:
 
         assert report.del_grey is True
         worksheet = load_workbook(output)["1-基本信息"]
-        header_rows = [row for row in range(1, worksheet.max_row) if worksheet.cell(row + 1, 2).value == "数据集"]
+        header_rows = [
+            row
+            for row in range(1, worksheet.max_row)
+            if worksheet.cell(row, 2).value == "统计详情" and worksheet.cell(row + 1, 2).value == "数据集"
+        ]
         sample_header, time_header, group_header = header_rows[:3]
 
         def header_columns(group_row):
@@ -1471,7 +1475,8 @@ class TestModelReportRegression:
         assert _merged_range_for_row(basic, 2).max_col != 35
 
         desc_row = _row_for_value(basic, "2、数据样本描述")
-        assert _merged_range_for_row(basic, desc_row).max_col == 3
+        # 数据样本描述新增12列标签定义表，标题应覆盖该表完整宽度。
+        assert _merged_range_for_row(basic, desc_row).max_col == 13
 
         parent_row = _row_for_value(feature_sheet, "3、入模变量有效性分析")
         child_row = _row_for_value(feature_sheet, "3.1、f0 有效性分析")
@@ -1628,7 +1633,7 @@ class TestModelReportRegression:
         feature_table = report.get_feature_bin_table("f0", labels=report._label_names)
         for table in (bin_table, feature_table):
             assert isinstance(table.columns, pd.MultiIndex)
-            assert {"MOB1>7", "MOB1>3", "MOB1>0"} <= set(table.columns.get_level_values(0))
+            assert {"MOB1@7", "MOB1@3", "MOB1@0"} <= set(table.columns.get_level_values(0))
             assert "指标名称" not in table.columns.get_level_values(-1)
             assert "指标含义" not in table.columns.get_level_values(-1)
 
@@ -1640,7 +1645,7 @@ class TestModelReportRegression:
 
         assert performance["B7"].value == "统计项"
         assert performance["B7"].style == "header_left"
-        assert [performance.cell(7, col).value for col in (3, 5, 7)] == ["MOB1>7", "MOB1>3", "MOB1>0"]
+        assert [performance.cell(7, col).value for col in (3, 5, 7)] == ["MOB1@7", "MOB1@3", "MOB1@0"]
         assert [performance.cell(8, col).value for col in range(2, 8)] == [
             "统计指标",
             "训练集",
@@ -1796,7 +1801,7 @@ class TestModelReportRealDataContract:
             "测试集": source.iloc[500:750].copy(),
             "OOT集": source.iloc[750:].copy(),
         }
-        expected_labels = ["MOB1>7", "MOB1>3", "MOB1>0"]
+        expected_labels = ["MOB1@7", "MOB1@3", "MOB1@0"]
         expected_display_labels = ["MOB1@7", "MOB1@3", "MOB1@0"]
         expected_counts = [len(frame) for frame in frames.values()]
         expected_bad_rates = {

@@ -13,7 +13,41 @@
 .. rubric:: 模型报告的配置、评估与导出
 
 分类、回归及所有模型的完整链路验收见 :doc:`model_workflow_validation`。
-``prediction_method=None`` 按任务自动选择概率或连续预测。报告的
+``prediction_method=None`` 默认使用分类模型的 ``predict_proba``，纯评分转换器的
+``transform``，回归模型的 ``predict``。ScoreCard 等具有 ``predict_proba`` 的分类模型
+仍默认输出概率。显式 ``prediction_method`` 优先，可指定模型已实现的方法名或 callable；
+``prediction_kwargs`` 同时支持两种形式，数据集只缓存该方法的返回结果。
+纯评分转换器以概率列作为输入，例如 ``features=["原始概率"]``，不把业务目标列传入转换器。
+
+逾期标签在所有模型报告表中统一展示为 ``字段@阈值``，例如 ``MOB1@3``；比较符不会混入标签名。
+显式 target 中形如 ``MOB1大于3``、``MOB1>3`` 的名称也按此规则展示，但名称不会用于推断其计算逻辑。
+归一化后重名的标签会明确报错。基本信息的“标签定义与剔灰规则”表按数据集/标签说明
+来源、操作符、坏样本定义、剔灰开关、灰区、缺失值处理及实际有效/剔除样本数。
+``>`` 的灰区为 ``(0, dpd]``，``>=`` 为 ``(0, dpd)``；``<`` 和 ``<=`` 不设置灰区。
+显式 target 开启剔灰时剔除非0/1及缺失值，否则非1值按0；外部 y 优先，并明确标出实际采用的口径。
+
+采用概率转评分输出时，模型参数页单独展示转换器、实际参数及转换公式。
+支持标准、线性、分位数和 Box-Cox；分位数的全部分位点单独列表，Box-Cox 展示已拟合 lambda 和值域。
+``transform`` 直接返回转换值；显式使用 ``predict`` 时还执行转换器的截断及四舍五入，报告说明与实际方法一致。
+普通分类器默认概率报告不会因为模型持有评分转换器就自动改为评分。
+
+.. code-block:: python
+
+   # 默认使用模型的坏样本概率，按每个标签独立剔灰。
+   report = model.model_report(
+       datasets={"训练集": train, "验证集": valid},
+       overdue=["MOB1"], dpds=[7, 3, 0], overdue_operator=">", del_grey=True,
+   )
+   # 直接报告已拟合的评分转换器，默认调用 transform；显式参数优先。
+   score_report = ModelReport(
+       converter, datasets={"验证集": probability_frame},
+       features=["原始概率"], target="FPD", prediction_method="transform",
+   )
+
+多标签报告默认单图使用逾期标签的“任一为1”联合视图，显式 target 字典使用首标签。
+基本信息会说明该口径；联合视图只剩一个类别时，KS/LIFT 图按不适用处理，保留其他统计与图表。
+
+报告的
 ``accuracy/precision/recall/f1`` 与模型的决策语义一致，规则模型保留 AND/OR 逻辑。
 
 .. rubric:: 训练过程与 SHAP 重要性

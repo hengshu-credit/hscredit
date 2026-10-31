@@ -152,11 +152,14 @@ class ModelContextMixin:
         if score_direction not in (None, "higher_risk", "higher_safe"):
             raise ValueError("score_direction 必须为 higher_risk、higher_safe 或 None（按预测方法确定）")
         if score_direction is None:
+            from ._model_protocol import final_estimator
+
+            estimator = final_estimator(self.model)
             score_method = self.prediction_method == "predict_score" or (
                 self.prediction_method in ("predict", "transform")
-                and (hasattr(self.model, "scorecard_points") or hasattr(self.model, "direction_"))
+                and (hasattr(estimator, "scorecard_points") or hasattr(estimator, "direction_"))
             )
-            owner = getattr(self.model, "score_transformer_", self.model)
+            owner = getattr(estimator, "score_transformer_", getattr(estimator, "transformer_", estimator))
             direction = getattr(owner, "direction_", getattr(owner, "direction", "descending"))
             score_direction = "higher_safe" if score_method and direction == "descending" else "higher_risk"
         self.score_direction = score_direction
