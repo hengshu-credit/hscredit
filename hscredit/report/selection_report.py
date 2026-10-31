@@ -1,8 +1,7 @@
-"""特征筛选报告的结果汇总、Excel 导出与 JSON 存取。
+"""建模流程中的特征筛选汇总与过程数据。
 
-``selection_report`` 遵循报告模块的 ``excel_writer`` / ``return_result`` 约定；
-``save_selection_report`` 保留版本目录发布，用于完整快照归档和 JSON 往返。
-所有入口只读取已拟合结果，不重新筛选或计算指标。
+``selection_report`` 只返回两个 DataFrame，供模型报告组合使用，不写入文件。
+独立的快照存取函数用于显式归档，不参与筛选报告的数据生成。
 """
 
 import copy
@@ -32,12 +31,13 @@ from ..core.selectors.reporting import (
     _INT_COLUMNS,
     _FLOAT_COLUMNS,
     _BOOL_COLUMNS,
+    _table as _selection_table,
 )
-from ..excel import ExcelWriter, dataframe2excel
 from ..exceptions import ValidationError
 from .result import ReportResult
 
 _TABLES = {"summary": "筛选汇总", "details": "特征决策", "metrics": "指标明细", "history": "迭代记录"}
+_PROCESS_COLUMNS = list(dict.fromkeys(["记录类型"] + DETAIL_COLUMNS + METRIC_COLUMNS + HISTORY_COLUMNS))
 _Path = Union[str, PathLike]
 _ExcelPlan = Tuple[str, str, pd.DataFrame, int, int]
 logger = logging.getLogger(__name__)
@@ -66,94 +66,65 @@ def to_report_result(report: SelectionReport) -> ReportResult:
 
 def selection_report(
     selector: Any,
-    excel_writer: Optional[Union[_Path, ExcelWriter]] = None,
     *,
     relation: str = "auto",
-    mode: str = "strict",
-    return_result: bool = False,
-    writer_params: Optional[Dict[str, Any]] = None,
-    by_selector: bool = False,
-    max_rows_per_sheet: int = 1048575,
-    max_excel_cells: int = 5000000,
-    max_sheets: int = 200,
-) -> Union[Dict[str, pd.DataFrame], ReportResult]:
-    """汇总已拟合筛选流程，可选写入 Excel。
+    strict: bool = True,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """读取用户已拟合的筛选流程，返回汇总和具体过程两张表。
 
-    :param selector: 已拟合筛选器、Pipeline、筛选器列表或 SelectionReport 快照。
-        列表元素也可为 ``(名称, 筛选器)``，不会调用 fit。
-    :param excel_writer: 默认 None，只返回结果表；支持 .xlsx 路径或 HSCredit
-        ExcelWriter。传路径时保存到该路径，传写入器时由调用方统一保存。
-    :param relation: 默认 'auto'；列表默认独立比较。支持 'independent'、
-        'sequential'、'intersection'、'union'，含义与 collect_selection_report 相同。
-    :param mode: 默认 'strict'，拒绝不完整来源；'best_effort' 保留可用表及诊断。
-    :param return_result: 默认 False，返回中文表名字典；True 返回 ReportResult，
-        可读取章节状态、元数据、工作表映射和制品路径。
-    :param writer_params: 新建 ExcelWriter 的配置，如 theme_color、font；
-        传入已有写入器时不得另传配置。
-    :param by_selector: 默认 False；True 时额外按阶段导出特征决策表。
-    :param max_rows_per_sheet: 每表最多数据行数，默认 1048575，不含表头。
-    :param max_excel_cells: Excel 总单元格预算，默认 5000000，包含表头。
-    :param max_sheets: 本次最多生成工作表数，默认 200。
-    :return: 四张中文结果表；不改变数值精度，不添加指标状态列。
-    :raises ValidationError: 参数无效、来源不完整或 Excel 容量超限。
-    :raises ReportGenerationError: 严格模式下，传入的报告快照包含未完成章节。
+    :param selector: 已拟合的单筛选器、组合筛选器、Pipeline、筛选器列表或
+        SelectionReport 快照。列表可混合上述筛选流程，也可使用 ``(名称, 筛选器)``
+        为每个流程命名；不会创建筛选器，也不会调用 fit 或 transform。
+    :param relation: 默认 'auto'，列表按独立筛选结果汇总，Pipeline 按实际步骤串行收集。
+        串行列表须显式指定 'sequential' 并满足输入/输出字段连续；
+        'intersection' / 'union' 按共同输入字段生成交集/并集根决策。
+        'independent' 表示独立比较，不合成最终特征数。
+    :param strict: 默认 True，拒绝未拟合或不完整的来源；False 保留已有记录，
+        完整性及诊断写入两张表各自的 attrs，不添加诊断列。
+    :return: ``(summary, process)`` 两个独立 DataFrame。
+        summary 按阶段给出路径、父路径、筛选器、输入/选中/剔除特征数及保留率；
+        根流程汇总与子阶段分别呈现，不能再次累加为唯一特征数量。
+        process 用“记录类型”区分“特征决策”“指标明细”“迭代事件”，包含特征、
+        指标值、阈值、筛选结果、原因及迭代轮次等原始字段。按汇总阶段顺序排列，
+        同阶段按上述记录类型排列，各类型内部保持原始顺序；不做多对多拼接，
+        不重复计算指标，不舍入，不修改筛选器。未记录的历史不会被补造。
+        两表列名为中文，空表也保留固定列结构及 dtype。
+    :raises ValidationError: 参数无效、字段链不连续或严格模式下来源不完整。
+    :raises NotFittedError: 严格模式下筛选器尚未拟合。
 
     **参考样例**
 
-    >>> tables = selection_report(fitted_selector)
-    >>> tables['特征决策']
-    >>> result = selection_report(fitted_pipeline, excel_writer='筛选报告.xlsx', return_result=True)
+    >>> summary, process = selection_report(selector=fitted_selector)
+    >>> summary, process = selection_report([('缺失', null_selector), ('相关性', corr_selector)], relation='sequential')
+    >>> summary, process = selection_report(fitted_pipeline)
     """
-    if not isinstance(mode, str) or mode not in {"strict", "best_effort"}:
-        raise ValidationError("mode 必须为 'strict' 或 'best_effort'")
-    _validate_bool(return_result, "return_result")
-    _validate_bool(by_selector, "by_selector")
-    if writer_params is not None and not isinstance(writer_params, dict):
-        raise ValidationError("writer_params 必须为字典或 None")
-    if isinstance(excel_writer, ExcelWriter) and writer_params is not None:
-        raise ValidationError("传入已有 ExcelWriter 时不能同时指定 writer_params")
-    output = None
-    if excel_writer is not None and not isinstance(excel_writer, ExcelWriter):
-        output = _validate_path(excel_writer)
-        if output.suffix.lower() != ".xlsx":
-            raise ValidationError("excel_writer 文件后缀必须为 .xlsx")
-    report = collect_selection_report(selector, relation=relation, strict=mode == "strict")
-    result = to_report_result(report)
-    result.mode = mode
-    result.ensure_publishable()
-    if excel_writer is not None:
-        plans = _plan_excel(report, max_rows_per_sheet, max_excel_cells, max_sheets, by_selector)
-        writer = excel_writer if isinstance(excel_writer, ExcelWriter) else ExcelWriter(**(writer_params or {}))
-        used = {name.lower() for name in writer.workbook.sheetnames}
-        for name, label, frame, start, end in plans:
-            name = _sheet_name(name, used)
-            sheet = writer.get_sheet_by_name(name)
-            # 保留空值和原始数值；复杂对象转换为可安全展示的文本。
-            data = pd.DataFrame(
-                [
-                    [_excel_value(value) for value in row]
-                    for row in frame.iloc[start:end].itertuples(index=False, name=None)
-                ],
-                columns=frame.columns,
-                dtype=object,
-            )
-            for row in data.itertuples(index=False, name=None):
-                if any(isinstance(value, str) and len(value) > 32767 for value in row):
-                    raise ValidationError("Excel 单元格文本超出 32767 字符；请使用 JSON 保存完整报告")
-            dataframe2excel(data, writer, sheet_name=sheet, start_row=1, start_col=1, index=False, decimal=None)
-            # ExcelWriter 负责统一样式；用户字段名及参数不能被解释为公式。
-            for row in sheet.iter_rows():
-                for cell in row:
-                    if isinstance(cell.value, str):
-                        cell.data_type = "s"
-            sheet.freeze_panes = "A2"
-            sheet.auto_filter.ref = f"A1:{get_column_letter(len(frame.columns))}{len(data) + 1}"
-            result.sheet_mapping[name if start or end < len(frame) else label] = name
-        if output is not None:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            writer.save(str(output))
-            result.artifacts.append({"类型": "Excel", "路径": str(output), "完整": result.complete})
-    return result if return_result else dict(result)
+    _validate_bool(strict, "strict")
+    if not isinstance(relation, str):
+        raise ValidationError("relation 必须为筛选关系名称字符串")
+    report = collect_selection_report(selector, relation=relation, strict=strict)
+    metadata = report.metadata
+    if strict and not metadata.get("完整", True):
+        raise ValidationError("筛选报告不完整：" + "；".join(map(str, metadata.get("诊断", []))))
+    summary = report.summary
+    stage_info = summary.set_index("阶段路径")
+    parts = []
+    for attribute, kind in (("details", "特征决策"), ("metrics", "指标明细"), ("history", "迭代事件")):
+        frame = getattr(report, attribute)
+        if frame.empty:
+            continue
+        frame.insert(0, "记录类型", kind)
+        for column in ("阶段编号", "阶段名称", "筛选器"):
+            if column not in frame:
+                frame[column] = frame["阶段路径"].map(stage_info[column])
+        parts.append(frame)
+    process = _selection_table(pd.concat(parts, ignore_index=True, sort=False) if parts else [], _PROCESS_COLUMNS)
+    if not process.empty:
+        stage_order = {path: index for index, path in enumerate(summary["阶段路径"])}
+        order = process["阶段路径"].map(stage_order).fillna(len(stage_order)).sort_values(kind="stable").index
+        process = process.loc[order].reset_index(drop=True)
+    summary.attrs = copy.deepcopy(metadata)
+    process.attrs = copy.deepcopy(metadata)
+    return summary, process
 
 
 def _validate_bool(value: bool, name: str) -> None:
@@ -505,7 +476,7 @@ def save_selection_report(
     :param by_selector: 默认 False；是否额外按筛选阶段导出特征决策表。
     :param allow_incomplete: 默认 False；是否允许归档带诊断的不完整快照。
     :return: 含路径、清单、协议版本、制品、工作表映射、表行数、完整、诊断的字典；
-        run_id 是版本标识。始终使用返回路径定位文件；直接导出请用 selection_report。
+        run_id 是版本标识。始终使用返回路径定位文件；建模流程中的两张结果表请用 selection_report。
     :raises ValidationError: 参数无效、报告不完整或超过 Excel 容量预算。
 
     **参考样例**

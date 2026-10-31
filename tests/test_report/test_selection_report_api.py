@@ -1,4 +1,4 @@
-"""筛选报告公共调用、数值与文件格式契约。"""
+"""筛选报告的双表输出、流程组合与独立快照归档契约。"""
 
 import json
 import inspect
@@ -8,31 +8,44 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-from openpyxl import load_workbook
+from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
-from hscredit.core.selectors import NullSelector, SelectionReport, VarianceSelector, collect_selection_report
-from hscredit.excel import ExcelWriter
+from hscredit.core.selectors import (
+    CompositeFeatureSelector,
+    NullSelector,
+    RFESelector,
+    SelectionReport,
+    VarianceSelector,
+    collect_selection_report,
+)
 from hscredit.exceptions import NotFittedError, ValidationError
-from hscredit.report import ReportResult, selection_report, load_selection_report
+from hscredit.report import selection_report, load_selection_report
 
 
 @pytest.fixture
-def selector():
-    return NullSelector(threshold=0.4, n_jobs=1).fit(
-        pd.DataFrame({"评分": [1, 2, 3, 4], "缺失字段": [1, np.nan, 3, np.nan], "全空": [np.nan] * 4})
-    )
+def data():
+    return pd.DataFrame({"评分": [1, 2, 3, 4], "缺失字段": [1, np.nan, 3, np.nan], "常量": [1, 1, 1, 1]})
 
 
-def test_selection_report_has_required_selector_and_public_exports():
+@pytest.fixture
+def selector(data):
+    return NullSelector(threshold=0.4, n_jobs=1).fit(data)
+
+
+def decisions(process):
+    return process.loc[process["记录类型"] == "特征决策"]
+
+
+def test_selection_report_public_signature_and_unfitted_input():
     import hscredit
     import hscredit.report as reports
 
     assert hscredit.selection_report is reports.selection_report is selection_report
     assert import_module("hscredit.report.selection_report").selection_report is selection_report
     parameters = inspect.signature(selection_report).parameters
+    assert list(parameters) == ["selector", "relation", "strict"]
     assert parameters["selector"].default is inspect.Parameter.empty
-    assert "source" not in parameters
     assert "auto_selection_report" not in reports.__all__
     assert "auto_selection_report" not in hscredit.__all__
     with pytest.raises(TypeError, match="selector"):
@@ -41,103 +54,170 @@ def test_selection_report_has_required_selector_and_public_exports():
         selection_report(selector=NullSelector())
 
 
-def test_report_uses_configured_selector_list_without_refitting(monkeypatch):
-    data = pd.DataFrame({"评分": [1, 2, 3, 4], "缺失字段": [1, np.nan, 3, np.nan]})
-    selectors = [
+@pytest.mark.parametrize(
+    "option", ["excel_writer", "writer_params", "return_result", "mode", "max_sheets", "by_selector"]
+)
+def test_removed_export_options_are_rejected(selector, option):
+    with pytest.raises(TypeError, match=option):
+        selection_report(selector, **{option: None})
+
+
+def test_report_returns_two_frames_without_fit_transform_or_files(selector, monkeypatch, tmp_path):
+    def unexpected(*args, **kwargs):
+        pytest.fail("报告不能重新筛选或写入文件")
+
+    monkeypatch.setattr(NullSelector, "fit", unexpected)
+    monkeypatch.setattr(NullSelector, "transform", unexpected)
+    adapter = import_module("hscredit.report.selection_report")
+    monkeypatch.setattr(adapter, "save_selection_report", unexpected)
+    monkeypatch.chdir(tmp_path)
+    result = selection_report(selector=selector)
+    assert type(result) is tuple and len(result) == 2
+    summary, process = result
+    assert all(isinstance(table, pd.DataFrame) for table in result)
+    assert summary.iloc[0]["输入特征数"] == 3
+    assert summary.iloc[0]["选中特征数"] == 2
+    assert summary.iloc[0]["剔除特征数"] == 1
+    assert summary.iloc[0]["保留率"] == 2 / 3
+    detail = decisions(process)
+    assert detail["特征"].tolist() == ["评分", "缺失字段", "常量"]
+    assert detail["指标值"].tolist() == [0, 0.5, 0]
+    assert detail["有效阈值"].tolist() == [0.4, 0.4, 0.4]
+    assert detail["筛选结果"].tolist() == ["保留", "剔除", "保留"]
+    assert not list(tmp_path.iterdir())
+
+
+def test_independent_selectors_keep_separate_counts(data):
+    items = [
         ("宽松", NullSelector(threshold=0.6, n_jobs=1).fit(data)),
         ("严格", NullSelector(threshold=0.4, n_jobs=1).fit(data)),
     ]
-    monkeypatch.setattr(NullSelector, "fit", lambda *a, **k: pytest.fail("不得重新拟合"))
-    tables = selection_report(selector=selectors)
-    summary = tables["筛选汇总"]
+    summary, process = selection_report(items)
     assert summary["阶段名称"].tolist() == ["宽松", "严格"]
-    assert summary["选中特征数"].tolist() == [2, 1]
+    assert summary["选中特征数"].tolist() == [3, 2]
+    assert summary["剔除特征数"].tolist() == [0, 1]
+    assert "最终字段" not in summary.attrs
+    assert decisions(process).groupby("阶段路径", sort=False).size().tolist() == [3, 3]
 
 
-def test_report_uses_fitted_values_and_independent_counts(selector, monkeypatch):
-    monkeypatch.setattr(NullSelector, "fit", lambda *a, **k: pytest.fail("不得重新拟合"))
-    tables = selection_report(selector=selector)
-    assert type(tables) is dict
-    assert list(tables) == ["筛选汇总", "特征决策", "指标明细", "迭代记录"]
-    summary = tables["筛选汇总"].iloc[0]
-    assert summary["输入特征数"] == 3
-    assert summary["选中特征数"] == 1
-    assert summary["剔除特征数"] == 2
-    assert summary["保留率"] == 1 / 3
-    detail = tables["特征决策"]
-    assert detail["特征"].tolist() == ["评分", "缺失字段", "全空"]
-    assert detail["指标值"].tolist() == [0, 0.5, 1]
-    detail.loc[:, "筛选结果"] = "修改副本"
-    assert selector.selected_features_ == ["评分"]
-    result = selection_report(selector, return_result=True)
-    assert isinstance(result, ReportResult)
-    assert result.complete
-    assert result.sections["特征决策"].input_rows is None
-    assert result.sections["特征决策"].output_rows == 3
+@pytest.mark.parametrize("kind", ["list", "composite", "pipeline", "nested_pipeline"])
+def test_sequential_forms_preserve_each_stage_and_final_counts(data, kind):
+    if kind == "list":
+        first = NullSelector(threshold=0.4, n_jobs=1).fit(data)
+        second = VarianceSelector(n_jobs=1).fit(first.transform(data))
+        source = [("缺失", first), ("方差", second)]
+    else:
+        steps = [("缺失", NullSelector(threshold=0.4, n_jobs=1)), ("方差", VarianceSelector(n_jobs=1))]
+        if kind == "composite":
+            source = CompositeFeatureSelector(steps, n_jobs=1).fit(data)
+        elif kind == "pipeline":
+            source = Pipeline(steps).fit(data)
+        else:
+            source = Pipeline([("预筛", Pipeline(steps)), ("模型", LogisticRegression())]).fit(data, [0, 0, 1, 1])
+    summary, process = selection_report(source, relation="sequential")
+    root = summary.iloc[0]
+    assert root["输入特征数"] == 3 and root["选中特征数"] == 1 and root["剔除特征数"] == 2
+    actual = decisions(process)
+    leaf = summary[summary["筛选器"].isin(["NullSelector", "VarianceSelector"])]
+    assert leaf["输入特征数"].tolist() == [3, 2]
+    assert leaf["剔除特征数"].tolist() == [1, 1]
+    for path, expected in zip(leaf["阶段路径"], [["缺失字段"], ["常量"]]):
+        dropped = actual[(actual["阶段路径"] == path) & (actual["筛选结果"] == "剔除")]
+        assert dropped["特征"].tolist() == expected
+    assert "模型" not in summary["阶段名称"].tolist()
+    assert process["阶段路径"].drop_duplicates().tolist() == [
+        p for p in summary["阶段路径"] if p in set(process["阶段路径"])
+    ]
 
 
-def test_pipeline_and_snapshot_return_identical_tables():
-    data = pd.DataFrame({"评分": [1, 2, 3], "常量": [1, 1, 1]})
-    pipeline = Pipeline([("缺失", NullSelector(n_jobs=1)), ("方差", VarianceSelector(n_jobs=1))]).fit(data)
-    snapshot = collect_selection_report(pipeline)
-    for name, frame in selection_report(pipeline).items():
-        pd.testing.assert_frame_equal(frame, selection_report(snapshot)[name])
+def test_mixed_single_composite_and_pipeline_inputs(data):
+    def steps():
+        return [("缺失", NullSelector(threshold=0.4, n_jobs=1)), ("方差", VarianceSelector(n_jobs=1))]
+
+    source = [
+        ("独立", NullSelector(threshold=0.6, n_jobs=1).fit(data)),
+        ("组合", CompositeFeatureSelector(steps(), n_jobs=1).fit(data)),
+        ("流水线", Pipeline(steps()).fit(data)),
+    ]
+    summary, process = selection_report(source)
+    assert summary["阶段路径"].is_unique
+    roots = summary[summary["父路径"].isna()]
+    assert roots["阶段名称"].tolist() == ["独立", "组合", "流水线"]
+    assert roots["选中特征数"].tolist() == [3, 1, 1]
+    assert set(process["阶段路径"]) <= set(summary["阶段路径"])
+    assert "最终字段" not in summary.attrs
 
 
-def test_direct_excel_path_preserves_precision_and_text(tmp_path):
-    report = SelectionReport(details=[{"特征": "=1+1", "指标值": 1 / 3}, {"特征": "空值", "指标值": pd.NA}])
-    destination = tmp_path / "nested" / "筛选.xlsx"
-    result = report.to_excel(destination, return_result=True, writer_params={"theme_color": "123456"})
-    assert destination.is_file()
-    assert not list(tmp_path.rglob("*.json"))
-    assert result.artifacts == [{"类型": "Excel", "路径": str(destination), "完整": True}]
-    with_workbook = load_workbook(destination, data_only=False)
-    try:
-        sheet = with_workbook["特征决策"]
-        assert sheet["F2"].value == "=1+1"
-        assert sheet["F2"].data_type == "s"
-        assert sheet["M2"].value == pytest.approx(1 / 3, abs=1e-15)
-        assert sheet["M3"].value is None
-        assert sheet["A1"].fill.fgColor.rgb.endswith("123456")
-        assert sheet.freeze_panes == "A2"
-        assert [cell.value for cell in with_workbook["参数说明"][1]] == ["阶段路径", "参数", "拟合标识"]
-    finally:
-        with_workbook.close()
+def test_unconnected_list_cannot_be_described_as_sequential(data):
+    items = [NullSelector(threshold=0.4, n_jobs=1).fit(data), VarianceSelector(n_jobs=1).fit(data.fillna(0))]
+    with pytest.raises(ValidationError, match="上一阶段输出"):
+        selection_report(items, relation="sequential")
 
 
-def test_existing_writer_does_not_save_or_overwrite_sheet(selector, monkeypatch):
-    writer = ExcelWriter()
-    writer.get_sheet_by_name("特征决策")["A1"] = "原报告"
-    monkeypatch.setattr(writer, "save", lambda *a, **k: pytest.fail("调用方负责保存"))
-    result = selection_report(selector, excel_writer=writer, max_rows_per_sheet=2, return_result=True)
-    assert writer.workbook["特征决策"]["A1"].value == "原报告"
-    assert writer.workbook["特征决策_1"].max_row == 3
-    assert writer.workbook["特征决策_2"].max_row == 2
-    assert result.artifacts == []
-    selection_report(selector, excel_writer=writer)
-    assert writer.workbook["特征决策_3"]["A1"].value == "阶段编号"
+@pytest.mark.parametrize("relation, count", [("intersection", 1), ("union", 3)])
+def test_set_relations_have_one_root_decision(data, relation, count):
+    items = [NullSelector(threshold=0.4, n_jobs=1).fit(data), VarianceSelector(n_jobs=1).fit(data.fillna(0))]
+    summary, process = selection_report(items, relation=relation)
+    assert summary.iloc[0]["选中特征数"] == count
+    assert summary.iloc[0]["剔除特征数"] == 3 - count
+    root = decisions(process).query("阶段路径 == 'list'")
+    assert len(root) == 3 and (root["筛选结果"] == "保留").sum() == count
 
 
-def test_incomplete_snapshot_is_rejected_unless_best_effort(tmp_path):
-    report = collect_selection_report([], strict=False)
-    with pytest.raises(ValueError, match="未完成"):
-        selection_report(report, excel_writer=tmp_path / "拒绝.xlsx")
-    assert not list(tmp_path.iterdir())
-    result = selection_report(report, mode="best_effort", return_result=True)
-    assert not result.complete
-    assert result.metadata["诊断"]
+def test_iterative_events_and_multiple_metrics_are_not_cartesian_joined():
+    rng = np.random.default_rng(42)
+    data = pd.DataFrame(rng.normal(size=(60, 3)), columns=["甲", "乙", "丙"])
+    target = (data["甲"] + data["乙"] > 0).astype(int)
+    selector = RFESelector(LogisticRegression(), n_features_to_select=1, report_history="diagnostics", n_jobs=1).fit(
+        data, target
+    )
+    snapshot = collect_selection_report(selector)
+    summary, process = selection_report(selector)
+    assert not snapshot.history.empty
+    assert len(process) == len(snapshot.details) + len(snapshot.metrics) + len(snapshot.history)
+    for kind, frame in (("特征决策", snapshot.details), ("指标明细", snapshot.metrics), ("迭代事件", snapshot.history)):
+        actual = process.loc[process["记录类型"] == kind, frame.columns].reset_index(drop=True)
+        pd.testing.assert_frame_equal(actual, frame, check_flags=False)
+    assert summary.iloc[0]["选中特征数"] == 1
+
+
+def test_partial_and_empty_results_keep_schema_and_isolated_diagnostics(selector):
+    complete = selection_report(selector)
+    partial = collect_selection_report([], strict=False)
+    with pytest.raises(ValidationError, match="不完整"):
+        selection_report(partial)
+    summary, process = selection_report(partial, strict=False)
+    assert summary.empty and process.empty
+    assert summary.columns.tolist() == complete[0].columns.tolist()
+    pd.testing.assert_series_equal(process.dtypes, complete[1].dtypes)
+    assert summary.attrs["完整"] is False and summary.attrs["诊断"]
+    summary.attrs["诊断"].clear()
+    assert process.attrs["诊断"] and partial.metadata["诊断"]
+
+
+def test_result_does_not_share_mutable_cells_or_metadata():
+    snapshot = SelectionReport(
+        summary=[{"阶段路径": "selector", "阶段编号": 1}],
+        details=[{"阶段路径": "selector", "特征": (1, "甲"), "指标值": 1 / 3}],
+        history=[{"阶段路径": "selector", "补充信息": {"候选": [1, 2]}, "是否采纳": True}],
+        metadata={"自定义": {"值": [1]}},
+    )
+    summary, process = selection_report(snapshot)
+    assert decisions(process).iloc[0]["特征"] == (1, "甲")
+    assert decisions(process).iloc[0]["指标值"] == 1 / 3
+    process.loc[process["记录类型"] == "迭代事件", "补充信息"].iloc[0]["候选"].clear()
+    summary.attrs["自定义"]["值"].clear()
+    assert snapshot.history.iloc[0]["补充信息"] == {"候选": [1, 2]}
+    assert process.attrs["自定义"]["值"] == [1]
 
 
 @pytest.mark.parametrize(
     "options",
     [{"max_excel_cells": True}, {"max_sheets": True}, {"max_rows_per_sheet": False}, {"by_selector": "False"}],
 )
-def test_invalid_export_limits_fail_before_creating_files(tmp_path, selector, options):
-    report = collect_selection_report(selector)
+def test_invalid_archive_limits_fail_before_creating_files(tmp_path, selector, options):
     with pytest.raises(ValidationError):
-        report.save(tmp_path / "归档", **options)
-    with pytest.raises(ValidationError):
-        report.to_excel(tmp_path / "直接.xlsx", **options)
+        collect_selection_report(selector).save(tmp_path / "归档", **options)
     assert not list(tmp_path.iterdir())
 
 
@@ -176,15 +256,14 @@ def test_real_workbook_null_rates_and_roundtrip(tmp_path):
     fields = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24", "商品类别"]
     data = pd.read_excel(path, usecols=fields + ["FPD"])
     selector = NullSelector(target="FPD", threshold=0.5, n_jobs=1).fit(data)
-    result = selection_report(selector, return_result=True)
-    detail = result["特征决策"].set_index("特征")
+    summary, process = selection_report(selector)
+    detail = decisions(process).set_index("特征")
     for field in fields:
         expected = sum(pd.isna(value) for value in data[field]) / len(data)
         assert detail.loc[field, "指标值"] == expected
     assert "FPD" not in detail.index
-    snapshot = collect_selection_report(selector)
-    snapshot.to_excel(tmp_path / "真实数据.xlsx")
-    saved = snapshot.save(tmp_path / "快照", formats="json")
+    assert summary.iloc[0]["输入特征数"] == 4
+    saved = collect_selection_report(selector).save(tmp_path / "快照", formats="json")
     restored = load_selection_report(saved["路径"]["json"])
-    for name, frame in result.items():
-        pd.testing.assert_frame_equal(frame, selection_report(restored)[name])
+    for actual, expected in zip(selection_report(restored), (summary, process)):
+        pd.testing.assert_frame_equal(actual, expected)

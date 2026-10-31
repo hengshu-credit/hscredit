@@ -93,6 +93,9 @@ def validate(input_path, directory):
         try:
             selector.fit(data, target)
             report = s.collect_selection_report(selector)
+            summary, process = selection_report(selector)
+            pd.testing.assert_frame_equal(summary, report.summary)
+            assert len(process) == len(report.details) + len(report.metrics) + len(report.history)
             detail = selector.get_selection_report_df()
             assert detail.columns.tolist() == DETAIL_COLUMNS
             assert report.metrics.columns.tolist() == METRIC_COLUMNS
@@ -159,14 +162,12 @@ def validate(input_path, directory):
         )
     all_report = s.collect_selection_report(fitted)
     assert "最终字段" not in all_report.metadata
-    direct_path = directory / "筛选报告.xlsx"
-    direct = selection_report(all_report, excel_writer=direct_path, return_result=True)
-    assert direct.complete and direct_path.is_file()
-    for attribute, name in zip(
-        ("summary", "details", "metrics", "history"), ("筛选汇总", "特征决策", "指标明细", "迭代记录")
-    ):
-        pd.testing.assert_frame_equal(direct[name], getattr(all_report, attribute))
-    artifacts = all_report.save(directory / "全部筛选器明细", by_selector=True, max_rows_per_sheet=200)
+    summary, process = selection_report(all_report)
+    pd.testing.assert_frame_equal(summary, all_report.summary)
+    assert len(process) == len(all_report.details) + len(all_report.metrics) + len(all_report.history)
+    mixed = selection_report([("单项", fitted[0][1]), ("组合", composite), ("流水线", pipeline)])
+    assert len(mixed) == 2 and all(isinstance(table, pd.DataFrame) for table in mixed)
+    artifacts = all_report.save(directory / "全部筛选器明细", formats="json")
     restored = load_selection_report(artifacts["路径"]["json"])
     for attribute in ("summary", "details", "metrics", "history"):
         pd.testing.assert_frame_equal(getattr(restored, attribute), getattr(all_report, attribute))
@@ -180,7 +181,7 @@ def validate(input_path, directory):
         "筛选器验收": records,
         "Pipeline阶段数": len(pipeline_report.summary),
         "保存重载": "四表逐项等价",
-        "直接导出": str(direct_path),
+        "双表结果": {"汇总行数": len(summary), "过程行数": len(process), "混合输入": "通过"},
         "报告产物": artifacts,
     }
 

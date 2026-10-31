@@ -89,38 +89,45 @@ TabPFN 的混合精度推理可能产生批量相关的数值差异；加总校�
 
 .. rubric:: 特征筛选报告
 
-``selection_report(selector=...)`` 必须传入用户配置并拟合的筛选器、Pipeline、筛选器列表或
-``SelectionReport`` 快照，不重复拟合。默认返回四张中文结果表：筛选汇总、
-特征决策、指标明细和迭代记录，保留字段顺序、数据类型和原始指标精度。
-``return_result=True`` 返回兼容字典的 ``ReportResult``，另含元数据和章节状态。
+``summary, process = selection_report(selector=...)`` 是模型报告中的数据生成环节，
+固定返回筛选汇总和具体过程两个 DataFrame，不接受 Excel 输出参数，也不写入文件。
+输入为用户已配置并拟合的单筛选器、组合筛选器、Pipeline 或这些对象组成的列表。
+列表元素可用 ``(名称, 筛选器)`` 命名，也可直接传入已保存的 ``SelectionReport`` 快照。
 
 .. code-block:: python
 
-   from hscredit.core.selectors import NullSelector, collect_selection_report
-   from hscredit.report import selection_report, ExcelWriter, load_selection_report
+   from hscredit.report import selection_report
 
-   selector = NullSelector(target="FPD", n_jobs=1).fit(data)
-   tables = selection_report(selector=selector)
-   details = tables["特征决策"]
-   result = selection_report(selector, excel_writer="筛选报告.xlsx", return_result=True)
+   summary, process = selection_report(selector=fitted_selector)
+   summary, process = selection_report(selector=fitted_pipeline)
 
-   # 与其他报告复用同一个写入器；由调用方统一保存。
-   writer = ExcelWriter(theme_color="2639E9")
-   selection_report(selector, excel_writer=writer)
-   writer.save("综合报告.xlsx")
+   # 实际串行拟合过的多个单筛选器，字段必须前后衔接。
+   summary, process = selection_report(
+       [("缺失", fitted_null_selector), ("相关性", fitted_corr_selector)],
+       relation="sequential",
+   )
 
-   snapshot = collect_selection_report(selector)
-   snapshot.to_excel("筛选快照.xlsx")
-   archived = snapshot.save("归档/筛选快照", formats="json")
-   restored = load_selection_report(archived["路径"]["json"])
+   # 独立的单筛选器、组合筛选器和 Pipeline，分别展示各自的完整筛选过程。
+   summary, process = selection_report([
+       ("单项", fitted_selector),
+       ("组合", fitted_composite),
+       ("流水线", fitted_pipeline),
+   ])
+   model_sections = {"筛选汇总": summary, "筛选过程": process}
+   feature_decisions = process.loc[process["记录类型"] == "特征决策"]
 
-原 ``auto_selection_report(source=...)`` 已更名为 ``selection_report(selector=...)``，
-不保留旧别名。筛选规则由调用方设置，报告入口不创建筛选器，也不调用 ``fit``。
+汇总表按阶段保留路径、父路径、输入/选中/剔除特征数和保留率。流程根节点与
+子步骤分别呈现，不能将它们的计数再次相加。列表默认独立比较，不编造最终特征数；
+Pipeline 按实际步骤串行收集，列表串行或交并集关系通过 ``relation`` 显式指定。
 
-直接 Excel 导出写入指定文件路径，不创建版本目录；归档 ``save`` 保留原有版本目录、
-原子发布清单和类型化 JSON 协议，读取时使用返回的实际路径。列表默认独立比较，
-需要串行或交并集口径时通过 ``relation`` 明确指定。不完整来源默认拒绝导出，
-诊断时可使用 ``mode='best_effort', return_result=True``。
+过程表按汇总中的阶段顺序排列，用“记录类型”区分特征决策、指标明细和迭代事件，
+保留原始字段、指标精度、阈值、原因和轮次；同一类型内保留原始记录顺序。
+采用逐行合并，避免多指标与多轮历史相互连接造成重复计数。不重新拟合或计算指标，
+也不补造拟合时未保存的历史。两张表均为隔离副本，空表保留固定结构。
+
+默认 ``strict=True`` 拒绝不完整来源。诊断时可传 ``strict=False``，完整性及诊断保留在
+``summary.attrs`` 和 ``process.attrs``。原 ``auto_selection_report``、``source``、
+``excel_writer``、``return_result``、``writer_params`` 等参数不再属于该接口。
 
 .. automethod:: hscredit.report.ModelReport.get_training_process
 
