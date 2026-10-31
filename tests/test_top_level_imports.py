@@ -95,6 +95,7 @@ def test_core_aggregates_public_subpackage_apis():
         assert core.CPSATBinning is binning.CPSATBinning
         assert core.OptimalBinning2D is binning.OptimalBinning2D
         assert core.StabilityAwareSelector is selectors.StabilityAwareSelector
+        assert core.selection_report is selectors.selection_report
         assert core.compute_bin_stats is metrics.compute_bin_stats
         """)
 
