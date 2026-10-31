@@ -256,7 +256,9 @@ def test_nonfinite_and_tuple_fields_json_roundtrip(tmp_path):
 
 
 def test_publish_failure_preserves_previous_manifest_and_both_files(tmp_path, monkeypatch, data):
-    import hscredit.report.selection_report as adapter
+    from importlib import import_module
+
+    adapter = import_module("hscredit.report.selection_report")
 
     X, _ = data
     report = collect_selection_report(selectors.NullSelector(n_jobs=1).fit(X))

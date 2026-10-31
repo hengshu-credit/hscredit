@@ -269,7 +269,7 @@ class SelectionReport:
         max_excel_cells=5000000,
         max_sheets=200,
     ):
-        """将快照写入 Excel，参数与 auto_selection_report 一致。
+        """将快照写入 Excel，参数与 selection_report 一致。
 
         :param excel_writer: .xlsx 文件路径或 HSCredit ExcelWriter；已有写入器由调用方保存。
         :param mode: 默认 'strict' 拒绝不完整快照；'best_effort' 保留诊断。
@@ -281,12 +281,12 @@ class SelectionReport:
         :param max_sheets: 本次最多工作表数，默认 200。
         :return: 中文表名字典或 ReportResult；直接保存到指定文件路径。
         """
-        from ...report.selection_report import auto_selection_report
+        from ...report.selection_report import selection_report
 
         if excel_writer is None:
             raise ValidationError("to_excel 必须提供 Excel 文件路径或 ExcelWriter")
-        return auto_selection_report(
-            source=self,
+        return selection_report(
+            selector=self,
             excel_writer=excel_writer,
             mode=mode,
             return_result=return_result,

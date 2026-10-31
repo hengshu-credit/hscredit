@@ -1,6 +1,6 @@
 """特征筛选报告的结果汇总、Excel 导出与 JSON 存取。
 
-``auto_selection_report`` 遵循报告模块的 ``excel_writer`` / ``return_result`` 约定；
+``selection_report`` 遵循报告模块的 ``excel_writer`` / ``return_result`` 约定；
 ``save_selection_report`` 保留版本目录发布，用于完整快照归档和 JSON 往返。
 所有入口只读取已拟合结果，不重新筛选或计算指标。
 """
@@ -64,8 +64,8 @@ def to_report_result(report: SelectionReport) -> ReportResult:
     return result
 
 
-def auto_selection_report(
-    source: Any,
+def selection_report(
+    selector: Any,
     excel_writer: Optional[Union[_Path, ExcelWriter]] = None,
     *,
     relation: str = "auto",
@@ -79,7 +79,7 @@ def auto_selection_report(
 ) -> Union[Dict[str, pd.DataFrame], ReportResult]:
     """汇总已拟合筛选流程，可选写入 Excel。
 
-    :param source: 已拟合筛选器、Pipeline、筛选器列表或 SelectionReport 快照。
+    :param selector: 已拟合筛选器、Pipeline、筛选器列表或 SelectionReport 快照。
         列表元素也可为 ``(名称, 筛选器)``，不会调用 fit。
     :param excel_writer: 默认 None，只返回结果表；支持 .xlsx 路径或 HSCredit
         ExcelWriter。传路径时保存到该路径，传写入器时由调用方统一保存。
@@ -100,9 +100,9 @@ def auto_selection_report(
 
     **参考样例**
 
-    >>> tables = auto_selection_report(fitted_selector)
+    >>> tables = selection_report(fitted_selector)
     >>> tables['特征决策']
-    >>> result = auto_selection_report(fitted_pipeline, excel_writer='筛选报告.xlsx', return_result=True)
+    >>> result = selection_report(fitted_pipeline, excel_writer='筛选报告.xlsx', return_result=True)
     """
     if not isinstance(mode, str) or mode not in {"strict", "best_effort"}:
         raise ValidationError("mode 必须为 'strict' 或 'best_effort'")
@@ -117,7 +117,7 @@ def auto_selection_report(
         output = _validate_path(excel_writer)
         if output.suffix.lower() != ".xlsx":
             raise ValidationError("excel_writer 文件后缀必须为 .xlsx")
-    report = collect_selection_report(source, relation=relation, strict=mode == "strict")
+    report = collect_selection_report(selector, relation=relation, strict=mode == "strict")
     result = to_report_result(report)
     result.mode = mode
     result.ensure_publishable()
@@ -505,7 +505,7 @@ def save_selection_report(
     :param by_selector: 默认 False；是否额外按筛选阶段导出特征决策表。
     :param allow_incomplete: 默认 False；是否允许归档带诊断的不完整快照。
     :return: 含路径、清单、协议版本、制品、工作表映射、表行数、完整、诊断的字典；
-        run_id 是版本标识。始终使用返回路径定位文件；直接导出请用 auto_selection_report。
+        run_id 是版本标识。始终使用返回路径定位文件；直接导出请用 selection_report。
     :raises ValidationError: 参数无效、报告不完整或超过 Excel 容量预算。
 
     **参考样例**
@@ -584,4 +584,4 @@ def save_selection_report(
     }
 
 
-__all__ = ["auto_selection_report", "save_selection_report", "load_selection_report", "to_report_result"]
+__all__ = ["selection_report", "save_selection_report", "load_selection_report", "to_report_result"]

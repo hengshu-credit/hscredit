@@ -205,6 +205,8 @@ NON_BATCH_EXPORTS = {
         "ReportResult",
         "ReportSectionResult",
         "ReportGenerationError",
+        # 只汇总用户已拟合的筛选结果，不执行批量筛选或指标计算。
+        "selection_report",
         "save_selection_report",
         "load_selection_report",
     },

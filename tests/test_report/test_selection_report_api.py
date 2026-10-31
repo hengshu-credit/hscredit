@@ -1,6 +1,8 @@
 """筛选报告公共调用、数值与文件格式契约。"""
 
 import json
+import inspect
+from importlib import import_module
 from pathlib import Path
 
 import numpy as np
@@ -11,8 +13,8 @@ from sklearn.pipeline import Pipeline
 
 from hscredit.core.selectors import NullSelector, SelectionReport, VarianceSelector, collect_selection_report
 from hscredit.excel import ExcelWriter
-from hscredit.exceptions import ValidationError
-from hscredit.report import ReportResult, auto_selection_report, load_selection_report
+from hscredit.exceptions import NotFittedError, ValidationError
+from hscredit.report import ReportResult, selection_report, load_selection_report
 
 
 @pytest.fixture
@@ -22,9 +24,39 @@ def selector():
     )
 
 
+def test_selection_report_has_required_selector_and_public_exports():
+    import hscredit
+    import hscredit.report as reports
+
+    assert hscredit.selection_report is reports.selection_report is selection_report
+    assert import_module("hscredit.report.selection_report").selection_report is selection_report
+    parameters = inspect.signature(selection_report).parameters
+    assert parameters["selector"].default is inspect.Parameter.empty
+    assert "source" not in parameters
+    assert "auto_selection_report" not in reports.__all__
+    assert "auto_selection_report" not in hscredit.__all__
+    with pytest.raises(TypeError, match="selector"):
+        selection_report()
+    with pytest.raises(NotFittedError):
+        selection_report(selector=NullSelector())
+
+
+def test_report_uses_configured_selector_list_without_refitting(monkeypatch):
+    data = pd.DataFrame({"评分": [1, 2, 3, 4], "缺失字段": [1, np.nan, 3, np.nan]})
+    selectors = [
+        ("宽松", NullSelector(threshold=0.6, n_jobs=1).fit(data)),
+        ("严格", NullSelector(threshold=0.4, n_jobs=1).fit(data)),
+    ]
+    monkeypatch.setattr(NullSelector, "fit", lambda *a, **k: pytest.fail("不得重新拟合"))
+    tables = selection_report(selector=selectors)
+    summary = tables["筛选汇总"]
+    assert summary["阶段名称"].tolist() == ["宽松", "严格"]
+    assert summary["选中特征数"].tolist() == [2, 1]
+
+
 def test_report_uses_fitted_values_and_independent_counts(selector, monkeypatch):
     monkeypatch.setattr(NullSelector, "fit", lambda *a, **k: pytest.fail("不得重新拟合"))
-    tables = auto_selection_report(source=selector)
+    tables = selection_report(selector=selector)
     assert type(tables) is dict
     assert list(tables) == ["筛选汇总", "特征决策", "指标明细", "迭代记录"]
     summary = tables["筛选汇总"].iloc[0]
@@ -37,7 +69,7 @@ def test_report_uses_fitted_values_and_independent_counts(selector, monkeypatch)
     assert detail["指标值"].tolist() == [0, 0.5, 1]
     detail.loc[:, "筛选结果"] = "修改副本"
     assert selector.selected_features_ == ["评分"]
-    result = auto_selection_report(selector, return_result=True)
+    result = selection_report(selector, return_result=True)
     assert isinstance(result, ReportResult)
     assert result.complete
     assert result.sections["特征决策"].input_rows is None
@@ -48,8 +80,8 @@ def test_pipeline_and_snapshot_return_identical_tables():
     data = pd.DataFrame({"评分": [1, 2, 3], "常量": [1, 1, 1]})
     pipeline = Pipeline([("缺失", NullSelector(n_jobs=1)), ("方差", VarianceSelector(n_jobs=1))]).fit(data)
     snapshot = collect_selection_report(pipeline)
-    for name, frame in auto_selection_report(pipeline).items():
-        pd.testing.assert_frame_equal(frame, auto_selection_report(snapshot)[name])
+    for name, frame in selection_report(pipeline).items():
+        pd.testing.assert_frame_equal(frame, selection_report(snapshot)[name])
 
 
 def test_direct_excel_path_preserves_precision_and_text(tmp_path):
@@ -77,21 +109,21 @@ def test_existing_writer_does_not_save_or_overwrite_sheet(selector, monkeypatch)
     writer = ExcelWriter()
     writer.get_sheet_by_name("特征决策")["A1"] = "原报告"
     monkeypatch.setattr(writer, "save", lambda *a, **k: pytest.fail("调用方负责保存"))
-    result = auto_selection_report(selector, excel_writer=writer, max_rows_per_sheet=2, return_result=True)
+    result = selection_report(selector, excel_writer=writer, max_rows_per_sheet=2, return_result=True)
     assert writer.workbook["特征决策"]["A1"].value == "原报告"
     assert writer.workbook["特征决策_1"].max_row == 3
     assert writer.workbook["特征决策_2"].max_row == 2
     assert result.artifacts == []
-    auto_selection_report(selector, excel_writer=writer)
+    selection_report(selector, excel_writer=writer)
     assert writer.workbook["特征决策_3"]["A1"].value == "阶段编号"
 
 
 def test_incomplete_snapshot_is_rejected_unless_best_effort(tmp_path):
     report = collect_selection_report([], strict=False)
     with pytest.raises(ValueError, match="未完成"):
-        auto_selection_report(report, excel_writer=tmp_path / "拒绝.xlsx")
+        selection_report(report, excel_writer=tmp_path / "拒绝.xlsx")
     assert not list(tmp_path.iterdir())
-    result = auto_selection_report(report, mode="best_effort", return_result=True)
+    result = selection_report(report, mode="best_effort", return_result=True)
     assert not result.complete
     assert result.metadata["诊断"]
 
@@ -144,7 +176,7 @@ def test_real_workbook_null_rates_and_roundtrip(tmp_path):
     fields = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24", "商品类别"]
     data = pd.read_excel(path, usecols=fields + ["FPD"])
     selector = NullSelector(target="FPD", threshold=0.5, n_jobs=1).fit(data)
-    result = auto_selection_report(selector, return_result=True)
+    result = selection_report(selector, return_result=True)
     detail = result["特征决策"].set_index("特征")
     for field in fields:
         expected = sum(pd.isna(value) for value in data[field]) / len(data)
@@ -155,4 +187,4 @@ def test_real_workbook_null_rates_and_roundtrip(tmp_path):
     saved = snapshot.save(tmp_path / "快照", formats="json")
     restored = load_selection_report(saved["路径"]["json"])
     for name, frame in result.items():
-        pd.testing.assert_frame_equal(frame, auto_selection_report(restored)[name])
+        pd.testing.assert_frame_equal(frame, selection_report(restored)[name])
