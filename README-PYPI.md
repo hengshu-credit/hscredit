@@ -35,7 +35,7 @@ hscredit（衡枢真信）将数据探索、分箱编码、特征筛选、评分
 
 | 微信 · itlubber | 微信公众号 · 衡枢风控 |
 |:---:|:---:|
-| <img src="https://itlubber.art/upload/itlubber.png" alt="微信 itlubber 二维码" width="200"><br>扫一扫，添加微信交流 | <img src="https://itlubber.art/upload/hengshucredit-com.png" alt="微信公众号 衡枢风控 二维码" width="200"><br>扫一扫关注，回复「入群」 |
+| <img src="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/wechat.svg" alt="微信 itlubber 二维码" width="200"><br>扫一扫，添加微信交流 | <img src="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/wechat-official-account.svg" alt="微信公众号 衡枢风控 二维码" width="200"><br>扫一扫关注，回复「入群」 |
 
 邮箱：[hscredit@hengshucredit.com](mailto:hscredit@hengshucredit.com)
 
