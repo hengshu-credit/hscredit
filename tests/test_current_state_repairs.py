@@ -62,13 +62,7 @@ def test_onehot_writable_output_and_missing_unknown(sparse, return_df):
     original = frame.copy(deep=True)
     encoder = OneHotEncoder(n_jobs=1, sparse_output=sparse, return_df=return_df)
     result = encoder.fit_transform(frame)
-    array = (
-        result.sparse.to_dense().to_numpy()
-        if sparse and return_df
-        else result.toarray()
-        if sparse
-        else np.asarray(result)
-    )
+    array = result.sparse.to_dense().to_numpy() if sparse and return_df else result.toarray() if sparse else np.asarray(result)
     np.testing.assert_array_equal(array.sum(axis=1), np.ones(4))
     unknown = encoder.transform(pd.DataFrame({"类别": [999]}))
     assert float(np.asarray(unknown.toarray() if sparse and not return_df else unknown).sum()) == 0
@@ -104,9 +98,7 @@ def test_auto_binning_projects_before_dispatch(monkeypatch):
 
     def dispatch(function, tasks, **kwargs):
         assert tasks[0][1].columns.tolist() == [0]
-        assert kwargs["workload"].data_bytes == tasks[0][1].memory_usage(deep=True).sum() + target.memory_usage(
-            deep=True
-        )
+        assert kwargs["workload"].data_bytes == tasks[0][1].memory_usage(deep=True).sum() + target.memory_usage(deep=True)
         return [("quantile", 1.0, None)]
 
     monkeypatch.setattr(module, "parallel_execute", dispatch)
@@ -280,9 +272,7 @@ def test_tree_missing_categories_and_literals_have_identical_leaf_rules(dtype):
             "target": [1, 1, 0, 0, 1, 0] * 20,
         }
     )
-    miner = TreeRuleExtractor(
-        algorithm="dt", max_depth=4, min_samples_leaf=1, min_samples_split=2, n_jobs=1, random_state=4
-    ).fit(frame)
+    miner = TreeRuleExtractor(algorithm="dt", max_depth=4, min_samples_leaf=1, min_samples_split=2, n_jobs=1, random_state=4).fit(frame)
     assert len(miner._raw_category_values_["类别"]) == 6
     for item in miner.extract_rules():
         raw = frame.loc[miner.X_train_.index]

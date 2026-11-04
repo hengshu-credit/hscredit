@@ -131,11 +131,7 @@ def _axes_top_boundary(axes: list, renderer: Any) -> float:
             if xaxis_bbox is not None and math.isfinite(xaxis_bbox.y1):
                 tops.append(xaxis_bbox.y1)
 
-        summaries = [
-            artist
-            for artist in [*ax.texts, *ax.artists]
-            if artist.get_visible() and artist.get_gid() == "bin-metric-summary"
-        ]
+        summaries = [artist for artist in [*ax.texts, *ax.artists] if artist.get_visible() and artist.get_gid() == "bin-metric-summary"]
         if summaries:
             title = ax.title
             if title.get_visible() and title.get_text().strip():
@@ -333,9 +329,7 @@ def save_figure(fig, save_path: Optional[str] = None, dpi: int = 240):
         fig.savefig(save_path, dpi=dpi, bbox_inches="tight", **save_kwargs)
 
 
-def get_or_create_ax(
-    figsize: Tuple[float, float] = (10, 6), ax: Optional[Any] = None, return_fig: bool = True
-) -> Tuple[Any, ...]:
+def get_or_create_ax(figsize: Tuple[float, float] = (10, 6), ax: Optional[Any] = None, return_fig: bool = True) -> Tuple[Any, ...]:
     """获取或创建 Axes 对象.
 
     如果传入 ax，则直接使用；否则创建新的 Figure 和 Axes。

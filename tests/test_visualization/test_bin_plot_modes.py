@@ -81,9 +81,7 @@ try:
     y_train = df["target"]
     feature_to_check = "score"
 
-    fig = bin_plot(
-        X_train_selected[feature_to_check], y_train, desc=f"{feature_to_check} 分箱图", show_data_points=False
-    )
+    fig = bin_plot(X_train_selected[feature_to_check], y_train, desc=f"{feature_to_check} 分箱图", show_data_points=False)
     print("✓ 用户调用方式测试通过")
 except Exception as e:
     import traceback

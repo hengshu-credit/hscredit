@@ -63,9 +63,7 @@ class ImpalaAdapter(HiveAdapter):
     ) -> str:
         options = dict(dialect_options or {})
         if options.get("transactional"):
-            raise DatabaseCapabilityError(
-                "Impala 文件表只支持 insert-only 事务，不能保证 r/MERGE；覆盖写入请使用 storage='KUDU'"
-            )
+            raise DatabaseCapabilityError("Impala 文件表只支持 insert-only 事务，不能保证 r/MERGE；覆盖写入请使用 storage='KUDU'")
         storage = self._storage(options)
         if storage != "KUDU":
             return super().build_create_table_sql(data, table_name, options)
@@ -79,11 +77,7 @@ class ImpalaAdapter(HiveAdapter):
         partitions = int(options.get("partitions", 3))
         quoted_keys = ", ".join(self.quote_identifier(str(column)) for column in keys)
         if_not_exists = " IF NOT EXISTS" if options.get("if_not_exists", True) else ""
-        return (
-            f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  "
-            + ",\n  ".join(definitions)
-            + f"\n) PARTITION BY HASH ({quoted_keys}) PARTITIONS {partitions}\nSTORED AS KUDU"
-        )
+        return f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  " + ",\n  ".join(definitions) + f"\n) PARTITION BY HASH ({quoted_keys}) PARTITIONS {partitions}\nSTORED AS KUDU"
 
     def prepare_write(
         self,

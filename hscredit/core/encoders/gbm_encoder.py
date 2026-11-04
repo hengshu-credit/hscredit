@@ -340,9 +340,7 @@ class GBMEncoder(BaseEncoder):
             fitted_input = self._preprocess_catboost_missing(X_train) if self.model_type == "catboost" else X_train
             leaves = self._transform_to_leaves(fitted_input)
             self.leaf_categories_ = {i: np.unique(leaves.iloc[:, i]).tolist() for i in range(leaves.shape[1])}
-            self.feature_names_ = [
-                f"gbm_tree{i}_leaf{leaf}" for i, categories in self.leaf_categories_.items() for leaf in categories
-            ]
+            self.feature_names_ = [f"gbm_tree{i}_leaf{leaf}" for i, categories in self.leaf_categories_.items() for leaf in categories]
 
     def _compute_missing_stats(self, X: pd.DataFrame):
         """计算缺失值统计信息。
@@ -424,15 +422,7 @@ class GBMEncoder(BaseEncoder):
             # CatBoost需要字符串；以类型记录编码，真实'__MISSING__'不与缺失混淆。
             import json
 
-            X[col] = (
-                X[col]
-                .astype(object)
-                .map(
-                    lambda value: json.dumps(
-                        pack(MISSING if pd.isna(value) else value), ensure_ascii=False, sort_keys=True
-                    )
-                )
-            )
+            X[col] = X[col].astype(object).map(lambda value: json.dumps(pack(MISSING if pd.isna(value) else value), ensure_ascii=False, sort_keys=True))
 
         return X
 
@@ -787,9 +777,7 @@ class GBMEncoder(BaseEncoder):
         # 使用 hscredit 模型类的 get_feature_importances 方法
         importance_series = self.model_.get_feature_importances()
 
-        return pd.DataFrame({"feature": importance_series.index, "importance": importance_series.values}).sort_values(
-            "importance", ascending=False
-        )
+        return pd.DataFrame({"feature": importance_series.index, "importance": importance_series.values}).sort_values("importance", ascending=False)
 
     def get_missing_stats(self) -> pd.DataFrame:
         """获取缺失值统计信息。
@@ -801,9 +789,7 @@ class GBMEncoder(BaseEncoder):
 
         stats = []
         for col, info in self.missing_stats_.items():
-            stats.append(
-                {"feature": col, "missing_count": info["missing_count"], "missing_ratio": info["missing_ratio"]}
-            )
+            stats.append({"feature": col, "missing_count": info["missing_count"], "missing_ratio": info["missing_ratio"]})
 
         return pd.DataFrame(stats).sort_values("missing_ratio", ascending=False)
 
@@ -832,8 +818,4 @@ class GBMEncoder(BaseEncoder):
 
         :return: 编码器类型及关键参数的字符串表示
         """
-        return (
-            f"GBMEncoder(model_type='{self.model_type}', "
-            f"n_estimators={self.n_estimators}, "
-            f"output_type='{self.output_type}')"
-        )
+        return f"GBMEncoder(model_type='{self.model_type}', " f"n_estimators={self.n_estimators}, " f"output_type='{self.output_type}')"

@@ -175,20 +175,10 @@ def load_selection_report(path: _Path) -> SelectionReport:
 
 
 def _report_from_payload(payload: Any) -> SelectionReport:
-    if (
-        not isinstance(payload, dict)
-        or payload.get("格式") != "hscredit.selection-report"
-        or type(payload.get("协议版本")) is not int
-        or payload.get("协议版本") != SCHEMA_VERSION
-    ):
+    if not isinstance(payload, dict) or payload.get("格式") != "hscredit.selection-report" or type(payload.get("协议版本")) is not int or payload.get("协议版本") != SCHEMA_VERSION:
         raise ValidationError("不是支持的筛选报告 JSON 协议")
     metadata = _unpack(payload.get("元数据"))
-    if (
-        not isinstance(metadata, dict)
-        or type(metadata.get("schema_version")) is not int
-        or metadata.get("schema_version") != SCHEMA_VERSION
-        or type(metadata.get("完整")) is not bool
-    ):
+    if not isinstance(metadata, dict) or type(metadata.get("schema_version")) is not int or metadata.get("schema_version") != SCHEMA_VERSION or type(metadata.get("完整")) is not bool:
         raise ValidationError("筛选报告元数据的协议版本或完整性状态无效")
     if not isinstance(metadata.get("诊断"), list):
         raise ValidationError("筛选报告诊断必须为列表")
@@ -252,14 +242,8 @@ def _excel_value(value: Any) -> Any:
     return value
 
 
-def _plan_excel(
-    report: SelectionReport, max_rows_per_sheet: int, max_excel_cells: int, max_sheets: int, by_selector: bool
-) -> List[_ExcelPlan]:
-    if (
-        not isinstance(max_rows_per_sheet, Integral)
-        or isinstance(max_rows_per_sheet, bool)
-        or not 1 <= max_rows_per_sheet <= 1048575
-    ):
+def _plan_excel(report: SelectionReport, max_rows_per_sheet: int, max_excel_cells: int, max_sheets: int, by_selector: bool) -> List[_ExcelPlan]:
+    if not isinstance(max_rows_per_sheet, Integral) or isinstance(max_rows_per_sheet, bool) or not 1 <= max_rows_per_sheet <= 1048575:
         raise ValidationError("max_rows_per_sheet 必须为 1 至 1048575 的整数（不含表头）")
     for name, value in (("max_excel_cells", max_excel_cells), ("max_sheets", max_sheets)):
         if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
@@ -275,19 +259,14 @@ def _plan_excel(
     )
     snapshots = report._metadata.get("阶段快照", {})
     parameters = pd.DataFrame(
-        [
-            {"阶段路径": stage, "参数": snapshot.get("拟合参数", {}), "拟合标识": snapshot.get("fit_id")}
-            for stage, snapshot in snapshots.items()
-        ],
+        [{"阶段路径": stage, "参数": snapshot.get("拟合参数", {}), "拟合标识": snapshot.get("fit_id")} for stage, snapshot in snapshots.items()],
         columns=["阶段路径", "参数", "拟合标识"],
     )
     frames = frames + [("参数说明", parameters)]
     if by_selector:
         for path, part in report._details.groupby("阶段路径", sort=False):
             frames.append((str(path), part))
-    total_cells = sum(
-        (len(frame) + max(1, math.ceil(len(frame) / max_rows_per_sheet))) * len(frame.columns) for _, frame in frames
-    )
+    total_cells = sum((len(frame) + max(1, math.ceil(len(frame) / max_rows_per_sheet))) * len(frame.columns) for _, frame in frames)
     if total_cells > max_excel_cells:
         raise ValidationError(f"Excel 预计 {total_cells} 个单元格，超出 max_excel_cells={max_excel_cells}；请仅保存完整 JSON 或提高预算")
     plans, used = [], set()
@@ -421,24 +400,14 @@ def save_selection_report(
         raise ValidationError("报告不完整，默认拒绝保存；如需诊断文档请显式设置 allow_incomplete=True")
     if isinstance(formats, str):
         formats = (formats,)
-    if (
-        not isinstance(formats, (list, tuple))
-        or not formats
-        or any(not isinstance(item, str) or item not in {"xlsx", "json"} for item in formats)
-        or len(set(formats)) != len(formats)
-    ):
+    if not isinstance(formats, (list, tuple)) or not formats or any(not isinstance(item, str) or item not in {"xlsx", "json"} for item in formats) or len(set(formats)) != len(formats):
         raise ValidationError("formats 只能包含不重复的 xlsx 和 json")
     output = _validate_path(path)
     if output.suffix and output.suffix.lower() not in {".xlsx", ".json"}:
         raise ValidationError("筛选报告文件后缀只支持 .xlsx 或 .json，也可不指定后缀")
     name = output.stem if output.suffix else output.name
-    plans = (
-        _plan_excel(report, max_rows_per_sheet, max_excel_cells, max_sheets, by_selector) if "xlsx" in formats else []
-    )
-    mapping = [
-        {"工作表": sheet, "来源": source, "起始行": start, "结束行": end, "行数": end - start}
-        for sheet, source, _, start, end in plans
-    ]
+    plans = _plan_excel(report, max_rows_per_sheet, max_excel_cells, max_sheets, by_selector) if "xlsx" in formats else []
+    mapping = [{"工作表": sheet, "来源": source, "起始行": start, "结束行": end, "行数": end - start} for sheet, source, _, start, end in plans]
     # 仅在归档时加载发布事务，常规报告不依赖制品运行时。
     from ..skills_runtime.artifacts import ArtifactTransaction
 

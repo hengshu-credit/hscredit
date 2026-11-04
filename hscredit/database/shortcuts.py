@@ -144,11 +144,7 @@ def _database_from_connection(connection: Any, db_type: Optional[str]) -> Databa
 def _resolve_config(source: Mapping[str, Any], db_type: Optional[str]) -> _ResolvedSource:
     config = dict(source)
     configured_type = config.pop("db_type", None)
-    if (
-        configured_type is not None
-        and db_type is not None
-        and canonical_adapter_name(configured_type) != canonical_adapter_name(db_type)
-    ):
+    if configured_type is not None and db_type is not None and canonical_adapter_name(configured_type) != canonical_adapter_name(db_type):
         raise ValidationError(f"配置 db_type={configured_type!r} 与参数 db_type={db_type!r} 冲突")
     resolved_type = db_type or configured_type
     if not isinstance(resolved_type, str) or not resolved_type.strip():
@@ -183,14 +179,8 @@ def _resolve_source(source: Any, db_type: Optional[str] = None) -> _ResolvedSour
 def _invoke(source: Any, method_name: str, *args: Any, db_type: Optional[str] = None, **kwargs: Any) -> Any:
     resolved = _resolve_source(source, db_type)
     try:
-        if (
-            getattr(resolved.database, "_shortcut_native_connection", False)
-            and resolved.database.database_type == "maxcompute"
-            and method_name in {"export_schema", "stream_write", "write"}
-        ):
-            raise DatabaseCapabilityError(
-                "MaxCompute 原生 DB-API 连接不包含 ODPS 元数据和 Tunnel 入口，" "请改为传入连接配置或 Database 实例"
-            )
+        if getattr(resolved.database, "_shortcut_native_connection", False) and resolved.database.database_type == "maxcompute" and method_name in {"export_schema", "stream_write", "write"}:
+            raise DatabaseCapabilityError("MaxCompute 原生 DB-API 连接不包含 ODPS 元数据和 Tunnel 入口，" "请改为传入连接配置或 Database 实例")
         method = getattr(resolved.database, method_name)
         return method(*args, **kwargs)
     finally:

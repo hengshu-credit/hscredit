@@ -59,9 +59,7 @@ def _feature_importance_worker(task):
     return result
 
 
-def iv_analysis(
-    df: pd.DataFrame, feature: str, target: str, max_n_bins: int = 10, method: str = "quantile"
-) -> Dict[str, Union[str, float, pd.DataFrame]]:
+def iv_analysis(df: pd.DataFrame, feature: str, target: str, max_n_bins: int = 10, method: str = "quantile") -> Dict[str, Union[str, float, pd.DataFrame]]:
     """单变量IV分析.
 
     复用 hscredit.core.metrics.IV_table
@@ -188,11 +186,7 @@ def batch_iv_analysis(
         ),
     )
     results = [row for row, _ in analyzed]
-    detail_results = {
-        feature: detail
-        for feature, (_, detail) in zip(valid_features, analyzed)
-        if return_details and detail is not None
-    }
+    detail_results = {feature: detail for feature, (_, detail) in zip(valid_features, analyzed) if return_details and detail is not None}
 
     result_df = pd.DataFrame(results).sort_values("IV值", ascending=False).reset_index(drop=True)
 
@@ -202,9 +196,7 @@ def batch_iv_analysis(
     return result_df
 
 
-def woe_analysis(
-    df: pd.DataFrame, feature: str, target: str, max_n_bins: int = 10, method: str = "quantile"
-) -> pd.DataFrame:
+def woe_analysis(df: pd.DataFrame, feature: str, target: str, max_n_bins: int = 10, method: str = "quantile") -> pd.DataFrame:
     """WOE分箱分析.
 
     复用 hscredit.core.metrics.IV_table 获取WOE值
@@ -249,9 +241,7 @@ def woe_analysis(
     return result
 
 
-def binning_bad_rate(
-    df: pd.DataFrame, feature: str, target: str, max_n_bins: int = 10, method: str = "quantile"
-) -> pd.DataFrame:
+def binning_bad_rate(df: pd.DataFrame, feature: str, target: str, max_n_bins: int = 10, method: str = "quantile") -> pd.DataFrame:
     """分箱逾期率分析.
 
     复用 hscredit.core.metrics.compute_bin_stats
@@ -306,9 +296,7 @@ def binning_bad_rate(
     return stats_df
 
 
-def monotonicity_check(
-    df: pd.DataFrame, feature: str, target: str, max_n_bins: int = 10
-) -> Dict[str, Union[str, float]]:
+def monotonicity_check(df: pd.DataFrame, feature: str, target: str, max_n_bins: int = 10) -> Dict[str, Union[str, float]]:
     """单调性检验.
 
     检查特征分箱后的逾期率是否单调变化

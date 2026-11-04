@@ -111,11 +111,7 @@ class QueryStream:
 
     def _to_frame(self, batch: Any) -> tuple[pd.DataFrame, Mapping[str, pd.Series]]:
         if isinstance(batch, pd.DataFrame):
-            null_masks = {
-                column: batch[column].map(self._is_sql_null)
-                for column, default in self.defaults.items()
-                if default is not None and column in batch.columns
-            }
+            null_masks = {column: batch[column].map(self._is_sql_null) for column, default in self.defaults.items() if default is not None and column in batch.columns}
             return batch, null_masks
         rows: Sequence[Any] = list(batch)
         frame = pd.DataFrame.from_records(rows, columns=self._columns)
@@ -304,9 +300,7 @@ class QueryStream:
                 "interrupt_reason": self.interrupt_reason,
             }
         )
-        frame.attrs["hscredit_query_source"] = {
-            key: frame.attrs[key] for key in ("completed", "state", "rows_read", "total_rows")
-        }
+        frame.attrs["hscredit_query_source"] = {key: frame.attrs[key] for key in ("completed", "state", "rows_read", "total_rows")}
         return frame
 
     def resource_usage(self):

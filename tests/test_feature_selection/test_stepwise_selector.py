@@ -51,9 +51,7 @@ X = pd.DataFrame(
 # 创建目标变量（与 feature1 和 feature2 相关）
 y = (X["feature1"] + X["feature2"] + np.random.randn(n_samples) * 0.5 > 0).astype(int)
 
-selector = StepwiseSelector(
-    estimator="logit", direction="forward", criterion="aic", p_enter=0.05, max_iter=50, verbose=False
-)
+selector = StepwiseSelector(estimator="logit", direction="forward", criterion="aic", p_enter=0.05, max_iter=50, verbose=False)
 
 selector.fit(X, y)
 
@@ -63,18 +61,14 @@ print(f"  剔除特征: {selector.removed_features_}")
 print(f"  特征数量: {selector.n_features_}")
 
 # 验证 feature1 和 feature2 被选中
-assert (
-    "feature1" in selector.selected_features_ or "feature2" in selector.selected_features_
-), "前向选择应该选中相关特征"
+assert "feature1" in selector.selected_features_ or "feature2" in selector.selected_features_, "前向选择应该选中相关特征"
 print("✓ 前向选择测试通过")
 
 # ==================== 测试 2: 后向消除 ====================
 print("\n测试 2: 基本功能 - 后向消除")
 print("-" * 70)
 
-selector_backward = StepwiseSelector(
-    estimator="logit", direction="backward", criterion="aic", p_remove=0.05, max_iter=50, verbose=False
-)
+selector_backward = StepwiseSelector(estimator="logit", direction="backward", criterion="aic", p_remove=0.05, max_iter=50, verbose=False)
 
 selector_backward.fit(X, y)
 
@@ -126,9 +120,7 @@ assert selector_max2.n_features_ <= 2, "选中特征数应该不超过 max_featu
 print("✓ max_features 整数测试通过")
 
 # 测试浮点数限制
-selector_max_ratio = StepwiseSelector(
-    estimator="logit", direction="forward", criterion="aic", max_features=0.5, verbose=False  # 最多选择 50% 的特征
-)
+selector_max_ratio = StepwiseSelector(estimator="logit", direction="forward", criterion="aic", max_features=0.5, verbose=False)  # 最多选择 50% 的特征
 
 selector_max_ratio.fit(X, y)
 
@@ -147,16 +139,11 @@ print("-" * 70)
 criteria = ["aic", "bic", "ks", "auc"]
 
 for criterion in criteria:
-    selector_criterion = StepwiseSelector(
-        estimator="logit", direction="forward", criterion=criterion, max_features=3, verbose=False
-    )
+    selector_criterion = StepwiseSelector(estimator="logit", direction="forward", criterion=criterion, max_features=3, verbose=False)
 
     selector_criterion.fit(X, y)
 
-    print(
-        f"准则 {criterion.upper():4s}: 选中 {selector_criterion.n_features_} 个特征 - "
-        f"{selector_criterion.selected_features_}"
-    )
+    print(f"准则 {criterion.upper():4s}: 选中 {selector_criterion.n_features_} 个特征 - " f"{selector_criterion.selected_features_}")
 
 print("✓ 不同准则测试通过")
 
@@ -188,9 +175,7 @@ print("-" * 70)
 
 custom_estimator = LogisticRegression(max_iter=100, random_state=42)
 
-selector_custom = StepwiseSelector(
-    estimator=custom_estimator, direction="forward", criterion="ks", max_features=3, verbose=False
-)
+selector_custom = StepwiseSelector(estimator=custom_estimator, direction="forward", criterion="ks", max_features=3, verbose=False)
 
 selector_custom.fit(X, y)
 

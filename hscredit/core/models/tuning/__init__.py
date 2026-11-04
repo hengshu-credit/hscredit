@@ -80,11 +80,7 @@ from .search_space import (  # noqa: F401,E402
 def __getattr__(name):
     if name not in __all__:
         raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
-    module_name = (
-        "._metrics"
-        if name in {"Metric", "TuningObjective"}
-        else ".space_adapter" if name == "normalize_search_space" else ".tuning"
-    )
+    module_name = "._metrics" if name in {"Metric", "TuningObjective"} else ".space_adapter" if name == "normalize_search_space" else ".tuning"
     module = importlib.import_module(module_name, __name__)
     value = getattr(module, name)
     globals()[name] = value

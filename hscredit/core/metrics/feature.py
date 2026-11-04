@@ -276,9 +276,7 @@ def cramers_v(x: Union[np.ndarray, pd.Series], y: Union[np.ndarray, pd.Series]) 
     return np.sqrt(chi2 / (n * min_dim))
 
 
-def feature_importance(
-    X: Union[pd.DataFrame, np.ndarray], y: Union[np.ndarray, pd.Series], method: str = "gini", **kwargs
-) -> pd.Series:
+def feature_importance(X: Union[pd.DataFrame, np.ndarray], y: Union[np.ndarray, pd.Series], method: str = "gini", **kwargs) -> pd.Series:
     """计算特征重要性.
 
     使用树模型基于特征对目标变量的分裂增益计算特征重要性。

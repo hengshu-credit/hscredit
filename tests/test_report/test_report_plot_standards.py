@@ -99,13 +99,7 @@ def test_new_report_plots_use_hscredit_axes_palette_and_export_defaults(tmp_path
     assert not axis.get_legend().get_frame_on()
     from matplotlib.container import BarContainer
 
-    bars = [
-        bar
-        for axis in saved["shap_importance"].axes
-        for container in axis.containers
-        if isinstance(container, BarContainer)
-        for bar in container
-    ]
+    bars = [bar for axis in saved["shap_importance"].axes for container in axis.containers if isinstance(container, BarContainer) for bar in container]
     assert bars and all(bar.get_hatch() == "/" for bar in bars)
     axes = {axis.get_label(): axis for axis in saved["shap_importance"].axes}
     assert {"SHAP分布", "特征重要性", "SHAP依赖"} <= set(axes)

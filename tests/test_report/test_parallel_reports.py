@@ -258,9 +258,7 @@ def test_swap_analyzer_parallel_match_and_is_transactional(backend, monkeypatch)
     pd.testing.assert_frame_equal(parallel.summary_report_count, serial.summary_report_count)
 
     old_result = analyzer.result
-    monkeypatch.setattr(
-        provider, "predict_bad_rate", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
-    )
+    monkeypatch.setattr(provider, "predict_bad_rate", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     with pytest.raises(Exception, match="boom"):
         analyzer.analyze(swap)
     assert analyzer.result is old_result
@@ -509,16 +507,7 @@ def _simple_bin_table(data, feature):
 
 
 def _workbook_matrix(writer):
-    return {
-        sheet: [
-            [
-                writer.workbook[sheet].cell(row=row, column=col).value
-                for col in range(1, writer.workbook[sheet].max_column + 1)
-            ]
-            for row in range(1, writer.workbook[sheet].max_row + 1)
-        ]
-        for sheet in writer.workbook.sheetnames
-    }
+    return {sheet: [[writer.workbook[sheet].cell(row=row, column=col).value for col in range(1, writer.workbook[sheet].max_column + 1)] for row in range(1, writer.workbook[sheet].max_row + 1)] for sheet in writer.workbook.sheetnames}
 
 
 def test_auto_feature_analysis_uses_ordered_shared_feature_executor(report_data, tmp_path, monkeypatch):
@@ -1019,9 +1008,7 @@ def test_rule_group_budget_respects_active_parent(monkeypatch):
         ([7, 3], True, 2, 2),
     ],
 )
-def test_swap_out_rule_report_budget_uses_real_deduplicated_targets(
-    monkeypatch, unique_dpds, expected_flag, expected_outer, expected_child
-):
+def test_swap_out_rule_report_budget_uses_real_deduplicated_targets(monkeypatch, unique_dpds, expected_flag, expected_outer, expected_child):
     captured = _capture_rule_strategy_parallel(monkeypatch)
     data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2})
     swap_out_report(
@@ -1047,9 +1034,7 @@ def test_swap_out_rule_report_budget_uses_real_deduplicated_targets(
         ([7, 3], True, 2, 2),
     ],
 )
-def test_swap_out_stability_budget_uses_real_deduplicated_targets(
-    monkeypatch, unique_dpds, expected_flag, expected_outer, expected_child
-):
+def test_swap_out_stability_budget_uses_real_deduplicated_targets(monkeypatch, unique_dpds, expected_flag, expected_outer, expected_child):
     captured = _capture_rule_strategy_parallel(monkeypatch)
     data = pd.DataFrame({"score": np.arange(12), "MOB1": [0, 1, 3, 7, 15, 0] * 2, "group": ["A"] * 12})
     swap_out_report(
@@ -1293,11 +1278,7 @@ def test_configured_parent_rule_group_parallel_matches_serial_and_stays_unchange
 def test_task11_model_report_entries_expose_common_parallel_parameters(entry):
     signature = inspect.signature(entry)
     # 新增标签/报告协议选项只通过关键字传入，不改变既有位置参数与并行三元组。
-    names = [
-        name
-        for name, parameter in signature.parameters.items()
-        if parameter.kind is not inspect.Parameter.KEYWORD_ONLY or name in COMMON
-    ]
+    names = [name for name, parameter in signature.parameters.items() if parameter.kind is not inspect.Parameter.KEYWORD_ONLY or name in COMMON]
     expected_slice = names[-4:-1] if names[-1] == "kwargs" else names[-3:]
     assert expected_slice == list(COMMON)
     assert signature.parameters["n_jobs"].default == -1
@@ -1381,9 +1362,7 @@ def test_model_report_parallel_tables_match_serial_exactly(backend):
     pd.testing.assert_frame_equal(parallel.get_feature_importance(), serial.get_feature_importance(), check_exact=True)
     pd.testing.assert_frame_equal(parallel.get_features_describe(), serial.get_features_describe(), check_exact=True)
     pd.testing.assert_frame_equal(parallel.get_features_corr(), serial.get_features_corr(), check_exact=True)
-    pd.testing.assert_frame_equal(
-        parallel._get_monthly_metrics("date"), serial._get_monthly_metrics("date"), check_exact=True
-    )
+    pd.testing.assert_frame_equal(parallel._get_monthly_metrics("date"), serial._get_monthly_metrics("date"), check_exact=True)
 
 
 def test_model_report_does_not_change_trained_model_parameters():
@@ -1553,9 +1532,7 @@ def test_compare_models_marks_real_nested_parallel_boundary(monkeypatch):
         (-1, 7, 2, 2),
     ],
 )
-def test_compare_models_actual_nested_budget_matrix(
-    monkeypatch, requested_n_jobs, expected_total, expected_outer, expected_child
-):
+def test_compare_models_actual_nested_budget_matrix(monkeypatch, requested_n_jobs, expected_total, expected_outer, expected_child):
     import hscredit.report.model_report as module
     import hscredit.utils.parallel as parallel_module
     from hscredit.utils.parallel import _ACTIVE_BUDGET

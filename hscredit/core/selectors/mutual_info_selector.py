@@ -29,12 +29,7 @@ from ...utils.parallel import ParallelWorkload
 def _compute_mutual_info_feature(task):
     """编码并计算单个特征与目标的互信息。"""
     feature, series, y, n_neighbors, seed = task
-    discrete = bool(
-        is_object_dtype(series.dtype)
-        or is_string_dtype(series.dtype)
-        or isinstance(series.dtype, pd.CategoricalDtype)
-        or is_bool_dtype(series.dtype)
-    )
+    discrete = bool(is_object_dtype(series.dtype) or is_string_dtype(series.dtype) or isinstance(series.dtype, pd.CategoricalDtype) or is_bool_dtype(series.dtype))
     if discrete:
         values = pd.factorize(series)[0].astype(float)
     else:
@@ -170,15 +165,9 @@ class MutualInfoSelector(BaseFeatureSelector):
 
     def _check_input(self, X, y=None):
         validate_real(self.threshold, "互信息阈值", allow_infinite=True)
-        if (
-            isinstance(self.n_neighbors, (bool, np.bool_))
-            or not isinstance(self.n_neighbors, (int, np.integer))
-            or self.n_neighbors < 1
-        ):
+        if isinstance(self.n_neighbors, (bool, np.bool_)) or not isinstance(self.n_neighbors, (int, np.integer)) or self.n_neighbors < 1:
             raise ValueError("n_neighbors 必须是正整数")
-        if self.random_state is not None and (
-            isinstance(self.random_state, (bool, np.bool_)) or not isinstance(self.random_state, (int, np.integer))
-        ):
+        if self.random_state is not None and (isinstance(self.random_state, (bool, np.bool_)) or not isinstance(self.random_state, (int, np.integer))):
             raise ValueError("random_state 必须是整数或 None")
         return super()._check_input(X, y)
 
@@ -204,11 +193,7 @@ class MutualInfoSelector(BaseFeatureSelector):
         self.score_name_, self.score_direction_ = "互信息值", "越大越好"
         self.discrete_features_ = pd.Series({column: is_categorical(X[column]) for column in X})
 
-        if (
-            isinstance(self.n_neighbors, (bool, np.bool_))
-            or not isinstance(self.n_neighbors, (int, np.integer))
-            or int(self.n_neighbors) < 1
-        ):
+        if isinstance(self.n_neighbors, (bool, np.bool_)) or not isinstance(self.n_neighbors, (int, np.integer)) or int(self.n_neighbors) < 1:
             raise ValueError("n_neighbors 必须是正整数")
 
         seed_modulus = 2**32 - 1

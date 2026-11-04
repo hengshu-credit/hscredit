@@ -306,9 +306,7 @@ def test_stream_query_projects_json_fields_without_returning_source_json():
         {"id": 2, "city": "上海"},
     ]
     assert database.adapter.stream_call == (
-        'SELECT "hscredit_json_source"."id", '
-        'JSON_GET("hscredit_json_source"."huge_json", \'$.address.city\') AS "city" '
-        'FROM (select id, huge_json from user_profile) "hscredit_json_source"',
+        'SELECT "hscredit_json_source"."id", ' 'JSON_GET("hscredit_json_source"."huge_json", \'$.address.city\') AS "city" ' 'FROM (select id, huge_json from user_profile) "hscredit_json_source"',
         None,
     )
 

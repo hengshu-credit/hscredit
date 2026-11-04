@@ -449,10 +449,4 @@ def test_mysql_json_projection_uses_server_side_path_extraction(adapter):
         json_fields={"payload": {"customer_id": "$.customer.id"}},
     )
 
-    assert sql == (
-        "SELECT `hscredit_json_source`.`id`, "
-        "CASE WHEN JSON_TYPE(JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.customer.id')) = 'NULL' "
-        "THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.customer.id')) END "
-        "AS `customer_id` "
-        "FROM (select id, payload from risk.events) `hscredit_json_source`"
-    )
+    assert sql == ("SELECT `hscredit_json_source`.`id`, " "CASE WHEN JSON_TYPE(JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.customer.id')) = 'NULL' " "THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.customer.id')) END " "AS `customer_id` " "FROM (select id, payload from risk.events) `hscredit_json_source`")

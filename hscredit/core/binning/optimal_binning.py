@@ -593,9 +593,7 @@ class OptimalBinning(BaseBinning):
             super().set_params(**nested)
         return self
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "OptimalBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "OptimalBinning":
         """拟合分箱.
 
         :param X: 训练数据
@@ -610,11 +608,7 @@ class OptimalBinning(BaseBinning):
         self._validate_objective_parameters()
         self.__dict__.pop("_candidate_splits_", None)
         X, y = self._check_input(X, y)
-        imported_features = [
-            feature
-            for feature in getattr(self, "_imported_rule_features_", ())
-            if getattr(self, "_rules_imported_", False) and feature in X.columns
-        ]
+        imported_features = [feature for feature in getattr(self, "_imported_rule_features_", ()) if getattr(self, "_rules_imported_", False) and feature in X.columns]
         excluded_features = set()
         if isinstance(self.user_splits, dict):
             excluded_features.update(self.user_splits)
@@ -726,9 +720,7 @@ class OptimalBinning(BaseBinning):
                 source = imported_state if feature in imported_set else ordinary_state
                 if feature in source:
                     merged[feature] = deepcopy(source[feature])
-            has_state = hasattr(self, state_name) or (
-                ordinary_binner is not None and hasattr(ordinary_binner, state_name)
-            )
+            has_state = hasattr(self, state_name) or (ordinary_binner is not None and hasattr(ordinary_binner, state_name))
             if has_state or merged:
                 setattr(self, state_name, merged)
 
@@ -738,20 +730,12 @@ class OptimalBinning(BaseBinning):
             setattr(
                 self,
                 state_name,
-                {
-                    feature
-                    for feature in X.columns
-                    if feature in (imported_state if feature in imported_set else ordinary_state)
-                },
+                {feature for feature in X.columns if feature in (imported_state if feature in imported_set else ordinary_state)},
             )
 
         imported_woe = getattr(self, "_woe_maps_", {})
         ordinary_woe = getattr(ordinary_binner, "_woe_maps_", {}) if ordinary_binner is not None else {}
-        self._woe_maps_ = {
-            feature: deepcopy((imported_woe if feature in imported_set else ordinary_woe)[feature])
-            for feature in X.columns
-            if feature in (imported_woe if feature in imported_set else ordinary_woe)
-        }
+        self._woe_maps_ = {feature: deepcopy((imported_woe if feature in imported_set else ordinary_woe)[feature]) for feature in X.columns if feature in (imported_woe if feature in imported_set else ordinary_woe)}
 
         # 只保留本轮 ordinary 子模型及其 delegate；transform 按特征分区调用，
         # imported 特征不会进入这个只覆盖 ordinary 子集的估计器。
@@ -870,20 +854,12 @@ class OptimalBinning(BaseBinning):
             setattr(
                 self,
                 state_name,
-                {
-                    feature
-                    for feature in X.columns
-                    if feature in (user_state if feature in user_set else ordinary_state)
-                },
+                {feature for feature in X.columns if feature in (user_state if feature in user_set else ordinary_state)},
             )
 
         user_woe = getattr(self, "_woe_maps_", {})
         ordinary_woe = getattr(ordinary_binner, "_woe_maps_", {}) if ordinary_binner is not None else {}
-        self._woe_maps_ = {
-            feature: (user_woe if feature in user_set else ordinary_woe)[feature]
-            for feature in X.columns
-            if feature in (user_woe if feature in user_set else ordinary_woe)
-        }
+        self._woe_maps_ = {feature: (user_woe if feature in user_set else ordinary_woe)[feature] for feature in X.columns if feature in (user_woe if feature in user_set else ordinary_woe)}
 
         self._ordinary_binner_ = ordinary_binner
         self._ordinary_features_ = tuple(ordinary_features)
@@ -932,9 +908,7 @@ class OptimalBinning(BaseBinning):
         ).fit(encoded.to_frame(), y)
         numeric_splits = method_binner.splits_.get(feature, np.array([]))
         atomic_groups = restore_category_groups(list(range(len(groups))), numeric_splits)
-        return [
-            [value for group_index in atomic_group for value in groups[group_index]] for atomic_group in atomic_groups
-        ]
+        return [[value for group_index in atomic_group for value in groups[group_index]] for atomic_group in atomic_groups]
 
     def _merge_common_user_category_groups_with_method(
         self,
@@ -1022,11 +996,7 @@ class OptimalBinning(BaseBinning):
 
         # 4. 所有主方法都真实拟合，使方法专属参数完整生效；随后把结果约束到
         # 预分箱候选边界。预分箱只定义搜索空间，不能替代主方法结果。
-        self._candidate_splits_ = {
-            feature: np.asarray(cuts, dtype=float)
-            for feature, cuts in pre_splits.items()
-            if self._detect_feature_type(X[feature]) == "numerical"
-        }
+        self._candidate_splits_ = {feature: np.asarray(cuts, dtype=float) for feature, cuts in pre_splits.items() if self._detect_feature_type(X[feature]) == "numerical"}
         self._fit_with_method(X, y)
         self._restrict_to_prebin_candidates(X, y, pre_splits)
 
@@ -1045,12 +1015,8 @@ class OptimalBinning(BaseBinning):
                     self.splits_[feature] = groups
                     self.n_bins_[feature] = len(groups)
                     self._category_orders_[feature] = [value for group in groups for value in group if pd.notna(value)]
-                    self._category_code_maps_[feature] = [
-                        (value, index) for index, value in enumerate(self._category_orders_[feature])
-                    ]
-                    self._categorical_numeric_splits_[feature] = (
-                        np.cumsum([len(group) for group in groups], dtype=float)[:-1] - 0.5
-                    )
+                    self._category_code_maps_[feature] = [(value, index) for index, value in enumerate(self._category_orders_[feature])]
+                    self._categorical_numeric_splits_[feature] = np.cumsum([len(group) for group in groups], dtype=float)[:-1] - 0.5
                     bins = self._assign_categorical_bins(feature, X[feature])
                     self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
                 continue
@@ -1126,12 +1092,8 @@ class OptimalBinning(BaseBinning):
                     self.splits_[feature] = groups
                     self.n_bins_[feature] = len(groups)
                     self._category_orders_[feature] = [value for group in groups for value in group if pd.notna(value)]
-                    self._category_code_maps_[feature] = [
-                        (value, index) for index, value in enumerate(self._category_orders_[feature])
-                    ]
-                    self._categorical_numeric_splits_[feature] = (
-                        np.cumsum([len(group) for group in groups], dtype=float)[:-1] - 0.5
-                    )
+                    self._category_code_maps_[feature] = [(value, index) for index, value in enumerate(self._category_orders_[feature])]
+                    self._categorical_numeric_splits_[feature] = np.cumsum([len(group) for group in groups], dtype=float)[:-1] - 0.5
                     bins = self._assign_categorical_bins(feature, X[feature])
                     self.bin_tables_[feature] = self._compute_bin_stats(feature, X[feature], y, bins)
                 continue
@@ -1194,13 +1156,7 @@ class OptimalBinning(BaseBinning):
     def _reserved_bins_are_finalized(self, features: Iterable[Any]) -> bool:
         """判断当前字段是否都已有可直接复用的最终分箱产物。"""
         finalized = getattr(self, "_reserved_bins_finalized_", set())
-        return all(
-            feature in finalized
-            and feature in self.bin_tables_
-            and feature in self._woe_maps_
-            and feature in self._recorded_bins_
-            for feature in features
-        )
+        return all(feature in finalized and feature in self.bin_tables_ and feature in self._woe_maps_ and feature in self._recorded_bins_ for feature in features)
 
     def _optimize_iv_splits(self, x: pd.Series, y: pd.Series, initial_splits: np.ndarray) -> np.ndarray:
         """基于预分箱切分点优化IV."""
@@ -1394,9 +1350,7 @@ class OptimalBinning(BaseBinning):
         """
         if len(splits) == 0:
             return 0.0
-        return iv_for_splits(
-            x.values if isinstance(x, pd.Series) else x, y.values if isinstance(y, pd.Series) else y, np.array(splits)
-        )
+        return iv_for_splits(x.values if isinstance(x, pd.Series) else x, y.values if isinstance(y, pd.Series) else y, np.array(splits))
 
     def _calculate_max_ks(self, x: pd.Series, y: pd.Series, splits: List) -> float:
         """计算给定切分点的最大KS值.
@@ -1405,9 +1359,7 @@ class OptimalBinning(BaseBinning):
         """
         if len(splits) == 0:
             return 0.0
-        return ks_for_splits(
-            x.values if isinstance(x, pd.Series) else x, y.values if isinstance(y, pd.Series) else y, np.array(splits)
-        )
+        return ks_for_splits(x.values if isinstance(x, pd.Series) else x, y.values if isinstance(y, pd.Series) else y, np.array(splits))
 
     def _calculate_chi2_for_splits(self, x: pd.Series, y: pd.Series, splits: List) -> float:
         """计算给定切分点的卡方统计量."""
@@ -1502,19 +1454,11 @@ class OptimalBinning(BaseBinning):
         if self.monotonic in ["ascending", "descending", "auto_asc_desc"]:
             monotonic_bonus *= 1.5
 
-        iv_value = iv_for_splits(
-            x.values if isinstance(x, pd.Series) else x, y.values if isinstance(y, pd.Series) else y, np.array(splits)
-        )
+        iv_value = iv_for_splits(x.values if isinstance(x, pd.Series) else x, y.values if isinstance(y, pd.Series) else y, np.array(splits))
 
         n_bins_score = np.log1p(max(0, len(splits)))
 
-        return (
-            focus_weight * tail_strength
-            + sample_weight * stability
-            + monotonic_bonus_weight * monotonic_bonus
-            + 0.08 * iv_value
-            + 0.25 * n_bins_score
-        )
+        return focus_weight * tail_strength + sample_weight * stability + monotonic_bonus_weight * monotonic_bonus + 0.08 * iv_value + 0.25 * n_bins_score
 
     def _refine_splits_for_lift_stability(self, X: pd.DataFrame, y: pd.Series):
         """对已有分箱结果做局部搜索：先删点，再补点，兼顾头尾Lift与单调性."""
@@ -1576,9 +1520,7 @@ class OptimalBinning(BaseBinning):
 
             current = np.unique(np.sort(splits_arr))
             best = current.copy()
-            best_score = self._evaluate_lift_stability_score(
-                x_valid, y_valid, best, min_samples_abs, focus_weight, sample_weight
-            )
+            best_score = self._evaluate_lift_stability_score(x_valid, y_valid, best, min_samples_abs, focus_weight, sample_weight)
 
             # Step1: 删点搜索（提升鲁棒性）
             improved = True
@@ -1593,9 +1535,7 @@ class OptimalBinning(BaseBinning):
                         continue
                     if not _is_ok_monotonic(x_valid, y_valid, cand):
                         continue
-                    score = self._evaluate_lift_stability_score(
-                        x_valid, y_valid, cand, min_samples_abs, focus_weight, sample_weight
-                    )
+                    score = self._evaluate_lift_stability_score(x_valid, y_valid, cand, min_samples_abs, focus_weight, sample_weight)
                     if score > candidate_score:
                         candidate_score = score
                         candidate_best = cand
@@ -1626,9 +1566,7 @@ class OptimalBinning(BaseBinning):
                         continue
                     if not _is_ok_monotonic(x_valid, y_valid, cand):
                         continue
-                    score = self._evaluate_lift_stability_score(
-                        x_valid, y_valid, cand, min_samples_abs, focus_weight, sample_weight
-                    )
+                    score = self._evaluate_lift_stability_score(x_valid, y_valid, cand, min_samples_abs, focus_weight, sample_weight)
                     if score > candidate_score:
                         candidate_score = score
                         candidate_best = cand
@@ -1950,11 +1888,7 @@ class OptimalBinning(BaseBinning):
             elif target == n - 1:
                 neighbor = n - 2
             else:
-                neighbor = (
-                    target - 1
-                    if abs(brate(target) - brate(target - 1)) <= abs(brate(target) - brate(target + 1))
-                    else target + 1
-                )
+                neighbor = target - 1 if abs(brate(target) - brate(target - 1)) <= abs(brate(target) - brate(target + 1)) else target + 1
             merge(min(target, neighbor), max(target, neighbor))
             # 合并后重新按坏样本率排序，保持相邻性语义
             idx = sorted(range(len(groups)), key=brate)
@@ -1976,9 +1910,7 @@ class OptimalBinning(BaseBinning):
                 return np.percentile(x_clean, quantiles[1:-1] * 100)
             return np.array([])
 
-    def _apply_bins(
-        self, x: pd.Series, splits: Union[np.ndarray, List], feature_type: str, feature: Optional[str] = None
-    ) -> np.ndarray:
+    def _apply_bins(self, x: pd.Series, splits: Union[np.ndarray, List], feature_type: str, feature: Optional[str] = None) -> np.ndarray:
         """应用分箱.
 
         类别规则只支持严格 ``List[List]`` ，并优先使用已规范化的 ``_cat_bins_`` 。
@@ -2071,9 +2003,7 @@ class OptimalBinning(BaseBinning):
 
         return left_desc and right_asc
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。
@@ -2147,11 +2077,7 @@ class OptimalBinning(BaseBinning):
             metric,
             lambda feature: self._apply_bins(
                 X[feature],
-                (
-                    self._cat_bins_[feature]
-                    if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_
-                    else self.splits_[feature]
-                ),
+                (self._cat_bins_[feature] if self.feature_types_[feature] == "categorical" and feature in self._cat_bins_ else self.splits_[feature]),
                 self.feature_types_[feature],
                 feature,
             ),

@@ -31,9 +31,7 @@ from hscredit.core.selectors.psi_selector import _compute_psi_single
 
 @pytest.fixture
 def numeric_data():
-    return pd.DataFrame(
-        {"甲": [0.0, 2.0, 4.0, 6.0, 8.0, 10.0], "乙": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0], "常量": [1.0] * 6}
-    ), np.array([0, 0, 0, 1, 1, 1])
+    return pd.DataFrame({"甲": [0.0, 2.0, 4.0, 6.0, 8.0, 10.0], "乙": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0], "常量": [1.0] * 6}), np.array([0, 0, 0, 1, 1, 1])
 
 
 @pytest.mark.parametrize(
@@ -153,9 +151,7 @@ def test_f_test_requires_explicit_unordered_category_strategy(dtype):
 
 
 def test_ordered_categorical_f_test_uses_declared_order():
-    X = pd.DataFrame(
-        {"等级": pd.Categorical(["中", "高", "低", "高", "低", "中"], categories=["低", "中", "高"], ordered=True)}
-    )
+    X = pd.DataFrame({"等级": pd.Categorical(["中", "高", "低", "高", "低", "中"], categories=["低", "中", "高"], ordered=True)})
     y = np.array([0, 1, 0, 1, 0, 1])
     selected = FTestSelector(n_jobs=1).fit(X, y)
     expected, _ = f_classif(X["等级"].cat.codes.to_numpy().reshape(-1, 1), y)
@@ -261,10 +257,7 @@ def test_lift_missing_exclusion_and_binary_validation():
 def test_psi_fold_summary_matches_kfold_without_retained_row_indices():
     X = pd.DataFrame({"连续": np.random.RandomState(7).normal(size=103)})
     fitted = PSISelector(n_splits=4, random_state=8, n_jobs=1).fit(X)
-    expected = [
-        _compute_psi_single(X.iloc[a, 0].to_numpy(), X.iloc[b, 0].to_numpy())
-        for a, b in KFold(4, shuffle=True, random_state=8).split(X)
-    ]
+    expected = [_compute_psi_single(X.iloc[a, 0].to_numpy(), X.iloc[b, 0].to_numpy()) for a, b in KFold(4, shuffle=True, random_state=8).split(X)]
     np.testing.assert_allclose(fitted.fold_scores_.iloc[0].to_numpy(), expected)
     assert fitted.scores_.iloc[0] == pytest.approx(np.mean(expected))
     assert fitted.psi_std_.iloc[0] == pytest.approx(np.std(expected))

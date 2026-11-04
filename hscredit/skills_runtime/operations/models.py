@@ -19,9 +19,7 @@ def _prediction(model, X, method, params):
     value = getattr(model, method)(X, **params)
     if method == "predict_proba":
         value = positive_probability(value, getattr(model, "classes_", None), positive_class=1)
-    return frame(
-        value, index=X.index, label={"predict": "预测", "predict_proba": "坏样本概率", "predict_score": "评分"}[method]
-    )
+    return frame(value, index=X.index, label={"predict": "预测", "predict_proba": "坏样本概率", "predict_score": "评分"}[method])
 
 
 def model_fit(context):
@@ -182,6 +180,4 @@ def register_model_operations(registry):
         "component_create": component_create,
         "loss_info": component_create,
     }.items():
-        registry.register(
-            OperationSpec("hsmodel", name, handler, extras=("skills", "tune") if name == "model_tune" else ("skills",))
-        )
+        registry.register(OperationSpec("hsmodel", name, handler, extras=("skills", "tune") if name == "model_tune" else ("skills",)))

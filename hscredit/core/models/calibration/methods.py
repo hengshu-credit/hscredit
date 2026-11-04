@@ -213,11 +213,7 @@ class HistogramCalibrator(BaseCalibrator):
                 mask = (probabilities >= self.bin_edges_[index]) & (probabilities <= self.bin_edges_[index + 1])
             else:
                 mask = (probabilities >= self.bin_edges_[index]) & (probabilities < self.bin_edges_[index + 1])
-            self.bin_freqs_[index] = (
-                np.average(labels[mask], weights=mass[mask])
-                if mass[mask].sum() > 0
-                else (self.bin_edges_[index] + self.bin_edges_[index + 1]) / 2
-            )
+            self.bin_freqs_[index] = np.average(labels[mask], weights=mass[mask]) if mass[mask].sum() > 0 else (self.bin_edges_[index] + self.bin_edges_[index + 1]) / 2
         return self
 
     def calibrate(self, y_prob):

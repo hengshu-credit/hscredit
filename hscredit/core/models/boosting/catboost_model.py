@@ -217,9 +217,7 @@ class CatBoost(BaseRiskModel):
             raise ImportError("CatBoost未安装，请使用 pip install catboost 安装")
 
         # sklearn clone 必须能够原样往返构造输入，原生覆盖值只用于实际训练。
-        self._constructor_params = {
-            name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}
-        }
+        self._constructor_params = {name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}}
         self._constructor_kwargs = dict(kwargs)
         # 保存原生params参数
         self.params = params  # 用于sklearn get_params兼容性
@@ -378,16 +376,12 @@ class CatBoost(BaseRiskModel):
                 if any(isinstance(metric, BaseMetric) for metric in requested_metrics):
                     raise ValueError("CatBoost 仅支持一个自定义主评估指标，请在 KS 与指标对象中选择一个")
                 params["eval_metric"] = CatBoostKSMetric()
-                native_metrics = [
-                    self._convert_metrics(metric) for metric in requested_metrics if str(metric).lower() != "ks"
-                ]
+                native_metrics = [self._convert_metrics(metric) for metric in requested_metrics if str(metric).lower() != "ks"]
                 if native_metrics:
                     params["custom_metric"] = native_metrics
             else:
                 # CatBoost 只允许一个主评估指标，其余指标放入 custom_metric。
-                converted = [
-                    self._convert_metrics(metric) if isinstance(metric, str) else metric for metric in requested_metrics
-                ]
+                converted = [self._convert_metrics(metric) if isinstance(metric, str) else metric for metric in requested_metrics]
                 params["eval_metric"] = converted[0]
                 if len(converted) > 1:
                     params["custom_metric"] = converted[1:]
@@ -398,25 +392,16 @@ class CatBoost(BaseRiskModel):
 
             # 如果指定了专门的早停指标，覆盖eval_metric
             if self.early_stopping_metric is not None:
-                if (
-                    isinstance(params.get("eval_metric"), BaseMetric)
-                    and self.early_stopping_metric == params["eval_metric"].name
-                ):
+                if isinstance(params.get("eval_metric"), BaseMetric) and self.early_stopping_metric == params["eval_metric"].name:
                     pass  # 指标对象同时承担早停，保留其方向与适配信息。
                 elif str(self.early_stopping_metric).lower() == "ks":
                     params["eval_metric"] = CatBoostKSMetric()
                 else:
                     params["eval_metric"] = self._convert_metrics(self.early_stopping_metric)
             # 如果有多个评估指标且没有指定早停指标，使用第一个
-            elif (
-                isinstance(eval_metric, (list, tuple))
-                and len(eval_metric) > 0
-                and not any(str(metric).lower() == "ks" for metric in eval_metric)
-            ):
+            elif isinstance(eval_metric, (list, tuple)) and len(eval_metric) > 0 and not any(str(metric).lower() == "ks" for metric in eval_metric):
                 first_metric = eval_metric[0]
-                params["eval_metric"] = (
-                    first_metric if isinstance(first_metric, BaseMetric) else self._convert_metrics(first_metric)
-                )
+                params["eval_metric"] = first_metric if isinstance(first_metric, BaseMetric) else self._convert_metrics(first_metric)
 
         # 更新kwargs参数
         params.update(self.kwargs)
@@ -451,10 +436,7 @@ class CatBoost(BaseRiskModel):
         from ..losses._sample_params import has_bound_sample_params
 
         if has_bound_sample_params(metric_object):
-            raise ValueError(
-                "CatBoost 回调无法标识逐行金融数组对应的样本；请使用 Pool/sample_weight 的金额权重，"
-                "或训练后 evaluate(metrics=loss.metric()) 分别评估"
-            )
+            raise ValueError("CatBoost 回调无法标识逐行金融数组对应的样本；请使用 Pool/sample_weight 的金额权重，" "或训练后 evaluate(metrics=loss.metric()) 分别评估")
         if isinstance(metric_object, BaseMetric):
             params["eval_metric"] = metric_object.to_catboost()
         resolved_loss = self._resolve_catboost_loss(loss_object)
@@ -592,9 +574,7 @@ class CatBoost(BaseRiskModel):
         importances = self._model.get_feature_importance(type=importance_type)
 
         # 创建Series
-        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
-            ascending=False
-        )
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(ascending=False)
 
         self._feature_importances = importance_series
 

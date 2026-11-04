@@ -205,9 +205,7 @@ def _impute_features(data: pd.DataFrame, feature_list: List[str], missing: Optio
     return filled
 
 
-def _prepare_training_features(
-    data: pd.DataFrame, feature_list: List[str], missing: Optional[float], owner: str
-) -> np.ndarray:
+def _prepare_training_features(data: pd.DataFrame, feature_list: List[str], missing: Optional[float], owner: str) -> np.ndarray:
     """根据 sklearn 版本与 missing 参数准备训练特征矩阵。
 
     - 指定 ``missing`` ：将缺失等价为该数值后训练（任意 sklearn 版本均可）；
@@ -227,11 +225,7 @@ def _prepare_training_features(
     if missing is not None:
         return feat.fillna(missing).values
     if bool(feat.isna().any().any()) and not _SKLEARN_NATIVE_MISSING:
-        raise InputValidationError(
-            f"{owner}：训练数据包含缺失值，当前 sklearn 版本（{sklearn.__version__} < 1.3）"
-            "不支持决策树原生缺失值；请在初始化时传入 missing 指定缺失值的等价填充数值"
-            "（例如 missing=-999）"
-        )
+        raise InputValidationError(f"{owner}：训练数据包含缺失值，当前 sklearn 版本（{sklearn.__version__} < 1.3）" "不支持决策树原生缺失值；请在初始化时传入 missing 指定缺失值的等价填充数值" "（例如 missing=-999）")
     return feat.values
 
 
@@ -282,9 +276,7 @@ def _resolve_fit_data(
         if not isinstance(X, pd.DataFrame):
             raise InputValidationError("未传入 y 时按 scorecardpipeline 风格解析：X 需为包含目标列的 DataFrame；" "若按 sklearn 风格请同时传入 y")
         if target not in X.columns:
-            raise InputValidationError(
-                f"目标列 '{target}' 未在数据中找到；请传入 y（sklearn 风格）" f"或在 DataFrame 中包含 '{target}' 列（scorecardpipeline 风格）"
-            )
+            raise InputValidationError(f"目标列 '{target}' 未在数据中找到；请传入 y（sklearn 风格）" f"或在 DataFrame 中包含 '{target}' 列（scorecardpipeline 风格）")
         data = X
         if selected is not None:
             feats = selected
@@ -1109,9 +1101,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             self.__tree_info_cache.n_node_samples = list(tree.n_node_samples)
             self.__tree_info_cache.value = [list(v) for v in tree.value]
             self.__tree_info_cache.impurity = list(tree.impurity)
-            self.__tree_info_cache.missing_go_to_left = list(
-                getattr(tree, "missing_go_to_left", [0] * len(tree.feature))
-            )
+            self.__tree_info_cache.missing_go_to_left = list(getattr(tree, "missing_go_to_left", [0] * len(tree.feature)))
         return self.__tree_info_cache
 
     # -------------------------------------------------------------------------
@@ -1356,9 +1346,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
     def report(
         self,
-        datasets: Optional[
-            Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]
-        ] = None,
+        datasets: Optional[Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
@@ -1530,11 +1518,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
                 has_parallel_children=True,
             ),
         )
-        result = (
-            dict(zip(names, results))
-            if isinstance(datasets, dict)
-            else (results if isinstance(datasets, (list, tuple)) else results[0])
-        )
+        result = dict(zip(names, results)) if isinstance(datasets, dict) else (results if isinstance(datasets, (list, tuple)) else results[0])
 
         from ._tree_report import format_rule_tables
 
@@ -1612,9 +1596,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
 
     def get_rule_table(
         self,
-        datasets: Optional[
-            Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]
-        ] = None,
+        datasets: Optional[Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
@@ -2470,11 +2452,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         """
         self._check_fitted()
         removed = set(_find_subtree_node_ids(self._tree_info, node)) - {node}
-        adjusted_nodes = {
-            old - sum(removed_node < old for removed_node in removed)
-            for old in self._manual_split_nodes | {node}
-            if old not in removed
-        }
+        adjusted_nodes = {old - sum(removed_node < old for removed_node in removed) for old in self._manual_split_nodes | {node} if old not in removed}
 
         (
             self._tree_info.children_left,
@@ -2622,9 +2600,7 @@ class ManualTreeExtractor(ParallelizableMixin):
 
     def get_rule_table(
         self,
-        datasets: Optional[
-            Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]
-        ] = None,
+        datasets: Optional[Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
@@ -2792,9 +2768,7 @@ class ManualTreeExtractor(ParallelizableMixin):
 
     def report(
         self,
-        datasets: Optional[
-            Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]
-        ] = None,
+        datasets: Optional[Union[pd.DataFrame, List[pd.DataFrame], Tuple[pd.DataFrame, ...], Dict[Any, pd.DataFrame]]] = None,
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
@@ -2966,11 +2940,7 @@ class ManualTreeExtractor(ParallelizableMixin):
                 has_parallel_children=True,
             ),
         )
-        result = (
-            dict(zip(names, results))
-            if isinstance(datasets, dict)
-            else (results if isinstance(datasets, (list, tuple)) else results[0])
-        )
+        result = dict(zip(names, results)) if isinstance(datasets, dict) else (results if isinstance(datasets, (list, tuple)) else results[0])
 
         from ._tree_report import format_rule_tables
 
@@ -3068,10 +3038,5 @@ class ManualTreeExtractor(ParallelizableMixin):
     def __repr__(self) -> str:
         if self._is_fitted:
             n_leaves = int(self._df_rules["if_leaf"].sum()) if self._df_rules is not None else 0
-            return (
-                f"ManualTreeExtractor(target='{self.target}', "
-                f"features={self._feature_list}, "
-                f"samples={self._n_total_samples}, "
-                f"leaves={n_leaves})"
-            )
+            return f"ManualTreeExtractor(target='{self.target}', " f"features={self._feature_list}, " f"samples={self._n_total_samples}, " f"leaves={n_leaves})"
         return "ManualTreeExtractor(not fitted)"

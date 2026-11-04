@@ -193,9 +193,7 @@ class ChiMergeBinning(BaseBinning):
         self.min_chi2_threshold = min_chi2_threshold
         self.significance_level = significance_level
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "ChiMergeBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "ChiMergeBinning":
         """拟合卡方分箱。
 
         对每个特征执行 ChiMerge 合并，得到切分点与分箱统计表。支持 sklearn 风格
@@ -350,9 +348,7 @@ class ChiMergeBinning(BaseBinning):
             # 检查停止条件
             if min_chi2_val > self.min_chi2_threshold:
                 if self.verbose:
-                    logger.info(
-                        f"  迭代 {iteration}: 最小卡方值 {min_chi2_val:.4f} > 阈值 {self.min_chi2_threshold:.4f}，停止合并"
-                    )
+                    logger.info(f"  迭代 {iteration}: 最小卡方值 {min_chi2_val:.4f} > 阈值 {self.min_chi2_threshold:.4f}，停止合并")
                 break
 
             if len(splits) + 1 <= self.max_n_bins:
@@ -367,9 +363,7 @@ class ChiMergeBinning(BaseBinning):
 
             # 合并卡方值最小的相邻箱
             if self.verbose:
-                logger.info(
-                    f"  迭代 {iteration}: 合并箱 {min_chi2_idx} 和 {min_chi2_idx + 1}，卡方值={min_chi2_val:.4f}"
-                )
+                logger.info(f"  迭代 {iteration}: 合并箱 {min_chi2_idx} 和 {min_chi2_idx + 1}，卡方值={min_chi2_val:.4f}")
 
             # 更新分箱统计：合并相邻两个箱
             bin_stats[min_chi2_idx] += bin_stats[min_chi2_idx + 1]
@@ -594,9 +588,7 @@ class ChiMergeBinning(BaseBinning):
         y_valid = y[mask]
 
         # 计算每个类别的坏样本率
-        cat_stats = (
-            pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
-        )
+        cat_stats = pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
 
         # 过滤掉样本数过少的类别
         min_samples = self._get_min_samples(len(x_valid))
@@ -726,9 +718,7 @@ class ChiMergeBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。

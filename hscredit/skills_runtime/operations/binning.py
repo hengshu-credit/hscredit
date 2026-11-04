@@ -34,14 +34,8 @@ def _parameters(
 ) -> Dict[str, Any]:
     """校验目标函数参数，并可按需放行 ``**kwargs`` 。"""
     signature = inspect.signature(function)
-    has_var_keyword = any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
-    )
-    allowed = {
-        name
-        for name, parameter in signature.parameters.items()
-        if parameter.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
-    }
+    has_var_keyword = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+    allowed = {name for name, parameter in signature.parameters.items() if parameter.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}}
     reserved = set(reserved)
     allowed.difference_update(reserved)
     unknown = sorted(set(parameters) - allowed)
@@ -62,9 +56,7 @@ def _data(context) -> pd.DataFrame:
         raise SkillExecutionError(code="SCHEMA_INVALID", message="缺少 inputs.data", field="inputs.data")
     value = context.resolver.resolve(spec)
     if not isinstance(value, pd.DataFrame):
-        raise SkillExecutionError(
-            code="SCHEMA_INVALID", message="inputs.data 必须解析为 DataFrame", field="inputs.data"
-        )
+        raise SkillExecutionError(code="SCHEMA_INVALID", message="inputs.data 必须解析为 DataFrame", field="inputs.data")
     if value.empty:
         raise SkillExecutionError(code="SCHEMA_INVALID", message="inputs.data 不能为空", field="inputs.data")
     return value
@@ -78,9 +70,7 @@ def _target_parameters(context, parameters):
     for name in ("target", "date", "group", "amount"):
         if name in context.request.inputs:
             if params.get(name) is not None:
-                raise SkillExecutionError(
-                    code="SCHEMA_INVALID", message=f"inputs.{name} 与 parameters.{name} 不能重复指定"
-                )
+                raise SkillExecutionError(code="SCHEMA_INVALID", message=f"inputs.{name} 与 parameters.{name} 不能重复指定")
             params[name] = context.resolver.resolve(context.request.inputs[name])
         elif name in params:
             params[name] = resolve(context, params[name])
@@ -113,19 +103,13 @@ def _overdue_summary(parameters: Mapping[str, Any], *, default_operator: str = "
     grey = configured.get("del_grey", False) if grey is None else grey
     target = parameters.get("target")
     if target is not None:
-        names = (
-            list(target)
-            if isinstance(target, Mapping)
-            else [target if isinstance(target, str) else getattr(target, "name", None) or "target"]
-        )
+        names = list(target) if isinstance(target, Mapping) else [target if isinstance(target, str) else getattr(target, "name", None) or "target"]
         summary.update(target_mode="target", target_names=names, del_grey=bool(grey))
     combinations = _label_combinations(parameters, paired=paired)
     if combinations:
         summary["label_combinations"] = combinations
         operator = parameters.get("overdue_operator")
-        summary["overdue_operator"] = (
-            configured.get("overdue_operator", default_operator) if operator is None else operator
-        )
+        summary["overdue_operator"] = configured.get("overdue_operator", default_operator) if operator is None else operator
         summary["del_grey"] = bool(grey)
     return summary
 
@@ -337,11 +321,7 @@ def _fit_inputs(context, parameters: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.S
 
 def _constructor_parameters(cls, parameters: Mapping[str, Any], reserved: Iterable[str]) -> Dict[str, Any]:
     signature = inspect.signature(cls)
-    allowed = {
-        name
-        for name, parameter in signature.parameters.items()
-        if parameter.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
-    }
+    allowed = {name for name, parameter in signature.parameters.items() if parameter.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}}
     params = dict(parameters)
     for name in reserved:
         params.pop(name, None)
@@ -433,9 +413,7 @@ def _optimal_binning_2d_fit(context) -> dict:
 
     params = dict(context.request.parameters)
     metric = params.pop("metric", "indices")
-    params["features"] = normalize_features(
-        params.get("features"), x1=params.pop("x1", None), x2=params.pop("x2", None), size=2, required=True
-    )
+    params["features"] = normalize_features(params.get("features"), x1=params.pop("x1", None), x2=params.pop("x2", None), size=2, required=True)
     X, y, features, target = _fit_inputs(context, params)
     if len(features) != 2:
         raise SkillExecutionError(

@@ -306,10 +306,7 @@ def normalize_space_param(name: str, raw: Any) -> Dict[str, Any]:
         return _categorical_spec(name, raw)
     if isinstance(raw, Mapping):
         return _normalize_dict(name, raw)
-    raise ValueError(
-        f"参数 {name!r} 的搜索空间定义无法识别: {raw!r}。支持字典、元组、列表、"
-        "hscredit 同名维度、SciPy 分布或 Optuna 分布对象"
-    )
+    raise ValueError(f"参数 {name!r} 的搜索空间定义无法识别: {raw!r}。支持字典、元组、列表、" "hscredit 同名维度、SciPy 分布或 Optuna 分布对象")
 
 
 def normalize_search_space(search_space: Optional[Any]) -> Optional[Dict[str, Dict[str, Any]]]:
@@ -489,9 +486,7 @@ class SearchSpaceAdapter:
         :return: 公开参数名到实际模型值的字典。
         """
         skipped = set(skip or ())
-        return {
-            name: self.sample_one(trial, name, spec) for name, spec in (self.space or {}).items() if name not in skipped
-        }
+        return {name: self.sample_one(trial, name, spec) for name, spec in (self.space or {}).items() if name not in skipped}
 
     def public_params(self, params_or_trial: Any) -> Dict[str, Any]:
         """还原试验记录中的潜变量，保留本空间已记录的参数。
@@ -554,17 +549,13 @@ class SearchSpaceAdapter:
         if kind == "normal" and not spec.get("q"):
             if float(value) < spec["low"] or float(value) > spec["high"]:
                 raise ValueError(f"参数 {name!r} 的值 {value!r} 超出截断搜索区间")
-        if spec.get("q") is not None and not np.isclose(
-            float(value), self._quantize(float(value), spec["q"]), atol=1e-8, rtol=0
-        ):
+        if spec.get("q") is not None and not np.isclose(float(value), self._quantize(float(value), spec["q"]), atol=1e-8, rtol=0):
             raise ValueError(f"参数 {name!r} 的值 {value!r} 不符合 q={spec['q']} 的量化规则")
 
     def _inverse_transformed(self, value: Any, spec: Mapping[str, Any]) -> float:
         kind = spec["type"]
         if kind == "categorical":
-            index = next(
-                index for index, choice in enumerate(spec["choices"]) if type(value) is type(choice) and value == choice
-            )
+            index = next(index for index, choice in enumerate(spec["choices"]) if type(value) is type(choice) and value == choice)
             left = float(sum(spec["prior"][:index]))
             right = left + float(spec["prior"][index])
             if left == right:
@@ -627,9 +618,7 @@ class SearchSpaceAdapter:
         for name, value in point.items():
             spec = (self.space or {})[name]
             self._validate_public_value(name, value, spec)
-            if spec["type"] in {"quniform", "qloguniform", "normal"} or (
-                spec["type"] == "categorical" and "prior" in spec
-            ):
+            if spec["type"] in {"quniform", "qloguniform", "normal"} or (spec["type"] == "categorical" and "prior" in spec):
                 internal = self._inverse_transformed(value, spec)
                 restored = self._materialize_latent(internal, spec)
                 if spec["type"] != "categorical" and not np.isclose(restored, value, atol=1e-8, rtol=0):

@@ -71,9 +71,12 @@ def label_definition_table(report):
                 bad, grey = "传入标签=1", "标签不是0或1（不含缺失）"
                 rule = "按本标签独立剔除灰样本" if report.del_grey else "灰样本按0处理"
                 missing = ""
-            missing = {"drop": "缺失标签剔除", "positive": "缺失标签按1处理", "negative": "缺失标签按0处理", "raise": "缺失标签报错"}[
-                report.handle_missing_target
-            ]
+            missing = {
+                "drop": "缺失标签剔除",
+                "positive": "缺失标签按1处理",
+                "negative": "缺失标签按0处理",
+                "raise": "缺失标签报错",
+            }[report.handle_missing_target]
             rows.append(
                 {
                     "数据集": dataset.label,
@@ -107,20 +110,14 @@ def label_configuration_table(report):
             else:
                 value = "；".join(values)
             groups.setdefault(value, []).append(dataset)
-        content = (
-            next(iter(groups))
-            if len(groups) == 1
-            else "；".join(f"{'、'.join(datasets)}：{value}" for value, datasets in groups.items())
-        )
+        content = next(iter(groups)) if len(groups) == 1 else "；".join(f"{'、'.join(datasets)}：{value}" for value, datasets in groups.items())
         rows.append({"配置项": field, "配置值": content})
     method = report.prediction_method
     rows.extend(
         [
             {
                 "配置项": "预测函数",
-                "配置值": ("predict_proba" if method == "predict_prob" else method)
-                if isinstance(method, str)
-                else getattr(method, "__name__", "自定义函数"),
+                "配置值": (("predict_proba" if method == "predict_prob" else method) if isinstance(method, str) else getattr(method, "__name__", "自定义函数")),
             },
             {"配置项": "分箱基准", "配置值": "训练样本" if report.binning_reference == "train" else "各数据集独立"},
             {"配置项": "统计口径", "配置值": "实际订单及实际金额"},

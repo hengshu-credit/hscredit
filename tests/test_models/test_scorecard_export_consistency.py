@@ -321,20 +321,8 @@ def test_scorecard_pmml_export_uses_expression_transformer_for_string_categories
     scorecard.export_pmml(str(tmp_path / "scorecard.pmml"))
 
     mapper = captured["pipeline"].named_steps["preprocessing"].transformers
-    categorical_steps = dict(
-        next(
-            transformer.steps
-            for _, transformer, features in mapper
-            if features == ["status_of_existing_checking_account"]
-        )
-    )
-    numeric_steps = dict(
-        next(
-            transformer.steps
-            for _, transformer, features in mapper
-            if (features == ["duration_in_month"] and transformer.steps[-1][1].name == "__score_duration_in_month")
-        )
-    )
+    categorical_steps = dict(next(transformer.steps for _, transformer, features in mapper if features == ["status_of_existing_checking_account"]))
+    numeric_steps = dict(next(transformer.steps for _, transformer, features in mapper if (features == ["duration_in_month"] and transformer.steps[-1][1].name == "__score_duration_in_month")))
 
     assert isinstance(categorical_steps["domain"], FakeCategoricalDomain)
     assert isinstance(categorical_steps["prepare"], FakeConcatTransformer)

@@ -75,10 +75,7 @@ def _population_profile_worker(task):
         "均值": round(float(valid.mean()), 4) if len(valid) > 0 else np.nan,
         "标准差": round(float(valid.std()), 4) if len(valid) > 1 else np.nan,
     }
-    values = [
-        round(float(np.percentile(valid, percentile * 100)), 4) if len(valid) > 0 else np.nan
-        for percentile in percentiles
-    ]
+    values = [round(float(np.percentile(valid, percentile * 100)), 4) if len(valid) > 0 else np.nan for percentile in percentiles]
     for label, value in zip(percentile_labels, values):
         row[label] = value
     if target_series is not None:
@@ -104,11 +101,7 @@ def _population_shift_worker(task):
     psi_value = _quick_psi(base_col.dropna().values, target_col.dropna().values, max_n_bins)
     mean_base = float(base_col.mean()) if base_col.notna().sum() > 0 else np.nan
     mean_target = float(target_col.mean()) if target_col.notna().sum() > 0 else np.nan
-    mean_change = (
-        round((mean_target - mean_base) / abs(mean_base) * 100, 2)
-        if not np.isnan(mean_base) and not np.isnan(mean_target) and mean_base != 0
-        else np.nan
-    )
+    mean_change = round((mean_target - mean_base) / abs(mean_base) * 100, 2) if not np.isnan(mean_base) and not np.isnan(mean_target) and mean_base != 0 else np.nan
     if np.isnan(psi_value):
         level, suggestion = "未知", "数据不足，无法评估"
     elif psi_value < warning_threshold:
@@ -322,12 +315,7 @@ def population_profile(
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
-        task_labels=[
-            f"{group_value}:{feature}"
-            for group_value, group_frame in groups
-            for feature in features
-            if feature in group_frame.columns
-        ],
+        task_labels=[f"{group_value}:{feature}" for group_value, group_frame in groups for feature in features if feature in group_frame.columns],
         default_backend="threading",
         workload=_eda_workload(df, actual_task_count, operation="客群画像", cost_per_item=5.0),
     )
@@ -524,10 +512,7 @@ def population_monitoring_report(
                 valid_pairs.append((label, compare_frame, feature))
     psi_results = parallel_execute(
         _monitoring_psi_worker,
-        (
-            (df_base[feature], compare_frame[feature], feature, label, max_n_bins)
-            for label, compare_frame, feature in valid_pairs
-        ),
+        ((df_base[feature], compare_frame[feature], feature, label, max_n_bins) for label, compare_frame, feature in valid_pairs),
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
@@ -552,9 +537,7 @@ def population_monitoring_report(
     psi_df = psi_df.sort_values("平均PSI", ascending=False).reset_index(drop=True)
 
     ws = writer.get_sheet_by_name("PSI总览")
-    end_row, _ = writer.insert_value2sheet(
-        ws, (2, 2), value="客群监控 - PSI总览", style="header_middle", end_space=(2, 30)
-    )
+    end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="客群监控 - PSI总览", style="header_middle", end_space=(2, 30))
     end_row, _ = dataframe2excel(psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="各期特征PSI（相对基准）")
 
     # ======================================================================
@@ -581,9 +564,7 @@ def population_monitoring_report(
     trend_df = pd.DataFrame(trend_rows)
 
     ws2 = writer.get_sheet_by_name("样本趋势")
-    end_row2, _ = writer.insert_value2sheet(
-        ws2, (2, 2), value="各期样本量与坏率趋势", style="header_middle", end_space=(2, 20)
-    )
+    end_row2, _ = writer.insert_value2sheet(ws2, (2, 2), value="各期样本量与坏率趋势", style="header_middle", end_space=(2, 20))
     end_row2, _ = dataframe2excel(trend_df, writer, sheet_name=ws2, start_row=end_row2 + 1, percent_cols=["坏率(%)"])
 
     # ======================================================================
@@ -813,9 +794,7 @@ def feature_cross_segment_effectiveness(
         seg_df = df[df[segment_col] == seg]
         if len(seg_df) < min_segment_size:
             continue
-        task_specs.extend(
-            (seg_df[feature], seg_df[target], feature, str(seg), metric, min_segment_size) for feature in features
-        )
+        task_specs.extend((seg_df[feature], seg_df[target], feature, str(seg), metric, min_segment_size) for feature in features)
 
     metric_results = parallel_execute(
         _cross_segment_metric_worker,

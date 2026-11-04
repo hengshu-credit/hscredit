@@ -188,7 +188,7 @@ zip-safe = false
 hscredit = ["py.typed", "resources/**/*"]
 
 [tool.black]
-line-length = 120
+line-length = 512
 target-version = ['py39']
 include = '\.pyi?$'
 extend-exclude = '''

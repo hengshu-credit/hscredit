@@ -159,12 +159,7 @@ def list_losses():
     >>> cost_loss = get_loss('cost_sensitive', fn_cost=5, fp_cost=1)
     >>> business_metric = cost_loss.metric(kind='business')
     """
-    return pd.DataFrame(
-        [
-            {"标识": key, "类名": cls.__name__, "用途": purpose, "参数": str(signature(cls))}
-            for key, (cls, purpose) in _losses().items()
-        ]
-    )
+    return pd.DataFrame([{"标识": key, "类名": cls.__name__, "用途": purpose, "参数": str(signature(cls))} for key, (cls, purpose) in _losses().items()])
 
 
 def list_metrics():
@@ -179,10 +174,7 @@ def list_metrics():
     >>> capture = get_metric('topk_capture', top_ratio=0.05)
     >>> assert capture.direction == 'maximize'
     """
-    rows = [
-        {"标识": key, "类名": cls.__name__, "用途": purpose, "优化方向": direction, "参数": str(signature(cls))}
-        for key, (cls, purpose, direction) in _metrics().items()
-    ]
+    rows = [{"标识": key, "类名": cls.__name__, "用途": purpose, "优化方向": direction, "参数": str(signature(cls))} for key, (cls, purpose, direction) in _metrics().items()]
     rows.extend(
         {
             "标识": key,

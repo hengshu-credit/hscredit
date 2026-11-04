@@ -10,11 +10,7 @@ from hscredit.core.metrics import compute_bin_stats
 def test_formatting(weighted):
     bins = np.array([0, 0, 0, 1, 1, 1, 1])
     y = np.array([0, 0, 1, 0, 1, 1, 1])
-    options = (
-        dict(target_type="amount_weighted", amount=[1.1234, 2.2345, 3.3456, 4.4567, 5.5678, 6.6789, 7.7891])
-        if weighted
-        else {}
-    )
+    options = dict(target_type="amount_weighted", amount=[1.1234, 2.2345, 3.3456, 4.4567, 5.5678, 6.6789, 7.7891]) if weighted else {}
     raw = compute_bin_stats(bins, y, round_digits=False, **options)
     shown = compute_bin_stats(bins, y, round_digits=True, **options)
     for column, digits in {"坏样本率": 6, "分档WOE值": 6, "指标IV值": 6, "LIFT值": 4, "坏账改善": 4}.items():

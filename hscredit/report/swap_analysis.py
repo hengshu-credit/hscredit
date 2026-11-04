@@ -421,9 +421,7 @@ class SwapAnalyzer(BaseEstimator):
         self.parallel_config = parallel_config
         self.result: Optional[SwapAnalysisResult] = None
 
-    def analyze(
-        self, swap_df: pd.DataFrame, ref_provider: Optional[ReferenceDataProvider] = None
-    ) -> "SwapAnalysisResult":
+    def analyze(self, swap_df: pd.DataFrame, ref_provider: Optional[ReferenceDataProvider] = None) -> "SwapAnalysisResult":
         """执行swap分析.
 
         :param swap_df: swap数据集
@@ -441,11 +439,7 @@ class SwapAnalyzer(BaseEstimator):
 
         df = swap_df.copy()
         cfg = self.config or SwapRiskConfig()
-        provider_targets = (
-            [candidate_provider.target_cols]
-            if isinstance(candidate_provider.target_cols, str)
-            else candidate_provider.target_cols
-        )
+        provider_targets = [candidate_provider.target_cols] if isinstance(candidate_provider.target_cols, str) else candidate_provider.target_cols
         targets = cfg.targets or provider_targets
 
         # 为每个样本、每个标签预估坏样本率
@@ -498,9 +492,7 @@ class SwapAnalyzer(BaseEstimator):
         amount_combined = None
         if amount_stats:
             total_amount = df[cfg.amount].sum()
-            amount_combined = self._calculate_combined_stats(
-                amount_stats, total_samples, metric="amount", total_amount=total_amount
-            )
+            amount_combined = self._calculate_combined_stats(amount_stats, total_samples, metric="amount", total_amount=total_amount)
 
         # 计算通过率分析
         pass_rate_analysis = self._calculate_pass_rate_analysis(count_stats, total_samples)
@@ -508,9 +500,7 @@ class SwapAnalyzer(BaseEstimator):
         # 计算风险拒绝率指标（每个标签）
         risk_rejection_metrics_dict = {}
         for target in targets:
-            risk_rejection_metrics_dict[target] = self._calculate_risk_rejection_metrics(
-                count_stats, count_combined, target
-            )
+            risk_rejection_metrics_dict[target] = self._calculate_risk_rejection_metrics(count_stats, count_combined, target)
 
         # 使用第一个标签作为默认风险指标
         risk_rejection_metrics = risk_rejection_metrics_dict[targets[0]]
@@ -528,9 +518,7 @@ class SwapAnalyzer(BaseEstimator):
             total_samples=total_samples,
         )
 
-    def _calculate_stats_by_metric(
-        self, df: pd.DataFrame, targets: List[str], metric: str = "count"
-    ) -> Dict[SwapType, Dict]:
+    def _calculate_stats_by_metric(self, df: pd.DataFrame, targets: List[str], metric: str = "count") -> Dict[SwapType, Dict]:
         """按口径计算各swap类型的统计.
 
         :param df: 数据集
@@ -711,9 +699,7 @@ class SwapAnalyzer(BaseEstimator):
             relative_change_pct=relative_change_pct,
         )
 
-    def _calculate_risk_rejection_metrics(
-        self, stats: Dict[SwapType, Dict], combined_stats: Dict[str, Dict], target: str
-    ) -> RiskRejectionMetrics:
+    def _calculate_risk_rejection_metrics(self, stats: Dict[SwapType, Dict], combined_stats: Dict[str, Dict], target: str) -> RiskRejectionMetrics:
         """计算风险拒绝率指标.
 
         :param stats: 各swap类型统计
@@ -871,11 +857,7 @@ class SwapAnalysisResult:
 
                 # 添加风险指标到每行
                 if overall_bad_rate > 0:
-                    bad_rate = (
-                        combined[key].get(f"adjusted_bad_rate_{target}", 0)
-                        if combined[key].get("total_count", 0) > 0
-                        else np.nan
-                    )
+                    bad_rate = combined[key].get(f"adjusted_bad_rate_{target}", 0) if combined[key].get("total_count", 0) > 0 else np.nan
                     row["坏账率变化(绝对)"] = _format_stat_number(bad_rate - overall_bad_rate)
                     if overall_bad_rate > 0:
                         row["坏账率变化(相对)"] = _format_stat_number((bad_rate - overall_bad_rate) / overall_bad_rate, ".2%")
@@ -919,16 +901,10 @@ class SwapAnalysisResult:
 
                     # 添加风险指标
                     if overall_bad_rate > 0:
-                        bad_rate = (
-                            combined[key].get(f"adjusted_bad_rate_{target}", 0)
-                            if combined[key].get("total_count", 0) > 0
-                            else np.nan
-                        )
+                        bad_rate = combined[key].get(f"adjusted_bad_rate_{target}", 0) if combined[key].get("total_count", 0) > 0 else np.nan
                         row["坏账率变化(绝对)"] = _format_stat_number(bad_rate - overall_bad_rate)
                         if overall_bad_rate > 0:
-                            row["坏账率变化(相对)"] = _format_stat_number(
-                                (bad_rate - overall_bad_rate) / overall_bad_rate, ".2%"
-                            )
+                            row["坏账率变化(相对)"] = _format_stat_number((bad_rate - overall_bad_rate) / overall_bad_rate, ".2%")
                         else:
                             row["坏账率变化(相对)"] = None
                     else:
@@ -1043,9 +1019,7 @@ class SwapAnalysisResult:
                 "说明": self._get_swap_description(swap_type),
                 "样本数": stat["total_count"],
                 "样本占比": f"{stat['sample_ratio']:.2%}",
-                f"坏样本率({target_alias})": _format_stat_number(
-                    stat.get(f"adjusted_bad_rate_{target}", 0) if stat["total_count"] > 0 else np.nan
-                ),
+                f"坏样本率({target_alias})": _format_stat_number(stat.get(f"adjusted_bad_rate_{target}", 0) if stat["total_count"] > 0 else np.nan),
                 "风险上浮": f"{self.config.out_in_uplift:.1f}x" if swap_type == SwapType.OUT_IN else "-",
             }
             rows.append(row)

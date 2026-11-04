@@ -33,9 +33,7 @@ def test_user_splits_fixed_preserves_exact_splits():
     # 验证切分点完全保留
     for feature, expected_splits in user_splits.items():
         actual_splits = binner_strict.splits_[feature]
-        np.testing.assert_array_equal(
-            actual_splits, np.array(expected_splits, dtype=float), err_msg=f"特征 {feature} 的切分点未完全保留"
-        )
+        np.testing.assert_array_equal(actual_splits, np.array(expected_splits, dtype=float), err_msg=f"特征 {feature} 的切分点未完全保留")
         print(f"[OK] 特征 {feature}: 切分点完全匹配 {list(actual_splits)}")
 
 
@@ -75,9 +73,7 @@ def test_user_splits_fixed_with_out_of_range():
     np.testing.assert_array_equal(binner_strict.splits_["age_in_years"], np.array([10, 20, 30, 100], dtype=float))
 
     # 验证默认模式过滤了超出范围的切分点
-    assert len(binner_default.splits_["age_in_years"]) < len(
-        user_splits["age_in_years"]
-    ), "默认模式应该过滤超出范围的切分点"
+    assert len(binner_default.splits_["age_in_years"]) < len(user_splits["age_in_years"]), "默认模式应该过滤超出范围的切分点"
 
     print("[OK] user_splits_fixed=True 正确保留了超出数据范围的切分点")
 
@@ -102,9 +98,7 @@ def test_user_splits_fixed_no_rounding():
 
     # 验证切分点没有被四舍五入
     expected = np.array([6.12345, 12.98765, 24.11111, 36.99999], dtype=float)
-    np.testing.assert_array_almost_equal(
-        binner_strict.splits_["duration_in_month"], expected, decimal=5, err_msg="切分点被意外四舍五入"
-    )
+    np.testing.assert_array_almost_equal(binner_strict.splits_["duration_in_month"], expected, decimal=5, err_msg="切分点被意外四舍五入")
     print(f"[OK] user_splits_fixed=True 保留了原始精度: {list(binner_strict.splits_['duration_in_month'])}")
 
     # user_splits_fixed=False: 切分点会被四舍五入

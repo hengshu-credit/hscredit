@@ -30,13 +30,7 @@ def _deployment_components(model):
         elif isinstance(value, dict):
             for item in value.values():
                 visit(item)
-        elif (
-            hasattr(value, "get_params")
-            or callable(getattr(value, "transform", None))
-            or isinstance(getattr(value, "_modules", None), dict)
-            or type(value).__module__.split(".")[0]
-            in {"torch", "lightgbm", "catboost", "xgboost", "tabm", "rtdl_revisiting_models"}
-        ):
+        elif hasattr(value, "get_params") or callable(getattr(value, "transform", None)) or isinstance(getattr(value, "_modules", None), dict) or type(value).__module__.split(".")[0] in {"torch", "lightgbm", "catboost", "xgboost", "tabm", "rtdl_revisiting_models"}:
             components.append(value)
             state = vars(value) if hasattr(value, "__dict__") else {}
             for name in (
@@ -133,18 +127,10 @@ def save_deployment(model, directory, *, name="model", validation_data=None, pre
 
     if isinstance(model, BaseEstimator) and callable(getattr(model, "fit", None)):
         check_is_fitted(model)
-    method = prediction_method or (
-        "predict_proba"
-        if callable(getattr(model, "predict_proba", None))
-        else "predict"
-        if callable(getattr(model, "predict", None))
-        else "transform"
-    )
+    method = prediction_method or ("predict_proba" if callable(getattr(model, "predict_proba", None)) else "predict" if callable(getattr(model, "predict", None)) else "transform")
     if method == "predict_prob":
         method = "predict_proba"
-    if method not in ("predict", "predict_proba", "predict_score", "transform") or not callable(
-        getattr(model, method, None)
-    ):
+    if method not in ("predict", "predict_proba", "predict_score", "transform") or not callable(getattr(model, method, None)):
         raise ValueError("prediction_method 必须是模型支持的 predict、predict_proba、predict_score 或 transform")
     metadata = model.get_artifact_metadata()
     dependencies, component_identities = _deployment_metadata(model, metadata)
@@ -192,11 +178,7 @@ def save_deployment(model, directory, *, name="model", validation_data=None, pre
             "component_identities": component_identities,
             "inference_only": inference,
             "verification": verification,
-            "preprocessing": {
-                key: type(getattr(model, key)).__name__
-                for key in ("binner_", "binner", "encoder_", "calibrator_", "scorecard_", "transformer_")
-                if getattr(model, key, None) is not None
-            },
+            "preprocessing": {key: type(getattr(model, key)).__name__ for key in ("binner_", "binner", "encoder_", "calibrator_", "scorecard_", "transformer_") if getattr(model, key, None) is not None},
         }
         item = transaction.publish(path, "model.pkl", artifact_type="model")
         item["relative_path"] = (Path(transaction.run_dir.name) / "model.pkl").as_posix()
@@ -244,9 +226,7 @@ def load_deployment(path, *, expected_type=None, trusted=True, metadata_policy="
         raise SerializationError("部署清单字段与模型不一致")
     if json_safe(getattr(obj, "classes_", None)) != config.get("classes"):
         raise SerializationError("部署清单类别映射与模型不一致")
-    if config.get("feature_types") is not None and config["feature_types"] != [
-        type(feature).__qualname__ for feature in (actual_metadata.get("features") or [])
-    ]:
+    if config.get("feature_types") is not None and config["feature_types"] != [type(feature).__qualname__ for feature in (actual_metadata.get("features") or [])]:
         raise SerializationError("部署清单字段类型与模型不一致")
     if not callable(getattr(obj, config.get("prediction_method", ""), None)):
         raise SerializationError("部署清单的预测函数不可用")

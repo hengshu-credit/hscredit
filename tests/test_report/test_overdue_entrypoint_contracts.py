@@ -22,11 +22,7 @@ def _overdue_entries():
             entries = [(node, node, node.name) for node in tree.body if isinstance(node, ast.FunctionDef)]
             for cls in tree.body:
                 if isinstance(cls, ast.ClassDef) and not cls.name.startswith("_"):
-                    entries.extend(
-                        (node, cls if node.name == "__init__" else node, f"{cls.name}.{node.name}")
-                        for node in cls.body
-                        if isinstance(node, ast.FunctionDef)
-                    )
+                    entries.extend((node, cls if node.name == "__init__" else node, f"{cls.name}.{node.name}") for node in cls.body if isinstance(node, ast.FunctionDef))
             for node, documented, name in entries:
                 arguments = {arg.arg for arg in node.args.posonlyargs + node.args.args + node.args.kwonlyargs}
                 if {"overdue", "dpds"} <= arguments and (not node.name.startswith("_") or node.name == "__init__"):

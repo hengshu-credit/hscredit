@@ -52,13 +52,7 @@ def _merge_report_title(worksheet, row_idx: int, end_col: int, start_col: int = 
 
 
 def adjust_report_title_merges(worksheet) -> None:
-    title_rows = [
-        (row_cell.row, level)
-        for row_cells in worksheet.iter_rows(min_col=2, max_col=2)
-        for row_cell in row_cells
-        for level in [_report_title_level(row_cell.row, row_cell.value)]
-        if level is not None
-    ]
+    title_rows = [(row_cell.row, level) for row_cells in worksheet.iter_rows(min_col=2, max_col=2) for row_cell in row_cells for level in [_report_title_level(row_cell.row, row_cell.value)] if level is not None]
     for idx, (row_idx, level) in enumerate(title_rows):
         if level == 0:
             end_row_for_title = worksheet.max_row

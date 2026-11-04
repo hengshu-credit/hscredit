@@ -75,9 +75,7 @@ def _validate_supplied_order(feature: str, supplied: Sequence[Any], observed: Se
     missing = [value for value in observed if not _contains_typed(ordered, value)]
     unknown = [value for value in ordered if not _contains_typed(observed, value)]
     if missing or unknown:
-        raise ValueError(
-            f"特征 '{feature}' 的 category_order 必须完整覆盖训练类别；" f"缺少类别: {missing}，未知类别: {unknown}"
-        )
+        raise ValueError(f"特征 '{feature}' 的 category_order 必须完整覆盖训练类别；" f"缺少类别: {missing}，未知类别: {unknown}")
     return ordered
 
 
@@ -135,10 +133,7 @@ def restore_category_groups(ordered_categories: Sequence[Any], numeric_splits: S
     splits = splits[np.isfinite(splits)]
     splits = np.unique(np.sort(splits))
     bin_indices = np.digitize(np.arange(len(categories), dtype=float), splits)
-    return [
-        [category for category, actual_bin in zip(categories, bin_indices) if actual_bin == expected_bin]
-        for expected_bin in sorted(set(bin_indices.tolist()))
-    ]
+    return [[category for category, actual_bin in zip(categories, bin_indices) if actual_bin == expected_bin] for expected_bin in sorted(set(bin_indices.tolist()))]
 
 
 def assign_category_groups(
@@ -219,7 +214,5 @@ def normalize_user_groups(
         uncovered = [value for value in observed_values if not _contains_typed(ordinary_values, value)]
         unknown = [value for value in ordinary_values if not _contains_typed(observed_values, value)]
         if uncovered or unknown:
-            raise ValueError(
-                f"特征 '{feature}' 的自定义分箱必须完整覆盖训练类别；" f"未覆盖类别: {uncovered}，规则外类别: {unknown}"
-            )
+            raise ValueError(f"特征 '{feature}' 的自定义分箱必须完整覆盖训练类别；" f"未覆盖类别: {uncovered}，规则外类别: {unknown}")
     return normalized

@@ -51,9 +51,7 @@ def test_full_chain_notebook_covers_public_model_families():
     from hscredit.core.models.classical import __all__ as classical_models
 
     book = nbformat.read(PROJECT_ROOT / "examples/all_model_workflow_validation.ipynb", as_version=4)
-    source = next(
-        cell.source for cell in book.cells if cell.cell_type == "code" and cell.source.startswith("BASE_NAMES")
-    )
+    source = next(cell.source for cell in book.cells if cell.cell_type == "code" and cell.source.startswith("BASE_NAMES"))
     declared = ast.literal_eval(ast.parse(source).body[0].value)
     expected = set(classical_models) | set(_LAZY_BOOSTING_MODELS) | set(_LAZY_NET_MODELS)
     expected |= {"ScoreCard", "RoundScoreCard", "ProbabilityScoreCard", "RulesClassifier"}
@@ -134,17 +132,8 @@ def test_model_interpretability_notebook_uses_new_explainability_api():
     source_texts = ["".join(source) if isinstance(source, list) else source for source in sources]
     all_source = "\n".join(source_texts)
     counterfactual_source = "\n".join(text for text in source_texts if "CounterfactualExplainer(" in text)
-    error_outputs = [
-        output
-        for cell in notebook["cells"]
-        for output in cell.get("outputs", [])
-        if output.get("output_type") == "error"
-    ]
-    output_text = "\n".join(
-        "".join(output.get("text", [])) if isinstance(output.get("text", []), list) else output.get("text", "")
-        for cell in notebook["cells"]
-        for output in cell.get("outputs", [])
-    )
+    error_outputs = [output for cell in notebook["cells"] for output in cell.get("outputs", []) if output.get("output_type") == "error"]
+    output_text = "\n".join("".join(output.get("text", [])) if isinstance(output.get("text", []), list) else output.get("text", "") for cell in notebook["cells"] for output in cell.get("outputs", []))
 
     assert "hscredit.core.models.evaluation" not in all_source
     assert "hscredit.core.models.explainability" in all_source
@@ -157,11 +146,7 @@ def test_selectors_notebook_psi_example_compares_unequal_train_and_oot_splits():
     """PSI 教程应能直接比较样本量不同的训练集与 OOT 集。"""
     notebook_path = PROJECT_ROOT / "examples" / "03_selectors.ipynb"
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
-    psi_cells = [
-        "".join(cell.get("source", []))
-        for cell in notebook["cells"]
-        if cell.get("cell_type") == "code" and "psi_selector.fit" in "".join(cell.get("source", []))
-    ]
+    psi_cells = ["".join(cell.get("source", [])) for cell in notebook["cells"] if cell.get("cell_type") == "code" and "psi_selector.fit" in "".join(cell.get("source", []))]
     numeric_features = ["数值特征", "稳定特征"]
     df_model = pd.DataFrame(
         {

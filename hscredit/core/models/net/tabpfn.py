@@ -106,9 +106,7 @@ class TabPFN(BaseNetModel):
             "model_path": self.model_path,
             "random_state": self.random_state,
         }
-        jobs_key = (
-            "n_preprocessing_jobs" if "n_preprocessing_jobs" in inspect.signature(backend).parameters else "n_jobs"
-        )
+        jobs_key = "n_preprocessing_jobs" if "n_preprocessing_jobs" in inspect.signature(backend).parameters else "n_jobs"
         params.setdefault(jobs_key, self.n_jobs)
         return params
 
@@ -172,9 +170,7 @@ class TabPFN(BaseNetModel):
         }
         unsupported = training_options.intersection(self.kwargs)
         if unsupported:
-            raise ValidationError(
-                f"TabPFN 默认使用预训练推理；训练参数 {sorted(unsupported)} 请通过 finetune=True 和 finetune_params 配置"
-            )
+            raise ValidationError(f"TabPFN 默认使用预训练推理；训练参数 {sorted(unsupported)} 请通过 finetune=True 和 finetune_params 配置")
         self.__dict__.pop("embedding_dim_", None)
         if isinstance(self.n_estimators, bool) or not isinstance(self.n_estimators, Integral) or self.n_estimators < 1:
             raise ValidationError("n_estimators 必须为正整数")
@@ -206,9 +202,7 @@ class TabPFN(BaseNetModel):
 
             config = {**(self.finetune_params or {}), **(finetune_params or {})}
             self._model, history = fine_tune(self, X, y, config, self.native_params_, sets[0] if sets else None)
-            self._evals_result = {
-                "训练集": {"微调损失": [v["train/mean_loss"] for v in history if "train/mean_loss" in v]}
-            }
+            self._evals_result = {"训练集": {"微调损失": [v["train/mean_loss"] for v in history if "train/mean_loss" in v]}}
             self.n_iter_ = len(history)
         else:
             if finetune_params:
@@ -315,13 +309,7 @@ class TabPFN(BaseNetModel):
             values = values[np.newaxis, np.newaxis, :]
         elif values.ndim == 2:
             values = values[:, np.newaxis, :] if len(X) == 1 else values[np.newaxis, ...]
-        if (
-            values.ndim != 3
-            or values.shape[0] == 0
-            or values.shape[1] != len(X)
-            or values.shape[2] == 0
-            or not np.isfinite(values).all()
-        ):
+        if values.ndim != 3 or values.shape[0] == 0 or values.shape[1] != len(X) or values.shape[2] == 0 or not np.isfinite(values).all():
             raise ValidationError("TabPFN embedding 必须为有限的 (成员数, 样本数, 嵌入维度) 数组")
         self.embedding_dim_ = values.shape[2]
         return values.mean(axis=0) if aggregate == "mean" else values

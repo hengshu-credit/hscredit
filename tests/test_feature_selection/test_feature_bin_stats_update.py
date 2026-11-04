@@ -30,35 +30,27 @@ df.loc[df.sample(30).index, "age"] = np.nan
 print("=" * 80)
 print("测试 1: dpds 参数（单值）")
 print("=" * 80)
-table1 = feature_bin_stats(
-    data=df, feature="score1", overdue="MOB1", dpds=7, method="quantile", max_n_bins=5, verbose=1  # 单个值
-)
+table1 = feature_bin_stats(data=df, feature="score1", overdue="MOB1", dpds=7, method="quantile", max_n_bins=5, verbose=1)  # 单个值
 print(f"\n结果形状: {table1.shape}")
 print(table1[["分箱标签", "样本总数", "坏样本率", "分档WOE值"]].head())
 
 print("\n" + "=" * 80)
 print("测试 2: dpds 参数（多值）")
 print("=" * 80)
-table2 = feature_bin_stats(
-    data=df, feature="score1", overdue="MOB1", dpds=[0, 7, 15], method="quantile", max_n_bins=5, verbose=1  # 多个值
-)
+table2 = feature_bin_stats(data=df, feature="score1", overdue="MOB1", dpds=[0, 7, 15], method="quantile", max_n_bins=5, verbose=1)  # 多个值
 print(f"\n结果形状: {table2.shape}")
 print(table2.head(10).to_string())
 
 print("\n" + "=" * 80)
 print("测试 3: del_grey 参数 - 不剔除灰客户")
 print("=" * 80)
-table3_no_grey = feature_bin_stats(
-    data=df, feature="score1", overdue="MOB1", dpds=7, del_grey=False, method="quantile", max_n_bins=5, verbose=1
-)
+table3_no_grey = feature_bin_stats(data=df, feature="score1", overdue="MOB1", dpds=7, del_grey=False, method="quantile", max_n_bins=5, verbose=1)
 print(f"样本总数: {table3_no_grey['样本总数'].sum()}")
 
 print("\n" + "=" * 80)
 print("测试 4: del_grey 参数 - 剔除灰客户")
 print("=" * 80)
-table3_grey = feature_bin_stats(
-    data=df, feature="score1", overdue="MOB1", dpds=7, del_grey=True, method="quantile", max_n_bins=5, verbose=1
-)
+table3_grey = feature_bin_stats(data=df, feature="score1", overdue="MOB1", dpds=7, del_grey=True, method="quantile", max_n_bins=5, verbose=1)
 print(f"样本总数: {table3_grey['样本总数'].sum()}")
 
 print("\n" + "=" * 80)
@@ -81,9 +73,7 @@ methods = [
 
 for method in methods:
     try:
-        table = feature_bin_stats(
-            data=df, feature="score1", overdue="MOB1", dpds=7, method=method, max_n_bins=5, verbose=0
-        )
+        table = feature_bin_stats(data=df, feature="score1", overdue="MOB1", dpds=7, method=method, max_n_bins=5, verbose=0)
         print(f"✅ {method:20s} - 分箱数: {len(table)}")
     except Exception as e:
         print(f"❌ {method:20s} - 错误: {str(e)[:50]}")
@@ -109,9 +99,7 @@ except Exception as e:
 print("\n" + "=" * 80)
 print("测试 7: 多特征分析")
 print("=" * 80)
-table_multi = feature_bin_stats(
-    data=df, feature=["score1", "score2", "age"], overdue="MOB1", dpds=7, method="quantile", max_n_bins=5, verbose=1
-)
+table_multi = feature_bin_stats(data=df, feature=["score1", "score2", "age"], overdue="MOB1", dpds=7, method="quantile", max_n_bins=5, verbose=1)
 print(f"\n结果形状: {table_multi.shape}")
 print(f"特征列表: {table_multi['指标名称'].unique()}")
 
@@ -134,9 +122,7 @@ print("注意: 不同目标下样本数不同，分箱详情列不包含样本�
 print("\n" + "=" * 80)
 print("测试 9: return_rules 参数")
 print("=" * 80)
-table, rules = feature_bin_stats(
-    data=df, feature="score1", overdue="MOB1", dpds=7, method="quantile", max_n_bins=5, return_rules=True, verbose=0
-)
+table, rules = feature_bin_stats(data=df, feature="score1", overdue="MOB1", dpds=7, method="quantile", max_n_bins=5, return_rules=True, verbose=0)
 print(f"分箱规则: {rules}")
 
 print("\n" + "=" * 80)

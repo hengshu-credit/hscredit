@@ -62,9 +62,7 @@ def test_model_auc_and_gini_match_public_metrics_with_weights_and_direction(dire
     y = np.array([0, 0, 1, 1])
     weights = np.array([1.0, 4.0, 3.0, 2.0])
     model = _FixedRiskModel(scores)
-    result = model.evaluate(
-        np.zeros((4, 1)), y, sample_weight=weights, metrics=["auc", "gini"], score_direction=direction
-    )
+    result = model.evaluate(np.zeros((4, 1)), y, sample_weight=weights, metrics=["auc", "gini"], score_direction=direction)
     assert result["AUC"] == auc(y, scores, sample_weight=weights, score_direction=direction)
     assert result["Gini"] == gini(y, scores, sample_weight=weights, score_direction=direction)
 

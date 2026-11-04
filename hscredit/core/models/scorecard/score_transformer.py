@@ -556,19 +556,11 @@ class StandardScoreTransformer(BaseScoreTransformer):
         if self.direction_ == "descending":
             # 递减：低概率应该对应高分
             if low_score <= high_score:
-                warnings.warn(
-                    f"评分方向验证失败。好客户(P={low_prob})得{low_score:.1f}分，"
-                    f"坏客户(P={high_prob})得{high_score:.1f}分。"
-                    f"对于信用分(descending)，好客户应得更高分数。"
-                )
+                warnings.warn(f"评分方向验证失败。好客户(P={low_prob})得{low_score:.1f}分，" f"坏客户(P={high_prob})得{high_score:.1f}分。" f"对于信用分(descending)，好客户应得更高分数。")
         else:
             # 递增：高概率应该对应高分(欺诈分)
             if high_score <= low_score:
-                warnings.warn(
-                    f"评分方向验证失败。好客户(P={low_prob})得{low_score:.1f}分，"
-                    f"坏客户(P={high_prob})得{high_score:.1f}分。"
-                    f"对于欺诈分(ascending)，坏客户应得更高分数。"
-                )
+                warnings.warn(f"评分方向验证失败。好客户(P={low_prob})得{low_score:.1f}分，" f"坏客户(P={high_prob})得{high_score:.1f}分。" f"对于欺诈分(ascending)，坏客户应得更高分数。")
 
     def _transform_single(self, proba: float) -> float:
         """转换单个概率.
@@ -841,11 +833,7 @@ class LinearScoreTransformer(BaseScoreTransformer):
         """
         check_is_fitted(self)
         return {
-            "公式": (
-                "Score = upper - (upper - lower) × P"
-                if self.direction_ == "descending"
-                else "Score = lower + (upper - lower) × P"
-            ),
+            "公式": ("Score = upper - (upper - lower) × P" if self.direction_ == "descending" else "Score = lower + (upper - lower) × P"),
             "lower": self.lower if self.lower is not None else 0,
             "upper": self.upper if self.upper is not None else 100,
             "direction": self.direction_,
@@ -1003,11 +991,7 @@ class QuantileScoreTransformer(BaseScoreTransformer):
         check_is_fitted(self)
         return {
             "分位点排名": "r = clip(searchsorted(quantile_values_, P, side='right') - 1, 0, n_quantiles - 1)",
-            "公式": (
-                "Score = upper - (upper - lower) × r / (n_quantiles - 1)"
-                if self.direction_ == "descending"
-                else "Score = lower + (upper - lower) × r / (n_quantiles - 1)"
-            ),
+            "公式": ("Score = upper - (upper - lower) × r / (n_quantiles - 1)" if self.direction_ == "descending" else "Score = lower + (upper - lower) × r / (n_quantiles - 1)"),
             "lower": self.lower if self.lower is not None else 0,
             "upper": self.upper if self.upper is not None else 100,
             "n_quantiles": self.n_quantiles,
@@ -1300,11 +1284,7 @@ class BoxCoxScoreTransformer(BaseScoreTransformer):
             "几率": "x = P / (1 - P) + shift",
             "Box-Cox变换": "z = ln(x)" if abs(self.lmbda_) < 1e-12 else "z = (x ** lmbda - 1) / lmbda",
             "归一化": "u = clip((z - z_min) / (z_max - z_min), 0, 1)",
-            "公式": (
-                "Score = upper - (upper - lower) × u"
-                if self.direction_ == "descending"
-                else "Score = lower + (upper - lower) × u"
-            ),
+            "公式": ("Score = upper - (upper - lower) × u" if self.direction_ == "descending" else "Score = lower + (upper - lower) × u"),
             "lmbda": round(float(self.lmbda_), decimal),
             "shift": self.shift,
             "z_min": round(float(self.z_min_), decimal),
@@ -1467,9 +1447,7 @@ class ScoreTransformer(ExtraParamsMixin, BaseScoreTransformer):
                 **self.transformer_params,
             )
         elif self.method == "linear":
-            self.transformer_ = LinearScoreTransformer(
-                lower=self.lower, upper=self.upper, direction=self.direction, decimal=self.decimal, clip=self.clip
-            )
+            self.transformer_ = LinearScoreTransformer(lower=self.lower, upper=self.upper, direction=self.direction, decimal=self.decimal, clip=self.clip)
         elif self.method == "quantile":
             self.transformer_ = QuantileScoreTransformer(
                 lower=self.lower,

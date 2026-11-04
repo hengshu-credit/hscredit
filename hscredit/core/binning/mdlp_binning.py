@@ -252,9 +252,7 @@ class MDLPBinning(BaseBinning):
         self.force_min_bins = force_min_bins
         self.mdlp_weight = mdlp_weight
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "MDLPBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "MDLPBinning":
         """拟合 MDLP 分箱.
 
         :param kwargs: 其他参数，传递给具体的分箱算法
@@ -324,9 +322,7 @@ class MDLPBinning(BaseBinning):
             return []
 
         # 计算每个类别的坏样本率并按其排序
-        cat_stats = (
-            pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
-        )
+        cat_stats = pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
 
         cat_stats = cat_stats.sort_values("mean")
 
@@ -394,11 +390,7 @@ class MDLPBinning(BaseBinning):
             return
 
         # 在当前区间内筛选候选切分点
-        local_candidates = [
-            i - start_idx
-            for i in all_candidates
-            if start_idx + self.min_samples_leaf <= i < start_idx + len(x) - self.min_samples_leaf
-        ]
+        local_candidates = [i - start_idx for i in all_candidates if start_idx + self.min_samples_leaf <= i < start_idx + len(x) - self.min_samples_leaf]
 
         local_candidates = sorted(list(set(local_candidates)))
 
@@ -506,9 +498,7 @@ class MDLPBinning(BaseBinning):
 
         return gain <= adjusted_threshold
 
-    def _force_additional_splits_v3(
-        self, x: np.ndarray, y: np.ndarray, existing_splits: List[float], all_candidates: List[int]
-    ) -> List[float]:
+    def _force_additional_splits_v3(self, x: np.ndarray, y: np.ndarray, existing_splits: List[float], all_candidates: List[int]) -> List[float]:
         """强制添加额外的切分点以满足分箱数要求 - V3改进版（目标是max_n_bins）."""
         splits = list(existing_splits)
         n = len(x)
@@ -539,9 +529,7 @@ class MDLPBinning(BaseBinning):
                 chunk = candidates[offset : offset + 4096]
                 proposed = np.sort(np.column_stack([np.broadcast_to(splits, (len(chunk), len(splits))), chunk]), axis=1)
                 cuts = np.searchsorted(x, proposed, side="left")
-                bounds = np.column_stack(
-                    [np.zeros(len(chunk), dtype=np.intp), cuts, np.full(len(chunk), n, dtype=np.intp)]
-                )
+                bounds = np.column_stack([np.zeros(len(chunk), dtype=np.intp), cuts, np.full(len(chunk), n, dtype=np.intp)])
                 bad = np.diff(prefix_bad[bounds], axis=1)
                 good = np.diff(bounds, axis=1) - bad
                 contributions = _iv_from_counts(bad, good, total_bad, total_good)
@@ -645,9 +633,7 @@ class MDLPBinning(BaseBinning):
 
         return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。

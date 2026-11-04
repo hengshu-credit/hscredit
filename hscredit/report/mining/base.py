@@ -33,10 +33,7 @@ def resolve_feature_map(
 ) -> Optional[Dict[str, str]]:
     """解析报告字段含义映射，显式调用参数优先于构造参数。"""
     resolved = configured if override is None else override
-    if resolved is not None and (
-        not isinstance(resolved, dict)
-        or any(not isinstance(key, str) or not isinstance(value, str) for key, value in resolved.items())
-    ):
+    if resolved is not None and (not isinstance(resolved, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in resolved.items())):
         raise TypeError("feature_map 必须是 dict[str, str] 或 None")
     return resolved
 
@@ -57,12 +54,7 @@ def _binning_has_parallel_children(method: Any, params: Optional[Dict[str, Any]]
     params = params or {}
 
     def can_spawn(method_name: Any, n_jobs: Any) -> bool:
-        return (
-            isinstance(method_name, str)
-            and method_name.strip().lower() in _NESTED_BINNING_METHODS
-            and n_jobs is not None
-            and n_jobs not in (1, 1.0)
-        )
+        return isinstance(method_name, str) and method_name.strip().lower() in _NESTED_BINNING_METHODS and n_jobs is not None and n_jobs not in (1, 1.0)
 
     inherited_n_jobs = params.get("n_jobs", -1)
     if can_spawn(method, inherited_n_jobs):

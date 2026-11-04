@@ -412,8 +412,4 @@ def test_hive_and_impala_json_projection_uses_get_json_object(adapter_class):
         json_fields={"payload": {"city": "$.address.city"}},
     )
 
-    assert sql == (
-        "SELECT `hscredit_json_source`.`id`, "
-        "GET_JSON_OBJECT(`hscredit_json_source`.`payload`, '$.address.city') AS `city` "
-        "FROM (select id, payload from events) `hscredit_json_source`"
-    )
+    assert sql == ("SELECT `hscredit_json_source`.`id`, " "GET_JSON_OBJECT(`hscredit_json_source`.`payload`, '$.address.city') AS `city` " "FROM (select id, payload from events) `hscredit_json_source`")

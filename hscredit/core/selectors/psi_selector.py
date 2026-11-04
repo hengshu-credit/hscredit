@@ -192,11 +192,7 @@ class PSISelector(BaseFeatureSelector):
 
     def _check_input(self, X, y=None):
         validate_real(self.threshold, "PSI阈值", minimum=0)
-        if (
-            isinstance(self.psi_bins, (bool, np.bool_))
-            or not isinstance(self.psi_bins, (int, np.integer))
-            or self.psi_bins < 2
-        ):
+        if isinstance(self.psi_bins, (bool, np.bool_)) or not isinstance(self.psi_bins, (int, np.integer)) or self.psi_bins < 2:
             raise ValueError("psi_bins 必须是大于等于 2 的整数")
         return super()._check_input(X, y)
 
@@ -221,9 +217,7 @@ class PSISelector(BaseFeatureSelector):
             raise ValueError("psi_bins 必须是整数")
         if int(self.psi_bins) < 2:
             raise ValueError("psi_bins 必须大于等于 2")
-        if isinstance(self.threshold, (bool, np.bool_)) or not isinstance(
-            self.threshold, (int, float, np.integer, np.floating)
-        ):
+        if isinstance(self.threshold, (bool, np.bool_)) or not isinstance(self.threshold, (int, float, np.integer, np.floating)):
             raise ValueError("threshold 必须是非负数")
         if float(self.threshold) < 0:
             raise ValueError("threshold 必须是非负数")

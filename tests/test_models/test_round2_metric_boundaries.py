@@ -19,9 +19,7 @@ def test_baseline_version_includes_transform_policy_and_raw_unknown_rate():
 
 @pytest.mark.parametrize("policy", [-3, -1, 0])
 def test_unknown_merged_into_missing_does_not_change_raw_missing_count(policy):
-    baseline = MonitoringBaseline(bin_params={"user_splits": [["A"], ["B"]], "handle_unknown": policy}).fit(
-        ["A", "B", None]
-    )
+    baseline = MonitoringBaseline(bin_params={"user_splits": [["A"], ["B"]], "handle_unknown": policy}).fit(["A", "B", None])
     result = baseline.evaluate(["C", None, "A"], include_missing=False)
     assert result["未知类别率"] == result["实际缺失率"] == pytest.approx(1 / 3)
     assert result["有效样本数"] == result["分箱明细"]["实际样本数"].sum() == 2
@@ -71,9 +69,7 @@ def test_accumulator_rejects_different_bin_identity():
 
 
 def test_refitting_ambiguous_legacy_baseline_clears_migration_block():
-    baseline = MonitoringBaseline(bin_params={"user_splits": [["A"], ["B"]], "handle_unknown": -1}).fit(
-        ["A", "B", None]
-    )
+    baseline = MonitoringBaseline(bin_params={"user_splits": [["A"], ["B"]], "handle_unknown": -1}).fit(["A", "B", None])
     old_state = dict(baseline.__dict__)
     old_state.pop("schema_version_")
     migrated = MonitoringBaseline()

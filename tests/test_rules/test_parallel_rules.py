@@ -28,9 +28,7 @@ def rule_data():
             "MOB1": [8, 4, 0, 2, 7, 1],
             "MOB2": [5, 0, 1, 6, 3, 9],
             "放款金额": [1000.0, 2000.0, 1500.0, 3000.0, 1200.0, 800.0],
-            "放款时间": pd.to_datetime(
-                ["2024-01-02", "2024-01-15", "2024-02-03", "2024-02-18", "2024-03-02", "2024-03-20"]
-            ),
+            "放款时间": pd.to_datetime(["2024-01-02", "2024-01-15", "2024-02-03", "2024-02-18", "2024-03-02", "2024-03-20"]),
         },
         index=pd.Index([31, 12, 44, 7, 28, 19], name="订单索引"),
     )
@@ -260,9 +258,7 @@ def test_rules_classifier_first_fit_failure_leaves_no_learned_state(rule_data):
 
 def test_rules_classifier_failed_prediction_preserves_learned_and_rule_state(rule_data):
     good_rule = Rule("score < 500", name="正常规则")
-    classifier = RulesClassifier(rules=[good_rule], n_jobs=2, parallel_backend="threading").fit(
-        rule_data[["score", "multi"]], rule_data["target"]
-    )
+    classifier = RulesClassifier(rules=[good_rule], n_jobs=2, parallel_backend="threading").fit(rule_data[["score", "multi"]], rule_data["target"])
     classifier.predict(rule_data[["score", "multi"]])
     old_result = good_rule.result().copy()
     old_features = classifier.feature_names_in_.copy()

@@ -20,8 +20,7 @@ def test_iterator_failure_preserves_committed_counts():
         prepare_write=lambda *a, **kw: None,
         ensure_table=lambda *a, **kw: None,
         finish_write=lambda *a, **kw: None,
-        write_batch=lambda table, batch, *a, **kw: committed.append(len(batch))
-        or BatchWriteResult(inserted=len(batch)),
+        write_batch=lambda table, batch, *a, **kw: committed.append(len(batch)) or BatchWriteResult(inserted=len(batch)),
     )
 
     def data():

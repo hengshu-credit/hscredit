@@ -206,9 +206,7 @@ class UniformBinning(BaseBinning):
         self.right_clip = right_clip
         self.force_numerical = force_numerical
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "UniformBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "UniformBinning":
         """拟合等距分箱.
 
         :param kwargs: 其他参数，传递给具体的分箱算法
@@ -359,9 +357,7 @@ class UniformBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。
@@ -405,6 +401,4 @@ class UniformBinning(BaseBinning):
             if unknown:
                 raise KeyError(f"转换数据包含未拟合特征: {unknown}")
 
-        return self._transform_binning_features(
-            X, metric, lambda feature: self._assign_bins(X[feature], feature), woe_default=0.0
-        )
+        return self._transform_binning_features(X, metric, lambda feature: self._assign_bins(X[feature], feature), woe_default=0.0)

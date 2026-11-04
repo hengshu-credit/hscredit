@@ -302,18 +302,10 @@ class TestOptimalBinning2DPlot:
             max_n_bins_2d=8,
         )
         binner.fit(sample_df, y=sample_df["target"], features=["age", "income"])
-        expected_x = [
-            binner.binner_x_.bin_tables_["age"].set_index("分箱").loc[i, "分箱标签"] for i in range(binner.n_bins_x_)
-        ]
-        expected_y = [
-            binner.binner_y_.bin_tables_["income"].set_index("分箱").loc[i, "分箱标签"] for i in range(binner.n_bins_y_)
-        ]
-        binner.binner_x_.bin_tables_["age"] = (
-            binner.binner_x_.bin_tables_["age"].sample(frac=1, random_state=1).reset_index(drop=True)
-        )
-        binner.binner_y_.bin_tables_["income"] = (
-            binner.binner_y_.bin_tables_["income"].sample(frac=1, random_state=2).reset_index(drop=True)
-        )
+        expected_x = [binner.binner_x_.bin_tables_["age"].set_index("分箱").loc[i, "分箱标签"] for i in range(binner.n_bins_x_)]
+        expected_y = [binner.binner_y_.bin_tables_["income"].set_index("分箱").loc[i, "分箱标签"] for i in range(binner.n_bins_y_)]
+        binner.binner_x_.bin_tables_["age"] = binner.binner_x_.bin_tables_["age"].sample(frac=1, random_state=1).reset_index(drop=True)
+        binner.binner_y_.bin_tables_["income"] = binner.binner_y_.bin_tables_["income"].sample(frac=1, random_state=2).reset_index(drop=True)
 
         fig = binner.plot(metric="bad_rate")
         ax = fig.axes[0]
@@ -872,10 +864,7 @@ class TestOptimalBinning2DMerge:
         binner = OptimalBinning2D(max_n_bins=4, missing_separate=True)
         binner.fit(df, y=df["target"], features=["age", "income"])
 
-        transformed = {
-            metric: binner.transform(df[["age", "income"]], metric=metric)["ageXincome"]
-            for metric in ("indices", "bins", "woe", "event_rate")
-        }
+        transformed = {metric: binner.transform(df[["age", "income"]], metric=metric)["ageXincome"] for metric in ("indices", "bins", "woe", "event_rate")}
         missing = df["age"].isna()
 
         assert (transformed["indices"][missing] >= 0).all()
@@ -1003,13 +992,9 @@ class TestOptimalBinning2DMerge:
             )
             binner.fit(df, y=df["target"], features=["a", "c"])
             normal = binner.get_bin_table().query("分箱 >= 0")
-            counts = {
-                int(row["分箱"]): (float(row["坏样本数"]), float(row["好样本数"])) for _, row in normal.iterrows()
-            }
+            counts = {int(row["分箱"]): (float(row["坏样本数"]), float(row["好样本数"])) for _, row in normal.iterrows()}
             # 硬约束：合并后必须零违例（软约束在随机数据上通常无法保证）
-            assert not binner._monotonic_violations(
-                binner.solution_, counts, trend_x, trend_y
-            ), f"单调硬约束未满足: trend_x={trend_x}, trend_y={trend_y}"
+            assert not binner._monotonic_violations(binner.solution_, counts, trend_x, trend_y), f"单调硬约束未满足: trend_x={trend_x}, trend_y={trend_y}"
             # 仍保持连通区域
             for bin_id in range(binner.n_bins_2d_):
                 cells = set(map(tuple, np.argwhere(binner.solution_ == bin_id)))

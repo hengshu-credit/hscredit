@@ -66,9 +66,7 @@ def _test_binner_impl(binner_class, name, X, y, **kwargs):
                 for idx, row in bin_table.iterrows():
                     if "分箱标签" in bin_table.columns:
                         bin_iv = row["分档IV值"] if "分档IV值" in bin_table.columns else 0
-                        print(
-                            f"    {row['分箱标签']}: 样本数={row['样本总数']}, 坏样本率={row['坏样本率']:.4f}, IV={bin_iv:.4f}"
-                        )
+                        print(f"    {row['分箱标签']}: 样本数={row['样本总数']}, 坏样本率={row['坏样本率']:.4f}, IV={bin_iv:.4f}")
 
         return binner
     except Exception as e:
@@ -101,9 +99,7 @@ def main():
     _test_binner_impl(SmoothBinning, "SmoothBinning (Bayesian)", X, y_target, method="bayesian", smoothing_param=1.0)
 
     # IV优化方法
-    _test_binner_impl(
-        SmoothBinning, "SmoothBinning (IV Optimized)", X, y_target, method="iv_optimized", smoothing_param=0.01
-    )
+    _test_binner_impl(SmoothBinning, "SmoothBinning (IV Optimized)", X, y_target, method="iv_optimized", smoothing_param=0.01)
 
     # 带单调性约束
     _test_binner_impl(
@@ -130,9 +126,7 @@ def main():
     print("=" * 80)
 
     # 基本设置
-    _test_binner_impl(
-        KernelDensityBinning, "KernelDensityBinning (基础)", X, y_target, kernel="gaussian", bandwidth="scott"
-    )
+    _test_binner_impl(KernelDensityBinning, "KernelDensityBinning (基础)", X, y_target, kernel="gaussian", bandwidth="scott")
 
     # 结合目标变量
     _test_binner_impl(

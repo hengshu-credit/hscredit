@@ -122,15 +122,9 @@ class MySQLAdapter(DBAPIAdapter):
         }
         known_charset_width = default_widths.get(charset)
         configured_charset_width = resolved_options.get("charset_max_bytes_per_character")
-        if (
-            configured_charset_width is not None
-            and known_charset_width is not None
-            and int(configured_charset_width) < known_charset_width
-        ):
+        if configured_charset_width is not None and known_charset_width is not None and int(configured_charset_width) < known_charset_width:
             raise ValidationError(f"MySQL {charset} 字符集最大字节宽度不能小于 {known_charset_width}")
-        charset_width = int(
-            configured_charset_width if configured_charset_width is not None else (known_charset_width or 4)
-        )
+        charset_width = int(configured_charset_width if configured_charset_width is not None else (known_charset_width or 4))
         if charset_width <= 0:
             raise ValidationError("MySQL charset_max_bytes_per_character 必须是正整数")
         varchar_byte_limit = int(resolved_options.get("varchar_max_bytes", 65_533))
@@ -213,11 +207,7 @@ class MySQLAdapter(DBAPIAdapter):
         if_not_exists = " IF NOT EXISTS" if options.get("if_not_exists", True) else ""
         engine = self._validate_option_token("engine", options.get("engine", "InnoDB"))
         charset = self._validate_option_token("charset", options.get("charset", "utf8mb4"))
-        ddl = (
-            f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  "
-            + ",\n  ".join(definitions)
-            + f"\n) ENGINE={engine} DEFAULT CHARSET={charset}"
-        )
+        ddl = f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  " + ",\n  ".join(definitions) + f"\n) ENGINE={engine} DEFAULT CHARSET={charset}"
         collate = options.get("collate")
         if collate is not None:
             ddl += f" COLLATE={self._validate_option_token('collate', collate)}"
@@ -324,10 +314,7 @@ ORDER BY CASE WHEN INDEX_NAME='PRIMARY' THEN 0 ELSE 1 END,
             update_columns = [column for column in columns if column not in keys]
             if not update_columns:
                 update_columns = list(key_columns or columns[:1])
-            assignments = ", ".join(
-                f"{self.quote_identifier(str(column))}=VALUES({self.quote_identifier(str(column))})"
-                for column in update_columns
-            )
+            assignments = ", ".join(f"{self.quote_identifier(str(column))}=VALUES({self.quote_identifier(str(column))})" for column in update_columns)
             sql += f" ON DUPLICATE KEY UPDATE {assignments}"
         return sql
 
@@ -538,11 +525,7 @@ ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
                     "database": database_name,
                     "schema": None,
                     "table_name": table_name,
-                    "qualified_name": (
-                        f"{database_name}.{table_name}"
-                        if database_name is not None and table_name is not None
-                        else None
-                    ),
+                    "qualified_name": (f"{database_name}.{table_name}" if database_name is not None and table_name is not None else None),
                     "table_type": row.get("table_type"),
                     "table_comment": row.get("table_comment"),
                     "table_engine": row.get("table_engine"),

@@ -595,9 +595,7 @@ class TestModelReportOverdueDpdsSeparate:
             }
         )
         model = MockModel(feature_names=["f0"])
-        report = ModelReport(
-            model=model, X_train=X, y_train=None, overdue=["dpds_m1", "dpds_m3"], dpds=[3, 0], features=["f0"]
-        )
+        report = ModelReport(model=model, X_train=X, y_train=None, overdue=["dpds_m1", "dpds_m3"], dpds=[3, 0], features=["f0"])
         # dpds_m1 > 3 or > 0 → [0, 0, 0, 0, 0, 0]
         # dpds_m3 > 3 or > 0 → [0, 0, 0, 0, 1, 1]
         # any true → y=1 → [0, 0, 0, 0, 1, 1]
@@ -787,11 +785,7 @@ class TestModelReportOverdueDpdsSeparate:
 
         assert report.del_grey is True
         worksheet = load_workbook(output)["1-基本信息"]
-        header_rows = [
-            row
-            for row in range(1, worksheet.max_row)
-            if worksheet.cell(row, 2).value == "统计详情" and worksheet.cell(row + 1, 2).value == "数据集"
-        ]
+        header_rows = [row for row in range(1, worksheet.max_row) if worksheet.cell(row, 2).value == "统计详情" and worksheet.cell(row + 1, 2).value == "数据集"]
         sample_header, time_header, group_header = header_rows[:3]
 
         def header_columns(group_row):
@@ -813,16 +807,8 @@ class TestModelReportOverdueDpdsSeparate:
 
         time_columns = header_columns(time_header)
         time_group_col = time_columns[("统计详情", "数据分组")]
-        january_row = next(
-            row
-            for row in range(time_header + 2, worksheet.max_row + 1)
-            if worksheet.cell(row, time_group_col).value == "2024-01"
-        )
-        february_row = next(
-            row
-            for row in range(time_header + 2, worksheet.max_row + 1)
-            if worksheet.cell(row, time_group_col).value == "2024-02"
-        )
+        january_row = next(row for row in range(time_header + 2, worksheet.max_row + 1) if worksheet.cell(row, time_group_col).value == "2024-01")
+        february_row = next(row for row in range(time_header + 2, worksheet.max_row + 1) if worksheet.cell(row, time_group_col).value == "2024-02")
         assert worksheet.cell(january_row, time_columns[("样本总数", "MOB1@1")]).value == 6
         assert worksheet.cell(january_row, time_columns[("样本总数", "MOB1@3")]).value == 4
         assert worksheet.cell(february_row, time_columns[("样本总数", "MOB1@1")]).value == 6
@@ -830,16 +816,8 @@ class TestModelReportOverdueDpdsSeparate:
 
         group_columns = header_columns(group_header)
         group_value_col = group_columns[("统计详情", "数据分组")]
-        group_a_row = next(
-            row
-            for row in range(group_header + 2, worksheet.max_row + 1)
-            if worksheet.cell(row, group_value_col).value == "A"
-        )
-        group_b_row = next(
-            row
-            for row in range(group_header + 2, worksheet.max_row + 1)
-            if worksheet.cell(row, group_value_col).value == "B"
-        )
+        group_a_row = next(row for row in range(group_header + 2, worksheet.max_row + 1) if worksheet.cell(row, group_value_col).value == "A")
+        group_b_row = next(row for row in range(group_header + 2, worksheet.max_row + 1) if worksheet.cell(row, group_value_col).value == "B")
         assert worksheet.cell(group_a_row, group_columns[("样本总数", "MOB1@1")]).value == 6
         assert worksheet.cell(group_a_row, group_columns[("样本总数", "MOB1@3")]).value == 4
         assert worksheet.cell(group_b_row, group_columns[("样本总数", "MOB1@1")]).value == 6
@@ -1026,17 +1004,11 @@ class TestModelReportRegression:
         summary_heading_row = _row_for_value(worksheet, "4、逻辑回归拟合结果")
         assert summary_heading_row > feature_heading_row
 
-        summary_header_row = next(
-            row
-            for row in range(summary_heading_row + 1, worksheet.max_row + 1)
-            if worksheet.cell(row, 2).value == "入参字段"
-        )
+        summary_header_row = next(row for row in range(summary_heading_row + 1, worksheet.max_row + 1) if worksheet.cell(row, 2).value == "入参字段")
         headers = [worksheet.cell(summary_header_row, column).value for column in range(2, 2 + len(expected_headers))]
         assert headers == expected_headers
 
-        summary_rows = {
-            worksheet.cell(row, 2).value: row for row in range(summary_header_row + 1, summary_header_row + 4)
-        }
+        summary_rows = {worksheet.cell(row, 2).value: row for row in range(summary_header_row + 1, summary_header_row + 4)}
         assert set(summary_rows) == {"const", "f0", "f1"}
         if expected_descriptions is not None:
             for feature, description in expected_descriptions.items():
@@ -1354,15 +1326,8 @@ class TestModelReportRegression:
         basic_info = [cell.value for row in workbook["1-基本信息"].iter_rows() for cell in row]
         performance = [cell.value for row in workbook["2-模型性能"].iter_rows() for cell in row]
         feature_sheet = workbook["3-入模变量分析"]
-        summary_feature_cell = next(
-            cell
-            for row in feature_sheet.iter_rows()
-            for cell in row
-            if cell.value == "f0" and cell.hyperlink is not None
-        )
-        feature_title_cell = next(
-            cell for row in feature_sheet.iter_rows() for cell in row if cell.value == "3.1、f0 有效性分析"
-        )
+        summary_feature_cell = next(cell for row in feature_sheet.iter_rows() for cell in row if cell.value == "f0" and cell.hyperlink is not None)
+        feature_title_cell = next(cell for row in feature_sheet.iter_rows() for cell in row if cell.value == "3.1、f0 有效性分析")
 
         assert "5-模型参数" in contents
         assert "6-模型部署需求" in contents
@@ -1376,13 +1341,7 @@ class TestModelReportRegression:
         sample_total_header = next(cell for row in basic_info_sheet.iter_rows() for cell in row if cell.value == "样本总数")
         stats_group_row = sample_total_header.row - 1
         assert basic_info_sheet.cell(stats_group_row, sample_total_header.column - 1).value == "统计详情"
-        assert any(
-            cell_range.min_row == stats_group_row
-            and cell_range.max_row == stats_group_row
-            and cell_range.min_col == sample_total_header.column - 1
-            and cell_range.max_col == sample_total_header.column
-            for cell_range in basic_info_sheet.merged_cells.ranges
-        )
+        assert any(cell_range.min_row == stats_group_row and cell_range.max_row == stats_group_row and cell_range.min_col == sample_total_header.column - 1 and cell_range.max_col == sample_total_header.column for cell_range in basic_info_sheet.merged_cells.ranges)
 
         feature_values = [cell.value for row in feature_sheet.iter_rows() for cell in row]
         assert feature_values.count("训练集 订单口径") == 1
@@ -1504,9 +1463,7 @@ class TestModelReportRegression:
         report.to_excel(str(output), with_plots=False, amount="放款金额")
 
         feature_sheet = load_workbook(output)["3-入模变量分析"]
-        feature_title_cell = next(
-            cell for row in feature_sheet.iter_rows() for cell in row if cell.value == "3.1、f0 有效性分析"
-        )
+        feature_title_cell = next(cell for row in feature_sheet.iter_rows() for cell in row if cell.value == "3.1、f0 有效性分析")
         assert feature_title_cell.hyperlink is None
 
     def test_time_distribution_header_groups_detail_columns(self, tmp_path):
@@ -1525,25 +1482,11 @@ class TestModelReportRegression:
         basic = load_workbook(output)["1-基本信息"]
         data_group_header = next(cell for row in basic.iter_rows() for cell in row if cell.value == "数据分组")
         header_row = data_group_header.row
-        data_set_header = next(
-            basic.cell(header_row, col)
-            for col in range(1, basic.max_column + 1)
-            if basic.cell(header_row, col).value == "数据集"
-        )
-        sample_total_header = next(
-            basic.cell(header_row, col)
-            for col in range(1, basic.max_column + 1)
-            if basic.cell(header_row, col).value == "样本总数"
-        )
+        data_set_header = next(basic.cell(header_row, col) for col in range(1, basic.max_column + 1) if basic.cell(header_row, col).value == "数据集")
+        sample_total_header = next(basic.cell(header_row, col) for col in range(1, basic.max_column + 1) if basic.cell(header_row, col).value == "样本总数")
 
         assert basic.cell(header_row - 1, data_set_header.column).value == "统计详情"
-        assert any(
-            cell_range.min_row == header_row - 1
-            and cell_range.min_col == data_set_header.column
-            and cell_range.max_row == header_row - 1
-            and cell_range.max_col == sample_total_header.column
-            for cell_range in basic.merged_cells.ranges
-        )
+        assert any(cell_range.min_row == header_row - 1 and cell_range.min_col == data_set_header.column and cell_range.max_row == header_row - 1 and cell_range.max_col == sample_total_header.column for cell_range in basic.merged_cells.ranges)
 
     def test_single_label_performance_metric_formats(self, tmp_path):
         X = pd.DataFrame({"f0": [1, 2, 3, 4, 5, 6], "target": [0, 0, 0, 1, 1, 1]})
@@ -1590,11 +1533,7 @@ class TestModelReportRegression:
 
         sheet = load_workbook(output)["Sheet1"]
         bad_rate_header = next(cell for row in sheet.iter_rows() for cell in row if cell.value == "坏样本率")
-        train_header = next(
-            sheet.cell(bad_rate_header.row + 1, col)
-            for col in range(bad_rate_header.column, sheet.max_column + 1)
-            if sheet.cell(bad_rate_header.row + 1, col).value == "训练集"
-        )
+        train_header = next(sheet.cell(bad_rate_header.row + 1, col) for col in range(bad_rate_header.column, sheet.max_column + 1) if sheet.cell(bad_rate_header.row + 1, col).value == "训练集")
         data_cell = sheet.cell(train_header.row + 1, train_header.column)
         assert data_cell.value == 0.5
         assert data_cell.number_format == "0.00%"
@@ -1663,13 +1602,7 @@ class TestModelReportRegression:
         sample_total_header = next(cell for row in basic.iter_rows() for cell in row if cell.value == "样本总数")
         stats_group_row = sample_total_header.row - 1
         assert basic.cell(stats_group_row, sample_total_header.column - 1).value == "统计详情"
-        assert any(
-            cell_range.min_row == stats_group_row
-            and cell_range.max_row == stats_group_row
-            and cell_range.min_col == sample_total_header.column - 1
-            and cell_range.max_col == sample_total_header.column
-            for cell_range in basic.merged_cells.ranges
-        )
+        assert any(cell_range.min_row == stats_group_row and cell_range.max_row == stats_group_row and cell_range.min_col == sample_total_header.column - 1 and cell_range.max_col == sample_total_header.column for cell_range in basic.merged_cells.ranges)
         assert basic.cell(sample_total_header.row, sample_total_header.column - 1).value == "数据集"
 
     def test_feature_psi_table_uses_percent_and_condition_formats(self, tmp_path, monkeypatch):
@@ -1715,17 +1648,10 @@ class TestModelReportRegression:
             "分档PSI值",
             "总体PSI值",
         }
-        header_cells = {
-            cell.value: cell for row in worksheet.iter_rows() for cell in row if cell.value in percent_headers
-        }
+        header_cells = {cell.value: cell for row in worksheet.iter_rows() for cell in row if cell.value in percent_headers}
         assert set(header_cells) == percent_headers
         assert all(worksheet.cell(cell.row + 1, cell.column).number_format == "0.00%" for cell in header_cells.values())
-        data_bar_columns = {
-            cell_range.min_col
-            for key, rules in worksheet.conditional_formatting._cf_rules.items()
-            if any(rule.type == "dataBar" for rule in rules)
-            for cell_range in key.sqref.ranges
-        }
+        data_bar_columns = {cell_range.min_col for key, rules in worksheet.conditional_formatting._cf_rules.items() if any(rule.type == "dataBar" for rule in rules) for cell_range in key.sqref.ranges}
         assert header_cells["实际% - 预期%"].column in data_bar_columns
         assert header_cells["分档PSI值"].column in data_bar_columns
 
@@ -1742,19 +1668,8 @@ class TestModelReportRegression:
         report.to_excel(str(output), with_plots=False)
 
         worksheet = load_workbook(output)["4-稳定性分析"]
-        reference = next(
-            cell
-            for row in worksheet.iter_rows()
-            for cell in row
-            if isinstance(cell.value, str) and cell.value.startswith("PSI参考标准：")
-        )
-        merged_range = next(
-            cell_range
-            for cell_range in worksheet.merged_cells.ranges
-            if cell_range.min_row == reference.row
-            and cell_range.max_row == reference.row
-            and cell_range.min_col == reference.column
-        )
+        reference = next(cell for row in worksheet.iter_rows() for cell in row if isinstance(cell.value, str) and cell.value.startswith("PSI参考标准："))
+        merged_range = next(cell_range for cell_range in worksheet.merged_cells.ranges if cell_range.min_row == reference.row and cell_range.max_row == reference.row and cell_range.min_col == reference.column)
         assert merged_range.max_col == reference.column + 2
         assert reference.alignment.horizontal == "left"
 
@@ -1785,11 +1700,7 @@ class TestModelReportRealDataContract:
     @staticmethod
     def _numeric_values_after(ws, label):
         cell = next(cell for row in ws.iter_rows() for cell in row if cell.value == label)
-        return [
-            ws.cell(cell.row, col).value
-            for col in range(cell.column + 1, ws.max_column + 1)
-            if isinstance(ws.cell(cell.row, col).value, (int, float))
-        ]
+        return [ws.cell(cell.row, col).value for col in range(cell.column + 1, ws.max_column + 1) if isinstance(ws.cell(cell.row, col).value, (int, float))]
 
     def test_auto_model_report_real_data_excel_contract(self, tmp_path):
         from hscredit.report.model_report import auto_model_report
@@ -1803,10 +1714,7 @@ class TestModelReportRealDataContract:
         expected_labels = ["MOB1@7", "MOB1@3", "MOB1@0"]
         expected_display_labels = ["MOB1@7", "MOB1@3", "MOB1@0"]
         expected_counts = [len(frame) for frame in frames.values()]
-        expected_bad_rates = {
-            label: [float((frame["MOB1"] > threshold).mean()) for frame in frames.values()]
-            for label, threshold in zip(expected_labels, [7, 3, 0])
-        }
+        expected_bad_rates = {label: [float((frame["MOB1"] > threshold).mean()) for frame in frames.values()] for label, threshold in zip(expected_labels, [7, 3, 0])}
         output = tmp_path / "真实数据模型评估报告.xlsx"
 
         report = auto_model_report(
@@ -1873,10 +1781,7 @@ class TestModelReportRealDataContract:
         assert "月度分布" in basic_values
         assert "商品类别分布" in basic_values
         assert set(source["商品类别"].unique()) <= set(basic_values)
-        assert all(
-            any(isinstance(value, str) and f"{label}:" in value for value in basic_values)
-            for label in expected_display_labels
-        )
+        assert all(any(isinstance(value, str) and f"{label}:" in value for value in basic_values) for label in expected_display_labels)
 
         performance = workbook["2-模型性能"]
         assert self._numeric_values_after(performance, "样本总数")[:9] == expected_counts * 3
@@ -1887,10 +1792,7 @@ class TestModelReportRealDataContract:
             atol=5e-5,
         )
         bad_rate_cell = next(cell for row in performance.iter_rows() for cell in row if cell.value == "坏样本率")
-        assert all(
-            performance.cell(bad_rate_cell.row, col).number_format == "0.00%"
-            for col in range(bad_rate_cell.column + 1, bad_rate_cell.column + 10)
-        )
+        assert all(performance.cell(bad_rate_cell.row, col).number_format == "0.00%" for col in range(bad_rate_cell.column + 1, bad_rate_cell.column + 10))
 
         for sheet_name in self.EXPECTED_SHEETS:
             ws = workbook[sheet_name]
@@ -1905,15 +1807,8 @@ class TestModelReportRealDataContract:
 
         feature_sheet = workbook["3-入模变量分析"]
         for index, feature in enumerate(self.FEATURE_NAMES, start=1):
-            summary_cell = next(
-                cell
-                for row in feature_sheet.iter_rows()
-                for cell in row
-                if cell.value == feature and cell.hyperlink is not None
-            )
-            title_cell = next(
-                cell for row in feature_sheet.iter_rows() for cell in row if cell.value == f"3.{index}、{feature} 有效性分析"
-            )
+            summary_cell = next(cell for row in feature_sheet.iter_rows() for cell in row if cell.value == feature and cell.hyperlink is not None)
+            title_cell = next(cell for row in feature_sheet.iter_rows() for cell in row if cell.value == f"3.{index}、{feature} 有效性分析")
             assert summary_cell.hyperlink.location == f"#'3-入模变量分析'!{title_cell.coordinate}"
             assert title_cell.hyperlink.location == f"#'3-入模变量分析'!{summary_cell.coordinate}"
 
@@ -1930,20 +1825,12 @@ class TestModelReportRealDataContract:
         assert all(feature in deployment_values for feature in self.FEATURE_NAMES)
         assert "模型分数" in deployment_values
         model_score = next(cell for row in deployment.iter_rows() for cell in row if cell.value == "模型分数")
-        scores = [
-            deployment.cell(row, model_score.column).value for row in range(model_score.row + 1, model_score.row + 6)
-        ]
+        scores = [deployment.cell(row, model_score.column).value for row in range(model_score.row + 1, model_score.row + 6)]
         assert all(isinstance(value, (int, float)) for value in scores)
         assert len(set(scores)) > 1
 
         formula_errors = {"#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A"}
-        assert not [
-            (ws.title, cell.coordinate, cell.value)
-            for ws in workbook.worksheets
-            for row in ws.iter_rows()
-            for cell in row
-            if isinstance(cell.value, str) and cell.value in formula_errors
-        ]
+        assert not [(ws.title, cell.coordinate, cell.value) for ws in workbook.worksheets for row in ws.iter_rows() for cell in row if isinstance(cell.value, str) and cell.value in formula_errors]
 
     def test_optional_plot_insert_failure_is_logged(self, tmp_path, monkeypatch, caplog):
         X = pd.DataFrame({"f0": range(20), "target": [0, 1] * 10})

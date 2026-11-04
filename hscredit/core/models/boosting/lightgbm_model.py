@@ -261,9 +261,7 @@ class LightGBM(BaseRiskModel):
             raise ImportError("LightGBM未安装，请使用 pip install lightgbm 安装")
 
         # sklearn clone 必须能够原样往返构造输入，原生覆盖值只用于实际训练。
-        self._constructor_params = {
-            name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}
-        }
+        self._constructor_params = {name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}}
         self._constructor_kwargs = dict(kwargs)
         # 保存原生params参数
         self.params = params  # 用于sklearn get_params兼容性
@@ -376,9 +374,7 @@ class LightGBM(BaseRiskModel):
             raise ValueError("绑定逐行金融参数的损失使用外部 eval_set 时，请显式提供该数据集的 eval_metric；不能复用训练金额")
         if eval_metric is None and isinstance(objective, BaseLoss):
             eval_metric = objective.metric()
-        early_stopping_rounds = fit_kwargs.pop(
-            "early_stopping_rounds", self._native_params.get("early_stopping_rounds", self.early_stopping_rounds)
-        )
+        early_stopping_rounds = fit_kwargs.pop("early_stopping_rounds", self._native_params.get("early_stopping_rounds", self.early_stopping_rounds))
         fit_verbose = fit_kwargs.pop("verbose", self.verbose)
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
@@ -430,34 +426,16 @@ class LightGBM(BaseRiskModel):
         }
 
         # 处理评估指标
-        requested = (
-            []
-            if eval_metric is None
-            else ([eval_metric] if isinstance(eval_metric, str) or callable(eval_metric) else list(eval_metric))
-        )
+        requested = [] if eval_metric is None else ([eval_metric] if isinstance(eval_metric, str) or callable(eval_metric) else list(eval_metric))
         if self.early_stopping_metric is not None:
             selected = self.early_stopping_metric
-            matches = [
-                item for item in requested if item == selected or isinstance(item, BaseMetric) and item.name == selected
-            ]
+            matches = [item for item in requested if item == selected or isinstance(item, BaseMetric) and item.name == selected]
             if not matches and not any(callable(item) for item in requested):
                 raise ValueError("early_stopping_metric 必须包含在 eval_metric 中")
             selected_item = matches[0] if matches else selected
-            requested = [selected_item] + [
-                item for item in requested if item is not selected_item and item != selected_item
-            ]
-        native_metrics = [
-            self._convert_metrics(item) for item in requested if isinstance(item, str) and item.lower() != "ks"
-        ]
-        custom_metrics = [
-            (
-                item.to_lightgbm(api="sklearn", raw_score=callable(objective))
-                if isinstance(item, BaseMetric)
-                else (_lightgbm_ks_metric if isinstance(item, str) and item.lower() == "ks" else item)
-            )
-            for item in requested
-            if callable(item) or str(item).lower() == "ks"
-        ]
+            requested = [selected_item] + [item for item in requested if item is not selected_item and item != selected_item]
+        native_metrics = [self._convert_metrics(item) for item in requested if isinstance(item, str) and item.lower() != "ks"]
+        custom_metrics = [(item.to_lightgbm(api="sklearn", raw_score=callable(objective)) if isinstance(item, BaseMetric) else (_lightgbm_ks_metric if isinstance(item, str) and item.lower() == "ks" else item)) for item in requested if callable(item) or str(item).lower() == "ks"]
         if native_metrics or custom_metrics:
             params["metric"] = native_metrics or "None"
         if custom_metrics:
@@ -467,13 +445,7 @@ class LightGBM(BaseRiskModel):
         params.update(self.kwargs)
 
         # 最后更新原生params（优先级最高）
-        params.update(
-            {
-                key: value
-                for key, value in self._native_params.items()
-                if key not in {"eval_metric", "early_stopping_rounds", "callbacks"}
-            }
-        )
+        params.update({key: value for key, value in self._native_params.items() if key not in {"eval_metric", "early_stopping_rounds", "callbacks"}})
         init_callbacks = params.pop("callbacks", self._native_params.get("callbacks", None))
         if init_callbacks:
             fit_kwargs["callbacks"] = list(init_callbacks) + list(fit_kwargs.get("callbacks", []) or [])
@@ -481,9 +453,7 @@ class LightGBM(BaseRiskModel):
         params = self._resolve_native_aliases(params, self._parameter_aliases)
 
         # 解析自定义损失（BaseLoss 实例 -> sklearn 包装器可用的目标函数）
-        params["objective"] = resolve_custom_objective(
-            objective if objective is not original_objective else params.get("objective")
-        )
+        params["objective"] = resolve_custom_objective(objective if objective is not original_objective else params.get("objective"))
         if LIGHTGBM_VERSION < Version("4.0") and callable(params["objective"]):
             import inspect
 
@@ -556,9 +526,7 @@ class LightGBM(BaseRiskModel):
                     elif isinstance(first_metric, str):
                         selected_metric = first_metric
                 if selected_metric is not None:
-                    stopping_callback = _SelectedMetricEarlyStopping(
-                        stopping_callback, self._convert_metrics(selected_metric)
-                    )
+                    stopping_callback = _SelectedMetricEarlyStopping(stopping_callback, self._convert_metrics(selected_metric))
                 callbacks.append(stopping_callback)
             if fit_verbose:
                 callbacks.append(lgb.log_evaluation(period=1))
@@ -577,9 +545,7 @@ class LightGBM(BaseRiskModel):
         self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
         from .._workflow import record_boosting_evaluation
 
-        record_boosting_evaluation(
-            self, eval_set, eval_metric=eval_metric, weights=fit_kwargs.get("eval_sample_weight")
-        )
+        record_boosting_evaluation(self, eval_set, eval_metric=eval_metric, weights=fit_kwargs.get("eval_sample_weight"))
 
         return self
 
@@ -625,9 +591,7 @@ class LightGBM(BaseRiskModel):
             proba = self._model.booster_.predict(X, **predict_params)
         else:
             native_predict_params = dict(predict_params)
-            if (
-                callable(getattr(self._model, "_objective", None)) or callable(getattr(self._model, "objective", None))
-            ) and not native_output_requested:
+            if (callable(getattr(self._model, "_objective", None)) or callable(getattr(self._model, "objective", None))) and not native_output_requested:
                 native_predict_params["raw_score"] = True
             proba = self._model.predict_proba(X, **native_predict_params)
         proba = np.asarray(proba)
@@ -658,9 +622,7 @@ class LightGBM(BaseRiskModel):
         importances = self._model.booster_.feature_importance(importance_type=importance_type)
 
         # 创建Series
-        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
-            ascending=False
-        )
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(ascending=False)
 
         self._feature_importances = importance_series
 

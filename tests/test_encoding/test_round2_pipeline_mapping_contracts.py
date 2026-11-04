@@ -69,9 +69,7 @@ def test_label_passthrough_is_explicit_legacy_mode(cls):
     assert "target" not in encoder.cols_
 
 
-@pytest.mark.parametrize(
-    "cls", [WOEEncoder, TargetEncoder, CountEncoder, OrdinalEncoder, QuantileEncoder, CatBoostEncoder]
-)
+@pytest.mark.parametrize("cls", [WOEEncoder, TargetEncoder, CountEncoder, OrdinalEncoder, QuantileEncoder, CatBoostEncoder])
 def test_real_unknown_named_category_is_not_overwritten(cls):
     X = pd.DataFrame({"x": ["__UNKNOWN__"] * 3 + ["other"] * 5})
     y = np.array([0, 0, 0, 1, 1, 1, 0, 1])
@@ -97,9 +95,7 @@ def test_typed_json_roundtrip_keeps_numeric_string_and_real_reserved_names(cls):
 @pytest.mark.parametrize("mode", ["in_sample", "oof"])
 def test_drop_invariant_schema_and_woe_metadata(mode):
     X = pd.DataFrame({"constant": ["fixed"] * 12, "x": ["a", "b"] * 6, "n": np.arange(12), "target": [0, 1] * 6})
-    encoder = WOEEncoder(
-        features=["constant", "x"], target="target", drop_invariant=True, training_mode=mode, cv=3, n_jobs=1
-    )
+    encoder = WOEEncoder(features=["constant", "x"], target="target", drop_invariant=True, training_mode=mode, cv=3, n_jobs=1)
     trained = encoder.fit_transform(X)
     inference = encoder.transform(X.drop(columns="target"))
     assert list(trained.columns) == list(inference.columns) == ["x", "n"]
@@ -146,9 +142,7 @@ def test_count_real_other_and_rare_unknown_are_distinct():
         strict.transform(pd.DataFrame({"x": ["new"]}))
 
 
-@pytest.mark.parametrize(
-    "cls", [WOEEncoder, TargetEncoder, CountEncoder, OrdinalEncoder, QuantileEncoder, CatBoostEncoder]
-)
+@pytest.mark.parametrize("cls", [WOEEncoder, TargetEncoder, CountEncoder, OrdinalEncoder, QuantileEncoder, CatBoostEncoder])
 def test_explicit_legacy_export_and_import(cls):
     X = pd.DataFrame({"x": ["a", "a", "b", None]})
     original = cls(n_jobs=1).fit(X, [0, 1, 1, 0])
@@ -164,9 +158,7 @@ def test_woe_legacy_missing_value_and_new_exact_type_semantics():
 
 
 def test_count_typed_nan_json_roundtrip_and_numpy_bool_config():
-    X = pd.DataFrame(
-        {"x": pd.Series([float("nan"), np.float32("nan"), np.float64("nan"), None, pd.NA, pd.NaT, "x"], dtype=object)}
-    )
+    X = pd.DataFrame({"x": pd.Series([float("nan"), np.float32("nan"), np.float64("nan"), None, pd.NA, pd.NaT, "x"], dtype=object)})
     original = CountEncoder(n_jobs=1, normalize=np.bool_(False)).fit(X)
     restored = CountEncoder(n_jobs=1).import_mapping(json.loads(json.dumps(original.export_mapping(), allow_nan=False)))
     assert restored.normalize == np.bool_(False)
@@ -196,9 +188,7 @@ def test_gbm_native_pipeline_and_frozen_leaf_schema():
     from hscredit.core.encoders import GBMEncoder
 
     X = pd.DataFrame({"x": np.arange(40), "target": [0, 1] * 20})
-    encoder = GBMEncoder(
-        target="target", model_type="xgboost", output_type="onehot", n_estimators=3, max_depth=2, n_jobs=1
-    )
+    encoder = GBMEncoder(target="target", model_type="xgboost", output_type="onehot", n_estimators=3, max_depth=2, n_jobs=1)
     pipeline = Pipeline([("encoder", encoder), ("model", NativeLR())]).fit(X, X.target)
     assert "target" not in pipeline[-1].feature_names_in_
     assert pipeline.predict(X[["x"]].iloc[:1]).shape == (1,)

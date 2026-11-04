@@ -495,9 +495,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             state["_y"] = None
         return pickle_callback_state(state)
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: Literal["indices", "bins", "woe", "event_rate"] = "indices"
-    ) -> pd.DataFrame:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: Literal["indices", "bins", "woe", "event_rate"] = "indices") -> pd.DataFrame:
         """将新数据映射到二维分箱.
 
         :param X: 待转换的数据
@@ -576,9 +574,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if input_features is not None:
             input_features = np.asarray(input_features, dtype=object)
             if not np.array_equal(input_features, self.feature_names_in_):
-                raise ValueError(
-                    f"input_features 必须与拟合时特征一致，期望 " f"{self.feature_names_in_.tolist()}，实际 {input_features.tolist()}"
-                )
+                raise ValueError(f"input_features 必须与拟合时特征一致，期望 " f"{self.feature_names_in_.tolist()}，实际 {input_features.tolist()}")
         return np.asarray([self.feature_name_], dtype=object)
 
     def get_cross_table(self) -> pd.DataFrame:
@@ -747,9 +743,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                     "solution": self.solution_.copy(),
                 }
             if feature not in (self.feature_x_, self.feature_y_):
-                raise HSCreditError(
-                    f"特征 '{feature}' 未找到，可用: " f"['{self.feature_x_}', '{self.feature_y_}', '{self.feature_name_}']"
-                )
+                raise HSCreditError(f"特征 '{feature}' 未找到，可用: " f"['{self.feature_x_}', '{self.feature_y_}', '{self.feature_name_}']")
             binner_inst = self.binner_x_ if feature == self.feature_x_ else self.binner_y_
             return _stats_for(binner_inst, feature)
         else:
@@ -1007,12 +1001,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         total_samples = self.cross_table_["样本总数"].sum()
         total_bad = self.cross_table_["坏样本数"].sum()
         overall_bad_rate = total_bad / total_samples if total_samples > 0 else 0.0
-        stats_text = (
-            f"总样本: {total_samples:,} | "
-            f"坏样本: {total_bad:,} ({overall_bad_rate:.1%}) | "
-            f"二维分箱: {self.n_bins_2d_} | "
-            f"交互IV: {self.iv_interaction_:.4f}"
-        )
+        stats_text = f"总样本: {total_samples:,} | " f"坏样本: {total_bad:,} ({overall_bad_rate:.1%}) | " f"二维分箱: {self.n_bins_2d_} | " f"交互IV: {self.iv_interaction_:.4f}"
         ax.text(
             0.5,
             1.015,
@@ -1494,12 +1483,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 return 2  # 特征1缺失，特征2正常
             return 3
 
-        observed_groups = {
-            cell_group(i, j)
-            for i in range(event.shape[0])
-            for j in range(event.shape[1])
-            if event[i, j] + nonevent[i, j] > 0
-        }
+        observed_groups = {cell_group(i, j) for i in range(event.shape[0]) for j in range(event.shape[1]) if event[i, j] + nonevent[i, j] > 0}
         solution = np.full(event.shape, UNKNOWN_BIN, dtype=int)
         next_id = 0
         for i in range(event.shape[0]):
@@ -1745,12 +1729,8 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
     def _compute_binning_table(self) -> None:
         """根据合并后的二维索引生成 hscredit 标准中文分箱表."""
-        bins_x = self.binner_x_.transform(self._axis_input(self._X, is_x=True), metric="indices")[
-            self.feature_x_
-        ].to_numpy()
-        bins_y = self.binner_y_.transform(self._axis_input(self._X, is_x=False), metric="indices")[
-            self.feature_y_
-        ].to_numpy()
+        bins_x = self.binner_x_.transform(self._axis_input(self._X, is_x=True), metric="indices")[self.feature_x_].to_numpy()
+        bins_y = self.binner_y_.transform(self._axis_input(self._X, is_x=False), metric="indices")[self.feature_y_].to_numpy()
         merged = self._map_grid_to_2d_bins(bins_x, bins_y)
 
         cells_by_bin = []
@@ -1873,12 +1853,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         grid = grid[leading + [column for column in grid.columns if column not in leading]]
         category = (grid["特征1分箱"] == -1).astype(int) * 2 + (grid["特征2分箱"] == -1).astype(int)
         special_order = (grid["分箱"] == -2).astype(int) * 4
-        grid = (
-            grid.assign(_组合顺序=category + special_order)
-            .sort_values(["_组合顺序", "特征1分箱", "特征2分箱"], kind="stable")
-            .drop(columns="_组合顺序")
-            .reset_index(drop=True)
-        )
+        grid = grid.assign(_组合顺序=category + special_order).sort_values(["_组合顺序", "特征1分箱", "特征2分箱"], kind="stable").drop(columns="_组合顺序").reset_index(drop=True)
         self.grid_table_ = grid
         self.cross_table_ = self.grid_table_
 
@@ -1923,9 +1898,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             return "缺失值"
         label_of = [self._get_bin_label(feat, i, binner) for i in idxs]
         feature_type = getattr(binner, "feature_types_", {}).get(feat)
-        interval_like = feature_type == "numerical" and all(
-            re.match(r"^[\[(].*,.*[\])]$", str(label)) for label in label_of
-        )
+        interval_like = feature_type == "numerical" and all(re.match(r"^[\[(].*,.*[\])]$", str(label)) for label in label_of)
         if not interval_like:
             return " ∪ ".join(dict.fromkeys(label_of))
         # 合并连续预分箱区间
@@ -2022,14 +1995,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
 
     def __repr__(self) -> str:
         if self._is_fitted:
-            return (
-                f"OptimalBinning2D("
-                f"fitted=True, "
-                f"features=['{self.feature_x_}', '{self.feature_y_}'], "
-                f"prebins=[{self.n_bins_x_}, {self.n_bins_y_}], "
-                f"n_bins_2d={self.n_bins_2d_}, "
-                f"iv={self.iv_interaction_:.4f})"
-            )
+            return f"OptimalBinning2D(" f"fitted=True, " f"features=['{self.feature_x_}', '{self.feature_y_}'], " f"prebins=[{self.n_bins_x_}, {self.n_bins_y_}], " f"n_bins_2d={self.n_bins_2d_}, " f"iv={self.iv_interaction_:.4f})"
         else:
             return "OptimalBinning2D(fitted=False)"
 

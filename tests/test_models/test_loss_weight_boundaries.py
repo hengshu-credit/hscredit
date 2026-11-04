@@ -38,9 +38,7 @@ def test_combined_weights_preserve_constant_loss_and_match_direct_weighted_bce(l
         plus, minus = margin.copy(), margin.copy()
         plus[i] += 1e-5
         minus[i] -= 1e-5
-        numerical.append(
-            (loss.evaluate(y, plus, weight, raw_score=True) - loss.evaluate(y, minus, weight, raw_score=True)) / 2e-5
-        )
+        numerical.append((loss.evaluate(y, plus, weight, raw_score=True) - loss.evaluate(y, minus, weight, raw_score=True)) / 2e-5)
     # 训练回调使用加权总和标度；评估采用加权均值。
     np.testing.assert_allclose(gradient / weight.sum(), numerical, rtol=1e-5)
 
@@ -78,6 +76,4 @@ def test_existing_ks_gini_metrics_support_explicit_weights():
 
     fpr, tpr, _ = roc_curve(y, p, sample_weight=weights)
     assert KSMetric().evaluate(y, p, weights) == pytest.approx(np.max(np.abs(tpr - fpr)))
-    assert GiniMetric(score_direction="higher_risk").evaluate(y, p, weights) == pytest.approx(
-        2 * roc_auc_score(y, p, sample_weight=weights) - 1
-    )
+    assert GiniMetric(score_direction="higher_risk").evaluate(y, p, weights) == pytest.approx(2 * roc_auc_score(y, p, sample_weight=weights) - 1)

@@ -52,9 +52,7 @@ def test_feature_binning_summary_returns_tables_and_multi_target_summary(sample_
     valid = table[table[("分箱详情", "分箱标签")] != "合计"]
     expected_bad = valid[("MOB1_3+", "坏样本数")].sum()
     expected_total = valid[("分箱详情", "样本总数")].sum()
-    row = summary[
-        (summary[("分箱详情", "分箱方法")] == "quantile") & (summary[("分箱详情", "指标名称")] == "特征1")
-    ].iloc[0]
+    row = summary[(summary[("分箱详情", "分箱方法")] == "quantile") & (summary[("分箱详情", "指标名称")] == "特征1")].iloc[0]
     assert row[("坏样本数", "MOB1@3")] == expected_bad
     assert row[("坏样本率", "MOB1@3")] == pytest.approx(expected_bad / expected_total)
     assert row[("分档KS值", "MOB1@3")] == valid[("MOB1_3+", "分档KS值")].max()
@@ -236,9 +234,7 @@ def test_feature_group_binning_summary_by_category_supports_categorical_feature(
     assert list(tables["职业"]["quantile"]) == ["线下", "线上"]
     assert list(summary[("分箱详情", "分组")]) == ["线下", "线上"]
     assert ("坏样本率", "FPD") in summary.columns
-    assert all(
-        not table["分箱标签"].astype(str).str.startswith("bin_").all() for table in tables["职业"]["quantile"].values()
-    )
+    assert all(not table["分箱标签"].astype(str).str.startswith("bin_").all() for table in tables["职业"]["quantile"].values())
 
 
 def test_feature_group_binning_summary_keeps_missing_group(sample_data):

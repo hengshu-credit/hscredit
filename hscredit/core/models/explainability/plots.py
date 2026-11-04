@@ -265,12 +265,7 @@ def plot_shap_result_importance(
     """使用既有 ExplanationResult 绘制单面板 SHAP 重要性图。"""
     if not isinstance(max_display, int) or isinstance(max_display, bool) or max_display <= 0:
         raise ValidationError("max_display 必须是正整数")
-    importance = (
-        pd.Series(np.abs(result.values).mean(axis=0), index=result.feature_names, name="SHAP重要性")
-        .sort_values(ascending=False, kind="mergesort")
-        .head(max_display)
-        .iloc[::-1]
-    )
+    importance = pd.Series(np.abs(result.values).mean(axis=0), index=result.feature_names, name="SHAP重要性").sort_values(ascending=False, kind="mergesort").head(max_display).iloc[::-1]
     fig, ax = plt.subplots(figsize=figsize)
     ax.barh(importance.index, importance.values, color=color)
     ax.set_xlabel("平均绝对SHAP值")

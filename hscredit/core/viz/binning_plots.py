@@ -162,13 +162,9 @@ def _compute_bin_stats_from_raw_data(
 
     if rules is not None:
         # 使用自定义分箱规则
-        binner = OptimalBinning(
-            user_splits={feature: rules}, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs
-        )
+        binner = OptimalBinning(user_splits={feature: rules}, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs)
     else:
-        binner = OptimalBinning(
-            method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs
-        )
+        binner = OptimalBinning(method=method, max_n_bins=max_n_bins, min_bin_size=min_bin_size, verbose=False, **kwargs)
 
     binner.fit(df[[feature]], df["target"])
 
@@ -705,12 +701,7 @@ def bin_plot(
     else:
         # 方式1：传入的是原始数据，需要计算分箱统计
         if target is None:
-            raise ValueError(
-                "当传入原始数据时，必须提供 target 参数。\n"
-                "用法示例:\n"
-                "  bin_plot(df, x='feature', target='target')\n"
-                "  bin_plot(df['feature'], target=df['target'])"
-            )
+            raise ValueError("当传入原始数据时，必须提供 target 参数。\n" "用法示例:\n" "  bin_plot(df, x='feature', target='target')\n" "  bin_plot(df['feature'], target=df['target'])")
 
         # 兼容 toad 的参数命名（x 参数）
         if "x" in kwargs:
@@ -897,9 +888,7 @@ def bin_plot(
         ax1.set_xticks(x_pos)
         # 分箱标签默认垂直展示，仅当标签非常长（阈值 18）时才按长度动态倾斜
         bin_labels = feature_table["_plot_bin_label"].tolist()
-        label_rotation, label_ha = _xtick_rotation_for_length(
-            max((len(str(l)) for l in bin_labels), default=0), threshold=18
-        )
+        label_rotation, label_ha = _xtick_rotation_for_length(max((len(str(l)) for l in bin_labels), default=0), threshold=18)
         ax1.set_xticklabels(bin_labels, rotation=label_rotation, ha=label_ha)
         if label_rotation != 90:
             for lbl in ax1.get_xticklabels():
@@ -966,9 +955,7 @@ def bin_plot(
 
     _summary_source = feature_table.drop(columns=["_plot_bin_label"], errors="ignore")
     summary_items_per_row = 100 if metric_summary_layout == "full_width_center" else 2
-    metric_summary = (
-        _build_bin_metric_summary(_summary_source, per_row=summary_items_per_row) if show_metric_summary else ""
-    )
+    metric_summary = _build_bin_metric_summary(_summary_source, per_row=summary_items_per_row) if show_metric_summary else ""
     axis_title = ax1.xaxis.label if is_horizontal else ax1.yaxis.label
     summary_fontsize = float(axis_title.get_fontsize())
     if not return_ax:
@@ -1153,9 +1140,7 @@ def corr_plot(
     if max_len is None:
         corr = data.corr()
     else:
-        corr = data.rename(
-            columns={c: c if len(str(c)) <= max_len else f"{str(c)[:max_len]}..." for c in data.columns}
-        ).corr()
+        corr = data.rename(columns={c: c if len(str(c)) <= max_len else f"{str(c)[:max_len]}..." for c in data.columns}).corr()
 
     corr_mask = np.zeros_like(corr, dtype=bool)
     corr_mask[np.triu_indices_from(corr_mask)] = True
@@ -1340,9 +1325,7 @@ def ks_plot(
         ax2.plot(fpr, tpr, color=colors[0], label="ROC 曲线")
         ax2.stackplot(fpr, tpr, color=colors[0], alpha=0.25)
         ax2.plot([0, 1], [0, 1], color=colors[1], lw=2, linestyle=":")
-        ax2.text(
-            0.5, 0.5, f"AUC: {auc_value:.4f}", fontsize=fontsize, horizontalalignment="center", transform=ax2.transAxes
-        )
+        ax2.text(0.5, 0.5, f"AUC: {auc_value:.4f}", fontsize=fontsize, horizontalalignment="center", transform=ax2.transAxes)
 
         ax2.set_xlabel("假正例率", fontsize=fontsize)
         ax2.set_ylabel("真正例率", fontsize=fontsize)
@@ -1627,12 +1610,7 @@ def psi_plot(
 
     if _has_bins(expected) and _has_bins(actual):
         # 检查是否为 psi_table 输出格式（有 '期望样本数' 列）
-        is_psi_table_fmt = (
-            "期望样本数" in expected.columns
-            and "实际样本数" in expected.columns
-            and "期望样本数" in actual.columns
-            and "实际样本数" in actual.columns
-        )
+        is_psi_table_fmt = "期望样本数" in expected.columns and "实际样本数" in expected.columns and "期望样本数" in actual.columns and "实际样本数" in actual.columns
 
         if is_psi_table_fmt:
             # psi_table 格式：重命名期望/实际列，再 merge
@@ -1657,11 +1635,7 @@ def psi_plot(
             ]
             exp_cols = {c: c for c in cols_to_keep if c in exp_renamed.columns}
             act_cols = {c: c for c in cols_to_keep if c in act_renamed.columns}
-            df_psi = (
-                exp_renamed[list(exp_cols.values())]
-                .merge(act_renamed[list(act_cols.values())], on="分箱", how="outer")
-                .replace(np.nan, 0)
-            )
+            df_psi = exp_renamed[list(exp_cols.values())].merge(act_renamed[list(act_cols.values())], on="分箱", how="outer").replace(np.nan, 0)
             # psi_table 输出没有坏样本率列，设为0避免绘图报错
             for lbl in labels:
                 df_psi[f"{lbl}坏样本率"] = 0.0
@@ -1814,9 +1788,7 @@ def psi_plot(
         if title is not None:
             title_artist = fig.suptitle(title)
         else:
-            title_artist = fig.suptitle(
-                f"{desc + ' ' if desc else ''}{labels[0]} vs {labels[1]} " f"群体稳定性指数(PSI): {df_psi['分档PSI值'].sum():.4f}"
-            )
+            title_artist = fig.suptitle(f"{desc + ' ' if desc else ''}{labels[0]} vs {labels[1]} " f"群体稳定性指数(PSI): {df_psi['分档PSI值'].sum():.4f}")
 
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels() if ax2 is not None else ([], [])
@@ -1908,9 +1880,7 @@ def dataframe_plot(
     for col in data.select_dtypes("float"):
         data[col] = data[col].apply(lambda x: np.nan if pd.isnull(x) else round(x, 4))
 
-    cols_width = [
-        max(data[col].apply(lambda x: len(str(x).encode())).max(), len(str(col).encode())) / 8.0 for col in data.columns
-    ]
+    cols_width = [max(data[col].apply(lambda x: len(str(x).encode())).max(), len(str(col).encode())) / 8.0 for col in data.columns]
 
     if ax is None:
         size = (sum(cols_width), (len(data) + 1) * row_height)
@@ -2653,12 +2623,7 @@ def _prepare_bin_trend_panels(
     if partition_data is not None:
         groups = working[partition_data].unique()
         if sort_by is not None and sort_by in working.columns:
-            full_group_order = (
-                working.groupby(partition_data)[sort_by]
-                .first()
-                .sort_values(ascending=(sort_order == "asc"))
-                .index.tolist()
-            )
+            full_group_order = working.groupby(partition_data)[sort_by].first().sort_values(ascending=(sort_order == "asc")).index.tolist()
         else:
             full_group_order = sorted(groups)
         group_order = list(full_group_order)
@@ -3646,9 +3611,7 @@ def bin_overdues_plot(
     tasks = []
     labels = []
     for name, definition in zip(targets.names(), targets.labels):
-        label = (
-            f"{definition.overdue} ({targets.operator} {definition.dpd})" if definition.overdue is not None else name
-        )
+        label = f"{definition.overdue} ({targets.operator} {definition.dpd})" if definition.overdue is not None else name
         target_values = data[definition.column]
         tasks.append((label, data.loc[:, [feature]].copy(), target_values, feature, stats_options))
         labels.append(label)
@@ -3823,11 +3786,7 @@ def _draw_2d_bin_boundaries(
                 for candidate in bend_candidates:
                     candidate_col = int(np.floor(candidate[0] + 0.5))
                     candidate_row = int(np.floor(candidate[1] + 0.5))
-                    if (
-                        0 <= candidate_row < n_rows
-                        and 0 <= candidate_col < n_cols
-                        and display_solution[candidate_row, candidate_col] == bin_id
-                    ):
+                    if 0 <= candidate_row < n_rows and 0 <= candidate_col < n_cols and display_solution[candidate_row, candidate_col] == bin_id:
                         bend = candidate
                         break
                 segments.append((first, bend))
@@ -4012,9 +3971,7 @@ def _binned_ks_curve(bin_table: pd.DataFrame) -> pd.DataFrame:
     ordered = bin_table.copy()
     for column in required:
         ordered[column] = pd.to_numeric(ordered[column], errors="coerce")
-    ordered = (
-        ordered.dropna(subset=required).sort_values("分档WOE值", ascending=False, kind="stable").reset_index(drop=True)
-    )
+    ordered = ordered.dropna(subset=required).sort_values("分档WOE值", ascending=False, kind="stable").reset_index(drop=True)
     # 相同 WOE 对 transform 而言是同一评分阈值。先聚合再累计，避免箱内行序
     # 产生实际不可达到的中间阈值并高估 KS。
     ordered = ordered.groupby("分档WOE值", sort=False, as_index=False)[["样本总数", "好样本数", "坏样本数"]].sum()
@@ -4287,9 +4244,7 @@ def bin_2d_plot(
     _cell_title(ax_bad, "坏样本率")
     _cross_heatmap_cell(ax_lift, M_lift, colors[2], fmt=".1%", annot=annot, fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_lift, "LIFT")
-    _cross_heatmap_cell(
-        ax_reject, M_reject, colors[0], fmt=".1%", annot=annot, fontsize=fontsize, axis_color=axis_color
-    )
+    _cross_heatmap_cell(ax_reject, M_reject, colors[0], fmt=".1%", annot=annot, fontsize=fontsize, axis_color=axis_color)
     _cell_title(ax_reject, "风险拒绝比")
     _cross_heatmap_cell(
         ax_improve,

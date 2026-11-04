@@ -42,13 +42,7 @@ def _get_feature_title_and_table_header_rows(ws):
 
 
 def _has_merged_range(ws, min_row, min_col, max_row, max_col):
-    return any(
-        cell_range.min_row == min_row
-        and cell_range.min_col == min_col
-        and cell_range.max_row == max_row
-        and cell_range.max_col == max_col
-        for cell_range in ws.merged_cells.ranges
-    )
+    return any(cell_range.min_row == min_row and cell_range.min_col == min_col and cell_range.max_row == max_row and cell_range.max_col == max_col for cell_range in ws.merged_cells.ranges)
 
 
 def _merged_range_for_row(ws, row, start_col=2):
@@ -320,12 +314,7 @@ def test_auto_feature_analysis_defaults_to_non_role_columns(monkeypatch, tmp_pat
     )
 
     ws = writer.get_sheet_by_name("default_features")
-    feature_titles = [
-        cell.value
-        for row in ws.iter_rows()
-        for cell in row
-        if isinstance(cell.value, str) and "、数据字段:" in cell.value
-    ]
+    feature_titles = [cell.value for row in ws.iter_rows() for cell in row if isinstance(cell.value, str) and "、数据字段:" in cell.value]
     assert feature_titles == ["4.1、数据字段: x (缺失率: 0.0%)", "4.2、数据字段: amount (缺失率: 0.0%)"]
 
 
@@ -425,9 +414,7 @@ def test_auto_feature_analysis_reserves_title_row_when_amount_gap_is_zero(monkey
     )
 
     ws = writer.get_sheet_by_name("zero_metric_title_gap")
-    feature_title = next(
-        cell for row in ws.iter_rows() for cell in row if cell.value == "3.1、数据字段: x (缺失率: 0.0%)"
-    )
+    feature_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "3.1、数据字段: x (缺失率: 0.0%)")
     order_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "订单口径")
     amount_title = next(cell for row in ws.iter_rows() for cell in row if cell.value == "金额口径")
     table_headers = [cell for row in ws.iter_rows() for cell in row if cell.value == "指标名称"]
@@ -510,11 +497,7 @@ def test_auto_feature_analysis_numbers_titles_and_formats_feature_summary(monkey
     summary_title_row = _row_for_value(ws, "2、变量综合统计")
     header_row = summary_title_row + 2
     data_row = header_row + 1
-    header_columns = {
-        ws.cell(header_row, column).value: column
-        for column in range(1, ws.max_column + 1)
-        if ws.cell(header_row, column).value is not None
-    }
+    header_columns = {ws.cell(header_row, column).value: column for column in range(1, ws.max_column + 1) if ws.cell(header_row, column).value is not None}
     percent_columns = {"缺失率", "众数占比", "覆盖占比", "零值率", "负值率", "重复率", "通过率", "KS", "PSI"}
     assert all(ws.cell(data_row, header_columns[column]).number_format == "0.00%" for column in percent_columns)
     assert ws.cell(data_row, header_columns["IV"]).number_format != "0.00%"
@@ -659,11 +642,7 @@ def test_feature_title_end_space_with_return_cols(monkeypatch):
     actual_span = None
 
     for merged_range in ws.merged_cells.ranges:
-        if (
-            merged_range.min_row == feature_title_row
-            and merged_range.max_row == feature_title_row
-            and merged_range.min_col == 2
-        ):
+        if merged_range.min_row == feature_title_row and merged_range.max_row == feature_title_row and merged_range.min_col == 2:
             actual_span = merged_range.max_col - merged_range.min_col + 1
             break
 
@@ -813,9 +792,7 @@ def test_auto_feature_analysis_resolves_top_level_del_grey_precedence(
     ws = writer.get_sheet_by_name("top_level_del_grey")
     _, table_header_row = _get_feature_title_and_table_header_rows(ws)
     headers = {ws.cell(table_header_row, column).value: column for column in range(1, ws.max_column + 1)}
-    total_row = next(
-        row for row in range(table_header_row + 1, ws.max_row + 1) if ws.cell(row, headers["分箱标签"]).value == "合计"
-    )
+    total_row = next(row for row in range(table_header_row + 1, ws.max_row + 1) if ws.cell(row, headers["分箱标签"]).value == "合计")
 
     assert ws.cell(total_row, headers["样本总数"]).value == expected_total
 
@@ -849,9 +826,7 @@ def test_auto_feature_analysis_missing_rate_and_summary_links(monkeypatch):
     feature_title_cell = ws.cell(row=feature_title_row, column=2)
     assert "缺失率: 25.0%" in feature_title_cell.value
 
-    summary_feature_cell = next(
-        cell for row in ws.iter_rows() for cell in row if cell.value == "x" and cell.hyperlink is not None
-    )
+    summary_feature_cell = next(cell for row in ws.iter_rows() for cell in row if cell.value == "x" and cell.hyperlink is not None)
     assert summary_feature_cell.hyperlink.location == f"#'{ws.title}'!{feature_title_cell.coordinate}"
     assert feature_title_cell.hyperlink.location == f"#'{ws.title}'!{summary_feature_cell.coordinate}"
 
@@ -918,16 +893,8 @@ def test_auto_feature_analysis_sample_distribution_uses_model_report_layout(monk
 
     data_group_header = next(cell for row in ws.iter_rows() for cell in row if cell.value == "数据分组")
     time_header_row = data_group_header.row
-    data_set_header = next(
-        ws.cell(time_header_row, col)
-        for col in range(1, ws.max_column + 1)
-        if ws.cell(time_header_row, col).value == "数据集"
-    )
-    time_total_header = next(
-        ws.cell(time_header_row, col)
-        for col in range(1, ws.max_column + 1)
-        if ws.cell(time_header_row, col).value == "样本总数"
-    )
+    data_set_header = next(ws.cell(time_header_row, col) for col in range(1, ws.max_column + 1) if ws.cell(time_header_row, col).value == "数据集")
+    time_total_header = next(ws.cell(time_header_row, col) for col in range(1, ws.max_column + 1) if ws.cell(time_header_row, col).value == "样本总数")
     assert ws.cell(time_header_row - 1, data_set_header.column).value == "统计详情"
     assert _has_merged_range(
         ws,
@@ -937,12 +904,7 @@ def test_auto_feature_analysis_sample_distribution_uses_model_report_layout(monk
         time_total_header.column,
     )
 
-    bad_rate_header = next(
-        cell
-        for row in ws.iter_rows()
-        for cell in row
-        if cell.value == "mob@3" and ws.cell(cell.row - 1, cell.column).value == "坏样本率"
-    )
+    bad_rate_header = next(cell for row in ws.iter_rows() for cell in row if cell.value == "mob@3" and ws.cell(cell.row - 1, cell.column).value == "坏样本率")
     assert ws.cell(bad_rate_header.row + 1, bad_rate_header.column).number_format == "0.00%"
 
 
@@ -1016,16 +978,8 @@ def test_auto_feature_analysis_removes_grey_samples_from_top_distributions(monke
 
     time_columns = header_columns(time_group_row)
     time_group_col = time_columns[("统计详情", "数据分组")]
-    first_week_row = next(
-        row
-        for row in range(time_group_row + 2, ws.max_row + 1)
-        if ws.cell(row, time_group_col).value == "2024-01-01/2024-01-07"
-    )
-    second_week_row = next(
-        row
-        for row in range(time_group_row + 2, ws.max_row + 1)
-        if ws.cell(row, time_group_col).value == "2024-01-08/2024-01-14"
-    )
+    first_week_row = next(row for row in range(time_group_row + 2, ws.max_row + 1) if ws.cell(row, time_group_col).value == "2024-01-01/2024-01-07")
+    second_week_row = next(row for row in range(time_group_row + 2, ws.max_row + 1) if ws.cell(row, time_group_col).value == "2024-01-08/2024-01-14")
     assert ws.cell(first_week_row, time_columns[("样本总数", "FPD7@0.5")]).value == 2
     assert ws.cell(first_week_row, time_columns[("样本总数", "FPD1@0.5")]).value == 3
     assert ws.cell(second_week_row, time_columns[("样本总数", "FPD7@0.5")]).value == 2

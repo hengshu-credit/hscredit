@@ -15,9 +15,7 @@ class ExampleArtifact(ArtifactSerializableMixin):
         self.feature_names_in_ = ["字段"]
 
 
-@pytest.mark.parametrize(
-    "key,value", [("class", "wrong.Class"), ("features", ["其他字段"]), ("dependencies", {"numpy": "999.0"})]
-)
+@pytest.mark.parametrize("key,value", [("class", "wrong.Class"), ("features", ["其他字段"]), ("dependencies", {"numpy": "999.0"})])
 def test_strict_metadata_rejects_inconsistent_envelope(tmp_path, key, value):
     path = tmp_path / "sample.joblib"
     ExampleArtifact().save_artifact(path)
@@ -46,9 +44,7 @@ def test_skill_and_direct_api_share_validation(tmp_path):
     path = tmp_path / "sample.joblib"
     ExampleArtifact().save_artifact(path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    result = InputResolver().resolve(
-        {"kind": "file", "path": str(path), "trusted": True, "metadata_policy": "strict", "sha256": digest}
-    )
+    result = InputResolver().resolve({"kind": "file", "path": str(path), "trusted": True, "metadata_policy": "strict", "sha256": digest})
     assert isinstance(result, ExampleArtifact)
     with pytest.raises(SkillExecutionError, match="摘要"):
         InputResolver().resolve({"kind": "file", "path": str(path), "trusted": True, "sha256": "0" * 64})

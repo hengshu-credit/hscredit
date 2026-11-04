@@ -202,9 +202,7 @@ class TargetBadRateBinning(BaseBinning):
         self.merge_empty_bins = merge_empty_bins
         self._actual_rates: Dict[str, List[float]] = {}
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "TargetBadRateBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "TargetBadRateBinning":
         """拟合目标坏样本率分箱.
 
         :param kwargs: 其他参数，传递给具体的分箱算法
@@ -295,11 +293,7 @@ class TargetBadRateBinning(BaseBinning):
         values = np.unique(np.asarray(X, dtype=float))
         candidates = getattr(self, "_candidate_splits_", {}).get(X.name)
         if candidates is None:
-            candidates = (
-                values[:-1] / 2.0 + values[1:] / 2.0
-                if len(values) <= 101
-                else np.unique(np.quantile(X, np.linspace(0, 1, 101)[1:-1]))
-            )
+            candidates = values[:-1] / 2.0 + values[1:] / 2.0 if len(values) <= 101 else np.unique(np.quantile(X, np.linspace(0, 1, 101)[1:-1]))
         info = {}
         result = solve_partition(
             X,
@@ -391,9 +385,7 @@ class TargetBadRateBinning(BaseBinning):
 
         return sorted(splits)
 
-    def _validate_and_adjust_splits(
-        self, x_sorted: np.ndarray, y_sorted: np.ndarray, splits: List[float], min_samples: int
-    ) -> List[float]:
+    def _validate_and_adjust_splits(self, x_sorted: np.ndarray, y_sorted: np.ndarray, splits: List[float], min_samples: int) -> List[float]:
         """验证并调整分箱，确保满足约束."""
         if not splits:
             return splits
@@ -424,9 +416,7 @@ class TargetBadRateBinning(BaseBinning):
 
         return valid_splits
 
-    def _merge_small_bins(
-        self, x_sorted: np.ndarray, y_sorted: np.ndarray, splits: List[float], min_samples: int
-    ) -> List[float]:
+    def _merge_small_bins(self, x_sorted: np.ndarray, y_sorted: np.ndarray, splits: List[float], min_samples: int) -> List[float]:
         """合并样本数过少的相邻箱."""
         if not splits:
             return splits
@@ -497,9 +487,7 @@ class TargetBadRateBinning(BaseBinning):
 
         return cat_bins
 
-    def _fit_categorical_with_target_rates(
-        self, category_stats: pd.DataFrame, n_total: int, min_samples: int
-    ) -> List[float]:
+    def _fit_categorical_with_target_rates(self, category_stats: pd.DataFrame, n_total: int, min_samples: int) -> List[float]:
         """类别型变量按目标坏样本率边界划分."""
         splits = []
 
@@ -649,9 +637,7 @@ class TargetBadRateBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         **参数**

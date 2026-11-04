@@ -162,12 +162,7 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
         for in_bin in self._iter_bin_masks(probabilities):
             proportion = float(mass[in_bin].sum() / mass.sum())
             if proportion > 0:
-                errors.append(
-                    abs(
-                        float(np.average(probabilities[in_bin], weights=mass[in_bin]))
-                        - float(np.average(labels[in_bin], weights=mass[in_bin]))
-                    )
-                )
+                errors.append(abs(float(np.average(probabilities[in_bin], weights=mass[in_bin])) - float(np.average(labels[in_bin], weights=mass[in_bin]))))
                 weights.append(proportion)
         return {
             "brier_score": self.compute_brier_score(labels, probabilities, sample_weight=sample_weight),

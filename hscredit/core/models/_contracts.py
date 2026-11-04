@@ -27,9 +27,7 @@ def evaluation_set_entries(eval_set):
         entries = [("数据集1", eval_set)]
     elif isinstance(eval_set, (list, tuple)):
         try:
-            is_pair = (
-                len(eval_set) == 2 and np.ndim(eval_set[0]) == 2 and (eval_set[1] is None or np.ndim(eval_set[1]) == 1)
-            )
+            is_pair = len(eval_set) == 2 and np.ndim(eval_set[0]) == 2 and (eval_set[1] is None or np.ndim(eval_set[1]) == 1)
         except (TypeError, ValueError):
             is_pair = False  # 数据集列表中的 (矩阵, 标签) 本身通常不能转为齐次数组。
         values = [eval_set] if is_pair else eval_set
@@ -71,11 +69,7 @@ def model_target_name(model):
             model = model.steps[-1][1]
         else:
             model = next(
-                (
-                    getattr(model, name)
-                    for name in ("base_model", "model_", "model")
-                    if getattr(model, name, None) is not None
-                ),
+                (getattr(model, name) for name in ("base_model", "model_", "model") if getattr(model, name, None) is not None),
                 None,
             )
     return None
@@ -109,12 +103,8 @@ def validate_custom_loss_weights(params):
     """自定义导数不消费原生正类权重；fit和搜索共用同一校验。"""
     objective = params.get("objective", params.get("loss_function"))
     custom = callable(objective) or hasattr(objective, "calc_ders_range")
-    if custom and (
-        params.get("scale_pos_weight") not in (None, 1, "auto") or params.get("is_unbalance") or params.get("unbalance")
-    ):
-        raise ValueError(
-            "自定义 loss 不使用原生 scale_pos_weight/is_unbalance；" "请通过损失参数或 sample_weight 设置类别权重"
-        )
+    if custom and (params.get("scale_pos_weight") not in (None, 1, "auto") or params.get("is_unbalance") or params.get("unbalance")):
+        raise ValueError("自定义 loss 不使用原生 scale_pos_weight/is_unbalance；" "请通过损失参数或 sample_weight 设置类别权重")
     return custom
 
 

@@ -104,9 +104,7 @@ def plot_reliability_diagram(
         keys = ["brier_score", "expected_calibration_error", "max_calibration_error"]
         positions = np.arange(len(keys))
         width = 0.35
-        metrics_ax.bar(
-            positions - width / 2, [original_metrics[key] for key in keys], width, label="校准前", color=palette[0]
-        )
+        metrics_ax.bar(positions - width / 2, [original_metrics[key] for key in keys], width, label="校准前", color=palette[0])
         metrics_ax.bar(
             positions + width / 2,
             [calibrated_metrics[key] for key in keys],
@@ -162,10 +160,7 @@ def plot_calibration_comparison(
         raise ValueError("y_prob_dict不能为空")
     palette = _validated_colors(colors)
     calibrator = PlattCalibrator(n_bins=n_bins)
-    validated = {
-        str(name): calibrator._validate_fit_data(probabilities, y_true)[0]
-        for name, probabilities in y_prob_dict.items()
-    }
+    validated = {str(name): calibrator._validate_fit_data(probabilities, y_true)[0] for name, probabilities in y_prob_dict.items()}
     labels = np.asarray(y_true)
 
     fig, (reliability_ax, metrics_ax) = plt.subplots(1, 2, figsize=figsize)

@@ -17,7 +17,7 @@ from hscredit.report.result import ReportGenerationError, ReportResult
 
 @pytest.mark.parametrize("direction", ["high", "low"])
 def test_strategy_prefix_matches_independent_masks(direction):
-    data = pd.DataFrame({"score": [100, 100, 200, 300], "y": [0, 1, 1, 0], "amount": ["100", "200", "300", "400"]})
+    data = pd.DataFrame({"score": [100, 100, 200, 300], "y": [0, 1, 1, 0], "amount": [100, 200, 300, 400]})
     original = data.copy(deep=True)
     thresholds = [100, 300, 0, 100, 999]
     actual = score_strategy_simulation(data, "score", "y", thresholds, amount="amount", score_low_risk=direction)
@@ -31,8 +31,15 @@ def test_strategy_prefix_matches_independent_masks(direction):
 
 
 def test_strategy_string_amount_regression():
+    data = pd.DataFrame({"score": [100, 200], "y": [0, 1], "amount": ["100", "200"]})
+    original = data.copy(deep=True)
+    with pytest.raises(ValueError, match="amount 金额必须为数值"):
+        score_strategy_simulation(data, "score", "y", [0, 0], amount="amount")
+    pd.testing.assert_frame_equal(data, original)
+
+    # 文本金额须由调用方显式转换，转换后的金额统计仍按数值求和。
     result = score_strategy_simulation(
-        pd.DataFrame({"score": [100, 200], "y": [0, 1], "amount": ["100", "200"]}),
+        data.assign(amount=pd.to_numeric(data["amount"])),
         "score",
         "y",
         [0, 0],
@@ -97,9 +104,7 @@ def test_vintage_immature_and_missing_observations_are_not_good():
     )
     assert result.loc[result.MOB.eq(3), "状态"].iloc[0] == "未成熟"
     assert result.loc[result.MOB.eq(3), "统计坏账率(%)"].isna().all()
-    incomplete = vintage_analysis(
-        panel().iloc[:-1], "v", "mob", "y", input_mode="panel", entity_col="id", label_mode="ever"
-    )
+    incomplete = vintage_analysis(panel().iloc[:-1], "v", "mob", "y", input_mode="panel", entity_col="id", label_mode="ever")
     assert incomplete.loc[incomplete.MOB.eq(2), "状态"].iloc[0] == "观测不足"
     assert incomplete.loc[incomplete.MOB.eq(2), "统计坏账率(%)"].isna().all()
 
@@ -147,9 +152,7 @@ def test_vintage_exposure_is_same_period_and_conserved(mode):
     data = panel().assign(amount=[100.0, 300.0, 90.0, 210.0])
     if mode == "snapshot":
         data = data.iloc[:2]
-    result = vintage_analysis(
-        data, "v", "mob", "y", entity_col="id", input_mode=mode, label_mode="ever", exposure_col="amount"
-    )
+    result = vintage_analysis(data, "v", "mob", "y", entity_col="id", input_mode=mode, label_mode="ever", exposure_col="amount")
     np.testing.assert_allclose(result["有效金额分母"], result["好账户金额"] + result["坏账金额"])
     assert result.iloc[0]["金额坏账率(%)"] == 25.0
     assert result.iloc[0]["累积坏账率(%)"] == 50.0
@@ -270,9 +273,7 @@ def test_excel_exception_and_xml_failure_preserve_old_file(tmp_path, monkeypatch
 
 
 def test_report_export_discloses_partial_status(tmp_path):
-    result = eda_summary(
-        eda_data().assign(date="invalid"), target="y", date="date", features=["x"], n_jobs=1, return_result=True
-    )
+    result = eda_summary(eda_data().assign(date="invalid"), target="y", date="date", features=["x"], n_jobs=1, return_result=True)
     output = tmp_path / "partial.xlsx"
     export_report_to_excel(result, str(output))
     workbook = load_workbook(output)
@@ -303,9 +304,7 @@ def test_excel_explicit_cell_budget_and_aggregated_feature_results():
     from hscredit.report.feature_analyzer import _auto_feature_compute_call
 
     data = pd.DataFrame({"x": np.tile(np.arange(10), 100), "y": np.tile([0, 1], 500)})
-    result = _auto_feature_compute_call(
-        (data, "x", "y", None, None, False, False, None, "x", False, {"method": "quantile", "n_jobs": 1})
-    )
+    result = _auto_feature_compute_call((data, "x", "y", None, None, False, False, None, "x", False, {"method": "quantile", "n_jobs": 1}))
     assert "data" not in result
     assert len(result["sample_table"]) < 20
 
@@ -377,9 +376,7 @@ def test_auto_feature_and_model_report_protocol_exports(tmp_path):
     assert isinstance(result, ReportResult) and result.complete
     assert result.artifacts and "特征分箱：x" in result.sections
     report = small_model_report()
-    model_result = auto_model_report(
-        report.model, X_train=eda_data()[["x"]], y_train=eda_data().y, verbose=False, n_jobs=1, return_result=True
-    )
+    model_result = auto_model_report(report.model, X_train=eda_data()[["x"]], y_train=eda_data().y, verbose=False, n_jobs=1, return_result=True)
     assert isinstance(model_result, ReportResult) and model_result.complete
 
 

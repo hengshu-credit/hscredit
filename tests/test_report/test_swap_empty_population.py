@@ -26,9 +26,7 @@ def test_swap_analyzer_all_rejected_risk_is_undefined_and_exportable_as_blank():
 def test_rule_swap_empty_new_pass_population_has_no_measured_bad_rate():
     data = pd.DataFrame({"score": [1, 2, 3, 4], "target": [0, 1, 0, 1]})
     bins = pd.DataFrame({"分箱标签": ["[-inf, 2.5)", "[2.5, +inf)"], "坏样本率": [0.5, 0.5]})
-    result = rule_swap_analysis(
-        data, score="score", target="target", bin_table=bins, rules_out=[Rule("score >= 0")], n_jobs=1
-    )
+    result = rule_swap_analysis(data, score="score", target="target", bin_table=bins, rules_out=[Rule("score >= 0")], n_jobs=1)
     change = result["swap_result"].set_index("指标").loc["逾期率"]
     assert pd.isna(change["变化后"])
     assert pd.isna(change["相对变化"])

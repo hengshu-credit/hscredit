@@ -236,9 +236,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         # 分类特征
         working.numerical_features_ = working._get_numeric_features(X)
         working.categorical_features_ = working._get_categorical_features(X)
-        working.features_ = (
-            list(X.columns) if features_explicit else working.numerical_features_ + working.categorical_features_
-        )
+        working.features_ = list(X.columns) if features_explicit else working.numerical_features_ + working.categorical_features_
 
         # 计算整体坏账率
         working.overall_badrate_ = y.mean()

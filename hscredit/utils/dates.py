@@ -128,9 +128,7 @@ def format_time_labels(labels, freq, *, period=True):
             # 仅显示本地日历周期，不让展示转换丢弃时区的警告影响日期分组。
             local = stamp.tz_localize(None) if stamp.tzinfo is not None else stamp
             formatted.append(str(local.to_period(period_freq)))
-        elif stamp == stamp.normalize() and not isinstance(
-            offset, (pd.offsets.Tick, pd.offsets.BusinessHour, pd.offsets.CustomBusinessHour)
-        ):
+        elif stamp == stamp.normalize() and not isinstance(offset, (pd.offsets.Tick, pd.offsets.BusinessHour, pd.offsets.CustomBusinessHour)):
             formatted.append(stamp.strftime("%Y-%m-%d"))
         elif isinstance(offset, pd.offsets.Day):
             formatted.append(stamp.strftime("%Y-%m-%d"))

@@ -20,9 +20,7 @@ def loans():
     columns = ["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24", "FPD"]
     frame = pd.read_excel(path, usecols=columns).apply(pd.to_numeric, errors="coerce")
     frame = frame.replace([np.inf, -np.inf], np.nan).dropna().iloc[:500]
-    return train_test_split(
-        frame[columns[:3]].to_numpy(), frame.FPD.to_numpy(), test_size=0.3, stratify=frame.FPD, random_state=24
-    )
+    return train_test_split(frame[columns[:3]].to_numpy(), frame.FPD.to_numpy(), test_size=0.3, stratify=frame.FPD, random_state=24)
 
 
 @pytest.mark.parametrize("loss", [FocalLoss(alpha=0.7), WeightedBCELoss(pos_weight=2)])

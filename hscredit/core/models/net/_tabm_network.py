@@ -10,9 +10,7 @@ from ....exceptions import ValidationError
 class TabMNetwork(nn.Module):
     """输出 (样本数, 成员数)，表示为 (样本数, 成员数, d_block)。"""
 
-    def __init__(
-        self, n_numeric, cardinalities, d_block, n_blocks, dropout, k, arch_type, num_embeddings, num_embedding_params
-    ):
+    def __init__(self, n_numeric, cardinalities, d_block, n_blocks, dropout, k, arch_type, num_embeddings, num_embedding_params):
         super().__init__()
         embeddings = None
         if num_embeddings is not None and n_numeric:

@@ -66,9 +66,7 @@ def test_training_metric_preserves_validation_weights(name, loan_data):
     metric = loss.metric()
     weights = np.where(y_valid == 1, 6.0, 1.0)
     weight_param = "sample_weight_eval_set" if name == "XGBoost" else "eval_sample_weight"
-    model = _model(name, objective=loss, eval_metric=metric).fit(
-        X_train, y_train, eval_set=[(X_valid, y_valid)], **{weight_param: [weights]}
-    )
+    model = _model(name, objective=loss, eval_metric=metric).fit(X_train, y_train, eval_set=[(X_valid, y_valid)], **{weight_param: [weights]})
     dataset = next(key for key in model.evals_result_ if key.startswith("valid"))
     expected = metric.evaluate(y_valid, model.predict_proba(X_valid)[:, 1], sample_weight=weights)
     assert model.evals_result_[dataset][metric.name][-1] == pytest.approx(expected, abs=1e-6)
@@ -77,9 +75,7 @@ def test_training_metric_preserves_validation_weights(name, loan_data):
 def test_lightgbm_accepts_mixed_metrics_and_selects_object_by_name(loan_data):
     X_train, X_valid, y_train, y_valid = loan_data
     metric = WeightedBCELoss().metric()
-    model = _model(
-        "LightGBM", eval_metric=["auc", metric], early_stopping_metric=metric.name, early_stopping_rounds=2
-    ).fit(X_train, y_train, eval_set=[(X_valid, y_valid)])
+    model = _model("LightGBM", eval_metric=["auc", metric], early_stopping_metric=metric.name, early_stopping_rounds=2).fit(X_train, y_train, eval_set=[(X_valid, y_valid)])
     assert set(model.evals_result_["valid_0"]) == {"auc", metric.name}
 
 
@@ -106,9 +102,7 @@ def test_lightgbm_default_early_stopping_preserves_requested_metric_order(loss_f
 def test_xgboost_maximizes_metric_when_early_stopping_is_requested(loan_data):
     X_train, X_valid, y_train, y_valid = loan_data
     metric = GiniMetric()
-    model = _model("XGBoost", eval_metric=metric, early_stopping_rounds=2).fit(
-        X_train, y_train, eval_set=[(X_valid, y_valid)]
-    )
+    model = _model("XGBoost", eval_metric=metric, early_stopping_rounds=2).fit(X_train, y_train, eval_set=[(X_valid, y_valid)])
     values = model.evals_result_["validation_0"][metric.name]
     assert float(model.best_score_) == pytest.approx(max(values))
 
@@ -167,9 +161,7 @@ def test_loss_scorer_and_tuner_use_correct_direction(loan_data):
     assert tuner.direction == "minimize"
     assert tuner.metric_names == [metric.name]
     assert Metric(metric).direction == "minimize"
-    scores = cross_val_score(
-        SklearnLogisticRegression(max_iter=1000), X_train, y_train, scoring=metric.to_scorer(), cv=2
-    )
+    scores = cross_val_score(SklearnLogisticRegression(max_iter=1000), X_train, y_train, scoring=metric.to_scorer(), cv=2)
     assert np.isfinite(scores).all()
     assert np.all(scores < 0)
     tuner.fit(X_train, y_train, n_trials=1, show_progress_bar=False)

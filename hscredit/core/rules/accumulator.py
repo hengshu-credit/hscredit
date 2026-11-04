@@ -48,7 +48,5 @@ class RuleAccumulator:
     def finalize(self):
         result = {"样本总数": self.total, "命中样本数": self.matched, "未命中样本数": self.total - self.matched}
         if self.target is not None:
-            result.update(
-                {"坏样本数": self.bad, "命中坏样本数": self.matched_bad, "未命中坏样本数": self.bad - self.matched_bad}
-            )
+            result.update({"坏样本数": self.bad, "命中坏样本数": self.matched_bad, "未命中坏样本数": self.bad - self.matched_bad})
         return result

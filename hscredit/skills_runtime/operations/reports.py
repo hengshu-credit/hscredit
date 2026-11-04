@@ -74,11 +74,7 @@ def _extract_feature_summary(staged: Path) -> pd.DataFrame:
         workbook = load_workbook(staged, read_only=True, data_only=True)
         for worksheet in workbook.worksheets:
             title_row = next(
-                (
-                    row_number
-                    for row_number, values in enumerate(worksheet.iter_rows(values_only=True), start=1)
-                    if any(isinstance(value, str) and value.endswith("变量综合统计") for value in values)
-                ),
+                (row_number for row_number, values in enumerate(worksheet.iter_rows(values_only=True), start=1) if any(isinstance(value, str) and value.endswith("变量综合统计") for value in values)),
                 None,
             )
             if title_row is None:
@@ -113,12 +109,7 @@ def _extract_feature_summary(staged: Path) -> pd.DataFrame:
                 feature_name = values[feature_position] if feature_position < len(values) else None
                 if feature_name is None:
                     break
-                records.append(
-                    {
-                        column: values[header_positions[column]] if header_positions[column] < len(values) else None
-                        for column in selected_columns
-                    }
-                )
+                records.append({column: values[header_positions[column]] if header_positions[column] < len(values) else None for column in selected_columns})
             return pd.DataFrame(records, columns=selected_columns)
     except Exception as exc:
         raise SkillExecutionError(
@@ -217,11 +208,7 @@ def _auto_model_report(context) -> dict:
     summary = {"datasets": list(datasets), "dataset_count": len(datasets)}
     if report._is_overdue_cfg():
         # 外部 (X, y) 的 y 优先，不把其标签错误归因于逾期比较符。
-        generated_datasets = [
-            name
-            for name, value in datasets.items()
-            if isinstance(value, pd.DataFrame) or (len(value) == 2 and value[1] is None)
-        ]
+        generated_datasets = [name for name, value in datasets.items() if isinstance(value, pd.DataFrame) or (len(value) == 2 and value[1] is None)]
         if generated_datasets:
             overdue, dpds = report._overdue_dpds()
             summary.update(

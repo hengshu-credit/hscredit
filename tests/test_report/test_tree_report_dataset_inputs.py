@@ -51,9 +51,7 @@ def test_single_label_frames_match_auto_model_report_naming_and_raw_rows(tree, s
     datasets = _datasets(samples, count, kind)
     options = {"target": "FPD"} if label_mode == "target" else {"overdue": ["MOB1"], "dpds": [7]}
     baseline = DecisionTreeClassifier(max_depth=2, random_state=42).fit(samples[["评分", "多头"]], samples.FPD)
-    reference = auto_model_report(
-        baseline, datasets=datasets, features=["评分", "多头"], verbose=False, with_plots=False, n_jobs=1, **options
-    )
+    reference = auto_model_report(baseline, datasets=datasets, features=["评分", "多头"], verbose=False, with_plots=False, n_jobs=1, **options)
     names = list(reference._datasets)
     frames = list(datasets.values()) if kind == "dict" else datasets
     originals = [frame.copy(deep=True) for frame in frames]
@@ -84,9 +82,7 @@ def test_single_label_excel_handles_one_and_many_frames(tree, samples, tmp_path,
     frames = list(datasets.values()) if kind == "dict" else datasets
     names = list(datasets) if kind == "dict" else [f"数据集{i+1}" for i in range(count)]
     path = tmp_path / f"{kind}-{count}.xlsx"
-    returned = tree.report(
-        datasets=datasets, target="FPD", amount="金额", date="日期", methods=["quantile"], save=path, round_digits=False
-    )
+    returned = tree.report(datasets=datasets, target="FPD", amount="金额", date="日期", methods=["quantile"], save=path, round_digits=False)
     assert isinstance(returned, dict if kind == "dict" else list)
     book = load_workbook(path)
     assert len(book.sheetnames) == 2
@@ -99,12 +95,7 @@ def test_single_label_excel_handles_one_and_many_frames(tree, samples, tmp_path,
     for i, frame in enumerate(frames):
         assert main.cell(header + 1 + i, 3).value == len(frame)
         assert main.cell(header + 1 + i, 5).value == frame.FPD.sum()
-    headers = [
-        (r, c)
-        for r in range(1, main.max_row + 1)
-        for c in range(2, main.max_column - 3)
-        if [main.cell(r, c + j).value for j in range(5)] == ["节点编号", "指标含义", "组合策略", "是否叶子", "是否调整"]
-    ]
+    headers = [(r, c) for r in range(1, main.max_row + 1) for c in range(2, main.max_column - 3) if [main.cell(r, c + j).value for j in range(5)] == ["节点编号", "指标含义", "组合策略", "是否叶子", "是否调整"]]
     assert len(headers) == 2 * (count + 1)
     rules = tree.get_rules(leaf_only=False)
     for i, frame in enumerate(frames):

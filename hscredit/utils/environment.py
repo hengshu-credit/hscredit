@@ -43,18 +43,12 @@ def check_environment(packages=None, *, strict=False):
         state = "缺失" if declared is None else "正常"
         if actual is not None and declared != actual:
             state = "导入版本与安装元数据不一致"
-        elif (
-            declared is not None
-            and requirement.specifier
-            and not requirement.specifier.contains(actual or declared, prereleases=True)
-        ):
+        elif declared is not None and requirement.specifier and not requirement.specifier.contains(actual or declared, prereleases=True):
             state = "版本不满足声明"
         rows.append({"依赖": name, "要求": str(requirement.specifier), "安装版本": declared, "导入版本": actual, "状态": state})
     result = {"Python": sys.version.split()[0], "正常": all(row["状态"] == "正常" for row in rows), "依赖": rows}
     if strict and not result["正常"]:
         from ..exceptions import DependencyError
 
-        raise DependencyError(
-            "运行环境不满足要求: " + "；".join(f"{row['依赖']}: {row['状态']}" for row in rows if row["状态"] != "正常")
-        )
+        raise DependencyError("运行环境不满足要求: " + "；".join(f"{row['依赖']}: {row['状态']}" for row in rows if row["状态"] != "正常"))
     return result

@@ -379,18 +379,9 @@ class VIFSelector(BaseFeatureSelector):
         """
         self._get_feature_names(X)
         initialize_history(self)
-        if (
-            isinstance(self.max_iter, (bool, np.bool_))
-            or not isinstance(self.max_iter, (int, np.integer))
-            or self.max_iter < 1
-        ):
+        if isinstance(self.max_iter, (bool, np.bool_)) or not isinstance(self.max_iter, (int, np.integer)) or self.max_iter < 1:
             raise ValueError("max_iter 必须为正整数")
-        if (
-            isinstance(self.threshold, (bool, np.bool_))
-            or not isinstance(self.threshold, (int, float, np.number))
-            or not np.isfinite(self.threshold)
-            or self.threshold <= 0
-        ):
+        if isinstance(self.threshold, (bool, np.bool_)) or not isinstance(self.threshold, (int, float, np.number)) or not np.isfinite(self.threshold) or self.threshold <= 0:
             raise ValueError("VIF 阈值必须为有限正数")
         self.score_name_ = "VIF值"
         self.score_direction_ = "越小越好"
@@ -424,10 +415,7 @@ class VIFSelector(BaseFeatureSelector):
             iteration_count += 1
             last_vif = vif_series
             series_bytes = int(vif_series.memory_usage(index=True, deep=True)) + 256
-            if (
-                stored_cells + len(vif_series) <= self.max_report_events
-                and stored_bytes + series_bytes <= self.max_report_bytes
-            ):
+            if stored_cells + len(vif_series) <= self.max_report_events and stored_bytes + series_bytes <= self.max_report_bytes:
                 vif_history.append(vif_series.copy())
                 stored_cells += len(vif_series)
                 stored_bytes += series_bytes
@@ -449,9 +437,7 @@ class VIFSelector(BaseFeatureSelector):
 
             # include 字段需要参与 VIF 回归，但不能被迭代剔除；只在其余
             # 候选字段中寻找本轮最大 VIF。
-            removable_vif = vif_series.drop(
-                labels=[feature for feature in forced_include if feature in vif_series.index]
-            )
+            removable_vif = vif_series.drop(labels=[feature for feature in forced_include if feature in vif_series.index])
             if removable_vif.empty:
                 self.selection_stopping_reason_ = "仅剩强制保留字段"
                 break
@@ -525,11 +511,7 @@ class VIFSelector(BaseFeatureSelector):
                     "指标值": value,
                     "有效阈值": self.threshold,
                     "是否有效": not np.isnan(value),
-                    "原因": (
-                        "强制保留"
-                        if feature in forced_include
-                        else ("满足VIF阈值" if value <= self.threshold else "迭代上限结束，仍超过阈值")
-                    ),
+                    "原因": ("强制保留" if feature in forced_include else ("满足VIF阈值" if value <= self.threshold else "迭代上限结束，仍超过阈值")),
                 },
             )
 

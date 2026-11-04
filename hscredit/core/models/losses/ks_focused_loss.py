@@ -215,12 +215,7 @@ class KSFocusedLoss(BaseLoss):
         focus = self.focus_weight
         bce_value = np.mean((1 + focus * kernel) * bce)
         focus_grad = kernel * bce_grad + kernel_grad * bce - center_grad * np.sum(kernel_grad * bce)
-        focus_hess = (
-            kernel * bce_hess
-            + 2 * (1 - center_grad) * kernel_grad * bce_grad
-            + (1 - 2 * center_grad) * kernel_hess * bce
-            + center_grad**2 * np.sum(kernel_hess * bce)
-        )
+        focus_hess = kernel * bce_hess + 2 * (1 - center_grad) * kernel_grad * bce_grad + (1 - 2 * center_grad) * kernel_hess * bce + center_grad**2 * np.sum(kernel_hess * bce)
         grad = self.bce_weight * (bce_grad + focus * focus_grad)
         hess = self.bce_weight * (bce_hess + focus * focus_hess)
         separation = stats["mu_neg"] - stats["mu_pos"]
@@ -228,9 +223,5 @@ class KSFocusedLoss(BaseLoss):
         means = np.where(pos, stats["mu_pos"], stats["mu_neg"])
         grad += n * self.var_weight * 2 * (p - means) / count
         hess += n * self.var_weight * 2 * (1 - 1 / count) / count
-        value = (
-            self.bce_weight * bce_value
-            + self.ks_weight * separation
-            + self.var_weight * (stats["var_pos"] + stats["var_neg"])
-        )
+        value = self.bce_weight * bce_value + self.ks_weight * separation + self.var_weight * (stats["var_pos"] + stats["var_neg"])
         return float(value), grad, hess

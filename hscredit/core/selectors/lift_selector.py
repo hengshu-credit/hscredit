@@ -107,19 +107,11 @@ def _compute_lift_pair(x, y, ratio, tie_policy="fractional", missing_policy="exc
         lower = ordered[k - 1]
         lower_left = int(np.searchsorted(ordered, lower, side="left"))
         lower_right = int(np.searchsorted(ordered, lower, side="right"))
-        lower_bad = cumulative_bad[lower_left] + (cumulative_bad[lower_right] - cumulative_bad[lower_left]) * (
-            k - lower_left
-        ) / (lower_right - lower_left)
+        lower_bad = cumulative_bad[lower_left] + (cumulative_bad[lower_right] - cumulative_bad[lower_left]) * (k - lower_left) / (lower_right - lower_left)
         upper = ordered[n - k]
         upper_left = int(np.searchsorted(ordered, upper, side="left"))
         upper_right = int(np.searchsorted(ordered, upper, side="right"))
-        upper_bad = (
-            cumulative_bad[n]
-            - cumulative_bad[upper_right]
-            + (cumulative_bad[upper_right] - cumulative_bad[upper_left])
-            * (k - (n - upper_right))
-            / (upper_right - upper_left)
-        )
+        upper_bad = cumulative_bad[n] - cumulative_bad[upper_right] + (cumulative_bad[upper_right] - cumulative_bad[upper_left]) * (k - (n - upper_right)) / (upper_right - upper_left)
     except (TypeError, ValueError) as exc:
         raise ValueError("LIFT 特征必须具有一致、可比较的取值，请先编码混合类别") from exc
     return float(upper_bad / k / base_bad_rate), float(lower_bad / k / base_bad_rate), n, k
@@ -410,10 +402,7 @@ class LiftSelector(BaseFeatureSelector):
 
         results = self._parallel_execute(
             _compute_lift_feature,
-            (
-                (col, X[col].values, y, self.ratio, self.direction, self.tie_policy, self.missing_policy)
-                for col in X.columns
-            ),
+            ((col, X[col].values, y, self.ratio, self.direction, self.tie_policy, self.missing_policy) for col in X.columns),
             task_labels=X.columns,
             default_backend="threading",
             workload=ParallelWorkload(
@@ -436,9 +425,7 @@ class LiftSelector(BaseFeatureSelector):
 
         # 评分只奖励目标方向上的改善
         self.scores_ = pd.Series(scores, index=X.columns)
-        self.effective_counts_ = (
-            self.valid_counts_.copy() if self.missing_policy == "exclude" else self.total_counts_.copy()
-        )
+        self.effective_counts_ = self.valid_counts_.copy() if self.missing_policy == "exclude" else self.total_counts_.copy()
         self.head_counts_ = np.ceil(self.effective_counts_ * self.ratio).astype(np.int64)
         self.actual_coverage_ = self.head_counts_ / self.effective_counts_.replace(0, np.nan)
 
@@ -463,7 +450,4 @@ class LiftSelector(BaseFeatureSelector):
 
         # 生成剔除原因
         dir_label = {"auto": "自动", "bad": "找坏人", "good": "找好人"}
-        self._drop_reason = (
-            f"LIFT@{self.ratio:.0%} 方向改善得分 < {self.threshold}"
-            f"（方向: {dir_label.get(self.direction, self.direction)}）"
-        )
+        self._drop_reason = f"LIFT@{self.ratio:.0%} 方向改善得分 < {self.threshold}" f"（方向: {dir_label.get(self.direction, self.direction)}）"

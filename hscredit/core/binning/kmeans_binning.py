@@ -194,9 +194,7 @@ class KMeansBinning(BaseBinning):
         self.max_iter = max_iter
         self.force_numerical = force_numerical
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "KMeansBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "KMeansBinning":
         """拟合 K-Means 分箱。
 
         对每个数值特征做一维 K-Means 聚类，以相邻聚类中心的中点作为切分点；类别特征按
@@ -247,9 +245,7 @@ class KMeansBinning(BaseBinning):
                     verbose=False,
                 )
                 clean = X.dropna()
-                splits = mono._ensure_monotonic(
-                    clean, y.loc[clean.index], splits, mono._detect_monotonic_mode(clean, y.loc[clean.index], splits)
-                )
+                splits = mono._ensure_monotonic(clean, y.loc[clean.index], splits, mono._detect_monotonic_mode(clean, y.loc[clean.index], splits))
                 splits = self._round_splits(splits)
             self.splits_[feature] = splits
         self.n_bins_[feature] = len(splits) + 1
@@ -318,9 +314,7 @@ class KMeansBinning(BaseBinning):
 
         for _ in range(self.n_init):
             try:
-                centers, labels = kmeans2(
-                    X_reshaped, n_bins, iter=self.max_iter, minit="points", missing="warn", seed=rng
-                )
+                centers, labels = kmeans2(X_reshaped, n_bins, iter=self.max_iter, minit="points", missing="warn", seed=rng)
 
                 # 计算惯性（簇内平方和）
                 inertia = 0
@@ -371,9 +365,7 @@ class KMeansBinning(BaseBinning):
         y_valid = y[mask]
 
         # 计算每个类别的坏样本率
-        cat_stats = (
-            pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
-        )
+        cat_stats = pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
 
         # 过滤掉样本数过少的类别
         min_samples = self._get_min_samples(len(x_valid))
@@ -506,9 +498,7 @@ class KMeansBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。

@@ -232,17 +232,9 @@ class NullImportanceSelector(BaseFeatureSelector):
         :param y: 目标变量
         """
         initialize_history(self)
-        if (
-            isinstance(self.n_runs, (bool, np.bool_))
-            or not isinstance(self.n_runs, (int, np.integer))
-            or self.n_runs < 1
-        ):
+        if isinstance(self.n_runs, (bool, np.bool_)) or not isinstance(self.n_runs, (int, np.integer)) or self.n_runs < 1:
             raise ValueError("n_runs 必须为正整数")
-        if (
-            isinstance(self.threshold, (bool, np.bool_))
-            or not isinstance(self.threshold, (int, float, np.number))
-            or not np.isfinite(self.threshold)
-        ):
+        if isinstance(self.threshold, (bool, np.bool_)) or not isinstance(self.threshold, (int, float, np.number)) or not np.isfinite(self.threshold):
             raise ValueError("Null Importance 阈值必须为有限数值")
         if y is None:
             if self.target not in X.columns:
@@ -270,9 +262,7 @@ class NullImportanceSelector(BaseFeatureSelector):
 
         # 计算实际标签下的重要性和 shuffle 目标后的 null 重要性。
         total_fits = n_splits * self.n_runs
-        retained_fits = min(
-            total_fits, self.max_report_events // max(1, n_features), self.max_report_bytes // (16 * max(1, n_features))
-        )
+        retained_fits = min(total_fits, self.max_report_events // max(1, n_features), self.max_report_bytes // (16 * max(1, n_features)))
         actual_importances = np.zeros((n_features, retained_fits))
         null_importances = np.zeros((n_features, retained_fits))
         actual_sum = np.zeros(n_features)
@@ -286,10 +276,7 @@ class NullImportanceSelector(BaseFeatureSelector):
         tasks = [(run, (base_seed + run) % max_seed, self.estimator, X, y, self.cv) for run in range(self.n_runs)]
         estimator_params = self.estimator.get_params(deep=True) if hasattr(self.estimator, "get_params") else {}
         worker_aliases = {"n_jobs", "thread_count", "num_workers"}
-        has_parallel_children = any(
-            name.rsplit("__", 1)[-1] in worker_aliases and isinstance(value, (int, np.integer)) and value not in (0, 1)
-            for name, value in estimator_params.items()
-        )
+        has_parallel_children = any(name.rsplit("__", 1)[-1] in worker_aliases and isinstance(value, (int, np.integer)) and value not in (0, 1) for name, value in estimator_params.items())
         cv_cost = float(self.cv) if isinstance(self.cv, (int, np.integer)) else 5.0
         # 实验分批归并：最终均值利用全部实验，诊断矩阵仅保留明确上限内的前缀。
         for batch_start in range(0, self.n_runs, 32):
@@ -312,12 +299,7 @@ class NullImportanceSelector(BaseFeatureSelector):
                 ),
             )
             for run, actual, null in results:
-                if (
-                    actual.shape != (n_features, n_splits)
-                    or null.shape != actual.shape
-                    or not np.isfinite(actual).all()
-                    or not np.isfinite(null).all()
-                ):
+                if actual.shape != (n_features, n_splits) or null.shape != actual.shape or not np.isfinite(actual).all() or not np.isfinite(null).all():
                     raise ValueError("Null Importance 实验返回的模型重要性形状或数值无效")
                 actual_sum += actual.sum(axis=1)
                 null_sum += null.sum(axis=1)

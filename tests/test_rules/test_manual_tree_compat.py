@@ -14,9 +14,7 @@ from hscredit.report.mining import manual_tree_extractor as manual_tree
 from hscredit.utils import style_rule_table
 
 
-@pytest.mark.parametrize(
-    "version, expected", [("0.24.2", False), ("1.2.2", False), ("1.3.0", True), ("1.6.1", True), ("1.10.0rc1", True)]
-)
+@pytest.mark.parametrize("version, expected", [("0.24.2", False), ("1.2.2", False), ("1.3.0", True), ("1.6.1", True), ("1.10.0rc1", True)])
 def test_native_missing_uses_parsed_version(monkeypatch, version, expected):
     monkeypatch.setattr(manual_tree.sklearn, "__version__", version)
     assert manual_tree._sklearn_supports_native_missing() is expected
@@ -25,9 +23,7 @@ def test_native_missing_uses_parsed_version(monkeypatch, version, expected):
 @pytest.fixture
 def tree():
     data = pd.DataFrame({"评分": [1, 2, 3, 4, 5, 6], "逾期": [1, 0, 1, 0, 0, 0]})
-    return ManualTreeExtractor(target="逾期", max_depth=1, min_samples_split=2, min_samples_leaf=1, n_jobs=1).fit(
-        data, features=["评分"]
-    )
+    return ManualTreeExtractor(target="逾期", max_depth=1, min_samples_split=2, min_samples_leaf=1, n_jobs=1).fit(data, features=["评分"])
 
 
 def test_display_renders_both_figure_and_html(monkeypatch, tree):

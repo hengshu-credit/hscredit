@@ -252,9 +252,7 @@ class MonotonicBinning(BaseBinning):
         if monotonic not in self.VALID_MONOTONIC_MODES:
             raise ValueError(f"monotonic必须是以下之一: {self.VALID_MONOTONIC_MODES}")
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "MonotonicBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "MonotonicBinning":
         """拟合单调性约束分箱.
 
         :param X: 训练数据，shape (n_samples, n_features)
@@ -410,12 +408,8 @@ class MonotonicBinning(BaseBinning):
 
         if len(bin_stats) < 3:
             # 分箱数太少，无法判断复杂模式，使用简单单调性
-            asc_score = sum(
-                1 for i in range(len(bin_stats) - 1) if bin_stats["mean"].iloc[i] <= bin_stats["mean"].iloc[i + 1]
-            )
-            desc_score = sum(
-                1 for i in range(len(bin_stats) - 1) if bin_stats["mean"].iloc[i] >= bin_stats["mean"].iloc[i + 1]
-            )
+            asc_score = sum(1 for i in range(len(bin_stats) - 1) if bin_stats["mean"].iloc[i] <= bin_stats["mean"].iloc[i + 1])
+            desc_score = sum(1 for i in range(len(bin_stats) - 1) if bin_stats["mean"].iloc[i] >= bin_stats["mean"].iloc[i + 1])
             return "ascending" if asc_score >= desc_score else "descending"
 
         bad_rates = bin_stats["mean"].values
@@ -437,13 +431,9 @@ class MonotonicBinning(BaseBinning):
         # 4. 极值点统计
         total_records = bin_stats["count"].sum()
         p_records_min_left = bin_stats["count"].iloc[:pos_min].sum() / total_records if pos_min > 0 else 0
-        p_records_min_right = (
-            bin_stats["count"].iloc[pos_min + 1 :].sum() / total_records if pos_min < n_prebins - 1 else 0
-        )
+        p_records_min_right = bin_stats["count"].iloc[pos_min + 1 :].sum() / total_records if pos_min < n_prebins - 1 else 0
         p_records_max_left = bin_stats["count"].iloc[:pos_max].sum() / total_records if pos_max > 0 else 0
-        p_records_max_right = (
-            bin_stats["count"].iloc[pos_max + 1 :].sum() / total_records if pos_max < n_prebins - 1 else 0
-        )
+        p_records_max_right = bin_stats["count"].iloc[pos_max + 1 :].sum() / total_records if pos_max < n_prebins - 1 else 0
 
         # 5. 极值点三角形面积比例
         p_area = self._extreme_points_area(bad_rates)
@@ -465,9 +455,7 @@ class MonotonicBinning(BaseBinning):
             )
         else:
             # auto/auto_heuristic模式：允许单增、单减、peak、valley
-            return self._auto_decision(
-                lr_sense, p_records_min_left, p_records_min_right, p_records_max_left, p_records_max_right, p_area
-            )
+            return self._auto_decision(lr_sense, p_records_min_left, p_records_min_right, p_records_max_left, p_records_max_right, p_area)
 
     def _n_peaks_valleys(self, x: np.ndarray) -> int:
         """计算数组中峰值和谷值的数量（趋势变化次数）.
@@ -1015,9 +1003,7 @@ class MonotonicBinning(BaseBinning):
         x_valid = x_clean[mask]
         y_valid = y[mask]
 
-        cat_stats = (
-            pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
-        )
+        cat_stats = pd.DataFrame({"category": x_valid, "target": y_valid}).groupby("category")["target"].agg(["mean", "count"])
 
         min_samples = self._get_min_samples(len(x_valid))
         cat_stats = cat_stats[cat_stats["count"] >= min_samples]
@@ -1087,10 +1073,7 @@ class MonotonicBinning(BaseBinning):
             merged_cat = f"{cat1},{cat2}"
 
             merged_count = cat_stats.iloc[merge_idx]["count"] + cat_stats.iloc[merge_idx + 1]["count"]
-            merged_bad = (
-                cat_stats.iloc[merge_idx]["mean"] * cat_stats.iloc[merge_idx]["count"]
-                + cat_stats.iloc[merge_idx + 1]["mean"] * cat_stats.iloc[merge_idx + 1]["count"]
-            )
+            merged_bad = cat_stats.iloc[merge_idx]["mean"] * cat_stats.iloc[merge_idx]["count"] + cat_stats.iloc[merge_idx + 1]["mean"] * cat_stats.iloc[merge_idx + 1]["count"]
             merged_rate = merged_bad / merged_count
 
             categories.pop(merge_idx + 1)
@@ -1172,9 +1155,7 @@ class MonotonicBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。

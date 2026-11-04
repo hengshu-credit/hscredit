@@ -954,17 +954,11 @@ class ScoreDriftCalibrator(ExtraParamsMixin, BaseDriftCalibrator):
 
         # 创建具体的校准器
         if self.method == "linear":
-            self.calibrator_ = LinearDriftCalibrator(
-                reference_scores=self.reference_scores, clip_bounds=self.clip_bounds, **self.calibrator_params
-            )
+            self.calibrator_ = LinearDriftCalibrator(reference_scores=self.reference_scores, clip_bounds=self.clip_bounds, **self.calibrator_params)
         elif self.method == "quantile":
-            self.calibrator_ = QuantileAligner(
-                reference_scores=self.reference_scores, clip_bounds=self.clip_bounds, **self.calibrator_params
-            )
+            self.calibrator_ = QuantileAligner(reference_scores=self.reference_scores, clip_bounds=self.clip_bounds, **self.calibrator_params)
         elif self.method == "binning":
-            self.calibrator_ = BinningRecalibrator(
-                reference_scores=self.reference_scores, clip_bounds=self.clip_bounds, **self.calibrator_params
-            )
+            self.calibrator_ = BinningRecalibrator(reference_scores=self.reference_scores, clip_bounds=self.clip_bounds, **self.calibrator_params)
         else:
             raise ValueError(f"不支持的校准方法: {self.method}")
 
@@ -1201,9 +1195,7 @@ def compare_drift_methods(
             scores_calib = calibrator.predict_score(X_current)
 
             ax.hist(scores_ref, bins=30, alpha=0.6, label="Reference", color=colors[0], density=True, edgecolor="white")
-            ax.hist(
-                scores_calib, bins=30, alpha=0.6, label="Calibrated", color=colors[2], density=True, edgecolor="white"
-            )
+            ax.hist(scores_calib, bins=30, alpha=0.6, label="Calibrated", color=colors[2], density=True, edgecolor="white")
             ax.set_xlabel("Score", fontweight="bold")
             ax.set_ylabel("Density", fontweight="bold")
             ax.set_title(f"Method: {method}", fontweight="bold")

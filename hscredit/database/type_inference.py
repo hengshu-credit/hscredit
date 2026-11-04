@@ -81,9 +81,7 @@ def profile_string_series(series: pd.Series) -> StringColumnProfile:
             (len(value.encode("utf-8")) for value in string_values),
             default=0,
         ),
-        all_json_documents=all_strings
-        and bool(string_values)
-        and all(_is_json_document(value) for value in string_values),
+        all_json_documents=all_strings and bool(string_values) and all(_is_json_document(value) for value in string_values),
     )
 
 

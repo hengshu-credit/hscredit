@@ -18,9 +18,7 @@ from ...utils.overdue import make_overdue_target, overdue_label, validate_overdu
 from .utils import validate_dataframe
 
 
-def _build_overdue_labels(
-    overdue: Union[str, List[str]], dpds: Union[int, List[int]], overdue_operator: str = ">"
-) -> List[Tuple[str, int, str]]:
+def _build_overdue_labels(overdue: Union[str, List[str]], dpds: Union[int, List[int]], overdue_operator: str = ">") -> List[Tuple[str, int, str]]:
     """构建逾期标签列表.
 
     :param overdue: 逾期天数字段名或列表
@@ -439,11 +437,7 @@ def bad_rate_by_bins(
     )
     if frame[feature].notna().sum() == 0:
         return pd.DataFrame()
-    bins = (
-        pd.qcut(frame[feature], q=max_n_bins, duplicates="drop")
-        if method == "quantile"
-        else pd.cut(frame[feature], bins=max_n_bins)
-    )
+    bins = pd.qcut(frame[feature], q=max_n_bins, duplicates="drop") if method == "quantile" else pd.cut(frame[feature], bins=max_n_bins)
     results = {}
     for name, values in targets.y_map(frame, "plain").items():
         grouped = values.groupby(bins, observed=False).agg(["count", "sum", "mean"]).reset_index()
@@ -459,9 +453,7 @@ def bad_rate_by_bins(
 
 
 @analysis_inputs("df", roles=("date",))
-def sample_distribution(
-    df: pd.DataFrame, date: str, freq: str = "M", target: Optional[TargetInput] = None
-) -> pd.DataFrame:
+def sample_distribution(df: pd.DataFrame, date: str, freq: str = "M", target: Optional[TargetInput] = None) -> pd.DataFrame:
     """样本时间分布分析.
 
     :param df: 输入数据

@@ -148,9 +148,7 @@ def _as_list(value: Any) -> List[Any]:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float, np.integer, np.floating)) and not (
-        isinstance(value, float) and (np.isnan(value) or np.isinf(value))
-    )
+    return isinstance(value, (int, float, np.integer, np.floating)) and not (isinstance(value, float) and (np.isnan(value) or np.isinf(value)))
 
 
 def _parse_value_conf(field: Any, conf: Any) -> Dict[str, Any]:
@@ -217,11 +215,7 @@ def normalize_values(values: Any, data: pd.DataFrame) -> List[Dict[str, Any]]:
             agg = "sum" if pd.api.types.is_numeric_dtype(data[col]) else "count"
         key = str(agg).lower()
         if key not in AGG_MAP:
-            raise ValueError(
-                "不支持的聚合方式 '{}'，可选: {}（可用 register_aggregation 扩展）".format(
-                    agg, ", ".join(sorted(AGG_MAP))
-                )
-            )
+            raise ValueError("不支持的聚合方式 '{}'，可选: {}（可用 register_aggregation 扩展）".format(agg, ", ".join(sorted(AGG_MAP))))
         subtotal, prefix = AGG_MAP[key]
 
         show_as_raw = conf["show_as"]
@@ -382,9 +376,7 @@ def build_pivot_spec(
                     "group_interval": bucket["interval"],
                     "min": float(non_null.min()) if len(non_null) else 0.0,
                     "max": float(non_null.max()) if len(non_null) else 0.0,
-                    "all_integer": bool(
-                        len(non_null) and np.all(np.equal(np.mod(non_null.to_numpy(dtype=float), 1), 0))
-                    ),
+                    "all_integer": bool(len(non_null) and np.all(np.equal(np.mod(non_null.to_numpy(dtype=float), 1), 0))),
                     "has_missing": bool(data[col].isna().any()),
                 }
             )
@@ -402,9 +394,7 @@ def build_pivot_spec(
                 non_null = ser.dropna()
                 info["min"] = float(non_null.min()) if len(non_null) else 0.0
                 info["max"] = float(non_null.max()) if len(non_null) else 0.0
-                info["all_integer"] = bool(
-                    len(non_null) and np.all(np.equal(np.mod(non_null.to_numpy(dtype=float), 1), 0))
-                )
+                info["all_integer"] = bool(len(non_null) and np.all(np.equal(np.mod(non_null.to_numpy(dtype=float), 1), 0)))
             info["has_missing"] = bool(ser.isna().any())
         field_infos.append(info)
 
@@ -507,20 +497,12 @@ def render_cache_definition_xml(spec: Dict[str, Any], rid_records: str) -> str:
         name = _esc(info["name"])
         if info.get("is_grouped"):
             # 数值分组字段：数值 sharedItems + fieldGroup/rangePr/groupItems
-            num_attrs = (
-                ' containsSemiMixedTypes="0" containsString="0" containsNumber="1"'
-                ' minValue="{}" maxValue="{}"'.format(_fmt_num(info["min"]), _fmt_num(info["max"]))
-            )
+            num_attrs = ' containsSemiMixedTypes="0" containsString="0" containsNumber="1"' ' minValue="{}" maxValue="{}"'.format(_fmt_num(info["min"]), _fmt_num(info["max"]))
             if info.get("all_integer"):
                 num_attrs += ' containsInteger="1"'
             labels = info["shared"]
             group_items = "".join('<s v="{}"/>'.format(_esc(lab)) for lab in labels)
-            field_group = (
-                "<fieldGroup>"
-                '<rangePr autoStart="0" autoEnd="0" startNum="{s}" endNum="{e}" groupInterval="{i}"/>'
-                '<groupItems count="{n}">{items}</groupItems>'
-                "</fieldGroup>"
-            ).format(
+            field_group = ("<fieldGroup>" '<rangePr autoStart="0" autoEnd="0" startNum="{s}" endNum="{e}" groupInterval="{i}"/>' '<groupItems count="{n}">{items}</groupItems>' "</fieldGroup>").format(
                 s=_fmt_num(info["group_start"]),
                 e=_fmt_num(info["group_end"]),
                 i=_fmt_num(info["group_interval"]),
@@ -544,10 +526,7 @@ def render_cache_definition_xml(spec: Dict[str, Any], rid_records: str) -> str:
             shared_xml = "<sharedItems{}>{}</sharedItems>".format(attrs, "".join(items))
         else:
             if info.get("is_number"):
-                attrs = (
-                    ' containsSemiMixedTypes="0" containsString="0" containsNumber="1"'
-                    ' minValue="{}" maxValue="{}"'.format(_fmt_num(info["min"]), _fmt_num(info["max"]))
-                )
+                attrs = ' containsSemiMixedTypes="0" containsString="0" containsNumber="1"' ' minValue="{}" maxValue="{}"'.format(_fmt_num(info["min"]), _fmt_num(info["max"]))
                 if info.get("all_integer"):
                     attrs += ' containsInteger="1"'
             else:
@@ -557,17 +536,7 @@ def render_cache_definition_xml(spec: Dict[str, Any], rid_records: str) -> str:
             shared_xml = "<sharedItems{}/>".format(attrs)
         fields_xml.append('<cacheField name="{}" numFmtId="0">{}</cacheField>'.format(name, shared_xml))
 
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
-        '<pivotCacheDefinition xmlns="{ns}" xmlns:r="{nsr}" r:id="{rid}" '
-        'refreshOnLoad="1" refreshedBy="hscredit" createdVersion="6" refreshedVersion="6" '
-        'minRefreshableVersion="3" recordCount="{rc}">'
-        '<cacheSource type="worksheet">'
-        '<worksheetSource ref="{ref}" sheet="{sheet}"/>'
-        "</cacheSource>"
-        '<cacheFields count="{fc}">{fields}</cacheFields>'
-        "</pivotCacheDefinition>"
-    ).format(
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' '<pivotCacheDefinition xmlns="{ns}" xmlns:r="{nsr}" r:id="{rid}" ' 'refreshOnLoad="1" refreshedBy="hscredit" createdVersion="6" refreshedVersion="6" ' 'minRefreshableVersion="3" recordCount="{rc}">' '<cacheSource type="worksheet">' '<worksheetSource ref="{ref}" sheet="{sheet}"/>' "</cacheSource>" '<cacheFields count="{fc}">{fields}</cacheFields>' "</pivotCacheDefinition>").format(
         ns=NS_MAIN,
         nsr=NS_REL,
         rid=rid_records,
@@ -594,10 +563,7 @@ def render_cache_records_xml(spec: Dict[str, Any]) -> str:
             else:
                 cells.append('<s v="{}"/>'.format(_esc(val)))
         rows_xml.append("<r>{}</r>".format("".join(cells)))
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
-        '<pivotCacheRecords xmlns="{ns}" xmlns:r="{nsr}" count="{rc}">{rows}</pivotCacheRecords>'
-    ).format(ns=NS_MAIN, nsr=NS_REL, rc=len(rows_xml), rows="".join(rows_xml))
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' '<pivotCacheRecords xmlns="{ns}" xmlns:r="{nsr}" count="{rc}">{rows}</pivotCacheRecords>').format(ns=NS_MAIN, nsr=NS_REL, rc=len(rows_xml), rows="".join(rows_xml))
 
 
 def _fmt_num(value: float) -> str:
@@ -622,27 +588,14 @@ def build_theme_dxfs(theme_color: str, stripe_color: str) -> List[str]:
     """构建主题样式所需的两个 dxf（表头：主题色底白字加粗；斑马纹：浅色调底）。"""
     header = _to_argb(theme_color)
     stripe = _to_argb(stripe_color)
-    header_dxf = (
-        '<dxf><font><b/><color rgb="FFFFFFFF"/></font>'
-        '<fill><patternFill patternType="solid">'
-        '<fgColor rgb="{c}"/><bgColor rgb="{c}"/></patternFill></fill></dxf>'
-    ).format(c=header)
-    stripe_dxf = (
-        '<dxf><fill><patternFill patternType="solid">'
-        '<fgColor rgb="{c}"/><bgColor rgb="{c}"/></patternFill></fill></dxf>'
-    ).format(c=stripe)
+    header_dxf = ('<dxf><font><b/><color rgb="FFFFFFFF"/></font>' '<fill><patternFill patternType="solid">' '<fgColor rgb="{c}"/><bgColor rgb="{c}"/></patternFill></fill></dxf>').format(c=header)
+    stripe_dxf = ('<dxf><fill><patternFill patternType="solid">' '<fgColor rgb="{c}"/><bgColor rgb="{c}"/></patternFill></fill></dxf>').format(c=stripe)
     return [header_dxf, stripe_dxf]
 
 
 def build_theme_tablestyle(name: str, header_dxf_id: int, stripe_dxf_id: int) -> str:
     """构建引用上述 dxf 的数据透视表 tableStyle（表头 + 首行斑马纹 + 总计行同表头色）。"""
-    return (
-        '<tableStyle name="{name}" table="0" pivot="1" count="3">'
-        '<tableStyleElement type="headerRow" dxfId="{h}"/>'
-        '<tableStyleElement type="firstRowStripe" dxfId="{s}"/>'
-        '<tableStyleElement type="totalRow" dxfId="{h}"/>'
-        "</tableStyle>"
-    ).format(name=_esc(name), h=header_dxf_id, s=stripe_dxf_id)
+    return ('<tableStyle name="{name}" table="0" pivot="1" count="3">' '<tableStyleElement type="headerRow" dxfId="{h}"/>' '<tableStyleElement type="firstRowStripe" dxfId="{s}"/>' '<tableStyleElement type="totalRow" dxfId="{h}"/>' "</tableStyle>").format(name=_esc(name), h=header_dxf_id, s=stripe_dxf_id)
 
 
 def resolve_theme_pivot_style_name(styles_xml: str, theme_color: str, stripe_color: str) -> str:
@@ -659,11 +612,7 @@ def resolve_theme_pivot_style_name(styles_xml: str, theme_color: str, stripe_col
 
     def referenced_fill_color(style: ET.Element, element_type: str) -> Optional[str]:
         style_element = next(
-            (
-                element
-                for element in style
-                if element.tag.rsplit("}", 1)[-1] == "tableStyleElement" and element.attrib.get("type") == element_type
-            ),
+            (element for element in style if element.tag.rsplit("}", 1)[-1] == "tableStyleElement" and element.attrib.get("type") == element_type),
             None,
         )
         if style_element is None:
@@ -682,10 +631,7 @@ def resolve_theme_pivot_style_name(styles_xml: str, theme_color: str, stripe_col
         style_name = style.attrib.get("name", "")
         if not style_name.startswith(THEME_PIVOT_STYLE_NAME):
             continue
-        if (
-            referenced_fill_color(style, "headerRow") == desired_header
-            and referenced_fill_color(style, "firstRowStripe") == desired_stripe
-        ):
+        if referenced_fill_color(style, "headerRow") == desired_header and referenced_fill_color(style, "firstRowStripe") == desired_stripe:
             return style_name
 
     if THEME_PIVOT_STYLE_NAME not in used_names:
@@ -796,9 +742,7 @@ def apply_pivot_styles(
         styles_xml = styles_xml.replace(m.group(0), "<tableStyles {}>".format(attrs2), 1)
         styles_xml = styles_xml.replace("</tableStyles>", tablestyle + "</tableStyles>", 1)
     else:
-        block = '<tableStyles count="1" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16">{}</tableStyles>'.format(
-            tablestyle
-        )
+        block = '<tableStyles count="1" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16">{}</tableStyles>'.format(tablestyle)
         styles_xml = styles_xml.replace("</styleSheet>", block + "</styleSheet>", 1)
 
     return styles_xml
@@ -946,17 +890,13 @@ def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, 
                 parts.append('<item x="{}"/>'.format(len(shared)))
             if field_has_subtotal:
                 parts.append('<item t="default"/>')
-            pivot_fields_xml.append(
-                '<pivotField{}><items count="{}">{}</items></pivotField>'.format(attrs, len(parts), "".join(parts))
-            )
+            pivot_fields_xml.append('<pivotField{}><items count="{}">{}</items></pivotField>'.format(attrs, len(parts), "".join(parts)))
         else:
             pivot_fields_xml.append("<pivotField{}/>".format(attrs))
 
     # rowFields / rowItems
     if row_idx:
-        row_fields_xml = '<rowFields count="{}">{}</rowFields>'.format(
-            len(row_idx), "".join('<field x="{}"/>'.format(i) for i in row_idx)
-        )
+        row_fields_xml = '<rowFields count="{}">{}</rowFields>'.format(len(row_idx), "".join('<field x="{}"/>'.format(i) for i in row_idx))
         items_xml, n_row_items = _axis_items_xml(spec["row_combos"], spec["show_row_totals"])
         row_items_xml = '<rowItems count="{}">{}</rowItems>'.format(n_row_items, items_xml)
     else:
@@ -973,9 +913,7 @@ def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, 
         col_fields_xml = ""
         col_items_xml = '<colItems count="1"><i/></colItems>'
     else:
-        col_fields_xml = '<colFields count="{}">{}</colFields>'.format(
-            len(col_levels), "".join('<field x="{}"/>'.format(i) for i in col_levels)
-        )
+        col_fields_xml = '<colFields count="{}">{}</colFields>'.format(len(col_levels), "".join('<field x="{}"/>'.format(i) for i in col_levels))
         # 构造列轴组合：列标签组合 × 值字段索引
         base_combos = spec["col_combos"] if col_idx else [()]
         if n_data > 1:
@@ -1023,11 +961,7 @@ def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, 
                 attrs += ' numFmtId="{}"'.format(fmt_id)
         # 组合占比等需 extLst（Excel 2010+）
         if show_as and v.get("show_as_ext"):
-            ext = (
-                '<extLst><ext uri="{{E15A36E0-9728-4e99-A89B-3F7291B0FE68}}" '
-                'xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">'
-                '<x14:dataField pivotShowAs="{showas}"/></ext></extLst>'
-            ).format(showas=show_as)
+            ext = ('<extLst><ext uri="{{E15A36E0-9728-4e99-A89B-3F7291B0FE68}}" ' 'xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">' '<x14:dataField pivotShowAs="{showas}"/></ext></extLst>').format(showas=show_as)
             data_parts.append('<dataField name="{}"{}>{}</dataField>'.format(_esc(v["name"]), attrs, ext))
         else:
             data_parts.append('<dataField name="{}"{}/>'.format(_esc(v["name"]), attrs))
@@ -1035,9 +969,7 @@ def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, 
 
     # location 估算（Excel 刷新时会重算）
     layout = compute_pivot_layout(spec)
-    location_xml = (
-        '<location ref="{ref}" firstHeaderRow="{fhr}" firstDataRow="{fdr}" firstDataCol="{fdc}"{page}/>'
-    ).format(
+    location_xml = ('<location ref="{ref}" firstHeaderRow="{fhr}" firstDataRow="{fdr}" firstDataCol="{fdc}"{page}/>').format(
         ref=layout["ref"],
         fhr=layout["first_header_row"],
         fdr=layout["first_data_row"],

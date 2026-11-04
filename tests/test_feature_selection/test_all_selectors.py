@@ -51,9 +51,7 @@ def test_vif():
     print("测试 2: VIFSelector (修复迭代剔除逻辑)")
     print("=" * 70)
 
-    X = pd.DataFrame(
-        {"a": [1, 2, 3, 4, 5], "b": [1, 2, 3, 4, 5], "c": [1, 4, 2, 5, 3]}  # 与 a 完全相关  # 与 a/b 不构成线性关系
-    )
+    X = pd.DataFrame({"a": [1, 2, 3, 4, 5], "b": [1, 2, 3, 4, 5], "c": [1, 4, 2, 5, 3]})  # 与 a 完全相关  # 与 a/b 不构成线性关系
 
     vif_selector = VIFSelector(threshold=4.0, verbose=False)
     vif_selector.fit(X)

@@ -10,11 +10,7 @@ import pytest
 def _active_requirements(name, python_version, extra=""):
     """按声明支持的解释器和可选能力解析真实发布元数据。"""
     environment = dict(default_environment(), python_version=python_version, extra=extra)
-    return [
-        requirement
-        for requirement in map(Requirement, metadata.requires("hscredit") or [])
-        if requirement.name == name and (requirement.marker is None or requirement.marker.evaluate(environment))
-    ]
+    return [requirement for requirement in map(Requirement, metadata.requires("hscredit") or []) if requirement.name == name and (requirement.marker is None or requirement.marker.evaluate(environment))]
 
 
 def test_shap_is_base_dependency_and_explain_extra_is_removed():

@@ -80,13 +80,9 @@ def worker(case, rows, columns):
             }
         if psutil.virtual_memory().available < rows * columns * 16 + 512 * 1024 * 1024:
             raise RuntimeError("可用内存不足以安全运行容量基准，请减小 --rows/--columns")
-        frame = pd.DataFrame(
-            rng.standard_normal((rows, columns), dtype=np.float32), columns=[f"字段{i}" for i in range(columns)]
-        )
+        frame = pd.DataFrame(rng.standard_normal((rows, columns), dtype=np.float32), columns=[f"字段{i}" for i in range(columns)])
         y = rng.integers(0, 2, size=rows, dtype=np.int8)
-        pipeline = Pipeline(
-            [("缺失", NullSelector(n_jobs=1)), ("方差", VarianceSelector(n_jobs=1)), ("IV", IVSelector(n_jobs=1))]
-        )
+        pipeline = Pipeline([("缺失", NullSelector(n_jobs=1)), ("方差", VarianceSelector(n_jobs=1)), ("IV", IVSelector(n_jobs=1))])
         _, fit = measure(lambda: pipeline.fit(frame, y))
         report, collect = measure(lambda: collect_selection_report(pipeline))
         with tempfile.TemporaryDirectory(prefix="hscredit-selector-benchmark-") as temporary:

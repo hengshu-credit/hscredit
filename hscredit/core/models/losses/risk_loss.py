@@ -98,11 +98,7 @@ class BadDebtLoss(BaseLoss):
         count = int(np.ceil(len(p) * self.target_approval_rate))
         threshold = np.sort(p)[count - 1] if count else -1.0
         metrics = self._compute_metrics(y, p, threshold)
-        return float(
-            np.mean(bce_terms(y, p)[0])
-            + self.bad_debt_weight * metrics["bad_debt_rate"]
-            + self.approval_weight * abs(metrics["approval_rate"] - self.target_approval_rate)
-        )
+        return float(np.mean(bce_terms(y, p)[0]) + self.bad_debt_weight * metrics["bad_debt_rate"] + self.approval_weight * abs(metrics["approval_rate"] - self.target_approval_rate))
 
     def gradient(self, y_true, y_pred):
         """硬审批惩罚无连续导数，训练仅使用 BCE 代理梯度。

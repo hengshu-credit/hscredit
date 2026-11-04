@@ -42,9 +42,7 @@ def test_rule_amount_validation_uses_each_targets_effective_population():
     data = pd.DataFrame({"x": [0, 0, 1, 1], "标签": [0, -1, 1, 0], "金额": [1.0, np.nan, 3.0, 4.0]})
     with pytest.raises(ValueError, match="金额"):
         Rule("x == 1").report(data, target="标签", amount="金额", del_grey=True, margins=True)
-    table = Rule("x == 1").report(
-        data.assign(金额=data["金额"].fillna(0)), target="标签", amount="金额", del_grey=True, margins=True
-    )
+    table = Rule("x == 1").report(data.assign(金额=data["金额"].fillna(0)), target="标签", amount="金额", del_grey=True, margins=True)
     assert table.loc[table["分箱"] == "合计", "样本总数"].iloc[0] == 8
     assert pd.isna(data.loc[1, "金额"])
 
@@ -89,9 +87,7 @@ def test_feature_margins_preserve_population_per_feature_and_target(long_format,
 
 def test_feature_margins_compute_rates_before_selecting_return_columns():
     data = pd.DataFrame({"x": [0, 0, 1, 1], "y": [0, 0, 1, 1]})
-    table = feature_bin_stats(
-        data, "x", target="y", method="uniform", max_n_bins=2, margins=True, return_cols=["坏样本率"], n_jobs=1
-    )
+    table = feature_bin_stats(data, "x", target="y", method="uniform", max_n_bins=2, margins=True, return_cols=["坏样本率"], n_jobs=1)
     assert table.iloc[-1]["坏样本率"] == 0.5
 
 
@@ -126,9 +122,7 @@ def test_multilabel_rule_workers_receive_only_required_standard_rule_columns(mon
         return worker(task)
 
     monkeypatch.setattr(rule_module, "_rule_report_target_worker", record)
-    Rule("x > 1", n_jobs=2, parallel_backend="threading").report(
-        data, target={"甲": data.y, "乙": 1 - data.y}, amount="金额"
-    )
+    Rule("x > 1", n_jobs=2, parallel_backend="threading").report(data, target={"甲": data.y, "乙": 1 - data.y}, amount="金额")
     assert len(observed) == 2
     assert all("无关字段" not in columns and "x" in columns and "金额" in columns for columns in observed)
     pd.testing.assert_frame_equal(data, original)
@@ -141,8 +135,6 @@ def test_custom_rule_multilabel_report_keeps_complete_input():
         def predict(self, frame):
             return frame["隐藏输入"].eq(1)
 
-    table = CustomRule("x > 1", n_jobs=2, parallel_backend="threading").report(
-        data, target={"甲": [1, 0, 1, 0], "乙": [0, 1, 0, 1]}
-    )
+    table = CustomRule("x > 1", n_jobs=2, parallel_backend="threading").report(data, target={"甲": [1, 0, 1, 0], "乙": [0, 1, 0, 1]})
     assert table.loc[0, ("甲", "坏样本率")] == 1
     assert table.loc[0, ("乙", "坏样本率")] == 0

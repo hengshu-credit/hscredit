@@ -202,26 +202,13 @@ class OneHotEncoder(BaseEncoder):
             raise ValueError("OneHot 的 handle_missing 必须为 value 或 error")
         if self.min_frequency is not None:
             value = self.min_frequency
-            if (
-                isinstance(value, (bool, np.bool_))
-                or not isinstance(value, (int, float, np.integer, np.floating))
-                or not np.isfinite(value)
-                or value <= 0
-            ):
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)) or not np.isfinite(value) or value <= 0:
                 raise ValueError("min_frequency 必须为正整数或 (0, 1) 内的比例")
             if isinstance(value, (float, np.floating)) and value >= 1:
                 raise ValueError("浮点 min_frequency 必须在 (0, 1) 内")
-        if self.max_categories is not None and (
-            isinstance(self.max_categories, (bool, np.bool_))
-            or not isinstance(self.max_categories, (int, np.integer))
-            or self.max_categories < 1
-        ):
+        if self.max_categories is not None and (isinstance(self.max_categories, (bool, np.bool_)) or not isinstance(self.max_categories, (int, np.integer)) or self.max_categories < 1):
             raise ValueError("max_categories 必须为正整数")
-        if self.max_output_bytes is not None and (
-            isinstance(self.max_output_bytes, (bool, np.bool_))
-            or not isinstance(self.max_output_bytes, (int, np.integer))
-            or self.max_output_bytes < 1
-        ):
+        if self.max_output_bytes is not None and (isinstance(self.max_output_bytes, (bool, np.bool_)) or not isinstance(self.max_output_bytes, (int, np.integer)) or self.max_output_bytes < 1):
             raise ValueError("max_output_bytes 必须为正整数字节数")
         self._other_cols_ = [c for c in X.columns if c not in self.cols_]
         self._fit_columns(X, y, state_attrs=("mapping_", "categories_", "known_categories_", "category_groups_"))
@@ -236,9 +223,7 @@ class OneHotEncoder(BaseEncoder):
                     suffix += 1
                 self.mapping_[column][category] = name
                 used.add(name)
-        self.feature_names_ = [
-            self.mapping_[column][category] for column in self.cols_ for category in self.categories_[column]
-        ]
+        self.feature_names_ = [self.mapping_[column][category] for column in self.cols_ for category in self.categories_[column]]
 
     def _fit_column(self, column, values, y=None):
         # 获取唯一值（包括缺失值）
@@ -253,9 +238,7 @@ class OneHotEncoder(BaseEncoder):
         if isinstance(minimum, (float, np.floating)):
             minimum *= len(values)
         frequent = [category for category in normal_categories if counts.get(category, 0) >= minimum]
-        if self.max_categories is not None and (
-            len(frequent) > self.max_categories or len(frequent) < len(normal_categories)
-        ):
+        if self.max_categories is not None and (len(frequent) > self.max_categories or len(frequent) < len(normal_categories)):
             ranked = sorted(frequent, key=lambda category: -counts.get(category, 0))
             keep = set(ranked[: max(0, self.max_categories - 1)])
             frequent = [category for category in frequent if category in keep]
@@ -307,11 +290,7 @@ class OneHotEncoder(BaseEncoder):
         other_cols = [column for column in X.columns if column not in self.cols_]
         columns = len(self.feature_names_) + len(other_cols)
         # 编码输出的保守预算；不声称覆盖上游 DataFrame 或进程的全部内存。
-        estimate = (
-            (len(X) * (len(self.cols_) + len(other_cols)) * 16 + (len(X) + 1) * 8)
-            if self.sparse_output
-            else len(X) * columns * np.dtype(int).itemsize
-        )
+        estimate = (len(X) * (len(self.cols_) + len(other_cols)) * 16 + (len(X) + 1) * 8) if self.sparse_output else len(X) * columns * np.dtype(int).itemsize
         self.estimated_output_bytes_ = estimate
         if self.max_output_bytes is not None and estimate > self.max_output_bytes:
             raise ValueError(f"独热编码预计输出 {estimate} 字节，超过 max_output_bytes={self.max_output_bytes}")
@@ -445,22 +424,13 @@ class OneHotEncoder(BaseEncoder):
             return super().export_mapping()
         payload = super().export_mapping(legacy=True)
         payload["onehot_version"] = 2
-        payload["mapping_"] = {
-            column: {str(i): self.mapping_[column][category] for i, category in enumerate(self.categories_[column])}
-            for column in self.cols_ or []
-        }
+        payload["mapping_"] = {column: {str(i): self.mapping_[column][category] for i, category in enumerate(self.categories_[column])} for column in self.cols_ or []}
         payload["extra_state"] = {"feature_names_": self.feature_names_, "_other_cols_": self._other_cols_}
         payload["onehot_columns"] = {
             column: {
-                "output": [
-                    [self._pack_category(category), self.mapping_[column][category]]
-                    for category in self.categories_[column]
-                ],
+                "output": [[self._pack_category(category), self.mapping_[column][category]] for category in self.categories_[column]],
                 "known": [self._pack_category(category) for category in self.known_categories_.get(column, [])],
-                "groups": [
-                    [self._pack_category(category), self._pack_category(group)]
-                    for category, group in self.category_groups_.get(column, {}).items()
-                ],
+                "groups": [[self._pack_category(category), self._pack_category(group)] for category, group in self.category_groups_.get(column, {}).items()],
             }
             for column in self.cols_ or []
         }
@@ -485,9 +455,7 @@ class OneHotEncoder(BaseEncoder):
                 self.mapping_[column] = {self._unpack_category(category): name for category, name in state["output"]}
                 self.categories_[column] = list(self.mapping_[column])
                 self.known_categories_[column] = [self._unpack_category(category) for category in state["known"]]
-                self.category_groups_[column] = {
-                    self._unpack_category(category): self._unpack_category(group) for category, group in state["groups"]
-                }
+                self.category_groups_[column] = {self._unpack_category(category): self._unpack_category(group) for category, group in state["groups"]}
         return self
 
     def get_feature_names_out(self, input_features=None) -> np.ndarray:

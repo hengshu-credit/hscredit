@@ -58,9 +58,7 @@ def test_legacy_table_is_explicitly_marked_and_strict_rejects_it():
 
 def test_multifeature_stats_return_fitted_binners_without_changing_default():
     data = pd.DataFrame({"x": [0, 1, 2, 3], "z": [2, 4, 1, 3], "y": [0, 0, 1, 1]})
-    table, rules, binners = feature_bin_stats(
-        data, ["x", "z"], target="y", method="quantile", return_rules=True, return_binner=True, n_jobs=1
-    )
+    table, rules, binners = feature_bin_stats(data, ["x", "z"], target="y", method="quantile", return_rules=True, return_binner=True, n_jobs=1)
     assert set(binners) == {"x", "z"} == set(rules)
     assert "分箱" in table
     default = feature_bin_stats(data, "x", target="y", method="quantile", n_jobs=1)
@@ -125,8 +123,6 @@ def test_transaction_commit_failure_never_exposes_staging_as_published(tmp_path,
         raise RuntimeError("受控整批提交失败")
 
     monkeypatch.setattr(ArtifactTransaction, "_commit", fail_commit)
-    result = report.to_excel(
-        str(destination), with_plots=False, transactional=True, mode="best_effort", return_result=True
-    )
+    result = report.to_excel(str(destination), with_plots=False, transactional=True, mode="best_effort", return_result=True)
     assert result.artifacts == [] and not result.complete
     assert manifest_path.read_bytes() == before

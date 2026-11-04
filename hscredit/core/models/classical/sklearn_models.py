@@ -252,9 +252,7 @@ class SklearnRiskModel(BaseRiskModel):
         importances = self._native_feature_importances()
 
         # 创建Series
-        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
-            ascending=False
-        )
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(ascending=False)
 
         self._feature_importances = importance_series
 
@@ -309,9 +307,7 @@ class SklearnRiskModel(BaseRiskModel):
             self.n_features_in_ = self._model.n_features_in_
         names = getattr(self._model, "feature_names_in_", None)
         self._feature_names_known_ = names is not None
-        self.feature_names_in_ = (
-            list(names) if names is not None else [f"feature_{i}" for i in range(self.n_features_in_)]
-        )
+        self.feature_names_in_ = list(names) if names is not None else [f"feature_{i}" for i in range(self.n_features_in_)]
         self._load_score_transformer_sidecar(path)
         return self
 

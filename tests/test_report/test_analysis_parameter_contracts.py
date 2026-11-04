@@ -43,9 +43,7 @@ def test_features_single_and_arrays_share_results(frame, value):
     assert_frame_equal(actual, expected)
 
 
-@pytest.mark.parametrize(
-    "as_values", [lambda s: s, lambda s: s.iloc[::-1], lambda s: s.to_numpy(), lambda s: s.tolist()]
-)
+@pytest.mark.parametrize("as_values", [lambda s: s, lambda s: s.iloc[::-1], lambda s: s.to_numpy(), lambda s: s.tolist()])
 def test_amount_data_matches_column_after_target_filtering(frame, as_values):
     target = frame.target.astype(float)
     target.iloc[::7] = -1
@@ -177,9 +175,7 @@ def test_bin_params_priority_and_removed_keywords(frame):
     fig, table = bin_plot(frame, feature="score", target="target", bin_params={"max_n_bins": 3}, result=True)
     assert len(table) == 3
     plt.close(fig)
-    fig, table = bin_plot(
-        frame, feature="score", target="target", max_n_bins=4, bin_params={"max_n_bins": 3}, result=True
-    )
+    fig, table = bin_plot(frame, feature="score", target="target", max_n_bins=4, bin_params={"max_n_bins": 3}, result=True)
     assert len(table) == 4
     plt.close(fig)
     with pytest.raises(TypeError, match="max_n_bins"):
@@ -301,9 +297,7 @@ def test_prediction_report_resolves_bin_params_before_defaults(frame):
     from hscredit.report.overdue_predictor import overdue_prediction_report
 
     expected = overdue_prediction_report(frame, "score", target="target", method="quantile", max_n_bins=3, n_jobs=1)
-    actual = overdue_prediction_report(
-        frame, "score", target="target", bin_params={"method": "quantile", "max_n_bins": 3}, n_jobs=1
-    )
+    actual = overdue_prediction_report(frame, "score", target="target", bin_params={"method": "quantile", "max_n_bins": 3}, n_jobs=1)
     assert_frame_equal(actual, expected)
 
 
@@ -312,9 +306,7 @@ def test_swap_bin_params_do_not_override_explicit_method(frame):
     config = {"method": "uniform", "max_n_bins": 3}
     report = swap_analysis(actual, frame, score_col="score", target="target", bin_params=config, n_jobs=1)
     assert report.config.method == "uniform"
-    overridden = swap_analysis(
-        actual, frame, score_col="score", target="target", method="quantile", bin_params=config, n_jobs=1
-    )
+    overridden = swap_analysis(actual, frame, score_col="score", target="target", method="quantile", bin_params=config, n_jobs=1)
     assert overridden.config.method == "quantile"
 
 
@@ -351,9 +343,7 @@ def test_summary_binning_priority_matches_direct_configuration(frame, entry, exp
 
     options = {"method": "quantile", "max_n_bins": 4} if explicit else {}
     config = {"method": "uniform", "max_n_bins": 3}
-    expected = feature_summary(
-        frame, features="score", y="target", force_numeric=["score"], n_jobs=1, **{**config, **options}
-    )
+    expected = feature_summary(frame, features="score", y="target", force_numeric=["score"], n_jobs=1, **{**config, **options})
     common = dict(force_numeric=["score"], n_jobs=1, bin_params=config, **options)
     if entry == "function":
         actual = feature_summary(frame, features="score", y="target", **common)

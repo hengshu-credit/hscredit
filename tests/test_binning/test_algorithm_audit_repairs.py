@@ -139,12 +139,8 @@ def test_search_metrics_use_the_same_left_closed_partition_as_transform():
     good = np.arange(1, len(y) + 1) - bad
     assert iv_for_splits(x, yy, [1.0]) == pytest.approx(expected_iv)
     assert ks_for_splits(x, yy, [1.0]) == pytest.approx(expected_ks)
-    assert BestIVBinning(min_bin_size=1)._calc_iv_fast(
-        x, yy, good, bad, int((yy == 0).sum()), int(yy.sum()), [1.0]
-    ) == pytest.approx(expected_iv)
-    assert BestKSBinning(min_bin_size=1)._calc_ks_fast(
-        x, yy, good, bad, int((yy == 0).sum()), int(yy.sum()), [1.0]
-    ) == pytest.approx(expected_ks)
+    assert BestIVBinning(min_bin_size=1)._calc_iv_fast(x, yy, good, bad, int((yy == 0).sum()), int(yy.sum()), [1.0]) == pytest.approx(expected_iv)
+    assert BestKSBinning(min_bin_size=1)._calc_ks_fast(x, yy, good, bad, int((yy == 0).sum()), int(yy.sum()), [1.0]) == pytest.approx(expected_ks)
 
 
 def test_chi_bin_cap_uses_statistical_merges_not_left_truncation():

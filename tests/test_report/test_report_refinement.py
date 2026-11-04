@@ -42,9 +42,7 @@ def data():
 @pytest.mark.parametrize("weighted", [False, True])
 def test_monthly_metrics_use_first_label_and_its_valid_rows(data, mode, weighted):
     first = data.MOB1.gt(7).astype(float).mask(data.MOB1.gt(0) & data.MOB1.le(7))
-    options = (
-        {"overdue": "MOB1", "dpds": [7, 0]} if mode == "overdue" else {"target": {"首标签": first, "次标签": data.MOB1.gt(0)}}
-    )
+    options = {"overdue": "MOB1", "dpds": [7, 0]} if mode == "overdue" else {"target": {"首标签": first, "次标签": data.MOB1.gt(0)}}
     report = ModelReport(
         ProbabilityModel(),
         datasets={"样本": data},
@@ -69,9 +67,7 @@ def test_monthly_metrics_use_first_label_and_its_valid_rows(data, mode, weighted
         assert_allclose(row[["坏样本率", "AUC", "KS"]].astype(float), [np.average(y, weights=w), auc, ks])
         assert_allclose(row[["均值", "最小值", "最大值"]].astype(float), [p.mean(), p.min(), p.max()])
     if mode == "overdue":
-        reverse = ModelReport(
-            ProbabilityModel(), datasets={"样本": data}, overdue="MOB1", dpds=[0, 7], del_grey=True, n_jobs=1
-        )
+        reverse = ModelReport(ProbabilityModel(), datasets={"样本": data}, overdue="MOB1", dpds=[0, 7], del_grey=True, n_jobs=1)
         assert reverse._get_monthly_metrics("日期")["样本数"].tolist() == [6, 6]
     report._monthly_metrics_cache["日期"] = pd.DataFrame({"旧联合口径": [1]})
     restored = pickle.loads(pickle.dumps(report))
@@ -79,11 +75,19 @@ def test_monthly_metrics_use_first_label_and_its_valid_rows(data, mode, weighted
 
 
 def test_description_four_configs_and_monthly_psi_percentage(data, tmp_path):
-    report = ModelReport(
-        ProbabilityModel(), datasets={"样本": data}, overdue="MOB1", dpds=[7, 0], del_grey=True, n_jobs=1
-    )
+    report = ModelReport(ProbabilityModel(), datasets={"样本": data}, overdue="MOB1", dpds=[7, 0], del_grey=True, n_jobs=1)
     config = label_configuration_table(report)
-    assert config["配置项"].tolist() == ["标签来源", "操作符", "灰样本定义", "剔灰配置", "缺失值处理", "预测函数", "分箱基准", "统计口径", "加权性能对照"]
+    assert config["配置项"].tolist() == [
+        "标签来源",
+        "操作符",
+        "灰样本定义",
+        "剔灰配置",
+        "缺失值处理",
+        "预测函数",
+        "分箱基准",
+        "统计口径",
+        "加权性能对照",
+    ]
     values = config.set_index("配置项")["配置值"]
     assert values["标签来源"] == "overdue+dpds" and values["操作符"] == ">" and values["剔灰配置"] == "是"
     assert "MOB1@7：0 < MOB1 <= 7" in values["灰样本定义"]
@@ -104,11 +108,7 @@ def test_description_four_configs_and_monthly_psi_percentage(data, tmp_path):
     sheet = book["2-模型性能"]
     assert any(c.value == "2、分月模型效果（MOB1@7）" for row in sheet for c in row)
     title = next(c.row for row in sheet for c in row if isinstance(c.value, str) and c.value.endswith("、分月对比PSI"))
-    header = next(
-        r
-        for r in range(title + 1, sheet.max_row)
-        if sheet.cell(r, 3).value == "2026-01" and sheet.cell(r, 4).value == "2026-02"
-    )
+    header = next(r for r in range(title + 1, sheet.max_row) if sheet.cell(r, 3).value == "2026-01" and sheet.cell(r, 4).value == "2026-02")
     for i, month in enumerate(expected_psi.index, header + 1):
         assert sheet.cell(i, 2).value == month
         for j, column in enumerate(expected_psi.columns, 3):

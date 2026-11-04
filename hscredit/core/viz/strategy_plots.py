@@ -108,25 +108,18 @@ def rule_swap_plot(
         axes[1].text(0.5, 0.5, "无LIFT数据", ha="center", va="center", transform=axes[1].transAxes)
     else:
         positions = np.arange(len(rule_rows))
-        label_col = (
-            "规则集" if "规则集" in rule_rows.columns else "指标名称" if "指标名称" in rule_rows.columns else None
-        )
+        label_col = "规则集" if "规则集" in rule_rows.columns else "指标名称" if "指标名称" in rule_rows.columns else None
         if label_col is None:
             labels = rule_rows["规则分类"].astype(str).tolist()
         else:
-            labels = [
-                str(label) if pd.notna(label) and str(label).strip() else str(category)
-                for label, category in zip(rule_rows[label_col], rule_rows["规则分类"])
-            ]
+            labels = [str(label) if pd.notna(label) and str(label).strip() else str(category) for label, category in zip(rule_rows[label_col], rule_rows["规则分类"])]
         bars = axes[0].bar(positions, rule_rows["样本总数"], color=DEFAULT_COLORS[0], alpha=0.8)
         axes[0].set_xticks(positions)
         axes[0].set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
         axes[0].set_ylabel("样本总数")
         axes[0].set_title("各规则命中样本数")
         for bar, rate in zip(bars, rule_rows["坏样本率"]):
-            axes[0].text(
-                bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{rate:.2%}", ha="center", va="bottom", fontsize=8
-            )
+            axes[0].text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{rate:.2%}", ha="center", va="bottom", fontsize=8)
 
         lift_values = pd.to_numeric(rule_rows["LIFT值"], errors="coerce").fillna(0).to_numpy()
         lift_colors = [STABLE_COLOR if value < 1 else BAD_RATE_COLOR for value in lift_values]
@@ -781,9 +774,7 @@ def segment_scorecard_comparison(
         vmax = max(vals) if vals else 1.0
         bars = cur_ax.bar(x, vals, width=0.6, color=[colors[i % len(colors)] for i in range(len(segments))], alpha=0.85)
         for bar, v in zip(bars, vals):
-            cur_ax.text(
-                bar.get_x() + bar.get_width() / 2, v + vmax * 0.01, f"{v:.3f}", ha="center", va="bottom", fontsize=8
-            )
+            cur_ax.text(bar.get_x() + bar.get_width() / 2, v + vmax * 0.01, f"{v:.3f}", ha="center", va="bottom", fontsize=8)
         cur_ax.set_xticks(x)
         cur_ax.set_xticklabels(seg_labels, rotation=30, ha="right", fontsize=9)
         cur_ax.set_ylabel(m, fontsize=11)

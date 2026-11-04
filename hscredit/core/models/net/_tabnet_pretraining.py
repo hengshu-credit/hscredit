@@ -85,28 +85,17 @@ def pretrain_tabnet(model, X, eval_set, sample_weight, ratio, options):
     model._pretrain_only_ = False
     model.__dict__.pop("_pretrained_state_", None)
     model.__dict__.pop("pretrainer_", None)
-    if (
-        isinstance(ratio, (bool, np.bool_))
-        or not isinstance(ratio, Real)
-        or not np.isfinite(ratio)
-        or not 0 < ratio <= 1
-    ):
+    if isinstance(ratio, (bool, np.bool_)) or not isinstance(ratio, Real) or not np.isfinite(ratio) or not 0 < ratio <= 1:
         raise ValidationError("pretraining_ratio 必须在 (0, 1] 内")
     model._validate_task()
     model._validate_options()
     config = {name: getattr(model, name) if value is None else value for name, value in options.items()}
     for name in ("max_epochs", "batch_size"):
         value = config[name]
-        if (
-            isinstance(value, (bool, np.bool_))
-            or not isinstance(value, Integral)
-            or value < (2 if name == "batch_size" else 1)
-        ):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral) or value < (2 if name == "batch_size" else 1):
             raise ValidationError("max_epochs 必须为正整数，TabNet 的 batch_size 必须至少为 2")
     patience, fraction = config["early_stopping_rounds"], config["validation_fraction"]
-    if patience is not None and (
-        isinstance(patience, (bool, np.bool_)) or not isinstance(patience, Integral) or patience < 1
-    ):
+    if patience is not None and (isinstance(patience, (bool, np.bool_)) or not isinstance(patience, Integral) or patience < 1):
         raise ValidationError("early_stopping_rounds 必须为正整数或 None")
     if isinstance(fraction, (bool, np.bool_)) or not isinstance(fraction, Real) or not 0 <= fraction < 1:
         raise ValidationError("validation_fraction 必须在 [0, 1) 内")
@@ -208,7 +197,5 @@ def pretrain_tabnet(model, X, eval_set, sample_weight, ratio, options):
     )
     model._pretrain_only_ = True
     model.pretraining_summary_ = model.training_summary_
-    model.pretraining_summary_.update(
-        训练阶段="TabNet 半监督预训练", 遮盖比例=ratio, 后端="pytorch_tabnet.TabNetPretrainer"
-    )
+    model.pretraining_summary_.update(训练阶段="TabNet 半监督预训练", 遮盖比例=ratio, 后端="pytorch_tabnet.TabNetPretrainer")
     return model

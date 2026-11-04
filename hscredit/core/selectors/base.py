@@ -281,9 +281,7 @@ class SelectionReport:
                         "阶段路径": stage["阶段路径"],
                         "阶段名称": stage["阶段名称"],
                         "特征": feature,
-                        "筛选结果": (
-                            source["筛选结果"] if source else ("未执行" if stage["执行状态"] != "已完成" else "未进入")
-                        ),
+                        "筛选结果": (source["筛选结果"] if source else ("未执行" if stage["执行状态"] != "已完成" else "未进入")),
                         "评估状态": source["评估状态"] if source else "未计算",
                         "筛选原因": source["筛选原因"] if source else stage["停止原因"],
                     }
@@ -480,13 +478,9 @@ def _main_values(selector, features):
     name, direction, comparison, mode = _ADAPTERS.get(cls, ("筛选得分", "由筛选器定义", "", "自定义筛选"))
     name = getattr(selector, "score_name_", name)
     direction = getattr(selector, "score_direction_", direction)
-    direction = {"越大越好": "越大越优", "越小越好": "越小越优", "候选子集评分越大越好": "越大越优"}.get(
-        direction, direction
-    )
+    direction = {"越大越好": "越大越优", "越小越好": "越小越优", "候选子集评分越大越好": "越大越优"}.get(direction, direction)
     values = _mapping(getattr(selector, "scores_", None), features)
-    threshold = getattr(
-        selector, "effective_threshold_", getattr(selector, "threshold_", getattr(selector, "threshold", None))
-    )
+    threshold = getattr(selector, "effective_threshold_", getattr(selector, "threshold_", getattr(selector, "threshold", None)))
     if cls == "VarianceSelector" and hasattr(selector, "variances_"):
         values = _mapping(selector.variances_, features)
     if cls == "FTestSelector" and hasattr(selector, "raw_scores_"):
@@ -527,20 +521,13 @@ def _single_report(selector):
     relation = getattr(selector, "strategy", "sequential" if hasattr(selector, "stage_selectors_") else "single")
     metric_name, direction, comparison, mode, threshold, values = _main_values(selector, features)
     dropped = getattr(selector, "dropped_", None)
-    dropped_map = (
-        {row["特征"]: row for row in dropped.to_dict("records")}
-        if isinstance(dropped, pd.DataFrame) and "特征" in dropped
-        else {}
-    )
+    dropped_map = {row["特征"]: row for row in dropped.to_dict("records")} if isinstance(dropped, pd.DataFrame) and "特征" in dropped else {}
     conditions = getattr(selector, "condition_results_", None)
     condition_map = conditions.to_dict("index") if isinstance(conditions, pd.DataFrame) else {}
     reason_map = _mapping(getattr(selector, "selection_reasons_", None), features)
     association_map = _mapping(getattr(selector, "association_features_", None), features)
     round_map = _mapping(getattr(selector, "elimination_round_", None), features)
-    condition_values = {
-        name: _mapping(getattr(selector, name, None), features)
-        for name in ("iv_scores_", "psi_scores_", "ranks_", "percentile_values_", "scores_")
-    }
+    condition_values = {name: _mapping(getattr(selector, name, None), features) for name in ("iv_scores_", "psi_scores_", "ranks_", "percentile_values_", "scores_")}
     details, metrics, history = [], [], []
     domain = "分箱结果" if getattr(selector, "_binner_instance", None) is not None else "原始值"
     path = "selector"
@@ -551,14 +538,8 @@ def _single_report(selector):
         valid = _validity(raw)
         kept = feature in selected
         source = "组合规则" if is_composite else "算法"
-        reason = str(
-            reason_map.get(
-                feature, dropped_map.get(feature, {}).get("剔除原因", "满足筛选条件" if kept else "不满足筛选条件")
-            )
-        )
-        evaluated = (
-            "已计算" if feature in values and valid not in {"缺失"} else ("不适用" if is_composite else "未计算")
-        )
+        reason = str(reason_map.get(feature, dropped_map.get(feature, {}).get("剔除原因", "满足筛选条件" if kept else "不满足筛选条件")))
+        evaluated = "已计算" if feature in values and valid not in {"缺失"} else ("不适用" if is_composite else "未计算")
         if feature in values and valid == "缺失":
             evaluated = "无效"
             if family in {"StepwiseSelector", "SequentialFeatureSelector"} and not kept:
@@ -859,19 +840,13 @@ def _single_report(selector):
             snapshot[attr] = _parameters(getattr(selector, attr))
     snapshot["历史策略"] = getattr(selector, "report_history", "未配置")
     snapshot["历史截断条数"] = int(getattr(selector, "report_events_truncated_", 0))
-    snapshot["候选历史完整"] = (
-        hasattr(selector, "selection_events_") and snapshot["历史策略"] == "full" and snapshot["历史截断条数"] == 0
-    )
-    return SelectionReport(
-        summary, details, metrics, history, {"阶段快照": {path: snapshot}, "关系类型": relation, "明细完整": True}
-    )
+    snapshot["候选历史完整"] = hasattr(selector, "selection_events_") and snapshot["历史策略"] == "full" and snapshot["历史截断条数"] == 0
+    return SelectionReport(summary, details, metrics, history, {"阶段快照": {path: snapshot}, "关系类型": relation, "明细完整": True})
 
 
 def _rebase(report, path, name=None, parent=None):
     result = report.copy()
-    old_root = result._metadata.get("根路径") or (
-        result._summary.iloc[0]["阶段路径"] if len(result._summary) else "selector"
-    )
+    old_root = result._metadata.get("根路径") or (result._summary.iloc[0]["阶段路径"] if len(result._summary) else "selector")
 
     def replace(value):
         if value is None or value is pd.NA:
@@ -928,10 +903,7 @@ def _skipped(selector, path, name, parent, reason, *, incomplete=False, selector
 
 def _children(selector):
     if hasattr(selector, "selectors"):
-        return [
-            (str(item[0]), item[1]) if isinstance(item, tuple) and len(item) == 2 else (type(item).__name__, item)
-            for item in selector.selectors
-        ]
+        return [(str(item[0]), item[1]) if isinstance(item, tuple) and len(item) == 2 else (type(item).__name__, item) for item in selector.selectors]
     if hasattr(selector, "stage_selectors_"):
         planned = getattr(selector, "planned_stages_", None)
         if planned is not None:
@@ -955,9 +927,7 @@ def capture_selection_report(selector):
         if reason is not None or (executed is not None and position not in executed):
             planned = getattr(selector, "planned_stages_", None)
             selector_type = planned[position].get("selector") if planned is not None else None
-            reports.append(
-                _skipped(child, path, name, "selector", reason or "上游无剩余特征，未执行", selector_type=selector_type)
-            )
+            reports.append(_skipped(child, path, name, "selector", reason or "上游无剩余特征，未执行", selector_type=selector_type))
         elif bool(getattr(child, "_is_fitted", False)):
             child_report = getattr(child, "selection_report_", None)
             if not isinstance(child_report, SelectionReport):
@@ -965,9 +935,7 @@ def capture_selection_report(selector):
             reports.append(_rebase(child_report, path, name, "selector"))
         else:
             # 子步骤既无拟合快照又无明确跳过记录，不能视为成功。
-            reports.append(
-                _skipped(child, path, name, "selector", "子筛选器未拟合，缺少明确的未执行记录", incomplete=True)
-            )
+            reports.append(_skipped(child, path, name, "selector", "子筛选器未拟合，缺少明确的未执行记录", incomplete=True))
     return _combine(reports, root._metadata["关系类型"])
 
 
@@ -1017,20 +985,12 @@ def collect_selection_report(source, relation="auto", strict=True):
     target_fields = set()
     for position, item in enumerate(items):
         name, child = item if isinstance(item, tuple) and len(item) == 2 else (type(item).__name__, item)
-        if (
-            isinstance(child, SelectionReport)
-            and not (isinstance(item, tuple) and len(item) == 2)
-            and len(child._summary)
-        ):
+        if isinstance(child, SelectionReport) and not (isinstance(item, tuple) and len(item) == 2) and len(child._summary):
             name = child._summary.iloc[0]["筛选器"]
         path = f"{prefix}/{position + 1:02d}_{name}"
         if child is None or (isinstance(child, str) and child == "passthrough"):
             continue
-        is_selector = (
-            isinstance(child, SelectionReport)
-            or isinstance(child, BaseFeatureSelector)
-            or hasattr(child, "selected_features_")
-        )
+        is_selector = isinstance(child, SelectionReport) or isinstance(child, BaseFeatureSelector) or hasattr(child, "selected_features_")
         if not is_selector and not hasattr(child, "steps"):
             if not is_pipeline:
                 raise ValidationError("筛选器列表包含非筛选器对象")
@@ -1138,13 +1098,9 @@ def collect_selection_report(source, relation="auto", strict=True):
         result._summary.loc[result._summary["父路径"].isna(), "父路径"] = "list"
         result = _combine([root, result], effective)
     if effective != "independent" and top:
-        result._metadata["最终字段"] = (
-            [f for f in top[0][1] if f in final] if effective in {"intersection", "union"} else top[-1][2]
-        )
+        result._metadata["最终字段"] = [f for f in top[0][1] if f in final] if effective in {"intersection", "union"} else top[-1][2]
     if effective == "sequential" and top:
-        incoming = (
-            [field for field in transform_input if field not in target_fields] if transform_input is not None else None
-        )
+        incoming = [field for field in transform_input if field not in target_fields] if transform_input is not None else None
         outgoing = [field for field in previous if field not in target_fields] if previous is not None else None
         comparable = incoming is not None and outgoing is not None and set(outgoing).issubset(incoming)
         result._metadata["阶段快照"][prefix] = {
@@ -1312,11 +1268,7 @@ def get_feature_importances(estimator) -> np.ndarray:
         except Exception:
             pass
 
-    raise ValidationError(
-        f"无法从 {type(estimator).__name__} 中提取特征重要性。"
-        f"模型需要提供 feature_importances_、coef_ 属性，"
-        f"或 get_score / feature_importance / get_feature_importance 方法。"
-    )
+    raise ValidationError(f"无法从 {type(estimator).__name__} 中提取特征重要性。" f"模型需要提供 feature_importances_、coef_ 属性，" f"或 get_score / feature_importance / get_feature_importance 方法。")
 
 
 class SelectionReportCollector:
@@ -1520,9 +1472,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         return self
 
     def _format_transform_output(self, result):
-        mode = getattr(self, "_sklearn_output_config", {}).get(
-            "transform", get_config().get("transform_output", "default")
-        )
+        mode = getattr(self, "_sklearn_output_config", {}).get("transform", get_config().get("transform_output", "default"))
         if mode == "default":
             return result
         if not isinstance(result, pd.DataFrame):
@@ -1684,9 +1634,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         if X.shape[0] == 0:
             raise ValidationError("Found array with 0 sample(s)（输入数据不能为空）")
         if X.shape[1] == 0:
-            raise ValidationError(
-                f"0 feature(s) (shape=({len(X)}, 0)) while a minimum of 1 is required.（至少需要一个特征）"
-            )
+            raise ValidationError(f"0 feature(s) (shape=({len(X)}, 0)) while a minimum of 1 is required.（至少需要一个特征）")
 
         prepared = prepare_xy(X, y, target=self.target)
         return prepared.X, prepared.y
@@ -1913,9 +1861,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                 seen[target_key] = item
                 normalized.append(item)
                 continue
-            if previous["candidate_source"] is item["candidate_source"] or cls._payloads_deep_equal(
-                previous["payload"], item["payload"]
-            ):
+            if previous["candidate_source"] is item["candidate_source"] or cls._payloads_deep_equal(previous["payload"], item["payload"]):
                 continue
             raise ValidationError("共享外部对象产生了冲突的候选状态，无法原子提交")
         return normalized
@@ -1956,9 +1902,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             for original_item, candidate_item in zip(original_selectors, candidate_selectors):
                 original_child = self._selector_from_item(original_item)
                 candidate_child = self._selector_from_item(candidate_item)
-                if not (
-                    isinstance(original_child, BaseFeatureSelector) and isinstance(candidate_child, BaseFeatureSelector)
-                ):
+                if not (isinstance(original_child, BaseFeatureSelector) and isinstance(candidate_child, BaseFeatureSelector)):
                     raise ValidationError("候选子筛选器类型与原配置不一致，无法提交拟合状态")
                 # 子级非默认配置优先；只有对应项未配置时才继承父级。
                 child_parallel = self._resolve_child_parallel_config(original_child)
@@ -1984,27 +1928,10 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                 "is_selector": True,
                 "success_param_refs": success_param_refs,
                 "rollback_param_refs": dict(original_params),
-                "rollback_param_snapshots": {
-                    name: (
-                        list(value)
-                        if name == "selectors" and isinstance(value, list)
-                        else copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value
-                    )
-                    for name, value in original_params.items()
-                },
-                "rollback_param_shallow": {
-                    name: list(value)
-                    for name, value in original_params.items()
-                    if name == "selectors" and isinstance(value, list)
-                },
-                "active_binner": (
-                    candidate_params.get("binner") is not None
-                    and getattr(candidate, "_binner_instance", None) is candidate_params.get("binner")
-                ),
-                "rollback_active_binner": (
-                    original_params.get("binner") is not None
-                    and getattr(self, "_binner_instance", None) is original_params.get("binner")
-                ),
+                "rollback_param_snapshots": {name: (list(value) if name == "selectors" and isinstance(value, list) else copy.deepcopy(value) if isinstance(value, (list, dict, set)) else value) for name, value in original_params.items()},
+                "rollback_param_shallow": {name: list(value) for name, value in original_params.items() if name == "selectors" and isinstance(value, list)},
+                "active_binner": (candidate_params.get("binner") is not None and getattr(candidate, "_binner_instance", None) is candidate_params.get("binner")),
+                "rollback_active_binner": (original_params.get("binner") is not None and getattr(self, "_binner_instance", None) is original_params.get("binner")),
             }
         )
 
@@ -2060,9 +1987,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         """逐项解析子级有效并行配置，非默认子级值拥有最高优先级。"""
         return {
             "n_jobs": child.n_jobs if child.n_jobs != -1 else self.n_jobs,
-            "parallel_backend": (
-                child.parallel_backend if child.parallel_backend is not None else self.parallel_backend
-            ),
+            "parallel_backend": (child.parallel_backend if child.parallel_backend is not None else self.parallel_backend),
             "parallel_config": (child.parallel_config if child.parallel_config is not None else self.parallel_config),
         }
 
@@ -2128,9 +2053,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         ...
         """
         # 检查输入并分离特征和目标
-        self.target_present_at_fit_ = (
-            isinstance(X, pd.DataFrame) and self.target is not None and self.target in X.columns
-        )
+        self.target_present_at_fit_ = isinstance(X, pd.DataFrame) and self.target is not None and self.target in X.columns
         self.input_columns_at_fit_ = list(X.columns) if isinstance(X, pd.DataFrame) else None
         X_processed, y_processed = self._check_input(X, y)
         if hasattr(self, "report_history"):
@@ -2245,11 +2168,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         excluded = set(self.exclude_)
         included = set(self.include_)
         include_participates = self._included_features_participate_in_selection()
-        return [
-            column
-            for column in X.columns
-            if column not in excluded and (include_participates or column not in included)
-        ]
+        return [column for column in X.columns if column not in excluded and (include_participates or column not in included)]
 
     def _initialize_empty_selection_result(self) -> None:
         """当所有输入列都已被强制处理时建立最小、完整的拟合结果。"""
@@ -2316,10 +2235,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         if callable(transform_method):
             try:
                 parameters = inspect.signature(transform_method).parameters.values()
-                supports_metric = any(
-                    parameter.name == "metric" or parameter.kind == inspect.Parameter.VAR_KEYWORD
-                    for parameter in parameters
-                )
+                supports_metric = any(parameter.name == "metric" or parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters)
             except (TypeError, ValueError):
                 supports_metric = False
             if supports_metric:
@@ -2423,11 +2339,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                         self.dropped_ = self.dropped_.loc[~self.dropped_["特征"].isin(self.selected_features_)].copy()
                     if len(self.dropped_) == 0 and len(dropped_cols) == 0:
                         self.dropped_ = pd.DataFrame(columns=self.dropped_.columns)
-                    self.removed_features_ = (
-                        self.dropped_["特征"].tolist()
-                        if len(self.dropped_) > 0 and "特征" in self.dropped_.columns
-                        else []
-                    )
+                    self.removed_features_ = self.dropped_["特征"].tolist() if len(self.dropped_) > 0 and "特征" in self.dropped_.columns else []
                 else:
                     if len(dropped_cols) > 0:
                         reason = getattr(self, "_drop_reason", "不满足筛选条件")
@@ -2497,9 +2409,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
                         self.dropped_.loc[self.dropped_["特征"] == col, "剔除原因"] = f"{current_reason} [强制剔除]"
         elif len(self.forced_dropped_) > 0:
             # 创建新的dropped_记录
-            self.dropped_ = pd.DataFrame(
-                {"特征": self.forced_dropped_, "剔除原因": ["强制剔除"] * len(self.forced_dropped_)}
-            )
+            self.dropped_ = pd.DataFrame({"特征": self.forced_dropped_, "剔除原因": ["强制剔除"] * len(self.forced_dropped_)})
 
         # 更新 removed_features_
         if hasattr(self, "dropped_") and len(self.dropped_) > 0:
@@ -2577,10 +2487,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
         if values.ndim != 2:
             raise ValidationError("Expected 2D array. Reshape your data（ndarray 输入必须是二维特征矩阵）")
         if values.shape[1] != self.n_features_in_:
-            raise ValidationError(
-                f"X has {values.shape[1]} features, but {self.__class__.__name__} is expecting "
-                f"{self.n_features_in_} features as input（转换数据特征数与拟合时不一致）"
-            )
+            raise ValidationError(f"X has {values.shape[1]} features, but {self.__class__.__name__} is expecting " f"{self.n_features_in_} features as input（转换数据特征数与拟合时不一致）")
         return self._format_transform_output(values[:, self.get_support()])
 
     def fit_transform(
@@ -2631,9 +2538,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             raise NotFittedError("筛选器尚未拟合，请先调用fit方法")
 
         selected = set(self.selected_features_)
-        return np.fromiter(
-            (column in selected for column in self._feature_names), dtype=bool, count=self.n_features_in_
-        )
+        return np.fromiter((column in selected for column in self._feature_names), dtype=bool, count=self.n_features_in_)
 
     def _get_support_mask(self) -> np.ndarray:
         """实现 sklearn 特征选择器的标准支持掩码接口。"""
@@ -2665,9 +2570,7 @@ class BaseFeatureSelector(ParallelizableMixin, TransformerMixin, BaseEstimator, 
             try:
                 provided = list(input_features)
                 include_target = self.target in provided
-                equal = pd.Index([field for field in provided if field != self.target], tupleize_cols=False).equals(
-                    pd.Index(self._feature_names, tupleize_cols=False)
-                )
+                equal = pd.Index([field for field in provided if field != self.target], tupleize_cols=False).equals(pd.Index(self._feature_names, tupleize_cols=False))
             except (TypeError, ValueError):
                 equal = False
             if not equal:

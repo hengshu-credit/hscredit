@@ -51,16 +51,12 @@ def test_unchanged_pandas_frequencies_are_not_rewritten(freq):
     assert normalize_freq(freq) == pd.tseries.frequencies.to_offset(freq)
 
 
-@pytest.mark.parametrize(
-    "freq", [pd.offsets.MonthBegin(2), pd.offsets.Week(weekday=2), pd.Timedelta(minutes=15), timedelta(hours=3)]
-)
+@pytest.mark.parametrize("freq", [pd.offsets.MonthBegin(2), pd.offsets.Week(weekday=2), pd.Timedelta(minutes=15), timedelta(hours=3)])
 def test_offset_and_timedelta_inputs(freq):
     assert normalize_freq(freq) == pd.tseries.frequencies.to_offset(freq)
 
 
-@pytest.mark.parametrize(
-    "freq", ["MS", "2ME", "QS-APR", "YE-JUN", "YS-JUL", "BME", "BMS", "SME-15", "WOM-2MON", "2W-MON", "B"]
-)
+@pytest.mark.parametrize("freq", ["MS", "2ME", "QS-APR", "YE-JUN", "YS-JUL", "BME", "BMS", "SME-15", "WOM-2MON", "2W-MON", "B"])
 def test_calendar_groups_match_pandas_with_unsorted_duplicate_indexes(freq):
     dates = pd.Series(
         pd.to_datetime(["2024-04-01", "2024-01-01", "2024-01-31", "2024-02-01", None, "2024-01-31"]),

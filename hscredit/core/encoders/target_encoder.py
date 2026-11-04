@@ -188,9 +188,7 @@ class TargetEncoder(BaseEncoder):
         df_temp = pd.DataFrame({"feature": values, "target": y.values})
         stats = df_temp.groupby("feature")["target"].agg(["mean", "count"])
 
-        smoothed_means = (stats["count"] * stats["mean"] + self.smoothing * self.global_mean_) / (
-            stats["count"] + self.smoothing
-        )
+        smoothed_means = (stats["count"] * stats["mean"] + self.smoothing * self.global_mean_) / (stats["count"] + self.smoothing)
 
         small_sample_mask = stats["count"] < self.min_samples_leaf
         smoothed_means[small_sample_mask] = self.global_mean_

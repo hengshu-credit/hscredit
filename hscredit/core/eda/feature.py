@@ -153,9 +153,7 @@ def feature_type_inference(
     """
     validate_dataframe(df)
 
-    feature_types = infer_feature_types(
-        df, categorical_threshold, unique_ratio_threshold, numeric_as_categorical, force_numeric
-    )
+    feature_types = infer_feature_types(df, categorical_threshold, unique_ratio_threshold, numeric_as_categorical, force_numeric)
 
     results = []
     for col, ftype in feature_types.items():
@@ -353,9 +351,7 @@ def outlier_detection(
         parallel_config=parallel_config,
         task_labels=valid_features,
         default_backend="threading",
-        workload=_eda_workload(
-            df.loc[:, valid_features], len(valid_features), operation="异常值检测", cost_per_item=4.0
-        ),
+        workload=_eda_workload(df.loc[:, valid_features], len(valid_features), operation="异常值检测", cost_per_item=4.0),
     )
     results = [row for row in analyzed if row is not None]
 
@@ -415,9 +411,7 @@ def rare_category_detection(
         parallel_config=parallel_config,
         task_labels=valid_features,
         default_backend="threading",
-        workload=_eda_workload(
-            df.loc[:, valid_features], len(valid_features), operation="稀有类别检测", cost_per_item=2.0
-        ),
+        workload=_eda_workload(df.loc[:, valid_features], len(valid_features), operation="稀有类别检测", cost_per_item=2.0),
     )
     results = [row for feature_rows in analyzed for row in feature_rows]
 
@@ -428,9 +422,7 @@ def rare_category_detection(
 
 
 @analysis_inputs("df", roles=())
-def concentration_analysis(
-    df: pd.DataFrame, features: List[str] = None, n_jobs=-1, parallel_backend=None, parallel_config=None
-) -> pd.DataFrame:
+def concentration_analysis(df: pd.DataFrame, features: List[str] = None, n_jobs=-1, parallel_backend=None, parallel_config=None) -> pd.DataFrame:
     """集中度分析(Gini系数).
 
     :param parallel_config: 默认值为 ``None`` 。并行配置字典或 ``None`` 。支持 ``adaptive`` 、 ``prefer`` 、 ``require`` 、
@@ -471,9 +463,7 @@ def concentration_analysis(
         parallel_config=parallel_config,
         task_labels=valid_features,
         default_backend="threading",
-        workload=_eda_workload(
-            df.loc[:, valid_features], len(valid_features), operation="集中度分析", cost_per_item=3.0
-        ),
+        workload=_eda_workload(df.loc[:, valid_features], len(valid_features), operation="集中度分析", cost_per_item=3.0),
     )
     results = [row for row in analyzed if row is not None]
 

@@ -8,9 +8,7 @@ import time
 
 import pytest
 
-SPEC = importlib.util.spec_from_file_location(
-    "validate_supervised", Path(__file__).resolve().parents[2] / "scripts" / "validate_supervised.py"
-)
+SPEC = importlib.util.spec_from_file_location("validate_supervised", Path(__file__).resolve().parents[2] / "scripts" / "validate_supervised.py")
 runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
 
@@ -96,11 +94,7 @@ def test_notebook_modules_are_separate_supervised_processes():
 def test_crashing_parent_does_not_leave_child_process(tmp_path):
     psutil = pytest.importorskip("psutil")
     marker = tmp_path / "child.pid"
-    body = (
-        "import os,subprocess,sys; from pathlib import Path; "
-        "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
-        f"Path({str(marker)!r}).write_text(str(child.pid)); os._exit(7)"
-    )
+    body = "import os,subprocess,sys; from pathlib import Path; " "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); " f"Path({str(marker)!r}).write_text(str(child.pid)); os._exit(7)"
     record = runner.run_group("orphan", _command(body), output_dir=tmp_path)
     assert record["status"] == "failed"
     pid = int(marker.read_text())

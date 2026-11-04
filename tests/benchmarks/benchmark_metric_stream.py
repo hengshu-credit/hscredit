@@ -81,10 +81,7 @@ def main():
                 "rows": rows,
                 "identical": True,
                 "runs": cases,
-                "median_seconds": {
-                    mode: statistics.median(c["seconds"] for c in cases if c["mode"] == mode)
-                    for mode in ["whole", "stream"]
-                },
+                "median_seconds": {mode: statistics.median(c["seconds"] for c in cases if c["mode"] == mode) for mode in ["whole", "stream"]},
             }
         )
     result = {

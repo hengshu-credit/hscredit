@@ -9,21 +9,14 @@ def validate_amounts(values, length=None):
         amounts = np.asarray(values, dtype=float)
     except (TypeError, ValueError) as exc:
         raise ValueError("amount金额必须为有限非负的一维数值") from exc
-    if (
-        amounts.ndim != 1
-        or (length is not None and len(amounts) != length)
-        or not np.isfinite(amounts).all()
-        or np.any(amounts < 0)
-    ):
+    if amounts.ndim != 1 or (length is not None and len(amounts) != length) or not np.isfinite(amounts).all() or np.any(amounts < 0):
         raise ValueError("amount金额必须为与数据等长的有限非负一维数组，不能包含缺失")
     return amounts
 
 
 def rejection_statistics(total, bad, rejected_total, rejected_bad):
     """返回剩余坏率、兼容改善值和拒绝效率；全拒绝的效率为 NaN。"""
-    total, bad, rejected_total, rejected_bad = np.broadcast_arrays(
-        *[np.asarray(value, dtype=float) for value in (total, bad, rejected_total, rejected_bad)]
-    )
+    total, bad, rejected_total, rejected_bad = np.broadcast_arrays(*[np.asarray(value, dtype=float) for value in (total, bad, rejected_total, rejected_bad)])
     remaining = total - rejected_total
     # 全量累计可能因浮点求和次序留下舍入残差，不能视作真实通过人群。
     full_rejection = np.isclose(rejected_total, total, rtol=8 * np.finfo(float).eps, atol=0)
@@ -106,9 +99,7 @@ def format_bin_stats(table, *, target_type="binary", round_digits=True):
     if target_type == "amount_weighted":
         decimals.update({name: 2 for name in ["样本总数", "好样本数", "坏样本数", "累积好样本数", "累积坏样本数"]})
     elif target_type == "continuous":
-        decimals.update(
-            {name: 2 for name in ["目标值均值", "目标值标准差", "目标值最小值", "目标值最大值", "累积平均值"]}
-        )
+        decimals.update({name: 2 for name in ["目标值均值", "目标值标准差", "目标值最小值", "目标值最大值", "累积平均值"]})
     result = table.copy()
     for column in result.columns:
         name = column[-1] if isinstance(column, tuple) else column

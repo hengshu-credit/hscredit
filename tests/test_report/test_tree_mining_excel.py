@@ -39,9 +39,7 @@ def tree(request, data):
 @pytest.mark.parametrize("long_format", [True, False])
 def test_shared_rule_apis_and_excel(tree, data, tmp_path, long_format):
     datasets = {"训练集": data, "验证集": data.iloc[::2], "测试集": data.iloc[1::2]}
-    expected = tree.report(
-        datasets, overdue=["MOB1"], dpds=[7, 3, 0], overdue_operator=">=", amount="金额", long_format=long_format
-    )
+    expected = tree.report(datasets, overdue=["MOB1"], dpds=[7, 3, 0], overdue_operator=">=", amount="金额", long_format=long_format)
     path = tmp_path / "reports" / "挖掘.xlsx"
     actual = tree.report(
         datasets,
@@ -67,12 +65,7 @@ def test_shared_rule_apis_and_excel(tree, data, tmp_path, long_format):
     detail = book["组合策略汇总"]
     assert not any(c.value == "完整节点信息" for row in detail for c in row)
     headings = ["节点编号", "指标含义", "组合策略", "是否叶子", "是否调整"]
-    headers = [
-        (r, c)
-        for r in range(1, detail.max_row + 1)
-        for c in range(2, detail.max_column - 3)
-        if [detail.cell(r, c + j).value for j in range(5)] == headings
-    ]
+    headers = [(r, c) for r in range(1, detail.max_row + 1) for c in range(2, detail.max_column - 3) if [detail.cell(r, c + j).value for j in range(5)] == headings]
     assert len(headers) == 8
     node_ids = tree.get_rule_table()["节点编号"].tolist()
     expressions = tree.get_rule_table()["组合策略"].tolist()
@@ -80,10 +73,7 @@ def test_shared_rule_apis_and_excel(tree, data, tmp_path, long_format):
         image_start = image.anchor._from.row + 1
         assert image_start < header
         assert image.anchor._from.col + 1 == column
-        reserved_pixels = sum(
-            (detail.row_dimensions[r].height or detail.sheet_format.defaultRowHeight or 15) / 0.75
-            for r in range(image_start, header)
-        )
+        reserved_pixels = sum((detail.row_dimensions[r].height or detail.sheet_format.defaultRowHeight or 15) / 0.75 for r in range(image_start, header))
         assert reserved_pixels >= image.anchor.ext.cy / 9525
         repetitions = 3 if long_format and ordinal >= 2 else 1
         ids = np.repeat(node_ids, repetitions).tolist()
@@ -215,9 +205,7 @@ def test_dataset_overview_and_grey_labels_match_model_report(tree, data, tmp_pat
     )
     pd.testing.assert_frame_equal(result, expected)
     prepared, bound = bind_targets(data, overdue=["MOB1"], dpds=[7, 3, 0], del_grey=True)
-    stats, _ = build_sample_stats_table(
-        ["数据集1"], [bound.y_map(prepared)], bound.names(), target_specific_totals=True, n_jobs=1
-    )
+    stats, _ = build_sample_stats_table(["数据集1"], [bound.y_map(prepared)], bound.names(), target_specific_totals=True, n_jobs=1)
     book = load_workbook(path)
     sheet = book["组合策略汇总"]
     title = next(c.row for row in sheet for c in row if c.value == "3、数据样本统计")
@@ -325,9 +313,7 @@ def test_model_metrics_match_raw_leaf_predictions_and_weights(tree, data):
             .groupby("分数")[["坏", "好"]]
             .sum()
         )
-        expected_ks = (
-            (grouped["坏"].cumsum() / grouped["坏"].sum() - grouped["好"].cumsum() / grouped["好"].sum()).abs().max()
-        )
+        expected_ks = (grouped["坏"].cumsum() / grouped["坏"].sum() - grouped["好"].cumsum() / grouped["好"].sum()).abs().max()
         assert result[(basis, "FPD", "AUC")][0] == pytest.approx(expected_auc)
         assert result[(basis, "FPD", "KS")][0] == pytest.approx(expected_ks)
 
@@ -369,9 +355,7 @@ def test_group_statistics_share_overall_schema_and_raw_denominators(data, long_f
         days.append(date_groups(frame.日期, "M"))
         reports[name] = tree.report(prepared, target=bound, amount="金额", long_format=False, round_digits=False)
     overall = _sample_tables(tree, frames, targets, reports, "金额", long_format)
-    grouped = _distribution_tables(
-        tree, frames, contexts, days, "金额", long_format, None, ">", {"amount": "金额", "round_digits": False}
-    )
+    grouped = _distribution_tables(tree, frames, contexts, days, "金额", long_format, None, ">", {"amount": "金额", "round_digits": False})
     for basis, (full, table) in enumerate(zip(overall, grouped)):
         group_col = "数据分组" if long_format else ("统计详情", "数据分组")
         assert table.drop(columns=[group_col]).columns.tolist() == full.columns.tolist()
@@ -440,9 +424,7 @@ def test_feature_sheet_reuses_strategy_binning_and_preserves_template_width(data
     book = load_workbook(path)
     sheet = book["组合策略汇总_特征分箱"]
     template_writer = ExcelWriter()
-    assert {key: d.width for key, d in sheet.column_dimensions.items()} == {
-        key: d.width for key, d in template_writer.style_sheet.column_dimensions.items()
-    }
+    assert {key: d.width for key, d in sheet.column_dimensions.items()} == {key: d.width for key, d in template_writer.style_sheet.column_dimensions.items()}
     template_writer.workbook.close()
     tables = list(sheet.tables.values())
     assert len(tables) == 2

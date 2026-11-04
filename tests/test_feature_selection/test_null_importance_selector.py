@@ -62,9 +62,7 @@ def test_null_importance_score_uses_actual_minus_null_percentage():
     details = selector.importance_details_.set_index("特征")
     pd.testing.assert_series_equal(details["实际重要性%"], actual_pct, check_names=False)
     pd.testing.assert_series_equal(details["Null重要性%"], null_pct, check_names=False)
-    pd.testing.assert_series_equal(
-        selector.actual_importances_, selector.actual_importance_runs_.mean(), check_names=False
-    )
+    pd.testing.assert_series_equal(selector.actual_importances_, selector.actual_importance_runs_.mean(), check_names=False)
     pd.testing.assert_series_equal(selector.null_importances_, selector.null_importance_runs_.mean(), check_names=False)
     assert selector.get_importance_details().equals(selector.importance_details_)
     assert selector.scores_["strong"] > selector.scores_["noise"]
@@ -73,9 +71,7 @@ def test_null_importance_score_uses_actual_minus_null_percentage():
 
 @pytest.mark.parametrize("actual_scale,null_scale", [(1.0, 1.0), (100.0, 0.5)])
 @pytest.mark.parametrize("threshold,selected", [(0.0, ["strong"]), (0.5, []), (-1.0, ["strong", "noise"])])
-def test_null_importance_normalizes_mean_totals_before_scoring(
-    monkeypatch, actual_scale, null_scale, threshold, selected
-):
+def test_null_importance_normalizes_mean_totals_before_scoring(monkeypatch, actual_scale, null_scale, threshold, selected):
     """原始差值均为负时仍按占比筛选，且两组重要性的独立缩放不影响结果。"""
 
     def experiment(task):
@@ -86,9 +82,7 @@ def test_null_importance_normalizes_mean_totals_before_scoring(
 
     monkeypatch.setattr("hscredit.core.selectors.null_importance_selector._run_null_importance_experiment", experiment)
     X = pd.DataFrame({"strong": [0, 1] * 4, "noise": [1, 0] * 4})
-    selector = NullImportanceSelector(
-        MeanDifferenceImportanceClassifier(), threshold=threshold, cv=2, n_runs=2, n_jobs=1
-    ).fit(X, np.array([0, 1] * 4))
+    selector = NullImportanceSelector(MeanDifferenceImportanceClassifier(), threshold=threshold, cv=2, n_runs=2, n_jobs=1).fit(X, np.array([0, 1] * 4))
 
     details = selector.get_importance_details().set_index("特征")
     np.testing.assert_allclose(details["实际重要性"], np.array([8.0, 2.0]) * actual_scale)
@@ -134,9 +128,7 @@ def test_null_importance_zero_totals_are_finite(monkeypatch, actual, null, expec
 
     monkeypatch.setattr("hscredit.core.selectors.null_importance_selector._run_null_importance_experiment", experiment)
     X = pd.DataFrame({"first": [0, 1] * 4, "second": [1, 0] * 4})
-    selector = NullImportanceSelector(MeanDifferenceImportanceClassifier(), cv=2, n_runs=1, n_jobs=1).fit(
-        X, np.array([0, 1] * 4)
-    )
+    selector = NullImportanceSelector(MeanDifferenceImportanceClassifier(), cv=2, n_runs=1, n_jobs=1).fit(X, np.array([0, 1] * 4))
 
     details = selector.get_importance_details()
     np.testing.assert_allclose(details["实际重要性%"], expected_actual)

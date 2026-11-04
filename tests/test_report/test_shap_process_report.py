@@ -95,9 +95,7 @@ def test_compact_process_shap_and_dynamic_numbering(fitted, tmp_path):
     table = report.get_shap_importance()
     assert {"原生特征重要性", "平均绝对SHAP值", "平均SHAP值"} <= set(table)
     result = report.get_model_explanation()["解释结果"]
-    np.testing.assert_allclose(
-        table.set_index("特征")["平均绝对SHAP值"].reindex(X.columns), np.abs(result.values).mean(axis=0)
-    )
+    np.testing.assert_allclose(table.set_index("特征")["平均绝对SHAP值"].reindex(X.columns), np.abs(result.values).mean(axis=0))
     display = process_tables(report)
     assert "模型口径" not in display and "预处理参数" not in display
     assert len(display["参数搜索对比"]) == 2
@@ -155,12 +153,7 @@ def test_training_titles_keep_sheet_number_after_learning_curve_plots(fitted, tm
     report.to_excel(path, with_plots=True, training_sheet_index=10, mode="strict")
     book = load_workbook(path)
     sheet = book["10-训练与调参过程"]
-    titles = [
-        c.value
-        for row in sheet.iter_rows(min_col=2, max_col=2)
-        for c in row
-        if isinstance(c.value, str) and "、" in c.value
-    ]
+    titles = [c.value for row in sheet.iter_rows(min_col=2, max_col=2) for c in row if isinstance(c.value, str) and "、" in c.value]
     assert titles[0] == "十、训练与调参过程"
     assert all(title.startswith(f"{index}、") for index, title in enumerate(titles[1:], 1))
     assert titles[-2].endswith("选中试验学习曲线") and titles[-1].endswith("最终模型学习曲线")
@@ -169,9 +162,7 @@ def test_training_titles_keep_sheet_number_after_learning_curve_plots(fitted, tm
 
 
 @pytest.mark.parametrize("scope", ["importance", "full"])
-def test_explanation_warn_preserves_incomplete_report_without_fabricated_importance(
-    fitted, tmp_path, monkeypatch, scope
-):
+def test_explanation_warn_preserves_incomplete_report_without_fabricated_importance(fitted, tmp_path, monkeypatch, scope):
     from hscredit.report.result import ReportGenerationError
 
     model, X, y = fitted

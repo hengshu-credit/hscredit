@@ -28,11 +28,7 @@ def test_all_explicit_raise_messages_contain_chinese():
             if isinstance(message_node, ast.Constant) and isinstance(message_node.value, str):
                 literal_parts.append(message_node.value)
             elif isinstance(message_node, ast.JoinedStr):
-                literal_parts.extend(
-                    value.value
-                    for value in message_node.values
-                    if isinstance(value, ast.Constant) and isinstance(value.value, str)
-                )
+                literal_parts.extend(value.value for value in message_node.values if isinstance(value, ast.Constant) and isinstance(value.value, str))
 
             message = "".join(literal_parts)
             if message and re.search(r"[A-Za-z]", message) and not re.search(r"[\u4e00-\u9fff]", message):

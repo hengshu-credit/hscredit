@@ -83,9 +83,7 @@ def test_prediction_reused_across_labels_weights_and_groups_but_not_reports(mode
         return original(model, data, class_index)
 
     monkeypatch.setattr(module, "_tree_score", count)
-    options = dict(
-        overdue="MOB1", dpds=[7, 3, 0], del_grey=True, amount="金额", date="日期", group="品类", methods=["quantile"]
-    )
+    options = dict(overdue="MOB1", dpds=[7, 3, 0], del_grey=True, amount="金额", date="日期", group="品类", methods=["quantile"])
     tree.report({"样本": frame}, save=tmp_path / "首次.xlsx", **options)
     assert calls == [(len(frame), 1)]
     changed = frame.assign(评分=frame["评分"].to_numpy()[::-1])

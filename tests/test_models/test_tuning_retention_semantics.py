@@ -38,9 +38,7 @@ def test_retention_preserves_trial_scores_and_best_model(mode, data, tmp_path):
     candidate = tune(data, tmp_path / mode, mode)
     assert candidate.best_params_ == full.best_params_
     assert [t.value for t in candidate.study_.trials] == [t.value for t in full.study_.trials]
-    np.testing.assert_allclose(
-        candidate.get_best_model().predict_proba(data[0]), full.get_best_model().predict_proba(data[0])
-    )
+    np.testing.assert_allclose(candidate.get_best_model().predict_proba(data[0]), full.get_best_model().predict_proba(data[0]))
     if mode == "summary":
         with pytest.raises(ValueError, match="未保留"):
             candidate.get_oof_predictions()
@@ -268,15 +266,9 @@ def test_multiobjective_retention_keeps_pareto_and_best_selection(mode, data, tm
         random_state=2,
     )
     full = ModelTuner(RandomForest(n_estimators=3, n_jobs=1, random_state=2), **options)
-    retained = ModelTuner(
-        RandomForest(n_estimators=3, n_jobs=1, random_state=2), retention=mode, artifact_dir=str(tmp_path), **options
-    )
+    retained = ModelTuner(RandomForest(n_estimators=3, n_jobs=1, random_state=2), retention=mode, artifact_dir=str(tmp_path), **options)
     for tuner in (full, retained):
         tuner.fit(*data, n_trials=2, show_progress_bar=False)
     assert retained.best_params_ == full.best_params_
-    assert [(trial.number, trial.values) for trial in retained.study_.best_trials] == [
-        (trial.number, trial.values) for trial in full.study_.best_trials
-    ]
-    np.testing.assert_allclose(
-        retained.get_best_model().predict_proba(data[0]), full.get_best_model().predict_proba(data[0])
-    )
+    assert [(trial.number, trial.values) for trial in retained.study_.best_trials] == [(trial.number, trial.values) for trial in full.study_.best_trials]
+    np.testing.assert_allclose(retained.get_best_model().predict_proba(data[0]), full.get_best_model().predict_proba(data[0]))

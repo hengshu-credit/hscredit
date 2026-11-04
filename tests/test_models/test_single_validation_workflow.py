@@ -135,9 +135,7 @@ def test_resume_save_and_release_external_validation(data, tmp_path):
     obj = fit(tuner(retention="disk", artifact_dir=str(tmp_path / "trials")), X, y, eval_set=[(X[:20], y[:20])])
     obj.save(tmp_path / "tuner.pkl")
     restored = ModelTuner.load(tmp_path / "tuner.pkl")
-    np.testing.assert_allclose(
-        obj.get_validation_predictions()["预测概率"], restored.get_validation_predictions()["预测概率"]
-    )
+    np.testing.assert_allclose(obj.get_validation_predictions()["预测概率"], restored.get_validation_predictions()["预测概率"])
     fit(restored, X, y, eval_set=[(X[:20], y[:20])])
     assert len(restored.study_.trials) == 2
     with pytest.raises(ValueError, match="续跑数据"):

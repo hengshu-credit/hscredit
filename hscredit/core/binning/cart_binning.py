@@ -240,9 +240,7 @@ class CartBinning(BaseBinning):
         self.class_weight = class_weight
         self.tree_models_ = {}
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "CartBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "CartBinning":
         """拟合 CART 分箱.
 
         :param X: 训练数据，shape (n_samples, n_features)
@@ -333,9 +331,7 @@ class CartBinning(BaseBinning):
         # 训练决策树：先做更细的内部预分箱，再通过约束合并到目标箱数
         tree_leaf_nodes = max(self.max_n_bins * 4, 20)
         if self.problem_type_ == "regression":
-            tree = DecisionTreeRegressor(
-                max_leaf_nodes=tree_leaf_nodes, min_samples_leaf=min_samples_leaf, random_state=self.random_state
-            )
+            tree = DecisionTreeRegressor(max_leaf_nodes=tree_leaf_nodes, min_samples_leaf=min_samples_leaf, random_state=self.random_state)
         else:
             tree = DecisionTreeClassifier(
                 max_leaf_nodes=tree_leaf_nodes,
@@ -724,9 +720,7 @@ class CartBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。
@@ -805,9 +799,7 @@ if __name__ == "__main__":
     print("带 p-value 约束的 CART 分箱")
     print("=" * 60)
 
-    binner2 = CartBinning(
-        max_n_bins=10, min_bin_size=0.01, max_pvalue=0.05, max_pvalue_policy="consecutive", monotonic=True
-    )
+    binner2 = CartBinning(max_n_bins=10, min_bin_size=0.01, max_pvalue=0.05, max_pvalue_policy="consecutive", monotonic=True)
     binner2.fit(X, y)
 
     print("\n分箱统计表:")

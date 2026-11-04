@@ -27,9 +27,7 @@ def copy_query_source(source, result):
     """在 DataFrame 编码/分箱后保留查询完整性，不覆盖变换本身的标记。"""
     metadata = _query_source(source)
     if metadata is not None and isinstance(result, pd.DataFrame):
-        result.attrs["hscredit_query_source"] = {
-            key: metadata[key] for key in ("completed", "state", "rows_read", "total_rows") if key in metadata
-        }
+        result.attrs["hscredit_query_source"] = {key: metadata[key] for key in ("completed", "state", "rows_read", "total_rows") if key in metadata}
     return result
 
 
@@ -66,9 +64,7 @@ def normalize_features(features=None, *, feature=None, x1=None, x2=None, size=No
         result = list(features)
     else:
         raise TypeError("features 必须是字段名或一维字段集合")
-    if (not result and required) or any(
-        not isinstance(value, (str, int, np.integer)) or (isinstance(value, str) and not value) for value in result
-    ):
+    if (not result and required) or any(not isinstance(value, (str, int, np.integer)) or (isinstance(value, str) and not value) for value in result):
         raise ValueError("features 必须包含非空字段名")
     if len(set(result)) != len(result):
         if size == 2:
@@ -127,12 +123,7 @@ def validate_amount_column(data, amount):
         raise ValueError(f"amount 指定的金额字段不存在: {amount!r}")
     series = data[amount]
     if not pd.api.types.is_numeric_dtype(series.dtype):
-        if (
-            isinstance(series.dtype, pd.CategoricalDtype)
-            or pd.api.types.is_datetime64_any_dtype(series.dtype)
-            or pd.api.types.is_timedelta64_dtype(series.dtype)
-            or any(isinstance(value, (str, bytes)) for value in series.array)
-        ):
+        if isinstance(series.dtype, pd.CategoricalDtype) or pd.api.types.is_datetime64_any_dtype(series.dtype) or pd.api.types.is_timedelta64_dtype(series.dtype) or any(isinstance(value, (str, bytes)) for value in series.array):
             raise ValueError("amount 金额必须为数值，文本、日期或分类字段请先显式转换")
     from ..core.metrics._semantics import validate_amounts
 
@@ -257,20 +248,10 @@ def report_inputs(function):
         original = bound.arguments["self"]
         amount = bound.arguments.get("amount")
         if isinstance(amount, str):
-            keys = (
-                [original._resolve_dataset_key(bound.arguments["dataset"])]
-                if "dataset" in bound.arguments
-                else original._datasets
-            )
+            keys = [original._resolve_dataset_key(bound.arguments["dataset"])] if "dataset" in bound.arguments else original._datasets
             for key in keys:
                 validate_amount_column(original._datasets[key].X, amount)
-        roles = {
-            role: bound.arguments[role]
-            for role in ("date", "group", "amount")
-            if role in bound.arguments
-            and bound.arguments[role] is not None
-            and not isinstance(bound.arguments[role], str)
-        }
+        roles = {role: bound.arguments[role] for role in ("date", "group", "amount") if role in bound.arguments and bound.arguments[role] is not None and not isinstance(bound.arguments[role], str)}
         if not roles:
             return function(*bound.args, **bound.kwargs)
         original = bound.arguments["self"]

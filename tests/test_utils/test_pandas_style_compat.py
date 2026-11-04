@@ -89,9 +89,7 @@ def test_prepare_matplotlib_uses_installed_version(monkeypatch, version, expecte
     installed = []
     value = Version(version) if version else None
     monkeypatch.setattr(compat, "installed_version", lambda name: value)
-    monkeypatch.setattr(
-        compat, "install_matplotlib_colormap_compat", lambda module, ver: installed.append((module, ver))
-    )
+    monkeypatch.setattr(compat, "install_matplotlib_colormap_compat", lambda module, ver: installed.append((module, ver)))
     compat.prepare_dependency("matplotlib")
     assert installed == ([(mpl, value)] if expected else [])
 
@@ -174,9 +172,7 @@ def test_show_keeps_numeric_bars_formats_and_precision(multi_level):
     assert ">1.25<" in html and "125.00%" not in html
     assert ">10<" in html and ">-<" in html
     assert "linear-gradient" in html
-    plain = style_bin_table(
-        table, percent_format=False, highlight_bad_rate=False, highlight_lift=False, highlight_ks=False
-    ).to_html()
+    plain = style_bin_table(table, percent_format=False, highlight_bad_rate=False, highlight_lift=False, highlight_ks=False).to_html()
     assert "linear-gradient" not in plain
 
 

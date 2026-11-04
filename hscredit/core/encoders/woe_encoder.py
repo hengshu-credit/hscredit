@@ -326,11 +326,7 @@ class WOEEncoder(BaseEncoder):
         # fit及v2类型映射按真实类别类型匹配，不将未见字符串悄悄当数值类别。
         unmapped = mapped.isna() & values.notna()
         if unmapped.any() and getattr(self, "_legacy_string_keys_", False):
-            str_map = {
-                str(k): v
-                for k, v in woe_map.items()
-                if not isinstance(k, CategoryToken) and not (isinstance(k, float) and pd.isna(k))
-            }
+            str_map = {str(k): v for k, v in woe_map.items() if not isinstance(k, CategoryToken) and not (isinstance(k, float) and pd.isna(k))}
             if str_map:
                 mapped.loc[unmapped] = values.loc[unmapped].astype(str).map(str_map)
                 # 旧JSON的整数键是"1"；Excel/pandas遇缺失可能把输入提升为1.0。

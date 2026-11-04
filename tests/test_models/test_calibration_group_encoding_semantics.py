@@ -80,11 +80,7 @@ def test_internal_calibration_split_uses_correct_weights_on_both_partitions():
     train, calibration = train_test_split(np.arange(80), test_size=0.25, random_state=42, stratify=y)
     base = LogisticRegression().fit(X.iloc[train], y[train], sample_weight=weights[train])
     p = base.predict_proba(X.iloc[calibration])[:, 1]
-    mapping = LogisticRegression(C=1.0, max_iter=1000).fit(
-        logit(p).reshape(-1, 1), y[calibration], sample_weight=weights[calibration]
-    )
+    mapping = LogisticRegression(C=1.0, max_iter=1000).fit(logit(p).reshape(-1, 1), y[calibration], sample_weight=weights[calibration])
     expected = mapping.predict_proba(logit(base.predict_proba(X)[:, 1]).reshape(-1, 1))
-    actual = ProbabilityCalibrator(model=LogisticRegression(), calib_ratio=0.25, random_state=42).fit(
-        X, y, sample_weight=weights
-    )
+    actual = ProbabilityCalibrator(model=LogisticRegression(), calib_ratio=0.25, random_state=42).fit(X, y, sample_weight=weights)
     np.testing.assert_allclose(actual.predict_proba(X), expected, atol=1e-8)

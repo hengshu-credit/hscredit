@@ -70,11 +70,7 @@ def worker(case, options):
     else:
         values = rng.normal(size=(options.rows_vif, options.features))
         frame = pd.DataFrame(values)
-        operation = (
-            (lambda: [_compute_vif_single(values, index) for index in range(values.shape[1])])
-            if case.endswith("legacy")
-            else (lambda: VIFSelector(n_jobs=1)._compute_vif_all(frame).tolist())
-        )
+        operation = (lambda: [_compute_vif_single(values, index) for index in range(values.shape[1])]) if case.endswith("legacy") else (lambda: VIFSelector(n_jobs=1)._compute_vif_all(frame).tolist())
         metadata = {"rows": len(values), "features": values.shape[1], "input_bytes": values.nbytes}
     # 各算法独立进程；计时前完成解释器/依赖导入，限制BLAS为单线程。
     with threadpool_limits(limits=1):
@@ -128,8 +124,5 @@ if __name__ == "__main__":
         np.testing.assert_allclose(report["vif_legacy"]["result"], report["vif_qr"]["result"], rtol=1e-8, atol=1e-10)
         report["equivalence"] = True
         for prefix, old, new in [("mdlp", "mdlp_legacy", "mdlp_prefix"), ("vif", "vif_legacy", "vif_qr")]:
-            report[prefix + "_median_speedup"] = float(
-                np.median([x["seconds"] for x in report[old]["samples"]])
-                / np.median([x["seconds"] for x in report[new]["samples"]])
-            )
+            report[prefix + "_median_speedup"] = float(np.median([x["seconds"] for x in report[old]["samples"]]) / np.median([x["seconds"] for x in report[new]["samples"]]))
         print(json.dumps(report, ensure_ascii=True, indent=2))

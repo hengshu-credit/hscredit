@@ -38,17 +38,11 @@ def _number_stored_as_text_ignored_cells(filename, sheet_name):
 
     with zipfile.ZipFile(filename) as zf:
         workbook_root = ET.fromstring(zf.read("xl/workbook.xml"))
-        sheet = next(
-            node for node in workbook_root.findall(f".//{{{spreadsheet_ns}}}sheet") if node.attrib["name"] == sheet_name
-        )
+        sheet = next(node for node in workbook_root.findall(f".//{{{spreadsheet_ns}}}sheet") if node.attrib["name"] == sheet_name)
         relationship_id = sheet.attrib[f"{{{document_rel_ns}}}id"]
 
         relationships_root = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
-        target = next(
-            node.attrib["Target"]
-            for node in relationships_root.findall(f"{{{package_rel_ns}}}Relationship")
-            if node.attrib["Id"] == relationship_id
-        ).lstrip("/")
+        target = next(node.attrib["Target"] for node in relationships_root.findall(f"{{{package_rel_ns}}}Relationship") if node.attrib["Id"] == relationship_id).lstrip("/")
         if not target.startswith("xl/"):
             target = f"xl/{target}"
 
@@ -266,20 +260,12 @@ class TestExcelWriter:
 
         writer.save(self.test_file)
         with zipfile.ZipFile(self.test_file) as zf:
-            worksheet_xmls = [
-                zf.read(name).decode("utf-8")
-                for name in zf.namelist()
-                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
-            ]
+            worksheet_xmls = [zf.read(name).decode("utf-8") for name in zf.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")]
 
         target_xml = next(xml for xml in worksheet_xmls if 'r="G2"' in xml)
         root = ET.fromstring(target_xml)
         ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-        adjusted_col = next(
-            col
-            for col in root.findall("x:cols/x:col", ns)
-            if col.attrib.get("min") == "7" and col.attrib.get("max") == "7"
-        )
+        adjusted_col = next(col for col in root.findall("x:cols/x:col", ns) if col.attrib.get("min") == "7" and col.attrib.get("max") == "7")
         assert adjusted_col.attrib.get("style") == "1"
         assert 'r="G3"' not in target_xml
 
@@ -348,23 +334,23 @@ class TestExcelWriter:
         writer.save(self.test_file)
         loaded = load_workbook(self.test_file)
         cell = loaded["显示宽度"]["B2"]
-        assert loaded["显示宽度"].column_dimensions["B"].width == pytest.approx(min(25, max(8, len(display) * 1.2 + 2)))
+        assert loaded["显示宽度"].column_dimensions["B"].width == pytest.approx(min(25, len(display) * 1.2 + 2))
         assert cell.value == (pytest.approx(value) if isinstance(value, float) else value)
-        assert cell.number_format == ("@" if isinstance(value, str) else number_format)
+        assert cell.number_format == number_format
         loaded.close()
 
     @pytest.mark.parametrize("speed", ["normal", "fast"])
     def test_auto_width_handles_merged_titles_and_multiline_text(self, speed):
-        """跨列标题不撑宽首列，跨行文本仍计宽，多行文本只取最长行。"""
+        """总宽度足够的跨列标题不额外撑宽，跨行文本仍计宽，多行文本只取最长行。"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("布局宽度")
         ws.merge_cells("B1:F1")
-        ws["B1"] = "跨列合并的报告标题" * 10
+        ws["B1"] = "跨列合并的报告标题"
         ws["B2"] = 0.12345678901234567
         ws["B2"].number_format = "0.00%"
         ws.merge_cells("D2:D3")
         ws["D2"] = "abcdefghijklmno"
-        group = "跨列合并的分组表头" * 10
+        group = "跨列合并的分组表头"
         data = pd.DataFrame(
             [["短", "abcdefghi\n短\nabcdef", "短", "长文本" * 30, "短"]],
             columns=pd.MultiIndex.from_tuples([(group, name) for name in ["甲", "乙", "丙", "丁", "戊"]]),
@@ -377,7 +363,7 @@ class TestExcelWriter:
         assert widths["C"].width == pytest.approx(12.8)
         assert widths["D"].width == pytest.approx(20)
         assert widths["E"].width == 50
-        assert widths["F"].width == 8
+        assert widths["F"].width == pytest.approx(4.1)
         loaded.close()
 
     def test_insert_value_with_merge(self):
@@ -1029,16 +1015,16 @@ class TestDataframe2Excel:
             for col in range(2, normal_end[1]):
                 assert fast_ws.cell(row, col)._style == normal_ws.cell(row, col)._style
 
-    def test_dataframe_auto_width_does_not_snapshot_each_cell(self, monkeypatch):
-        """DataFrame 自动列宽只能按列处理一次，不能在每个单元格重复快照。"""
+    def test_dataframe_auto_width_adjusts_once(self, monkeypatch):
+        """DataFrame 自动列宽只能在内容完成后批量处理一次。"""
         calls = []
-        original = ExcelWriter._get_column_cells_data
+        original = ExcelWriter.adjust_columns_width
 
-        def counted(writer, worksheet, col_letter):
-            calls.append(col_letter)
-            return original(writer, worksheet, col_letter)
+        def counted(writer, worksheet, **kwargs):
+            calls.append((kwargs["start_col"], kwargs["end_col"]))
+            return original(writer, worksheet, **kwargs)
 
-        monkeypatch.setattr(ExcelWriter, "_get_column_cells_data", counted)
+        monkeypatch.setattr(ExcelWriter, "adjust_columns_width", counted)
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("S")
 
@@ -1049,18 +1035,16 @@ class TestDataframe2Excel:
             auto_width=True,
         )
 
-        assert calls == ["B", "C"]
+        assert calls == [(2, 3)]
 
-    def test_fast_auto_width_avoids_column_style_snapshots(self, monkeypatch):
-        """快速模式应在写入时累计宽度，不能再次扫描和复制整列样式。"""
-        calls = []
-        original = ExcelWriter._get_column_cells_data
+    def test_fast_dataframe_defers_width_work_until_contents_are_finished(self, monkeypatch):
+        """快速写入不能提前扫描宽度或在写入期间累计宽度。"""
 
-        def counted(writer, worksheet, col_letter):
-            calls.append(col_letter)
-            return original(writer, worksheet, col_letter)
+        def reject_early_width(*args, **kwargs):
+            pytest.fail("dataframe2excel 应在所有内容和格式完成后统一调整列宽")
 
-        monkeypatch.setattr(ExcelWriter, "_get_column_cells_data", counted)
+        monkeypatch.setattr(ExcelWriter, "_initial_fast_widths", reject_early_width)
+        monkeypatch.setattr(ExcelWriter, "_apply_fast_widths", reject_early_width)
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("S")
 
@@ -1072,7 +1056,6 @@ class TestDataframe2Excel:
             speed="fast",
         )
 
-        assert calls == []
         assert ws.column_dimensions["B"].width >= 8
         assert ws.column_dimensions["C"].width >= 8
 
@@ -1118,14 +1101,8 @@ class TestDataframe2Excel:
                 assert fast_cell.value == normal_cell.value
                 assert fast_cell._style == normal_cell._style
 
-        normal_rules = [
-            (str(key.sqref), [rule.type for rule in rules])
-            for key, rules in normal_ws.conditional_formatting._cf_rules.items()
-        ]
-        fast_rules = [
-            (str(key.sqref), [rule.type for rule in rules])
-            for key, rules in fast_ws.conditional_formatting._cf_rules.items()
-        ]
+        normal_rules = [(str(key.sqref), [rule.type for rule in rules]) for key, rules in normal_ws.conditional_formatting._cf_rules.items()]
+        fast_rules = [(str(key.sqref), [rule.type for rule in rules]) for key, rules in fast_ws.conditional_formatting._cf_rules.items()]
         assert fast_rules == normal_rules
 
     def test_write_with_title(self):
@@ -1482,9 +1459,7 @@ class TestPivotTable:
         """insert_pivot_table2sheet 仅记录配置，不立即落地"""
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("透视表")
-        writer.insert_pivot_table2sheet(
-            ws, self.df, "B2", rows="商品类别", columns="区域", values=[("放款金额", "sum")]
-        )
+        writer.insert_pivot_table2sheet(ws, self.df, "B2", rows="商品类别", columns="区域", values=[("放款金额", "sum")])
         assert len(writer._pivot_specs) == 1
         assert writer._pivot_specs[0]["name"] == "数据透视表1"
 
@@ -1926,12 +1901,8 @@ class TestPivotTable:
         long_name = "超长透视表名称用于触发工作表名称超过三十一个字符的边界情况测试用例"
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("透视表")
-        writer.insert_pivot_table2sheet(
-            ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")], name=long_name
-        )
-        writer.insert_pivot_table2sheet(
-            ws, self.df, "B20", rows="商品类别", values=[("放款金额", "sum")], name=long_name + "X"
-        )
+        writer.insert_pivot_table2sheet(ws, self.df, "B2", rows="商品类别", values=[("放款金额", "sum")], name=long_name)
+        writer.insert_pivot_table2sheet(ws, self.df, "B20", rows="商品类别", values=[("放款金额", "sum")], name=long_name + "X")
 
         src_sheets = [s for s in writer.workbook.sheetnames if "源数据" in s]
         assert len(src_sheets) == 2

@@ -8,9 +8,7 @@ from hscredit.core.selectors import VIFSelector
 from hscredit.core.selectors.vif_selector import _compute_vif_single
 
 
-@pytest.mark.parametrize(
-    "case", ["ordinary", "offset", "constant", "missing", "singular", "tiny", "huge_offset", "wide", "one", "two_rows"]
-)
+@pytest.mark.parametrize("case", ["ordinary", "offset", "constant", "missing", "singular", "tiny", "huge_offset", "wide", "one", "two_rows"])
 def test_shared_vif_matches_column_ols(case):
     rng = np.random.default_rng(51)
     X = rng.normal(size=(120, 8))

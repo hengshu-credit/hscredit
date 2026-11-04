@@ -766,10 +766,7 @@ def test_handle_unknown_raise_is_preserved_by_python_and_rejected_by_sql_export(
 def test_missing_separate_false_uses_learned_target_bin_in_all_rule_deployments():
     """合并缺失箱必须保留训练时目标箱，而不是在部署端退化为零贡献。"""
     X = pd.DataFrame({"x": np.r_[np.repeat([0.0, 1.0, 2.0, 3.0], 30), [np.nan] * 20]})
-    y = pd.Series(
-        (([0] * 27 + [1] * 3) + ([0] * 21 + [1] * 9) + ([0] * 9 + [1] * 21) + ([0] * 3 + [1] * 27))
-        + ([0] * 18 + [1] * 2)
-    )
+    y = pd.Series((([0] * 27 + [1] * 3) + ([0] * 21 + [1] * 9) + ([0] * 9 + [1] * 21) + ([0] * 3 + [1] * 27)) + ([0] * 18 + [1] * 2))
     binner = OptimalBinning(
         method="target_bad_rate",
         max_n_bins=4,
@@ -827,10 +824,7 @@ def test_round_scorecard_preserves_unknown_target_bin_for_ascending_deployments(
 def test_round_scorecard_preserves_merged_missing_target_for_ascending_deployments():
     """RoundScoreCard 的合并缺失箱分必须按方向取整后用于规则与部署。"""
     X = pd.DataFrame({"x": np.r_[np.repeat([0.0, 1.0, 2.0, 3.0], 30), [np.nan] * 20]})
-    y = pd.Series(
-        (([0] * 27 + [1] * 3) + ([0] * 21 + [1] * 9) + ([0] * 9 + [1] * 21) + ([0] * 3 + [1] * 27))
-        + ([0] * 18 + [1] * 2)
-    )
+    y = pd.Series((([0] * 27 + [1] * 3) + ([0] * 21 + [1] * 9) + ([0] * 9 + [1] * 21) + ([0] * 3 + [1] * 27)) + ([0] * 18 + [1] * 2))
     binner = OptimalBinning(
         method="target_bad_rate",
         max_n_bins=4,

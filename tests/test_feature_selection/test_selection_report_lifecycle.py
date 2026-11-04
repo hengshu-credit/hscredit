@@ -34,13 +34,7 @@ def test_every_public_selector_exposes_explicit_target_policy():
             assert "passthrough_target" not in parameters
 
 
-PUBLIC_SELECTOR_CLASSES = [
-    getattr(selectors, name)
-    for name in selectors.__all__
-    if inspect.isclass(getattr(selectors, name))
-    and issubclass(getattr(selectors, name), BaseFeatureSelector)
-    and getattr(selectors, name) is not BaseFeatureSelector
-]
+PUBLIC_SELECTOR_CLASSES = [getattr(selectors, name) for name in selectors.__all__ if inspect.isclass(getattr(selectors, name)) and issubclass(getattr(selectors, name), BaseFeatureSelector) and getattr(selectors, name) is not BaseFeatureSelector]
 
 
 def _target_policy_selector(kind, **options):
@@ -136,9 +130,7 @@ def test_target_removal_requires_boolean_on_fit_and_runtime(target_rm, target_po
 @pytest.mark.parametrize("transform_has_target", [False, True])
 @pytest.mark.parametrize("target_rm", [False, True])
 @pytest.mark.parametrize("configuration", ["selector", "global"])
-def test_pandas_output_uses_current_target_without_mutating_fit_metadata(
-    kind, fit_has_target, transform_has_target, target_rm, configuration, target_policy_frame
-):
+def test_pandas_output_uses_current_target_without_mutating_fit_metadata(kind, fit_has_target, transform_has_target, target_rm, configuration, target_policy_frame):
     frame = target_policy_frame
     features = frame.drop(columns="目标")
     selector = _target_policy_selector(kind, target_rm=target_rm)
@@ -182,9 +174,7 @@ def test_pandas_output_converts_ndarray_and_survives_transactional_fit(configura
 def test_pipeline_target_is_not_an_input_to_native_model():
     rng = np.random.default_rng(42)
     frame = pd.DataFrame({"x": rng.normal(size=100), "目标": rng.integers(0, 2, 100)})
-    pipeline = Pipeline(
-        [("筛选", NullSelector(target="目标", target_rm=True, n_jobs=1)), ("模型", LogisticRegression())]
-    )
+    pipeline = Pipeline([("筛选", NullSelector(target="目标", target_rm=True, n_jobs=1)), ("模型", LogisticRegression())])
     pipeline.fit(frame, frame["目标"])
     assert pipeline[-1].feature_names_in_.tolist() == ["x"]
     assert len(pipeline.predict(frame[["x"]])) == len(frame)
@@ -260,9 +250,7 @@ def test_invalid_composite_configuration_even_if_forced_only(kwargs):
 
 
 def test_composite_empty_upstream_is_legitimate_skipped_stage():
-    selector = CompositeFeatureSelector([NullSelector(threshold=0, n_jobs=1), VarianceSelector(n_jobs=1)]).fit(
-        pd.DataFrame({"a": [1, 2]})
-    )
+    selector = CompositeFeatureSelector([NullSelector(threshold=0, n_jobs=1), VarianceSelector(n_jobs=1)]).fit(pd.DataFrame({"a": [1, 2]}))
     assert selector.executed_stages_ == [0]
     assert selector.skipped_stages_ == {1: "上游无剩余特征"}
     report = collect_selection_report(selector)
@@ -273,9 +261,7 @@ def test_composite_empty_upstream_is_legitimate_skipped_stage():
 
 def test_scorecard_disabled_and_forced_stages_preserve_execution_status():
     frame = pd.DataFrame({"a": [1, 2], "目标": [0, 1]})
-    selector = ScorecardFeatureSelection(
-        null_threshold=None, iv_threshold=None, corr_threshold=None, mode_threshold=None, target="目标"
-    ).fit(frame)
+    selector = ScorecardFeatureSelection(null_threshold=None, iv_threshold=None, corr_threshold=None, mode_threshold=None, target="目标").fit(frame)
     assert selector.transform(frame).columns.tolist() == ["a", "目标"]
     assert selector.select_columns == ["a", "目标"]
     report = collect_selection_report(selector)
@@ -346,9 +332,7 @@ def test_rfe_fixed_budget_marks_unsearched_features_as_not_computed():
     from hscredit.core.selectors import RFESelector
 
     frame = pd.DataFrame({"a": [0.0, 1.0, 2.0, 3.0], "b": [2.0, 1.0, 3.0, 0.0]})
-    selector = RFESelector(LogisticRegression(), n_features_to_select=1, include=["a"], n_jobs=1).fit(
-        frame, [0, 0, 1, 1]
-    )
+    selector = RFESelector(LogisticRegression(), n_features_to_select=1, include=["a"], n_jobs=1).fit(frame, [0, 0, 1, 1])
     detail = selector.get_selection_details().set_index("特征")
     assert detail.loc["b", "评估状态"] == "未计算"
     assert pd.isna(detail.loc["b", "指标值"])

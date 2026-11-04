@@ -179,9 +179,7 @@ class TabNet(TorchTabularModel):
         try:
             from ._tabnet_pretraining import pretrain_tabnet
         except ImportError as exc:
-            raise DependencyError(
-                'TabNet 需要 torch 和 pytorch-tabnet>=4.1，请安装 pip install "hscredit[net]"'
-            ) from exc
+            raise DependencyError('TabNet 需要 torch 和 pytorch-tabnet>=4.1，请安装 pip install "hscredit[net]"') from exc
         return pretrain_tabnet(
             self,
             X,
@@ -229,9 +227,7 @@ class TabNet(TorchTabularModel):
                 raise DependencyError('TabNet 需要 pytorch-tabnet>=4.1，请安装 pip install "hscredit[net]"')
             from ._tabnet_network import TabNetNetwork
         except ImportError as exc:
-            raise DependencyError(
-                'TabNet 需要 torch 和 pytorch-tabnet>=4.1，请安装 pip install "hscredit[net]"'
-            ) from exc
+            raise DependencyError('TabNet 需要 torch 和 pytorch-tabnet>=4.1，请安装 pip install "hscredit[net]"') from exc
         device = "cuda" if self.device == "auto" and torch.cuda.is_available() else self.device
         try:
             self.device_ = torch.device("cpu" if device == "auto" else device)
@@ -254,9 +250,7 @@ class TabNet(TorchTabularModel):
                 "epsilon",
             )
         }
-        self.native_params_.update(
-            n_numeric=len(self.preprocessor_.num_indices_), cardinalities=self.preprocessor_.cardinalities_
-        )
+        self.native_params_.update(n_numeric=len(self.preprocessor_.num_indices_), cardinalities=self.preprocessor_.cardinalities_)
         self.embedding_dim_, self.n_members_ = self.n_d, 1
         self._model = TabNetNetwork(**self.native_params_).to(self.device_)
 
@@ -271,9 +265,7 @@ class TabNet(TorchTabularModel):
         totals = np.zeros(self.n_features_in_, dtype=np.float64)
         with torch.no_grad():
             for start in range(0, len(tensors[0]), self.batch_size):
-                numeric, categorical, _, weights = (
-                    v[start : start + self.batch_size].to(self.device_) for v in tensors
-                )
+                numeric, categorical, _, weights = (v[start : start + self.batch_size].to(self.device_) for v in tensors)
                 attention = self._model.feature_attention(numeric, categorical)
                 totals += (attention * weights[:, None]).sum(dim=0).cpu().numpy()
         values = np.zeros_like(totals)

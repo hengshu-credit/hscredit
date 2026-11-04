@@ -25,7 +25,6 @@ import re
 import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import date as calendar_date
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -771,9 +770,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             normalized_method = "predict_proba" if prediction_method == "predict_prob" else prediction_method
             if not callable(getattr(model, normalized_method, None)):
                 prefix = "回归报告需要连续预测值；" if self.task_type_ == "regression" else ""
-                raise ValidationError(
-                    f"{prefix}prediction_method={normalized_method!r}：模型 {type(model).__name__} 不支持该方法"
-                )
+                raise ValidationError(f"{prefix}prediction_method={normalized_method!r}：模型 {type(model).__name__} 不支持该方法")
         if prediction_kwargs is not None and not isinstance(prediction_kwargs, dict):
             raise ValidationError("prediction_kwargs 必须是字典或 None")
         self.prediction_method = prediction_method
@@ -1055,9 +1052,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             self.init_params_["target"] = self._target_cfg
         # 新增比较符之前的报告按 > 生成标签，恢复时补齐配置以支持继续计算和添加数据集。
         init_params = dict(state.get("init_params_", {}))
-        self.overdue_operator = validate_overdue_operator(
-            state.get("overdue_operator", init_params.get("overdue_operator") or ">")
-        )
+        self.overdue_operator = validate_overdue_operator(state.get("overdue_operator", init_params.get("overdue_operator") or ">"))
         init_params["overdue_operator"] = self.overdue_operator
         self.init_params_ = init_params
         if payload is not None:
@@ -1164,24 +1159,15 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 has_parallel_children=True,
                 operation="模型报告数据集预测",
                 # 输入投影、概率临时数组和返回的逐行预测；不包含模型原生内部工作区。
-                working_bytes_per_task=max(
-                    (int(spec[3].memory_usage(deep=True).sum()) + len(spec[3]) * 32 for spec in specs), default=0
-                ),
+                working_bytes_per_task=max((int(spec[3].memory_usage(deep=True).sum()) + len(spec[3]) * 32 for spec in specs), default=0),
                 result_bytes_per_task=max(
-                    (
-                        int(spec[3].memory_usage(deep=True).sum())
-                        + len(spec[3]) * 16
-                        + sum(np.asarray(values).nbytes for values in (spec[5] or {}).values())
-                        for spec in specs
-                    ),
+                    (int(spec[3].memory_usage(deep=True).sum()) + len(spec[3]) * 16 + sum(np.asarray(values).nbytes for values in (spec[5] or {}).values()) for spec in specs),
                     default=0,
                 ),
                 output_rows_per_task=max((len(spec[3]) for spec in specs), default=0),
             ),
         )
-        results = (
-            [self._dataset_from_prepared(item) for item in prepared] if callable(self.prediction_method) else prepared
-        )
+        results = [self._dataset_from_prepared(item) for item in prepared] if callable(self.prediction_method) else prepared
         self._datasets = {dataset.name: dataset for dataset in results}
         self._datasets_info = {dataset.name: dataset.label for dataset in results}
 
@@ -1193,13 +1179,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             columns, thresholds = self._overdue_dpds()
             if len(columns) == len(thresholds) == 1:
                 return f"{columns[0]}@{thresholds[0]}"
-        name = (
-            target
-            if isinstance(target, str)
-            else (
-                next(iter(target)) if isinstance(target, dict) and target else getattr(target, "name", None) or "target"
-            )
-        )
+        name = target if isinstance(target, str) else (next(iter(target)) if isinstance(target, dict) and target else getattr(target, "name", None) or "target")
         return name if self.task_type_ == "regression" else display_label(name)
 
     def _build_y(self, X: pd.DataFrame, target_cfg, *, dataset_name=None):
@@ -1224,19 +1204,13 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
 
         values = {}
         for definition in targets.labels:
-            name = (
-                f"{definition.overdue}@{definition.dpd}"
-                if definition.overdue is not None
-                else display_label(definition.name)
-            )
+            name = f"{definition.overdue}@{definition.dpd}" if definition.overdue is not None else display_label(definition.name)
             if name in values:
                 raise ValidationError(f"标签展示名重复: {name}，请为不同标签指定不同名称")
             values[name] = frame[definition.column]
             self._label_aliases[definition.name] = name
             if definition.overdue is not None:
-                self._label_aliases[
-                    overdue_label(definition.overdue, definition.dpd, self.overdue_operator, style="plain")
-                ] = name
+                self._label_aliases[overdue_label(definition.overdue, definition.dpd, self.overdue_operator, style="plain")] = name
         y_dict = {name: value.to_numpy(dtype=float) for name, value in values.items()}
         if targets.mode == "overdue" and len(targets) > 1:
             indicators = pd.DataFrame(y_dict, index=X.index)
@@ -1307,9 +1281,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         specs: List[Tuple[Any, ...]] = []
         candidate_labels: List[str] = []
         for name, (X_raw, y_raw) in normalized.items():
-            self._dataset_target_sources[name] = (
-                "explicit_y" if y_raw is not None else "overdue" if self._is_overdue_cfg() else "target"
-            )
+            self._dataset_target_sources[name] = "explicit_y" if y_raw is not None else "overdue" if self._is_overdue_cfg() else "target"
             X_df = _ensure_dataframe(X_raw, features=self._feature_names)
             if y_raw is None:
                 y_s, y_dict = self._build_y(X_df, self._target_cfg, dataset_name=name)
@@ -1367,9 +1339,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 has_parallel_children=True,
                 operation="模型报告新增数据集预测",
                 working_bytes_per_task=int(X.memory_usage(deep=True).sum()) + len(X) * 32,
-                result_bytes_per_task=int(X.memory_usage(deep=True).sum())
-                + len(X) * 16
-                + sum(np.asarray(values).nbytes for values in (y_dict or {}).values()),
+                result_bytes_per_task=int(X.memory_usage(deep=True).sum()) + len(X) * 16 + sum(np.asarray(values).nbytes for values in (y_dict or {}).values()),
                 output_rows_per_task=len(X),
             ),
         )[0]
@@ -1561,10 +1531,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         # 数据集按传入顺序展示（dict 的 key / list 顺序 / 训练集→测试集→跨时间验证集）
         ds_keys = list(self._datasets)
         labels_map = {k: self._datasets[k].label for k in ds_keys}
-        tasks = [
-            (*self._get_valid_target_arrays(key, label), self.score_direction, self._metric_weight(key, label))
-            for key in ds_keys
-        ]
+        tasks = [(*self._get_valid_target_arrays(key, label), self.score_direction, self._metric_weight(key, label)) for key in ds_keys]
         metric_values = parallel_execute(
             _binary_metric_worker,
             tasks,
@@ -1638,11 +1605,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         from .feature_analyzer import feature_bin_stats
 
         targets = parameters["target"]
-        if (
-            parameters.get("binner") is None
-            and y_dict
-            and not any(values.dropna().nunique() >= 2 for values in targets.y_map(data).values())
-        ):
+        if parameters.get("binner") is None and y_dict and not any(values.dropna().nunique() >= 2 for values in targets.y_map(data).values()):
             available = {name: values for name, values in y_dict.items() if pd.Series(values).dropna().nunique() >= 2}
             if available:
                 fitting = dict(parameters, target=available, del_grey=True, return_binner=True)
@@ -1737,9 +1700,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         ]
 
         chosen = labels if labels is not None else [label]
-        explicit = (
-            {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
-        )
+        explicit = {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
         df, targets = bind_targets(df, target=explicit, del_grey=True)
         targets = replace(targets, del_grey=self.del_grey, handle_missing_target=self.handle_missing_target)
 
@@ -1781,10 +1742,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 continue
             seen.add(id(candidate))
             candidates.append(candidate)
-            pending.extend(
-                getattr(candidate, name, None)
-                for name in ("model_", "_model", "model", "lr_model_", "lr_model", "base_model")
-            )
+            pending.extend(getattr(candidate, name, None) for name in ("model_", "_model", "model", "lr_model_", "lr_model", "base_model"))
             if getattr(candidate, "steps", None):
                 pending.append(candidate.steps[-1][1])
 
@@ -1794,9 +1752,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
 
             if getattr(candidate, "_supports_native_feature_importance", None) is False:
                 continue
-            if isinstance(candidate, SklearnRiskModel) and not any(
-                hasattr(candidate._model, attr) for attr in ("feature_importances_", "coef_")
-            ):
+            if isinstance(candidate, SklearnRiskModel) and not any(hasattr(candidate._model, attr) for attr in ("feature_importances_", "coef_")):
                 continue  # 如 RBF SVM，原生没有逐字段重要性。
             values = None
             if callable(getattr(candidate, "get_feature_importances", None)):
@@ -1816,9 +1772,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     coefficient = getattr(candidate, "coef_", None)
                     if coefficient is not None:
                         coefficients = np.asarray(coefficient, dtype=float)
-                        values = (
-                            np.mean(np.abs(coefficients), axis=0) if coefficients.ndim > 1 else np.abs(coefficients)
-                        )
+                        values = np.mean(np.abs(coefficients), axis=0) if coefficients.ndim > 1 else np.abs(coefficients)
                 except Exception as exc:
                     self._report_warning("读取模型系数失败 [模型=%s]: %s", type(candidate).__name__, exc)
                     values = None
@@ -2049,11 +2003,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 metric_tasks = []
                 for feat in importance_df.index:
                     train_values = train_ds.X[feat] if feat in train_ds.X.columns else pd.Series(dtype=float)
-                    test_values = (
-                        self._datasets[test_key].X[feat]
-                        if test_key is not None and feat in self._datasets[test_key].X.columns
-                        else None
-                    )
+                    test_values = self._datasets[test_key].X[feat] if test_key is not None and feat in self._datasets[test_key].X.columns else None
                     metric_tasks.append((y_arr, train_values, test_values))
                 metric_values = parallel_execute(
                     _feature_metric_worker,
@@ -2073,11 +2023,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         releases_gil=True,
                         operation="模型报告字段IV KS PSI",
                         working_bytes_per_task=max(
-                            (
-                                int(task[1].memory_usage(deep=True)) * 2
-                                + (len(task[0]) + (len(task[2]) if task[2] is not None else 0)) * 64
-                                for task in metric_tasks
-                            ),
+                            (int(task[1].memory_usage(deep=True)) * 2 + (len(task[0]) + (len(task[2]) if task[2] is not None else 0)) * 64 for task in metric_tasks),
                             default=0,
                         ),
                         result_bytes_per_task=24,
@@ -2106,13 +2052,9 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         """按评分卡能力识别 hscredit、toad 与 scorecardpipeline 对象。"""
         model_name = type(self._report_model).__name__.lower()
         has_points = callable(getattr(self._report_model, "scorecard_points", None))
-        has_rules = isinstance(getattr(self._report_model, "rules", None), dict) or isinstance(
-            getattr(self._report_model, "rules_", None), dict
-        )
+        has_rules = isinstance(getattr(self._report_model, "rules", None), dict) or isinstance(getattr(self._report_model, "rules_", None), dict)
         has_export = callable(getattr(self._report_model, "export", None))
-        probability_card = hasattr(self._report_model, "transformer_") and callable(
-            getattr(self._report_model, "score_formula", None)
-        )
+        probability_card = hasattr(self._report_model, "transformer_") and callable(getattr(self._report_model, "score_formula", None))
         return "scorecard" in model_name and (has_points or (has_rules and has_export) or probability_card)
 
     def _scorecard_lr_model(self):
@@ -2146,11 +2088,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             return None
 
         actual_converter = getattr(converter, "transformer_", converter)
-        is_fitted = any(
-            bool(getattr(candidate, "_is_fitted", False))
-            for candidate in (owner, converter, actual_converter)
-            if candidate is not None
-        )
+        is_fitted = any(bool(getattr(candidate, "_is_fitted", False)) for candidate in (owner, converter, actual_converter) if candidate is not None)
         if not is_fitted:
             return None
 
@@ -2584,9 +2522,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         binner = reference_binner(self, feature, method, max_n_bins, label, labels, supplied=binner)
 
         chosen = labels if labels is not None else [label]
-        explicit = (
-            {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
-        )
+        explicit = {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
         df, targets = bind_targets(df, target=explicit, del_grey=True)
         targets = replace(targets, del_grey=self.del_grey, handle_missing_target=self.handle_missing_target)
 
@@ -2691,9 +2627,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 selected = fractions[pct] * weights
                 top_bad_rate = float(np.dot(y_arr, selected) / selected.sum()) if selected.sum() else np.nan
                 lift = top_bad_rate / overall_bad_rate if overall_bad_rate > 0 else np.nan
-                _, improvement, _ = rejection_statistics(
-                    weights.sum(), np.dot(y_arr, weights), selected.sum(), np.dot(y_arr, selected)
-                )
+                _, improvement, _ = rejection_statistics(weights.sum(), np.dot(y_arr, weights), selected.sum(), np.dot(y_arr, selected))
                 key = f"TOP {int(pct * 100)}%"
                 bad_rates[key] = top_bad_rate
                 lifts[key] = lift
@@ -2720,9 +2654,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     top_amt = amounts * fractions[pct]
                     top_bad_amt = float((y_arr * top_amt).sum() / top_amt.sum()) if top_amt.sum() > 0 else np.nan
                     lift_amt = top_bad_amt / overall_bad_amount if overall_bad_amount > 0 else np.nan
-                    _, imp_amt, _ = rejection_statistics(
-                        amounts.sum(), np.dot(y_arr, amounts), top_amt.sum(), np.dot(y_arr, top_amt)
-                    )
+                    _, imp_amt, _ = rejection_statistics(amounts.sum(), np.dot(y_arr, amounts), top_amt.sum(), np.dot(y_arr, top_amt))
                     key = f"TOP {int(pct * 100)}%"
                     amt_bad_rates[key] = top_bad_amt
                     amt_lifts[key] = lift_amt
@@ -2851,9 +2783,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         "样本数": len(y_m),
                         "坏样本率": float(np.average(y_m, weights=month_weights)),
                         "KS": _safe_binary_metric(ks, y_m, proba_m, sample_weight=month_weights),
-                        "AUC": _safe_binary_metric(
-                            auc, y_m, proba_m, score_direction=self.score_direction, sample_weight=month_weights
-                        ),
+                        "AUC": _safe_binary_metric(auc, y_m, proba_m, score_direction=self.score_direction, sample_weight=month_weights),
                         "均值": float(np.nanmean(score_m)),
                         "标准差": float(np.nanstd(score_m)),
                         "最小值": float(np.nanmin(score_m)),
@@ -3048,9 +2978,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     col_raw = ds.X[feat]
                     col = col_raw.dropna()
                     # 检查是否为类别特征或低基数的数值特征
-                    is_categorical = col.dtype == "object" or (
-                        col.dtype in ["int64", "float64"] and col.nunique() <= 10
-                    )
+                    is_categorical = col.dtype == "object" or (col.dtype in ["int64", "float64"] and col.nunique() <= 10)
                     if is_categorical:
                         # 类别特征跳过KS图
                         continue
@@ -3338,9 +3266,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     path = str(output_dir / f"ks_{feature}_{ds_key}.png")
                     try:
                         column = ds.X[feature].dropna()
-                        is_categorical = column.dtype == "object" or (
-                            column.dtype in ["int64", "float64"] and column.nunique() <= 10
-                        )
+                        is_categorical = column.dtype == "object" or (column.dtype in ["int64", "float64"] and column.nunique() <= 10)
                         if is_categorical:
                             continue
                         target = ds.y.loc[column.index]
@@ -3522,16 +3448,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             rows.append(row)
 
         columns = pd.MultiIndex.from_tuples(
-            [
-                (metric, column)
-                for metric in self._SUMMARY_METRICS
-                for ds_label in ds_labels
-                for column in (
-                    [ds_label, f"{ds_label}（加权）"]
-                    if self.show_weighted_metrics and metric not in ("样本数", "坏样本率")
-                    else [ds_label]
-                )
-            ],
+            [(metric, column) for metric in self._SUMMARY_METRICS for ds_label in ds_labels for column in ([ds_label, f"{ds_label}（加权）"] if self.show_weighted_metrics and metric not in ("样本数", "坏样本率") else [ds_label])],
             names=["统计指标", "数据集"],
         )
         index = pd.Index(index_labels, name="目标变量" if self.task_type_ == "regression" else "逾期指标")
@@ -3682,9 +3599,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             config["X_validation"] = config["data"] if config["X_validation"] is None else config["X_validation"]
         explanation = build_model_explanation(self.model, config)
         if "元信息" in explanation:
-            explanation["元信息"]["解释数据集"] = self.explain_config["dataset"] or (
-                "显式 data" if self.explain_config["data"] is not None else self._datasets[self._train_key].label
-            )
+            explanation["元信息"]["解释数据集"] = self.explain_config["dataset"] or ("显式 data" if self.explain_config["data"] is not None else self._datasets[self._train_key].label)
         self._model_explanation_cache = explanation
         return explanation
 
@@ -3874,9 +3789,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
 
         def publish_bundle():
             nonlocal result
-            with ArtifactTransaction(
-                {"directory": str(destination.parent), "name": destination.stem, "overwrite": True}
-            ) as transaction:
+            with ArtifactTransaction({"directory": str(destination.parent), "name": destination.stem, "overwrite": True}) as transaction:
                 staged = transaction.stage_path(destination.name)
                 result = self.to_excel(str(staged), mode=mode, return_result=True, **options)
                 if not staged.is_file():
@@ -3884,9 +3797,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 # 内层记录的只是暂存文件，不应暴露为已发布制品。
                 result.artifacts = []
                 workbook = transaction.publish(staged, destination.name, artifact_type="excel")
-                assets = sorted(
-                    path for path in transaction.staging_dir.rglob("*") if path.is_file() and path != staged
-                )
+                assets = sorted(path for path in transaction.staging_dir.rglob("*") if path.is_file() and path != staged)
                 for asset in assets:
                     transaction.publish(
                         asset,
@@ -3903,12 +3814,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 )
                 transaction.publish(status_file, "report-status.json", artifact_type="json")
             # 只有成功退出事务（完成清单已原子发布）才公布正式路径。
-            result.metadata.update(
-                {"事务发布": True, "完成清单": str(transaction.manifest_path), "版本目录": str(transaction.run_dir)}
-            )
-            result.artifacts = [
-                {"类型": item["type"], "路径": item["path"], "完整": result.complete} for item in transaction.artifacts
-            ]
+            result.metadata.update({"事务发布": True, "完成清单": str(transaction.manifest_path), "版本目录": str(transaction.run_dir)})
+            result.artifacts = [{"类型": item["type"], "路径": item["path"], "完整": result.complete} for item in transaction.artifacts]
             self.last_report_result_ = result
             return result if return_result else workbook["path"]
 
@@ -4007,9 +3914,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     missing = [ds.label for ds in self._datasets.values() if column not in ds.X.columns]
                     if missing:
                         execution_result.failure(label, f"请求字段 {column} 在以下数据集中缺失: {missing}")
-        feature_contribution_label_max_features = self._validate_feature_contribution_label_limit(
-            feature_contribution_label_max_features
-        )
+        feature_contribution_label_max_features = self._validate_feature_contribution_label_limit(feature_contribution_label_max_features)
         model_name = model_name or self.model.__class__.__name__
 
         plot_paths: Dict[str, List[str]] = {}
@@ -4073,32 +3978,9 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             "内容": training_name,
             "备注": "预测口径、训练记录、曲线、参数搜索及最终重训",
         }
-        ws = writer.get_sheet_by_name("目录")
-        end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="模型评估报告", style="header_middle")
-        end_row, _ = dataframe2excel(contents, writer, sheet_name=ws, start_row=end_row + 1, left_cols=["内容", "备注"])
+        from ._model_layout import write_model_contents
 
-        for i, row in contents.iterrows():
-            target_cell = writer.get_cell_space((2, 2))
-            _insert_required_hyperlink(
-                ws,
-                (end_row - len(contents) + i, 3),
-                hyperlink=f"#'{row['内容']}'!{target_cell}",
-                purpose="目录链接",
-            )
-
-        _, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2))
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row + 1, 3), value="V1.0", style="middle", end_space=(end_row + 1, 4)
-        )
-        _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="创建日期:", style="middle", end_space=(end_row, 2))
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row, 3), value=calendar_date.today().strftime("%Y-%m-%d"), style="middle", end_space=(end_row, 4)
-        )
-        _, _ = writer.insert_value2sheet(ws, (end_row, 2), value="模型名称:", style="middle", end_space=(end_row, 2))
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row, 3), value=model_name, style="middle", end_space=(end_row, 4)
-        )
-        writer.adjust_columns_width(ws, start_col=2, end_col=4)
+        write_model_contents(writer, contents, model_name)
 
         # ============================================================
         # 1-基本信息 Sheet
@@ -4108,9 +3990,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
         # 1.1 项目目标
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"}
-        )
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"})
         desc_text = project_desc or f"使用 {model_name} 模型进行信用风险评估"
         end_row, _ = writer.insert_value2sheet(
             ws,
@@ -4121,9 +4001,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         )
 
         # 1.2 数据样本描述
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row + 2, 2), value="2、数据样本描述", style="header_middle", align={"horizontal": "left"}
-        )
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="2、数据样本描述", style="header_middle", align={"horizontal": "left"})
 
         label_text = self._target_name or "TARGET"
 
@@ -4138,10 +4016,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             if all_dates:
                 all_dates_combined = pd.concat(all_dates, ignore_index=True).dropna()
                 if not all_dates_combined.empty:
-                    global_date_prefix = (
-                        f"{all_dates_combined.min().strftime('%Y-%m-%d')} ~ "
-                        f"{all_dates_combined.max().strftime('%Y-%m-%d')}  "
-                    )
+                    global_date_prefix = f"{all_dates_combined.min().strftime('%Y-%m-%d')} ~ " f"{all_dates_combined.max().strftime('%Y-%m-%d')}  "
         sample_interval = global_date_prefix if global_date_prefix else ""
 
         is_multi = self._is_multi_label()
@@ -4149,11 +4024,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         dataset_labels = [self._datasets[k].label for k in ds_keys_list]
 
         # ---- Step 2: 整体样本描述（多标签时逐标签展示坏样本率） ----
-        target_specific_totals = any(
-            np.isnan(np.asarray(values, dtype=float)).any()
-            for ds in self._datasets.values()
-            for values in (ds.y_dict or {"target": ds.y}).values()
-        )
+        target_specific_totals = any(np.isnan(np.asarray(values, dtype=float)).any() for ds in self._datasets.values() for values in (ds.y_dict or {"target": ds.y}).values())
         overall_n = sum(len(self._datasets[k].y) for k in ds_keys_list)
         if target_specific_totals and not is_multi:
             overall_n = sum(int(np.isfinite(np.asarray(self._datasets[k].y, dtype=float)).sum()) for k in ds_keys_list)
@@ -4226,20 +4097,11 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         )
 
         # 1.3 数据样本统计
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row + 2, 2), value="3、数据样本统计", style="header_middle", align={"horizontal": "left"}
-        )
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="3、数据样本统计", style="header_middle", align={"horizontal": "left"})
         ds_keys_list = list(self._datasets.keys())
         dataset_labels = [self._datasets[k].label for k in ds_keys_list]
 
-        y_maps = [
-            (
-                {label: self._get_y(ds_key, label) for label in self._label_names}
-                if is_multi
-                else {label_text: self._get_y(ds_key)}
-            )
-            for ds_key in ds_keys_list
-        ]
+        y_maps = [({label: self._get_y(ds_key, label) for label in self._label_names} if is_multi else {label_text: self._get_y(ds_key)}) for ds_key in ds_keys_list]
         stat_df, stat_pct_cols = build_sample_stats_table(
             dataset_labels,
             y_maps,
@@ -4262,16 +4124,12 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 percent_cols=stat_pct_cols,
             )
         else:
-            end_row, _ = dataframe2excel(
-                stat_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=stat_pct_cols
-            )
+            end_row, _ = dataframe2excel(stat_df, writer, sheet_name=ws, start_row=end_row + 1, percent_cols=stat_pct_cols)
 
         # 1.4 样本分布情况
         freq_label_map = {"D": "日", "W": "周", "M": "月", "Q": "季度", "Y": "年", "ME": "月", "QE": "季度", "YE": "年"}
         if date or group:
-            end_row, _ = writer.insert_value2sheet(
-                ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"}
-            )
+            end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="4、样本分布情况", style="header_middle", align={"horizontal": "left"})
 
             def _write_distribution(group_of_ds, title: str):
                 """构建并写入一张「数据集 × 数据分组」的分布表（数据集逐段堆叠）。
@@ -4288,11 +4146,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         continue
                     distribution_dataset_labels.append(ds_label)
                     group_values.append(gvals)
-                    distribution_y_maps.append(
-                        {label: self._get_y(ds_key, label) for label in self._label_names}
-                        if is_multi
-                        else {label_text: self._get_y(ds_key)}
-                    )
+                    distribution_y_maps.append({label: self._get_y(ds_key, label) for label in self._label_names} if is_multi else {label_text: self._get_y(ds_key)})
                 if not distribution_y_maps:
                     return
                 dist_df, pct = build_group_distribution_table(
@@ -4329,9 +4183,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 except ValueError as exc:
                     self._report_warning("日期频率 %s 无效，回退为月频: %s", freq, exc)
                     resolved_freq = "M"
-                period_col_name = freq_label_map.get(
-                    frequency_name(resolved_freq).split("-")[0], frequency_name(resolved_freq)
-                )
+                period_col_name = freq_label_map.get(frequency_name(resolved_freq).split("-")[0], frequency_name(resolved_freq))
 
                 def _period_of(ds_key, ds, _freq=resolved_freq):
                     if date not in ds.X.columns:
@@ -4642,18 +4494,10 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         labels=self._label_names,
                     )
                     # 从 MultiIndex 列中提取百分位列
-                    pct_cols = [
-                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS
-                    ]
-                    cond_cols = [
-                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS
-                    ]
-                    amt_pct = [
-                        c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS
-                    ]
-                    amt_cond = [
-                        c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS
-                    ]
+                    pct_cols = [c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
+                    cond_cols = [c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
+                    amt_pct = [c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
+                    amt_cond = [c for c in amount_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
                     order_start_row = end_row + 1
                     order_end_row, order_end_col = dataframe2excel(
                         order_table,
@@ -4686,12 +4530,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         margins=True,
                         labels=self._label_names,
                     )
-                    pct_cols = [
-                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS
-                    ]
-                    cond_cols = [
-                        c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS
-                    ]
+                    pct_cols = [c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._PERCENT_COLS]
+                    cond_cols = [c for c in order_table.columns if (c[1] if isinstance(c, tuple) else c) in self._CONDITION_COLS]
                     end_row, _ = dataframe2excel(
                         order_table,
                         writer,
@@ -4720,9 +4560,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     condition_color="F76E6C",
                 )
                 try:
-                    amount_table = self.get_bin_table(
-                        ds_key, method=method, max_n_bins=max_n_bins, amount=amount, margins=True
-                    )
+                    amount_table = self.get_bin_table(ds_key, method=method, max_n_bins=max_n_bins, amount=amount, margins=True)
                     amt_pct = [c for c in self._PERCENT_COLS if c in amount_table.columns]
                     amt_cond = [c for c in self._CONDITION_COLS if c in amount_table.columns]
                     amount_end_row, _ = dataframe2excel(
@@ -4795,10 +4633,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 condition_cols=["IV", "KS"],
             )
             feature_name_col = 2 + features_summary.columns.get_loc("特征名")
-            features_summary_rows = {
-                str(feat): features_summary_start_row + features_summary.columns.nlevels + position
-                for position, feat in enumerate(features_summary["特征名"])
-            }
+            features_summary_rows = {str(feat): features_summary_start_row + features_summary.columns.nlevels + position for position, feat in enumerate(features_summary["特征名"])}
             feature_section += 1
 
         # 入模变量相关性
@@ -4894,16 +4729,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         margins=True,
                         labels=labels_arg,
                     )
-                    ft_pct = (
-                        [c for c in ft.columns if c[-1] in self._PERCENT_COLS]
-                        if isinstance(ft.columns, pd.MultiIndex)
-                        else [c for c in self._PERCENT_COLS if c in ft.columns]
-                    )
-                    ft_cond = (
-                        [c for c in ft.columns if c[-1] in self._CONDITION_COLS]
-                        if isinstance(ft.columns, pd.MultiIndex)
-                        else [c for c in self._CONDITION_COLS if c in ft.columns]
-                    )
+                    ft_pct = [c for c in ft.columns if c[-1] in self._PERCENT_COLS] if isinstance(ft.columns, pd.MultiIndex) else [c for c in self._PERCENT_COLS if c in ft.columns]
+                    ft_cond = [c for c in ft.columns if c[-1] in self._CONDITION_COLS] if isinstance(ft.columns, pd.MultiIndex) else [c for c in self._CONDITION_COLS if c in ft.columns]
 
                     if amount:
                         table_start = end_row + 1
@@ -4927,16 +4754,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                             amount=amount,
                             labels=labels_arg,
                         )
-                        amt_pct = (
-                            [c for c in ft_amt.columns if c[-1] in self._PERCENT_COLS]
-                            if isinstance(ft_amt.columns, pd.MultiIndex)
-                            else [c for c in self._PERCENT_COLS if c in ft_amt.columns]
-                        )
-                        amt_cond = (
-                            [c for c in ft_amt.columns if c[-1] in self._CONDITION_COLS]
-                            if isinstance(ft_amt.columns, pd.MultiIndex)
-                            else [c for c in self._CONDITION_COLS if c in ft_amt.columns]
-                        )
+                        amt_pct = [c for c in ft_amt.columns if c[-1] in self._PERCENT_COLS] if isinstance(ft_amt.columns, pd.MultiIndex) else [c for c in self._PERCENT_COLS if c in ft_amt.columns]
+                        amt_cond = [c for c in ft_amt.columns if c[-1] in self._CONDITION_COLS] if isinstance(ft_amt.columns, pd.MultiIndex) else [c for c in self._CONDITION_COLS if c in ft_amt.columns]
                         amount_end_row, _ = dataframe2excel(
                             ft_amt,
                             writer,
@@ -4978,11 +4797,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                             exc,
                         )
             if isinstance(psi_df, pd.DataFrame) and not psi_df.empty:
-                psi_percent_cols = [
-                    column
-                    for column in psi_df.columns
-                    if "占比" in str(column) or "样本率" in str(column) or str(column) in {"实际% - 预期%", "分档PSI值", "总体PSI值"}
-                ]
+                psi_percent_cols = [column for column in psi_df.columns if "占比" in str(column) or "样本率" in str(column) or str(column) in {"实际% - 预期%", "分档PSI值", "总体PSI值"}]
                 psi_condition_cols = [column for column in psi_df.columns if str(column) in {"实际% - 预期%", "分档PSI值"}]
                 end_row, _ = dataframe2excel(
                     psi_df,
@@ -5178,9 +4993,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             style="header_middle",
             align={"horizontal": "left"},
         )
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row, 2), value=model_name, style="middle", align={"horizontal": "left"}
-        )
+        end_row, _ = writer.insert_value2sheet(ws, (end_row, 2), value=model_name, style="middle", align={"horizontal": "left"})
         param_section += 1
 
         # 5.2 模型参数
@@ -5261,11 +5074,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 writer,
                 sheet_name=ws,
                 start_row=end_row + 1,
-                left_cols=[
-                    column
-                    for column in ("入参字段", "Features", "变量", "feature", "特征", "字段名称")
-                    if column in direct_lr_summary.columns
-                ],
+                left_cols=[column for column in ("入参字段", "Features", "变量", "feature", "特征", "字段名称") if column in direct_lr_summary.columns],
             )
             param_section += 1
 
@@ -5449,9 +5258,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                             )
                 score_psi_df = psi_tables.get("score_psi")
                 if isinstance(score_psi_df, pd.DataFrame) and not score_psi_df.empty:
-                    end_row, _ = dataframe2excel(
-                        score_psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="评分PSI"
-                    )
+                    end_row, _ = dataframe2excel(score_psi_df, writer, sheet_name=ws, start_row=end_row + 1, title="评分PSI")
                 param_section += 1
 
         # ============================================================
@@ -5462,9 +5269,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
         # 6.1 入模变量信息
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row + 2, 2), value="1、入模变量信息", style="header_middle", align={"horizontal": "left"}
-        )
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value="1、入模变量信息", style="header_middle", align={"horizontal": "left"})
         if feature_info is not None and isinstance(feature_info, pd.DataFrame) and not feature_info.empty:
             end_row, _ = dataframe2excel(feature_info, writer, sheet_name=ws, start_row=end_row + 1)
         else:
@@ -5483,9 +5288,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
 
         # 6.2 生产订单测试用例；关闭时不创建、读取或写入逐行样例表。
         sample_title = "2、生产订单测试用例" if include_sample_records else "2、生产订单测试用例（不适用：已关闭明细输出）"
-        end_row, _ = writer.insert_value2sheet(
-            ws, (end_row + 2, 2), value=sample_title, style="header_middle", align={"horizontal": "left"}
-        )
+        end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=sample_title, style="header_middle", align={"horizontal": "left"})
         if include_sample_records:
             try:
                 train_ds = self._datasets[self._train_key]
@@ -5531,12 +5334,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 if execution_result is not None:
                     execution_result.failure("模型解释", str(explanation["失败原因"]))
             else:
-                metadata_table = pd.DataFrame(
-                    [{"项目": key, "值": str(value)} for key, value in explanation["元信息"].items()]
-                )
-                end_row, _ = dataframe2excel(
-                    metadata_table, writer, sheet_name=ws, start_row=end_row + 2, title="1、解释范围与元信息"
-                )
+                metadata_table = pd.DataFrame([{"项目": key, "值": str(value)} for key, value in explanation["元信息"].items()])
+                end_row, _ = dataframe2excel(metadata_table, writer, sheet_name=ws, start_row=end_row + 2, title="1、解释范围与元信息")
                 for title, key in [
                     ("2、全局SHAP重要性", "全局解释"),
                     ("3、SHAP贡献相关性", "相关性"),
@@ -5547,9 +5346,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     ("8、业务原因码", "原因码"),
                 ]:
                     table = explanation[key]
-                    end_row, _ = dataframe2excel(
-                        table, writer, sheet_name=ws, start_row=end_row + 2, title=title, index=key == "相关性"
-                    )
+                    end_row, _ = dataframe2excel(table, writer, sheet_name=ws, start_row=end_row + 2, title=title, index=key == "相关性")
                 local_tables = []
                 for sample_id, table in explanation["样本解释"].items():
                     local = table.copy()
@@ -5642,9 +5439,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             "summary": self.summary().reset_index().to_dict(orient="records"),
             "metrics": self.get_metrics().to_dict(orient="records"),
             "feature_importance": self.get_feature_importance().reset_index().to_dict(orient="records"),
-            "training_process": {
-                key: table.to_dict(orient="records") for key, table in self.get_training_process().items()
-            },
+            "training_process": {key: table.to_dict(orient="records") for key, table in self.get_training_process().items()},
         }
         for ds_key in self._datasets:
             result[f"bin_table_{ds_key}"] = self.get_bin_table(ds_key, labels=labels_arg).to_dict(orient="records")

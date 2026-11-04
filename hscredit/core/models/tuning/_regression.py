@@ -50,9 +50,7 @@ class RegressionMetric(Metric):
             if key == "rmse":
                 value = np.sqrt(value)
         else:
-            value = (
-                self.scorer(y, prediction, sample_weight=weight) if weight is not None else self.scorer(y, prediction)
-            )
+            value = self.scorer(y, prediction, sample_weight=weight) if weight is not None else self.scorer(y, prediction)
         if isinstance(value, (bool, np.bool_)) or np.ndim(value) != 0:
             raise ValueError(f"指标 {self.name} 必须返回单个有限数值")
         try:

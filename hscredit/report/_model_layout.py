@@ -3,6 +3,7 @@
 import copy
 import math
 import unicodedata
+from datetime import date as calendar_date
 
 import pandas as pd
 import numpy as np
@@ -10,6 +11,42 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import coordinate_to_tuple
 import re
+
+
+def write_model_contents(writer, contents, model_name, title="模型评估报告"):
+    """分类与回归报告共用目录版式、导航链接及版本信息。"""
+    from ..excel import dataframe2excel
+
+    worksheet = writer.get_sheet_by_name("目录")
+    worksheet.sheet_view.showGridLines = False
+    end_row, _ = writer.insert_value2sheet(worksheet, "B2", value=title, style="header_middle", end_space="D2")
+    end_row, _ = dataframe2excel(
+        contents,
+        writer,
+        sheet_name=worksheet,
+        start_row=end_row + 1,
+        index=False,
+        left_cols=["内容", "备注"],
+        speed="fast",
+    )
+    for offset, name in enumerate(contents["内容"]):
+        cell = (end_row - len(contents) + offset, 3)
+        hyperlink = f"#'{name}'!B2"
+        try:
+            writer.insert_hyperlink2sheet(worksheet, cell, hyperlink=hyperlink)
+        except Exception as exc:
+            coordinate = writer.get_cell_space(cell)
+            raise RuntimeError(f"生成目录链接失败 [工作表=目录, 单元格={coordinate}, 目标={hyperlink}]") from exc
+
+    row = end_row + 1
+    for label, value in (
+        ("版本号:", "V1.0"),
+        ("创建日期:", calendar_date.today().strftime("%Y-%m-%d")),
+        ("模型名称:", model_name),
+    ):
+        writer.insert_value2sheet(worksheet, (row, 2), value=label, style="middle", end_space=(row, 2))
+        row, _ = writer.insert_value2sheet(worksheet, (row, 3), value=value, style="middle", end_space=(row, 4))
+    writer.adjust_columns_width(worksheet, start_col=2, end_col=4)
 
 
 def chapter_number(number):
@@ -36,20 +73,11 @@ def fit_report_titles(worksheet):
     for index, (start, level) in enumerate(headings):
         stop = next((row for row, depth in headings[index + 1 :] if depth <= level), None)
         last = max(
-            (
-                cell.column
-                for row in worksheet.iter_rows(min_row=start + 1, max_row=(stop - 1 if stop else worksheet.max_row))
-                for cell in row
-                if cell.value is not None
-            ),
+            (cell.column for row in worksheet.iter_rows(min_row=start + 1, max_row=(stop - 1 if stop else worksheet.max_row)) for cell in row if cell.value is not None),
             default=4,
         )
         for area in worksheet.merged_cells.ranges:
-            if (
-                area.min_row > start
-                and (stop is None or area.max_row < stop)
-                and area.min_row not in {r for r, _ in headings}
-            ):
+            if area.min_row > start and (stop is None or area.max_row < stop) and area.min_row not in {r for r, _ in headings}:
                 last = max(last, area.max_col)
         for picture in worksheet._images:
             if isinstance(picture.anchor, str):
@@ -138,23 +166,10 @@ def fit_metadata_sheet(worksheet, default_column_width=None):
     def width(value):
         return sum(2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1 for char in str(value))
 
-    merged = {
-        cell.coordinate
-        for area in worksheet.merged_cells.ranges
-        for row in worksheet.iter_rows(
-            min_row=area.min_row, max_row=area.max_row, min_col=area.min_col, max_col=area.max_col
-        )
-        for cell in row
-    }
+    merged = {cell.coordinate for area in worksheet.merged_cells.ranges for row in worksheet.iter_rows(min_row=area.min_row, max_row=area.max_row, min_col=area.min_col, max_col=area.max_col) for cell in row}
     for column in range(2, worksheet.max_column + 1):
-        cells = [
-            row[0]
-            for row in worksheet.iter_rows(min_col=column, max_col=column)
-            if not isinstance(row[0], MergedCell) and row[0].value is not None and row[0].coordinate not in merged
-        ]
-        desired = max(
-            (max(width(line) for line in str(cell.value).splitlines() or [""]) + 2 for cell in cells), default=12
-        )
+        cells = [row[0] for row in worksheet.iter_rows(min_col=column, max_col=column) if not isinstance(row[0], MergedCell) and row[0].value is not None and row[0].coordinate not in merged]
+        desired = max((max(width(line) for line in str(cell.value).splitlines() or [""]) + 2 for cell in cells), default=12)
         limit = 60 if column == 3 else 40 if column == 2 else 36
         worksheet.column_dimensions[get_column_letter(column)].width = min(limit, max(14, desired))
     for row in worksheet:

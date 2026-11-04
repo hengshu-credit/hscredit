@@ -348,14 +348,10 @@ def test_tree_report_and_rule_table_forward_operator(data, op):
 
     fit_data = data.assign(target=LABELS[">"])
     tree = DecisionTreeAnalyzer(target="target", features=["评分"], tree_params={"max_depth": 1}, n_jobs=1).fit(fit_data)
-    manual = ManualTreeExtractor(target="target", max_depth=1, min_samples_leaf=1, n_jobs=1).fit(
-        fit_data, features=["评分"]
-    )
+    manual = ManualTreeExtractor(target="target", max_depth=1, min_samples_leaf=1, n_jobs=1).fit(fit_data, features=["评分"])
     manual.manual_split(fit_data, feature="评分", threshold=3, node=0)
     for estimator in [tree, manual]:
-        params = dict(
-            overdue="MOB 1", dpds=[3, 0], overdue_operator=op, del_grey=True, leaf_only=True, long_format=False
-        )
+        params = dict(overdue="MOB 1", dpds=[3, 0], overdue_operator=op, del_grey=True, leaf_only=True, long_format=False)
         report = estimator.report({"样本": data}, **params)["样本"]
         assert report[(f"MOB 1{op}3", "坏样本数")].sum() == sum(LABELS[op])
         table = estimator.get_rule_table(data, **params)
@@ -614,9 +610,7 @@ def test_normalized_thresholds_use_the_same_values_for_labels_and_comparisons(da
     actual = bad_rate_overall(data, dpds=pd.Index(["3.0", "0", 3]), **params)
     assert_frame_equal(actual, expected)
     expected_labels = pd.Series(LABELS[op], index=data.index).where(data["MOB 1"].notna())
-    np.testing.assert_allclose(
-        make_overdue_target(data["MOB 1"], "3.0", overdue_operator=op), expected_labels, equal_nan=True
-    )
+    np.testing.assert_allclose(make_overdue_target(data["MOB 1"], "3.0", overdue_operator=op), expected_labels, equal_nan=True)
 
 
 @pytest.mark.parametrize("container", [np.array, pd.Index, pd.Series])

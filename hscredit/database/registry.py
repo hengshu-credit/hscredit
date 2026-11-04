@@ -82,12 +82,7 @@ def register_adapter(
     """
 
     canonical = _normalize_name(name)
-    if not isinstance(adapter_class, type) or not (
-        issubclass(adapter_class, BaseDatabaseAdapter)
-        or all(
-            callable(getattr(adapter_class, method, None)) for method in ("query", "execute", "executemany", "close")
-        )
-    ):
+    if not isinstance(adapter_class, type) or not (issubclass(adapter_class, BaseDatabaseAdapter) or all(callable(getattr(adapter_class, method, None)) for method in ("query", "execute", "executemany", "close"))):
         raise ValidationError("adapter_class 必须是实现 query、execute、executemany、close 的适配器类")
     if canonical in _ADAPTERS and not replace:
         raise ValidationError(f"数据库适配器 {canonical!r} 已经注册")

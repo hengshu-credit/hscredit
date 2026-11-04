@@ -243,9 +243,7 @@ def test_eval_ratios_are_recorded_as_public_lift_history_columns():
 
     assert "LIFT@20%" in tuner.optimization_history_.columns
     assert np.isfinite(tuner.optimization_history_.loc[0, "LIFT@20%"])
-    assert tuner.study_.trials[0].user_attrs["LIFT@20%"] == pytest.approx(
-        tuner.optimization_history_.loc[0, "LIFT@20%"]
-    )
+    assert tuner.study_.trials[0].user_attrs["LIFT@20%"] == pytest.approx(tuner.optimization_history_.loc[0, "LIFT@20%"])
 
 
 def test_analysis_apis_translate_latent_parameter_names(monkeypatch):

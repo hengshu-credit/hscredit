@@ -312,9 +312,7 @@ def test_lightgbm_auto_split_slices_init_score_and_validation_weights(monkeypatc
 
     monkeypatch.setattr(module.lgb, "LGBMClassifier", FakeLGBMClassifier)
     X, y = _binary_data()
-    module.LightGBM(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
-        X, y, sample_weight=np.arange(1, 101), init_score=np.arange(100)
-    )
+    module.LightGBM(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(X, y, sample_weight=np.arange(1, 101), init_score=np.arange(100))
 
     fitted = FakeLGBMClassifier.instance
     assert fitted.n_rows == 80
@@ -446,9 +444,7 @@ def test_catboost_auto_split_slices_baseline_and_uses_weighted_eval_pool(monkeyp
     monkeypatch.setattr(module.cb, "Pool", FakePool)
     monkeypatch.setattr(module.cb, "CatBoostClassifier", FakeCatBoostClassifier)
     X, y = _binary_data()
-    module.CatBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
-        X, y, sample_weight=np.arange(1, 101), baseline=np.arange(100)
-    )
+    module.CatBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(X, y, sample_weight=np.arange(1, 101), baseline=np.arange(100))
 
     fitted = FakeCatBoostClassifier.instance
     assert fitted.n_rows == 80
@@ -507,9 +503,7 @@ def test_ngboost_forwards_fit_params(monkeypatch):
     "ngboost_version, constructor_handles_early_stopping",
     [("0.3.12", False), ("0.5.10", False), ("0.5.11", True)],
 )
-def test_ngboost_routes_early_stopping_parameters_by_installed_version(
-    monkeypatch, ngboost_version, constructor_handles_early_stopping
-):
+def test_ngboost_routes_early_stopping_parameters_by_installed_version(monkeypatch, ngboost_version, constructor_handles_early_stopping):
     """不同版本的分类器应从各自支持的入口接收早停参数。"""
     try:
         from hscredit.core.models.boosting import ngboost_model as module
@@ -549,9 +543,7 @@ def test_ngboost_routes_early_stopping_parameters_by_installed_version(
     "ngboost_version, constructor_handles_early_stopping",
     [("0.5.10", False), ("0.5.11", True)],
 )
-def test_ngboost_fit_early_stopping_overrides_constructor_across_versions(
-    monkeypatch, ngboost_version, constructor_handles_early_stopping
-):
+def test_ngboost_fit_early_stopping_overrides_constructor_across_versions(monkeypatch, ngboost_version, constructor_handles_early_stopping):
     """fit 显式早停值必须在所有版本中覆盖构造器配置。"""
     try:
         from hscredit.core.models.boosting import ngboost_model as module
@@ -591,9 +583,7 @@ def test_ngboost_fit_early_stopping_overrides_constructor_across_versions(
     "ngboost_version, constructor_handles_early_stopping",
     [("0.5.10", False), ("0.5.11", True)],
 )
-def test_ngboost_fit_only_early_stopping_creates_validation_split_across_versions(
-    monkeypatch, ngboost_version, constructor_handles_early_stopping
-):
+def test_ngboost_fit_only_early_stopping_creates_validation_split_across_versions(monkeypatch, ngboost_version, constructor_handles_early_stopping):
     """仅在 fit 指定早停时也必须创建统一的内部验证集。"""
     try:
         from hscredit.core.models.boosting import ngboost_model as module
@@ -617,9 +607,7 @@ def test_ngboost_fit_only_early_stopping_creates_validation_split_across_version
     monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
     X, y = _binary_data()
 
-    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=None, random_state=23).fit(
-        X, y, early_stopping_rounds=7
-    )
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=None, random_state=23).fit(X, y, early_stopping_rounds=7)
 
     fitted = FakeNGBClassifier.instance
     assert fitted.n_rows == 80
@@ -635,9 +623,7 @@ def test_ngboost_fit_only_early_stopping_creates_validation_split_across_version
     "ngboost_version, constructor_handles_early_stopping",
     [("0.5.10", False), ("0.5.11", True)],
 )
-def test_ngboost_disables_early_stopping_without_validation_data_across_versions(
-    monkeypatch, ngboost_version, constructor_handles_early_stopping
-):
+def test_ngboost_disables_early_stopping_without_validation_data_across_versions(monkeypatch, ngboost_version, constructor_handles_early_stopping):
     """没有验证数据时各版本都应使用全量样本并禁用早停。"""
     try:
         from hscredit.core.models.boosting import ngboost_model as module
@@ -679,9 +665,7 @@ def test_ngboost_disables_early_stopping_without_validation_data_across_versions
     "ngboost_version, constructor_handles_early_stopping",
     [("0.5.10", False), ("0.5.11", True)],
 )
-def test_ngboost_preserves_native_validation_data_and_fit_early_stopping_across_versions(
-    monkeypatch, ngboost_version, constructor_handles_early_stopping
-):
+def test_ngboost_preserves_native_validation_data_and_fit_early_stopping_across_versions(monkeypatch, ngboost_version, constructor_handles_early_stopping):
     """原生验证集参数不能被内部切分覆盖，fit 早停值仍应优先。"""
     try:
         from hscredit.core.models.boosting import ngboost_model as module
@@ -706,9 +690,7 @@ def test_ngboost_preserves_native_validation_data_and_fit_early_stopping_across_
     X, y = _binary_data()
     X_val, y_val = X[:12], y[:12]
 
-    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
-        X, y, X_val=X_val, Y_val=y_val, early_stopping_rounds=7
-    )
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(X, y, X_val=X_val, Y_val=y_val, early_stopping_rounds=7)
 
     fitted = FakeNGBClassifier.instance
     assert fitted.n_rows == len(y)
@@ -778,9 +760,7 @@ def test_ngboost_accepts_backported_constructor_early_stopping_api(monkeypatch):
     "ngboost_version, constructor_handles_early_stopping",
     [("0.3.12", False), ("0.5.11", True)],
 )
-def test_ngboost_native_params_use_the_same_versioned_early_stopping_route(
-    monkeypatch, ngboost_version, constructor_handles_early_stopping
-):
+def test_ngboost_native_params_use_the_same_versioned_early_stopping_route(monkeypatch, ngboost_version, constructor_handles_early_stopping):
     """原生 params 的早停配置必须先归一化，再按版本进入正确入口。"""
     try:
         from hscredit.core.models.boosting import ngboost_model as module
@@ -878,9 +858,7 @@ def test_ngboost_translates_singular_natural_gradient_error(monkeypatch):
     "natural_gradient, native_message",
     [(False, "Singular matrix"), (True, "SVD did not converge")],
 )
-def test_ngboost_preserves_linalg_errors_outside_singular_natural_gradient(
-    monkeypatch, natural_gradient, native_message
-):
+def test_ngboost_preserves_linalg_errors_outside_singular_natural_gradient(monkeypatch, natural_gradient, native_message):
     """非自然梯度或非奇异矩阵错误必须保留底层异常语义。"""
     try:
         from hscredit.core.models.boosting import ngboost_model as module
@@ -925,9 +903,7 @@ def test_ngboost_auto_split_preserves_validation_weights(monkeypatch):
 
     monkeypatch.setattr(module, "NGBClassifier", FakeNGBClassifier)
     X, y = _binary_data()
-    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(
-        X, y, sample_weight=np.arange(1, 101)
-    )
+    module.NGBoost(validation_fraction=0.2, early_stopping_rounds=2, random_state=23).fit(X, y, sample_weight=np.arange(1, 101))
 
     fitted = FakeNGBClassifier.instance
     assert fitted.n_rows == 80

@@ -66,9 +66,7 @@ def test_query_completion_metadata_survives_woe_transform_without_tag_collision(
     from hscredit.utils.arguments import validate_source_completion
 
     full = pd.DataFrame({"bin": [0, 1, 0, 1]})
-    transformer = (
-        WOEEncoder(features=["bin"], n_jobs=1) if kind == "encoder" else OptimalBinning(method="quantile", n_jobs=1)
-    )
+    transformer = WOEEncoder(features=["bin"], n_jobs=1) if kind == "encoder" else OptimalBinning(method="quantile", n_jobs=1)
     transformer.fit(full, [0, 1, 1, 0])
     stream = QueryStream(Resource(), chunksize=2)
     next(stream)
@@ -107,9 +105,7 @@ def test_report_release_drops_explicit_explanation_data_and_keeps_metrics():
     model, X, y = sample_model()
     background = pd.concat([X] * 1000, ignore_index=True)
     reference = weakref.ref(background)
-    report = ModelReport(
-        model, X_train=X, y_train=y, n_jobs=1, explain_config={"enabled": False, "background_data": background}
-    )
+    report = ModelReport(model, X_train=X, y_train=y, n_jobs=1, explain_config={"enabled": False, "background_data": background})
     before = report.resource_usage()["估算保留字节"]
     expected = report.get_metrics()
     del background
@@ -151,9 +147,7 @@ def test_deployment_requires_fitted_model_and_tracks_used_backend(tmp_path):
     X = pd.DataFrame({"x": np.arange(60)})
     model = LightGBM(n_estimators=2, n_jobs=1).fit(X, np.arange(60) % 2)
     manifest = model.save_deployment(tmp_path / "fitted", validation_data=X)
-    entry = next(
-        item for item in json.loads(Path(manifest).read_text(encoding="utf-8"))["制品"] if item["type"] == "deployment"
-    )
+    entry = next(item for item in json.loads(Path(manifest).read_text(encoding="utf-8"))["制品"] if item["type"] == "deployment")
     metadata = json.loads((Path(manifest).parent / entry["relative_path"]).read_text(encoding="utf-8"))
     assert "lightgbm" in metadata["dependencies"]
     assert "catboost" not in metadata["dependencies"]

@@ -34,11 +34,7 @@ class MongoDBAdapter(BaseDatabaseAdapter):
         uri = client_options.pop("uri", None)
         database_name = client_options.pop("database", None)
         pool_kwargs = self.pool_options.to_mongo_kwargs()
-        self.client = (
-            pymongo.MongoClient(uri, **client_options, **pool_kwargs)
-            if uri is not None
-            else pymongo.MongoClient(**client_options, **pool_kwargs)
-        )
+        self.client = pymongo.MongoClient(uri, **client_options, **pool_kwargs) if uri is not None else pymongo.MongoClient(**client_options, **pool_kwargs)
         if database_name is None:
             try:
                 self.database = self.client.get_default_database()

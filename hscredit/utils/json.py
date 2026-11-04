@@ -26,11 +26,7 @@ def json_safe(value):
     if isinstance(value, dict):
         result = {}
         for key, item in value.items():
-            name = (
-                json.dumps(json_safe(list(key)), ensure_ascii=False, separators=(",", ":"))
-                if isinstance(key, tuple)
-                else str(key)
-            )
+            name = json.dumps(json_safe(list(key)), ensure_ascii=False, separators=(",", ":")) if isinstance(key, tuple) else str(key)
             if name in result:
                 raise ValueError(f"JSON 字段名转换后发生冲突: {name}")
             result[name] = json_safe(item)

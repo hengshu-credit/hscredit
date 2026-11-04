@@ -14,9 +14,7 @@ from hscredit.core.rules.artifact import RuleArtifact
 from hscredit.report.mining import MultiFeatureRuleMiner, MultiLabelRuleMiner, SingleFeatureRuleMiner, TreeRuleExtractor
 
 
-@pytest.mark.parametrize(
-    "miner", [SingleFeatureRuleMiner(n_jobs=1), MultiFeatureRuleMiner(n_jobs=1), TreeRuleExtractor(n_jobs=1)]
-)
+@pytest.mark.parametrize("miner", [SingleFeatureRuleMiner(n_jobs=1), MultiFeatureRuleMiner(n_jobs=1), TreeRuleExtractor(n_jobs=1)])
 def test_miner_mixed_target_and_positional_alignment(miner):
     X = pd.DataFrame({"x": [0, 1, 2, 3], "target": [1, 1, 0, 0]}, index=["b", "b", "a", "c"])
     y = pd.Series([0, 1, 0, 1], index=[100, 101, 102, 103])
@@ -63,9 +61,7 @@ def test_cross_rules_match_bin_masks_and_counts():
     assert len(rules) > 0
     count = 0
     for _, row in rules.iterrows():
-        expected = (miner._prepared_features_["中文 字段"] == row["特征1箱号"]) & (
-            miner._prepared_features_["类别"] == row["特征2箱号"]
-        )
+        expected = (miner._prepared_features_["中文 字段"] == row["特征1箱号"]) & (miner._prepared_features_["类别"] == row["特征2箱号"])
         actual = row["规则制品"].predict(X)
         np.testing.assert_array_equal(actual, expected)
         assert row["命中样本数"] == int(expected.sum())
@@ -109,12 +105,8 @@ def test_multilabel_only_is_exclusive_and_max_rules_is_enforced():
 
 
 def test_tree_raw_category_and_missing_numeric_leaf_equivalence():
-    data = pd.DataFrame(
-        {"类别": ["a", "b", None, "a'b"] * 30, "x": [np.nan, 1.0, -1.0, 2.0] * 30, "target": [0, 1, 0, 1] * 30}
-    )
-    miner = TreeRuleExtractor(
-        algorithm="dt", max_depth=3, min_samples_leaf=1, min_samples_split=2, n_jobs=1, random_state=4
-    ).fit(data)
+    data = pd.DataFrame({"类别": ["a", "b", None, "a'b"] * 30, "x": [np.nan, 1.0, -1.0, 2.0] * 30, "target": [0, 1, 0, 1] * 30})
+    miner = TreeRuleExtractor(algorithm="dt", max_depth=3, min_samples_leaf=1, min_samples_split=2, n_jobs=1, random_state=4).fit(data)
     for item in miner.extract_rules():
         raw = data.loc[miner.X_train_.index]
         expected = miner._apply_conditions(item["conditions"], miner.X_train_)
@@ -124,9 +116,7 @@ def test_tree_raw_category_and_missing_numeric_leaf_equivalence():
 
 def test_tree_float32_rounding_boundary():
     data = pd.DataFrame({"x": [-1.0, -0.1, 0.1, 1.0] * 25, "target": [0, 0, 1, 1] * 25})
-    miner = TreeRuleExtractor(
-        algorithm="dt", max_depth=1, min_samples_leaf=1, min_samples_split=2, n_jobs=1, random_state=4
-    ).fit(data)
+    miner = TreeRuleExtractor(algorithm="dt", max_depth=1, min_samples_leaf=1, min_samples_split=2, n_jobs=1, random_state=4).fit(data)
     tree = miner.model_.get_native_model()
     boundary = float(tree.tree_.threshold[0])
     raw = pd.DataFrame({"x": [boundary, np.nextafter(boundary, np.inf), np.nextafter(boundary, -np.inf), np.nan]})
@@ -172,16 +162,10 @@ def test_rule_aggregate_merge_and_block_prediction():
 @pytest.mark.parametrize("categorical", [False, True])
 @pytest.mark.parametrize("missing_separate", [False, True])
 def test_specs_from_binner_match_reserved_policies(categorical, missing_separate):
-    values = (
-        ["a,b", "缺失", "其他", "a'b", None, "特殊"] * 10
-        if categorical
-        else list(np.arange(56, dtype=float)) + [np.nan, np.nan, -999.0, -999.0]
-    )
+    values = ["a,b", "缺失", "其他", "a'b", None, "特殊"] * 10 if categorical else list(np.arange(56, dtype=float)) + [np.nan, np.nan, -999.0, -999.0]
     special = ["特殊"] if categorical else [-999.0]
     X = pd.DataFrame({"x": values})
-    binner = OptimalBinning(
-        method="quantile", max_n_bins=3, special_codes=special, missing_separate=missing_separate, n_jobs=1
-    ).fit(X, np.arange(60) % 2)
+    binner = OptimalBinning(method="quantile", max_n_bins=3, special_codes=special, missing_separate=missing_separate, n_jobs=1).fit(X, np.arange(60) % 2)
     raw = pd.concat([X, pd.DataFrame({"x": ["新类别"] if categorical else [np.inf]})], ignore_index=True)
     expected = binner.transform(raw).x
     specs = BinSpec.from_binner(binner, "x")
@@ -193,9 +177,7 @@ def test_specs_from_binner_match_reserved_policies(categorical, missing_separate
 @pytest.mark.parametrize("unknown_target", [-1, 0])
 def test_specs_unknown_category_can_join_existing_or_missing_bin(unknown_target):
     X = pd.DataFrame({"class": ["A", "B", None] * 10})
-    binner = OptimalBinning(method="quantile", max_n_bins=2, handle_unknown=unknown_target, n_jobs=1).fit(
-        X, np.arange(30) % 2
-    )
+    binner = OptimalBinning(method="quantile", max_n_bins=2, handle_unknown=unknown_target, n_jobs=1).fit(X, np.arange(30) % 2)
     raw = pd.DataFrame({"class": ["A", "B", None, "C"]})
     expected = binner.transform(raw)["class"]
     specs = BinSpec.from_binner(binner, "class")

@@ -134,14 +134,7 @@ def metric_comparison_plot(
     values = plot_data[value_col].to_numpy(dtype=float)
     labels = plot_data[label_col].astype(str).tolist()
     if color_scheme == "iv":
-        colors = [
-            (
-                _IV_COLORS[0]
-                if value < 0.02
-                else _IV_COLORS[1] if value < 0.10 else _IV_COLORS[2] if value < 0.30 else _IV_COLORS[3]
-            )
-            for value in values
-        ]
+        colors = [(_IV_COLORS[0] if value < 0.02 else _IV_COLORS[1] if value < 0.10 else _IV_COLORS[2] if value < 0.30 else _IV_COLORS[3]) for value in values]
         if reference_lines is None:
             reference_lines = [
                 (0.02, "IV=0.02", _IV_COLORS[1]),
@@ -178,9 +171,7 @@ def metric_comparison_plot(
         if orientation == "horizontal":
             ax.text(value + max_abs * 0.01, bar.get_y() + bar.get_height() / 2, text, va="center", fontsize=9)
         else:
-            ax.text(
-                bar.get_x() + bar.get_width() / 2, value + max_abs * 0.01, text, ha="center", va="bottom", fontsize=9
-            )
+            ax.text(bar.get_x() + bar.get_width() / 2, value + max_abs * 0.01, text, ha="center", va="bottom", fontsize=9)
 
     for value, label, color in reference_lines or []:
         if orientation == "horizontal":

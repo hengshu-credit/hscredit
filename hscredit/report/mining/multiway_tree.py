@@ -302,10 +302,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         # 保留金额、日期和逾期字段供训练集报告使用；搜索/预测仅访问 features_。
         working._data = frame.reset_index(drop=True).copy()
         working._data[self.target] = np.asarray(labels)
-        working._numeric = {
-            name: pd.api.types.is_numeric_dtype(frame[name]) and not pd.api.types.is_bool_dtype(frame[name])
-            for name in selected
-        }
+        working._numeric = {name: pd.api.types.is_numeric_dtype(frame[name]) and not pd.api.types.is_bool_dtype(frame[name]) for name in selected}
         working.nodes_ = {}
         working.edit_history_ = []
         working._next_id = 0
@@ -328,9 +325,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     def _new_node(self, parent, depth, path, positions):
         node_id = self._next_id
         self._next_id += 1
-        self.nodes_[node_id] = MultiwayNode(
-            node_id, parent, depth, np.bincount(self._y[positions], minlength=len(self.classes_)), path
-        )
+        self.nodes_[node_id] = MultiwayNode(node_id, parent, depth, np.bincount(self._y[positions], minlength=len(self.classes_)), path)
         return node_id
 
     def _positions(self, node):
@@ -361,11 +356,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         """缺失配置使用明确布尔值和从 0 开始的分支序号。"""
         if missing_separate is not None and not isinstance(missing_separate, (bool, np.bool_)):
             raise InputValidationError("missing_separate 必须是布尔值或 None")
-        if missing_branch is not None and (
-            isinstance(missing_branch, (bool, np.bool_))
-            or not isinstance(missing_branch, Integral)
-            or missing_branch < 0
-        ):
+        if missing_branch is not None and (isinstance(missing_branch, (bool, np.bool_)) or not isinstance(missing_branch, Integral) or missing_branch < 0):
             raise InputValidationError("missing_branch 必须是非负整数分支序号")
 
     @staticmethod
@@ -431,15 +422,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 groups=tuple(groups),
                 missing_branch=int(destination),
                 missing_separate=bool(missing_separate),
-                unknown_branch=(
-                    None
-                    if self._numeric[feature]
-                    else (
-                        int(np.argmax(np.where(ordinary, counts.sum(axis=1), -1)))
-                        if missing_separate
-                        else int(destination)
-                    )
-                ),
+                unknown_branch=(None if self._numeric[feature] else (int(np.argmax(np.where(ordinary, counts.sum(axis=1), -1))) if missing_separate else int(destination))),
                 statistic=statistic,
                 pvalue=pvalue,
                 gain=gain,
@@ -508,10 +491,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                         consider(groups=tuple(groups))
                     if len(groups) == (1 if separate else 2):
                         break
-                    counts = [
-                        np.bincount(labels[series.isin(group).to_numpy()], minlength=len(self.classes_))
-                        for group in groups
-                    ]
+                    counts = [np.bincount(labels[series.isin(group).to_numpy()], minlength=len(self.classes_)) for group in groups]
                     pair = max(
                         combinations(range(len(groups)), 2),
                         key=lambda ij: _split_statistics([counts[ij[0]], counts[ij[1]]], "gini")[1],
@@ -522,9 +502,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             for candidate in feature_candidates:
                 candidate["adjusted_pvalue"] = min(1.0, candidate["pvalue"] * (trials if self.adjust_pvalue else 1))
                 if self.criterion == "chi2":
-                    candidate["worth"] = max(
-                        0.0, candidate["worth"] - (np.log10(trials) if self.adjust_pvalue else 0.0)
-                    )
+                    candidate["worth"] = max(0.0, candidate["worth"] - (np.log10(trials) if self.adjust_pvalue else 0.0))
             if feature_candidates:
                 candidates.append(max(feature_candidates, key=lambda item: (item["worth"], -item["branches"])))
         return sorted(candidates, key=lambda item: item["worth"], reverse=True)
@@ -585,11 +563,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         )
 
     def _allowed(self, candidate, size):
-        return (
-            candidate["gain"] > 1e-14
-            and candidate["gain"] * size / len(self._data) >= self.min_impurity_decrease
-            and (self.criterion != "chi2" or candidate["adjusted_pvalue"] <= self.alpha)
-        )
+        return candidate["gain"] > 1e-14 and candidate["gain"] * size / len(self._data) >= self.min_impurity_decrease and (self.criterion != "chi2" or candidate["adjusted_pvalue"] <= self.alpha)
 
     def _grow(self, node):
         current = self.nodes_[node]
@@ -754,18 +728,14 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         current = self._node(node)
         if current.depth >= self.max_depth:
             raise InputValidationError("该节点已达到 max_depth，请提高深度上限后再分裂")
-        if data is not None and not data[self.features_ + [self.target]].reset_index(drop=True).equals(
-            self._data[self.features_ + [self.target]]
-        ):
+        if data is not None and not data[self.features_ + [self.target]].reset_index(drop=True).equals(self._data[self.features_ + [self.target]]):
             raise InputValidationError("节点编辑使用拟合数据；如需更换训练样本，请重新 fit")
         if feature is not None and feature not in self.features_:
             raise InputValidationError(f"特征 {feature} 不在拟合字段中")
         if thresholds is None and category_groups is None:
             if missing_branch is not None and missing_branch >= self._branch_limit():
                 raise InputValidationError("missing_branch 超出 max_n_bins 允许的分支范围")
-            candidates = [
-                c for c in self._search(node, separate, missing_branch) if feature is None or c["feature"] == feature
-            ]
+            candidates = [c for c in self._search(node, separate, missing_branch) if feature is None or c["feature"] == feature]
             if not candidates:
                 raise InputValidationError("该节点没有满足样本约束的可用分裂")
             return self._edit(
@@ -821,11 +791,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             raise InputValidationError("普通分支数超过 max_n_bins，独立缺失分支不计入上限")
         if count < 2:
             raise InputValidationError("分裂至少需要两个分支；仅区分缺失与非缺失可指定 missing_separate=True")
-        if missing_branch is not None and (
-            isinstance(missing_branch, bool)
-            or not isinstance(missing_branch, Integral)
-            or not 0 <= missing_branch < count
-        ):
+        if missing_branch is not None and (isinstance(missing_branch, bool) or not isinstance(missing_branch, Integral) or not 0 <= missing_branch < count):
             raise InputValidationError("missing_branch 必须是有效的分支序号")
         candidate = self._candidate(
             values,
@@ -1059,15 +1025,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     @staticmethod
     def _format_rule(path):
         expression = " & ".join(f"({spec.to_expression()})" for spec in path) or "True"
-        description = (
-            " 且 ".join(
-                f"{spec.feature}: {spec.label(8)}"
-                + (" 或缺失" if spec.include_missing else "")
-                + (" 或未知类别" if spec.unknown else "")
-                for spec in path
-            )
-            or "全部样本"
-        )
+        description = " 且 ".join(f"{spec.feature}: {spec.label(8)}" + (" 或缺失" if spec.include_missing else "") + (" 或未知类别" if spec.unknown else "") for spec in path) or "全部样本"
         return Rule(expression, description=description)
 
     def get_rules(self, leaf_only=True):
@@ -1284,12 +1242,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 target = self.target
             else:
                 target = {f"类别_{value}": datasets[self.target].eq(value).astype(int) for value in self.classes_}
-        rules = pd.DataFrame(
-            [
-                dict(node=node, if_leaf=not current.children, rule_list=current.path)
-                for node, current in self.nodes_.items()
-            ]
-        )
+        rules = pd.DataFrame([dict(node=node, if_leaf=not current.children, rule_list=current.path) for node, current in self.nodes_.items()])
         feature_map = resolve_feature_map(self.feature_map, feature_map)
         adjusted_nodes = set()
         for node, current in self.nodes_.items():
@@ -1318,10 +1271,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         if feature_map is not None:
             multi = isinstance(result.columns, pd.MultiIndex)
             node_col = ("分箱详情", "节点编号") if multi else "节点编号"
-            context = {
-                node: format_feature_context([spec.feature for spec in current.path], feature_map)
-                for node, current in self.nodes_.items()
-            }
+            context = {node: format_feature_context([spec.feature for spec in current.path], feature_map) for node, current in self.nodes_.items()}
             for index, name in enumerate(("入参字段", "字段含义")):
                 column = ("分箱详情", name) if multi else name
                 result[column] = result[node_col].map(lambda node: context[int(node)][index])
@@ -1480,17 +1430,10 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         """
         self._check_fitted()
         if isinstance(datasets, dict):
-            return pd.concat(
-                [self.evaluate(data).assign(数据集=name) for name, data in datasets.items()], ignore_index=True
-            )
+            return pd.concat([self.evaluate(data).assign(数据集=name) for name, data in datasets.items()], ignore_index=True)
         frame = self._data if datasets is None else datasets
         labels = np.asarray(frame[self.target] if y is None else y)
-        if (
-            len(labels) != len(frame)
-            or len(labels) == 0
-            or pd.isna(labels).any()
-            or not pd.Series(labels).isin(self.classes_).all()
-        ):
+        if len(labels) != len(frame) or len(labels) == 0 or pd.isna(labels).any() or not pd.Series(labels).isin(self.classes_).all():
             raise InputValidationError("评估标签长度必须匹配、非空且属于训练类别")
         probability = self.predict_proba(frame)
         prediction = self.classes_[probability.argmax(axis=1)]

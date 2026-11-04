@@ -90,13 +90,7 @@ def vintage_analysis(
             cohort_sizes,
             exposure_col,
         )
-    if (
-        entity_col is not None
-        or observation_end is not None
-        or cohort_sizes is not None
-        or label_mode is not None
-        or exposure_col is not None
-    ):
+    if entity_col is not None or observation_end is not None or cohort_sizes is not None or label_mode is not None or exposure_col is not None:
         raise ValueError("指定账户、标签或成熟度口径时必须显式选择 input_mode，不能混用 legacy")
     warnings.warn(
         "legacy Vintage 保留累计行口径，不适用于账户×MOB的 ever 面板；请显式设置 input_mode、entity_col、label_mode",
@@ -204,9 +198,7 @@ def _explicit_vintage(
             raise ValueError("observation_end 必须为有效日期") from exc
         if pd.isna(cutoff):
             raise ValueError("observation_end 不能缺失")
-    points = (
-        list(range(max_mob + 1)) if cutoff is not None else sorted(data.loc[data[mob_col] <= max_mob, mob_col].unique())
-    )
+    points = list(range(max_mob + 1)) if cutoff is not None else sorted(data.loc[data[mob_col] <= max_mob, mob_col].unique())
     rows = []
     cohorts = {vintage: cohort for vintage, cohort in data.groupby(vintage_col, sort=False)}
     if input_mode == "event":
@@ -240,11 +232,7 @@ def _explicit_vintage(
             else:
                 bad_count = int(snapshot.loc[valid, target_col].sum())
                 denominator = count if input_mode == "panel" else len(snapshot)
-            status = (
-                "未成熟"
-                if not mature
-                else ("观测不足" if observed_count < denominator or observed_count == 0 else "成功")
-            )
+            status = "未成熟" if not mature else ("观测不足" if observed_count < denominator or observed_count == 0 else "成功")
             rate = bad_count / denominator * 100 if status == "成功" and denominator else np.nan
             rows.append(
                 {
@@ -287,9 +275,7 @@ def _explicit_vintage(
     return result
 
 
-def vintage_summary(
-    df: pd.DataFrame, vintage_col: str, mob_col: str, target: str, max_mob: int = 12, **kwargs
-) -> pd.DataFrame:
+def vintage_summary(df: pd.DataFrame, vintage_col: str, mob_col: str, target: str, max_mob: int = 12, **kwargs) -> pd.DataFrame:
     """Vintage汇总统计.
 
     :param df: 输入数据
@@ -321,9 +307,7 @@ def vintage_summary(
     for vintage in vintage_df["Vintage批次"].unique():
         vintage_data = vintage_df[vintage_df["Vintage批次"] == vintage]
 
-        total_accounts = (
-            vintage_data["总开户数"].iloc[0] if "总开户数" in vintage_data else vintage_data["当期开户数"].sum()
-        )
+        total_accounts = vintage_data["总开户数"].iloc[0] if "总开户数" in vintage_data else vintage_data["当期开户数"].sum()
 
         # 各MOB点的坏账率
         result = {

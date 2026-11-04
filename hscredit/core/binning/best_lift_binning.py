@@ -220,9 +220,7 @@ class BestLiftBinning(BaseBinning):
         self.n_prebins = n_prebins
         self.optimization = optimization
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "BestLiftBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "BestLiftBinning":
         """拟合 Best Lift 分箱.
 
         :param kwargs: 其他参数，传递给具体的分箱算法
@@ -554,9 +552,7 @@ class BestLiftBinning(BaseBinning):
         """
         return self._bins_to_splits(prebins, x_sorted)
 
-    def _enforce_monotonic(
-        self, splits: List[float], x_sorted: np.ndarray, y_sorted: np.ndarray, min_samples: int, total_bad_rate: float
-    ) -> List[float]:
+    def _enforce_monotonic(self, splits: List[float], x_sorted: np.ndarray, y_sorted: np.ndarray, min_samples: int, total_bad_rate: float) -> List[float]:
         """强制单调性约束.
 
         :param splits: 初始分割点
@@ -723,9 +719,7 @@ class BestLiftBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签、WOE值或LIFT值。
@@ -813,9 +807,7 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # 测试 Best Lift 分箱
-    binner = BestLiftBinning(
-        max_n_bins=5, min_lift=0.0, monotonic=True, optimization="extreme", n_prebins=50, verbose=True
-    )
+    binner = BestLiftBinning(max_n_bins=5, min_lift=0.0, monotonic=True, optimization="extreme", n_prebins=50, verbose=True)
     binner.fit(X, y)
 
     print("\n分箱统计表:")

@@ -58,19 +58,11 @@ class MonitoringBaseline(ArtifactSerializableMixin, BaseEstimator):
 
     def fit(self, expected, y=None):
         del y
-        if (
-            isinstance(self.max_n_bins, bool)
-            or not isinstance(self.max_n_bins, (int, np.integer))
-            or self.max_n_bins < 1
-        ):
+        if isinstance(self.max_n_bins, bool) or not isinstance(self.max_n_bins, (int, np.integer)) or self.max_n_bins < 1:
             raise ValueError("max_n_bins 必须是正整数")
         if not np.isfinite(self.epsilon) or self.epsilon <= 0:
             raise ValueError("epsilon 必须为有限正数")
-        if (
-            not isinstance(self.min_bin_size, (int, float, np.number))
-            or not np.isfinite(self.min_bin_size)
-            or self.min_bin_size <= 0
-        ):
+        if not isinstance(self.min_bin_size, (int, float, np.number)) or not np.isfinite(self.min_bin_size) or self.min_bin_size <= 0:
             raise ValueError("min_bin_size 必须为有限正数")
         if self.bin_params is not None and not isinstance(self.bin_params, dict):
             raise ValueError("bin_params 必须是字典或None")
@@ -84,9 +76,7 @@ class MonitoringBaseline(ArtifactSerializableMixin, BaseEstimator):
         # 用真实基准重新拟合后，旧制品无法区分缺失/未知的迁移标记不再成立。
         candidate._legacy_missing_ambiguous_ = False
         candidate.epsilon_ = float(self.epsilon)
-        candidate.feature_name_ = (
-            self.feature_name if self.feature_name is not None else getattr(expected, "name", None)
-        )
+        candidate.feature_name_ = self.feature_name if self.feature_name is not None else getattr(expected, "name", None)
         candidate.input_dtype_ = str(values.dtype)
         candidate.binner_ = None
         candidate.bin_specs_ = {}
@@ -219,9 +209,7 @@ class MonitoringBaseline(ArtifactSerializableMixin, BaseEstimator):
             else:
                 nonmissing = values[~missing].to_numpy()
             if len(nonmissing):
-                codes[~missing] = self.binner_.transform(pd.DataFrame({"value": nonmissing}), metric="indices")[
-                    "value"
-                ].to_numpy(dtype=np.int64)
+                codes[~missing] = self.binner_.transform(pd.DataFrame({"value": nonmissing}), metric="indices")["value"].to_numpy(dtype=np.int64)
         elif not self.numeric_:
             known = self.categories_.get_indexer(values[~missing])
             if self.unknown_policy_ == "raise" and (known < 0).any():
@@ -263,9 +251,7 @@ class MonitoringBaseline(ArtifactSerializableMixin, BaseEstimator):
         self.transform([])  # 显式检查拟合状态，不修改基准。
         values = self._series(actual)
         counts = self._counts(values)
-        return self._evaluate_counts(
-            counts, len(values), self._unknown_count(values), include_missing, int(values.isna().sum())
-        )
+        return self._evaluate_counts(counts, len(values), self._unknown_count(values), include_missing, int(values.isna().sum()))
 
     def evaluate_batches(self, batches, *, include_missing=True):
         """逐块累计监控分布，只保留各箱计数。"""

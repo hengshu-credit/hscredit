@@ -31,9 +31,7 @@ def test_report_uses_explicit_probability_direction_and_common_tail_rules():
     assert probability.get_metrics().set_index("统计项").loc["AUC", "训练集"] == 0
     assert score.get_metrics().set_index("统计项").loc["AUC", "训练集"] == 0
     assert Metric("auc")(y, X["概率"]) == get_metric("auc")(y, X["概率"]) == 0
-    pd.testing.assert_frame_equal(
-        probability._get_top_n_lift_table(percentiles=(0.5,)), score._get_top_n_lift_table(percentiles=(0.5,))
-    )
+    pd.testing.assert_frame_equal(probability._get_top_n_lift_table(percentiles=(0.5,)), score._get_top_n_lift_table(percentiles=(0.5,)))
     np.testing.assert_array_equal(score._datasets["训练集"].prediction, model.predict_score(X))
 
 
@@ -43,9 +41,7 @@ def test_tied_top_lift_matches_common_metric_and_is_row_order_independent(weight
     y = np.array([1, 0, 0, 0, 0, 0, 0, 0, 0, 1])
     for order in (np.arange(10), np.arange(10)[::-1]):
         data = X.iloc[order]
-        report = ModelReport(
-            Predictions(), X_train=data, y_train=y[order], sample_weight="金额" if weighted else None, n_jobs=1
-        )
+        report = ModelReport(Predictions(), X_train=data, y_train=y[order], sample_weight="金额" if weighted else None, n_jobs=1)
         table = report._get_top_n_lift_table(percentiles=(0.1,)).set_index("统计项")
         metric = get_metric("topk_lift", top_ratio=0.1)
         expected = metric(y[order], data["概率"], sample_weight=data["金额"] if weighted else None)
@@ -60,15 +56,11 @@ def test_report_financial_metric_and_weight_match_model_evaluation():
     metric = get_loss("cost_sensitive", fn_cost=7).metric(kind="business")
     weights = np.arange(1, 81)
     expected = model.evaluate(X, y, metrics=[metric, "auc", "ks", "lift@10%"], sample_weight=weights)
-    report = ModelReport(
-        model, X_train=X, y_train=y, metrics=[metric], sample_weight=weights, show_weighted_metrics=True, n_jobs=1
-    )
+    report = ModelReport(model, X_train=X, y_train=y, metrics=[metric], sample_weight=weights, show_weighted_metrics=True, n_jobs=1)
     actual = report.get_metrics().set_index("统计项")["训练集（加权）"]
     for key in [metric.name, "AUC", "KS"]:
         assert actual[key] == pytest.approx(expected[key])
-    assert report._get_top_n_lift_table(percentiles=(0.1,)).set_index("统计项").loc["LIFT值", "TOP 10%"] == pytest.approx(
-        model.evaluate(X, y, metrics=["lift@10%"])["LIFT@10%"]
-    )
+    assert report._get_top_n_lift_table(percentiles=(0.1,)).set_index("统计项").loc["LIFT值", "TOP 10%"] == pytest.approx(model.evaluate(X, y, metrics=["lift@10%"])["LIFT@10%"])
 
 
 def test_report_refuses_model_revision_mix_and_snapshots_configuration(tmp_path):
@@ -133,17 +125,13 @@ def test_auto_split_financial_parameters_matches_explicit_manual_split(model_cla
     X, y = make_classification(n_samples=100, n_features=4, random_state=15)
     amounts = np.arange(1, 101, dtype=float)
     train, valid = train_test_split(np.arange(100), test_size=0.2, random_state=15, stratify=y)
-    parameters = (
-        {"amounts": amounts} if loss_name == "amount_weighted" else {"ead": amounts, "lgd": np.linspace(0.2, 0.8, 100)}
-    )
+    parameters = {"amounts": amounts} if loss_name == "amount_weighted" else {"ead": amounts, "lgd": np.linspace(0.2, 0.8, 100)}
     loss = get_loss(loss_name, **parameters)
     options = dict(n_estimators=6, random_state=15, n_jobs=1, early_stopping_rounds=2)
     automatic = model_class(objective=loss, **options).fit(X, y)
     train_loss = get_loss(loss_name, **{key: value[train] for key, value in parameters.items()})
     valid_loss = get_loss(loss_name, **{key: value[valid] for key, value in parameters.items()})
-    manual = model_class(objective=train_loss, eval_metric=valid_loss.metric(), **options).fit(
-        X[train], y[train], eval_set=[(X[valid], y[valid])]
-    )
+    manual = model_class(objective=train_loss, eval_metric=valid_loss.metric(), **options).fit(X[train], y[train], eval_set=[(X[valid], y[valid])])
     np.testing.assert_allclose(automatic.predict_proba(X), manual.predict_proba(X))
     assert automatic.training_summary_["金融参数切分"] == {"原始样本": 100, "训练样本": 80, "验证样本": 20}
     assert len(loss.amounts_ if loss_name == "amount_weighted" else loss.ead) == 100
@@ -164,9 +152,7 @@ def test_report_process_is_snapshot_when_tuner_continues():
 
 def test_tuner_learning_curve_and_report_metric_convenience_entry():
     X, y = make_classification(n_samples=60, n_features=4, random_state=5)
-    model = LightGBM(n_estimators=4, n_jobs=1).tune(
-        X, y, search_space={}, n_trials=1, metric=get_metric("auc"), n_jobs=1
-    )
+    model = LightGBM(n_estimators=4, n_jobs=1).tune(X, y, search_space={}, n_trials=1, metric=get_metric("auc"), n_jobs=1)
     curves = model.tuner.get_learning_curve()
     assert set(["试验编号", "折编号", "迭代", "指标", "数值"]).issubset(curves.columns)
     assert len(curves) > 0

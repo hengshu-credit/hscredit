@@ -204,9 +204,7 @@ class NGBoost(BaseRiskModel):
             raise ImportError("NGBoost未安装，请使用 pip install ngboost 安装")
 
         # sklearn clone 必须能够原样往返构造输入，原生覆盖值只用于实际训练。
-        self._constructor_params = {
-            name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}
-        }
+        self._constructor_params = {name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}}
         self._constructor_kwargs = dict(kwargs)
         # 保存原生params参数
         self.params = params  # 用于sklearn get_params兼容性
@@ -302,11 +300,7 @@ class NGBoost(BaseRiskModel):
         from .._workflow import record_eval_results
 
         eval_metric = fit_params.pop("eval_metric", self._native_params.get("eval_metric", self.eval_metric))
-        requested_metrics = (
-            list(eval_metric)
-            if isinstance(eval_metric, (list, tuple))
-            else [eval_metric] if eval_metric is not None else []
-        )
+        requested_metrics = list(eval_metric) if isinstance(eval_metric, (list, tuple)) else [eval_metric] if eval_metric is not None else []
         monitor_metric = get_metric(requested_metrics[0]) if requested_metrics else None
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
@@ -358,9 +352,7 @@ class NGBoost(BaseRiskModel):
         else:
             X_train, y_train = X, y
 
-        native_early_stopping_rounds = (
-            effective_early_stopping_rounds if X_val is not None and y_val is not None else None
-        )
+        native_early_stopping_rounds = effective_early_stopping_rounds if X_val is not None and y_val is not None else None
 
         # 构建基学习器
         base_learner = DecisionTreeRegressor(
@@ -406,12 +398,7 @@ class NGBoost(BaseRiskModel):
 
         objective = self._native_params.get("objective", self.objective)
         if isinstance(objective, BaseLoss):
-            if (
-                "Score" in self.kwargs
-                or "Dist" in self.kwargs
-                or "Score" in self._native_params
-                or "Dist" in self._native_params
-            ):
+            if "Score" in self.kwargs or "Dist" in self.kwargs or "Score" in self._native_params or "Dist" in self._native_params:
                 raise ValueError("NGBoost 自定义 objective 与原生 Score/Dist 不能同时设置")
             ngb_params.update(objective.ngboost_params())
         elif objective not in ("binary", "binary:logistic", None):
@@ -423,9 +410,7 @@ class NGBoost(BaseRiskModel):
 
         if continuation is not None:
             validate_ngboost_objective(self, objective)
-        self._model = (
-            NGBClassifier(**ngb_params) if continuation is None else continue_ngboost(continuation, ngb_params)
-        )
+        self._model = NGBClassifier(**ngb_params) if continuation is None else continue_ngboost(continuation, ngb_params)
 
         # 训练
         weight_routing = {}
@@ -456,14 +441,10 @@ class NGBoost(BaseRiskModel):
 
                 if hasattr(self, "_eval_val_indices_"):
                     monitor_metric = slice_sample_loss(monitor_metric, self._eval_val_indices_, len(y))
-                    requested_metrics = [
-                        slice_sample_loss(item, self._eval_val_indices_, len(y)) for item in requested_metrics
-                    ]
+                    requested_metrics = [slice_sample_loss(item, self._eval_val_indices_, len(y)) for item in requested_metrics]
                 weight = fit_kwargs.get("val_sample_weight")
                 sign = -1 if monitor_metric.direction == "maximize" else 1
-                fit_kwargs["val_loss_monitor"] = lambda distribution, labels: sign * monitor_metric.evaluate(
-                    labels, distribution.probs[1], sample_weight=weight
-                )
+                fit_kwargs["val_loss_monitor"] = lambda distribution, labels: sign * monitor_metric.evaluate(labels, distribution.probs[1], sample_weight=weight)
 
         # NGBoost 的提升轮次存在顺序依赖，不能安全地在轮次层并行；其
         # 决策树/NumPy 原生计算仍会使用 OpenMP/BLAS。统一 n_jobs 在这里
@@ -474,10 +455,7 @@ class NGBoost(BaseRiskModel):
         except np.linalg.LinAlgError as exc:
             if not self.natural_gradient or "singular" not in str(exc).lower():
                 raise
-            raise ValidationError(
-                "NGBoost训练失败：自然梯度计算出现奇异矩阵，通常由预测概率饱和到0或1导致。"
-                "请降低学习率或基学习器深度，并增大叶节点最小样本数后重试。"
-            ) from exc
+            raise ValidationError("NGBoost训练失败：自然梯度计算出现奇异矩阵，通常由预测概率饱和到0或1导致。" "请降低学习率或基学习器深度，并增大叶节点最小样本数后重试。") from exc
 
         # 保存结果
         self._best_iteration = getattr(self._model, "best_val_loss_itr", None)
@@ -507,14 +485,7 @@ class NGBoost(BaseRiskModel):
             all_eval_set,
             metrics=requested_metrics or None,
             staged=True,
-            eval_sample_weight=(
-                {
-                    name: fit_kwargs.get("val_sample_weight") if i == len(all_eval_names) - 1 else None
-                    for i, name in enumerate(all_eval_names)
-                }
-                if all_eval_names
-                else None
-            ),
+            eval_sample_weight=({name: fit_kwargs.get("val_sample_weight") if i == len(all_eval_names) - 1 else None for i, name in enumerate(all_eval_names)} if all_eval_names else None),
         )
 
         return self
@@ -598,9 +569,7 @@ class NGBoost(BaseRiskModel):
             importances = np.asarray(raw_importances).ravel()
 
         # 创建Series
-        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
-            ascending=False
-        )
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(ascending=False)
 
         self._feature_importances = importance_series
 

@@ -27,9 +27,7 @@ class RecordingClassifier(ClassifierMixin, BaseEstimator):
     def fit(self, X, y):
         FIT_COLUMNS.append(list(X.columns))
         self.classes_ = np.unique(y)
-        self.coef_ = np.asarray(
-            [[float(str(column).replace("x", "")) + 1 if str(column).startswith("x") else 0.1 for column in X.columns]]
-        )
+        self.coef_ = np.asarray([[float(str(column).replace("x", "")) + 1 if str(column).startswith("x") else 0.1 for column in X.columns]])
         return self
 
     def score(self, X, y):
@@ -57,9 +55,7 @@ def test_stepwise_compares_forced_baseline_before_adding_noise():
     a, b = rng.normal(size=100), rng.normal(size=100)
     y = a + rng.normal(scale=0.1, size=100)
     X = pd.DataFrame({"a": a, "b": b})
-    selector = StepwiseSelector(estimator="ols", direction="forward", criterion="aic", include=["a"], n_jobs=1).fit(
-        X, y
-    )
+    selector = StepwiseSelector(estimator="ols", direction="forward", criterion="aic", include=["a"], n_jobs=1).fit(X, y)
     assert selector.selected_features_ == ["a"]
     assert selector.initial_criterion_ == pytest.approx(sm.OLS(y, sm.add_constant(X[["a"]])).fit().aic)
     assert np.isnan(selector.scores_["b"])
@@ -68,9 +64,7 @@ def test_stepwise_compares_forced_baseline_before_adding_noise():
 
 def test_stepwise_custom_model_does_not_invent_p_values(xy):
     X, y = xy
-    selector = StepwiseSelector(
-        LogisticRegression(), direction="forward", criterion="aic", max_features=2, n_jobs=1
-    ).fit(X, y)
+    selector = StepwiseSelector(LogisticRegression(), direction="forward", criterion="aic", max_features=2, n_jobs=1).fit(X, y)
     assert selector.scores_.isna().all()
     assert selector.model_results_ is not None
     assert any(event["动作"] == "最终统计量" and not event["是否有效"] for event in selector.selection_events_)
@@ -78,9 +72,7 @@ def test_stepwise_custom_model_does_not_invent_p_values(xy):
 
 def test_sequential_rejects_nan_and_supports_splitter(xy):
     X, y = xy
-    selector = SequentialFeatureSelector(
-        LogisticRegression(), n_features_to_select=1, cv=StratifiedKFold(2), scoring=finite_second, n_jobs=1
-    ).fit(X.iloc[:, :2], y)
+    selector = SequentialFeatureSelector(LogisticRegression(), n_features_to_select=1, cv=StratifiedKFold(2), scoring=finite_second, n_jobs=1).fit(X.iloc[:, :2], y)
     assert selector.selected_features_ == ["x1"]
     assert selector.candidate_failures_ == 1
     assert np.isnan(selector.scores_["x0"])
@@ -225,11 +217,7 @@ def test_corr_explains_conflicting_feature_without_calling_weight_correlation():
     ],
 )
 def test_model_selector_new_parameters_are_cloneable(kind):
-    kwargs = (
-        {"estimator": LogisticRegression()}
-        if kind in {FeatureImportanceSelector, NullImportanceSelector, RFESelector, SequentialFeatureSelector}
-        else {}
-    )
+    kwargs = {"estimator": LogisticRegression()} if kind in {FeatureImportanceSelector, NullImportanceSelector, RFESelector, SequentialFeatureSelector} else {}
     selector = kind(target_rm=True, report_history="full", max_report_events=123, max_report_bytes=4567, **kwargs)
     copied = clone(selector)
     assert copied.target_rm is True
@@ -274,7 +262,5 @@ def test_byte_budget_changes_history_not_selection(xy, kind):
     pd.testing.assert_series_equal(bounded.scores_, full.scores_)
     assert bounded.report_events_bytes_ <= 64
     assert bounded.report_events_truncated_ > 0
-    assert (
-        bounded.report_events_truncated_ == bounded.report_candidates_truncated_ + bounded.report_decisions_truncated_
-    )
+    assert bounded.report_events_truncated_ == bounded.report_candidates_truncated_ + bounded.report_decisions_truncated_
     assert bounded.selection_events_ == []

@@ -175,11 +175,7 @@ class FTestSelector(BaseFeatureSelector):
     def _check_input(self, X, y=None):
         validate_real(self.threshold, "F检验阈值", allow_infinite=True)
         validate_k(self.k)
-        if self.percentile is not None and (
-            isinstance(self.percentile, (bool, np.bool_))
-            or not isinstance(self.percentile, (int, np.integer))
-            or not 0 < int(self.percentile) <= 100
-        ):
+        if self.percentile is not None and (isinstance(self.percentile, (bool, np.bool_)) or not isinstance(self.percentile, (int, np.integer)) or not 0 < int(self.percentile) <= 100):
             raise ValueError("percentile 必须是 (0, 100] 范围内的整数")
         if self.categorical_strategy not in {"error", "legacy_ordinal"}:
             raise ValueError("categorical_strategy 必须是 'error' 或 'legacy_ordinal'")
@@ -211,11 +207,7 @@ class FTestSelector(BaseFeatureSelector):
                 raise ValueError("k 必须大于 0")
         elif self.k != "all":
             raise ValueError("k 必须是大于 0 的整数或 'all'")
-        if self.percentile is not None and (
-            isinstance(self.percentile, (bool, np.bool_))
-            or not isinstance(self.percentile, (int, np.integer))
-            or not 0 < int(self.percentile) <= 100
-        ):
+        if self.percentile is not None and (isinstance(self.percentile, (bool, np.bool_)) or not isinstance(self.percentile, (int, np.integer)) or not 0 < int(self.percentile) <= 100):
             raise ValueError("percentile 必须是 (0, 100] 范围内的整数")
 
         # 处理类别变量
@@ -227,9 +219,7 @@ class FTestSelector(BaseFeatureSelector):
                 self.test_methods_[col] = "有序类别ANOVA F检验"
             elif is_categorical(X[col]) and not pd.api.types.is_bool_dtype(X[col].dtype):
                 if self.categorical_strategy != "legacy_ordinal":
-                    raise ValueError(
-                        f"F检验不支持无序类别字段 '{col}'；请先数值编码，或显式指定 categorical_strategy='legacy_ordinal'"
-                    )
+                    raise ValueError(f"F检验不支持无序类别字段 '{col}'；请先数值编码，或显式指定 categorical_strategy='legacy_ordinal'")
                 X_encoded[col] = pd.factorize(X[col])[0]
                 self.test_methods_[col] = "旧版类别序号ANOVA F检验"
             else:
@@ -278,9 +268,7 @@ class FTestSelector(BaseFeatureSelector):
                 if remaining > 0:
                     percentile_mask[ties[:remaining]] = True
         quantity_mask = top_k_mask(f_scores, self.k)
-        record_conditions(
-            self, X.columns, 阈值达标=threshold_mask, 百分位达标=percentile_mask, 数量限制达标=quantity_mask
-        )
+        record_conditions(self, X.columns, 阈值达标=threshold_mask, 百分位达标=percentile_mask, 数量限制达标=quantity_mask)
         selected_mask = threshold_mask & percentile_mask & quantity_mask
 
         self.selected_features_ = X.columns[selected_mask].tolist()
@@ -296,6 +284,4 @@ class FTestSelector(BaseFeatureSelector):
             if not conditions["数量限制达标"]:
                 parts.append(f"未进入前{self.k}名")
             reasons.append("；".join(parts))
-        self.dropped_ = pd.DataFrame(
-            {"特征": dropped_columns, "剔除原因": reasons, "F值": self.scores_.reindex(dropped_columns).to_numpy()}
-        )
+        self.dropped_ = pd.DataFrame({"特征": dropped_columns, "剔除原因": reasons, "F值": self.scores_.reindex(dropped_columns).to_numpy()})

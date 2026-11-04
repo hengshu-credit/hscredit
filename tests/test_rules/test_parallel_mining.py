@@ -63,10 +63,7 @@ def _assert_miner_results_equal(left, right):
 def _normalize_tree_rules(rules):
     return [
         (
-            tuple(
-                (condition["feature"], condition["operator"], condition["threshold"])
-                for condition in rule["conditions"]
-            ),
+            tuple((condition["feature"], condition["operator"], condition["threshold"]) for condition in rule["conditions"]),
             rule["predicted_class"],
             rule["class_probability"],
             rule["sample_count"],
@@ -211,9 +208,7 @@ def test_tree_rule_reports_parallel_match_serial_and_fail_fast(mining_data, back
 def test_tree_rule_string_normalizes_numpy_scalar_threshold():
     """NumPy 2.x 标量 repr 不得把 np 误解析成输入数据列。"""
     extractor = TreeRuleExtractor(n_jobs=1)
-    expression = extractor._rule_to_string(
-        {"conditions": [{"feature": "score", "operator": ">", "threshold": np.float64(0.5)}]}
-    )
+    expression = extractor._rule_to_string({"conditions": [{"feature": "score", "operator": ">", "threshold": np.float64(0.5)}]})
 
     assert expression == "(score > 0.5)"
     assert Rule(expression).predict(pd.DataFrame({"score": [0.25, 0.75]})).tolist() == [False, True]
@@ -226,12 +221,8 @@ def test_tree_analyzer_and_manual_tree_report_parallel_datasets_match_serial(min
     datasets = {"训练": train, "测试": test}
 
     serial_analyzer = DecisionTreeAnalyzer(features=["score", "debt"], n_jobs=1).fit(train)
-    parallel_analyzer = DecisionTreeAnalyzer(features=["score", "debt"], n_jobs=2, parallel_backend="threading").fit(
-        train
-    )
-    assert serial_analyzer.evaluate([("测试", test)], metric_type="ks") == parallel_analyzer.evaluate(
-        [("测试", test)], metric_type="ks"
-    )
+    parallel_analyzer = DecisionTreeAnalyzer(features=["score", "debt"], n_jobs=2, parallel_backend="threading").fit(train)
+    assert serial_analyzer.evaluate([("测试", test)], metric_type="ks") == parallel_analyzer.evaluate([("测试", test)], metric_type="ks")
     serial_reports = serial_analyzer.report(datasets)
     parallel_reports = parallel_analyzer.report(datasets)
     assert list(serial_reports) == list(parallel_reports)
@@ -239,9 +230,7 @@ def test_tree_analyzer_and_manual_tree_report_parallel_datasets_match_serial(min
         pd.testing.assert_frame_equal(serial_reports[name], parallel_reports[name])
 
     serial_manual = ManualTreeExtractor(max_depth=2, n_jobs=1).fit(train, features=["score", "debt"])
-    parallel_manual = ManualTreeExtractor(max_depth=2, n_jobs=2, parallel_backend="loky").fit(
-        train, features=["score", "debt"]
-    )
+    parallel_manual = ManualTreeExtractor(max_depth=2, n_jobs=2, parallel_backend="loky").fit(train, features=["score", "debt"])
     serial_manual_reports = serial_manual.report(datasets)
     parallel_manual_reports = parallel_manual.report(datasets)
     for name in datasets:
@@ -653,15 +642,11 @@ def test_multi_label_successful_refit_matches_fresh_instance(mining_data):
         max_n_bins=3,
         n_jobs=1,
     )
-    refit_labels = MultiLabelRuleMiner(labels=labels, label_names=label_names, **label_kwargs).fit(
-        first, features=["score"]
-    )
+    refit_labels = MultiLabelRuleMiner(labels=labels, label_names=label_names, **label_kwargs).fit(first, features=["score"])
     labels[:] = ["next_target"]
     label_names[:] = ["新标签"]
     refit_labels.fit(second, features=["x", "y"])
-    fresh_labels = MultiLabelRuleMiner(labels=labels, label_names=label_names, **label_kwargs).fit(
-        second, features=["x", "y"]
-    )
+    fresh_labels = MultiLabelRuleMiner(labels=labels, label_names=label_names, **label_kwargs).fit(second, features=["x", "y"])
     assert refit_labels.target == fresh_labels.target == "next_target"
     pd.testing.assert_frame_equal(refit_labels.get_report(), fresh_labels.get_report())
 
@@ -777,9 +762,7 @@ def test_tree_helpers_successful_refit_matches_fresh_instance(mining_data):
     np.testing.assert_array_equal(refit_analyzer.predict(second), fresh_analyzer.predict(second))
 
     manual_kwargs = dict(max_depth=2, min_samples_split=2, min_samples_leaf=1, n_jobs=1)
-    refit_manual = ManualTreeExtractor(**manual_kwargs).fit(
-        first[["score", "debt", "target"]], features=["score", "debt"]
-    )
+    refit_manual = ManualTreeExtractor(**manual_kwargs).fit(first[["score", "debt", "target"]], features=["score", "debt"])
     refit_manual.fit(second, features=["x", "y"])
     fresh_manual = ManualTreeExtractor(**manual_kwargs).fit(second, features=["x", "y"])
     assert refit_manual._feature_list == fresh_manual._feature_list == ["x", "y"]

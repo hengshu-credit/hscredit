@@ -24,9 +24,7 @@ def test_explicit_worker_memory_budget_is_checked_before_running():
     workload = ParallelWorkload(10, data_bytes=100, working_bytes_per_task=40, result_bytes_per_task=10)
     with pytest.raises(ValidationError, match="预计峰值内存"):
         plan_parallel_execution(4, workload, parallel_backend="threading", parallel_config={"memory_budget_bytes": 300})
-    plan = plan_parallel_execution(
-        4, workload, parallel_backend="threading", parallel_config={"memory_budget_bytes": 400}
-    )
+    plan = plan_parallel_execution(4, workload, parallel_backend="threading", parallel_config={"memory_budget_bytes": 400})
     assert plan.estimated_peak_bytes == 360
 
 
@@ -79,9 +77,7 @@ def test_iterator_keeps_input_consumption_bounded(workers, backend):
 
 
 def test_bounded_list_keeps_default_order_and_reports_iterator_length_errors():
-    assert parallel_execute(
-        _square, range(9), n_jobs=2, parallel_backend="threading", parallel_config={"max_inflight_tasks": 3}
-    ) == [i * i for i in range(9)]
+    assert parallel_execute(_square, range(9), n_jobs=2, parallel_backend="threading", parallel_config={"max_inflight_tasks": 3}) == [i * i for i in range(9)]
     result = parallel_execute(
         _square,
         iter([1, 2]),
@@ -102,9 +98,7 @@ def test_unknown_size_iterators_require_workload():
 
 def test_output_limit_checked_in_plan_and_during_consumption():
     with pytest.raises(ValidationError, match="预计输出行数"):
-        plan_parallel_execution(
-            1, ParallelWorkload(3, output_rows_per_task=10), parallel_config={"max_output_rows": 20}
-        )
+        plan_parallel_execution(1, ParallelWorkload(3, output_rows_per_task=10), parallel_config={"max_output_rows": 20})
     result = parallel_execute(
         lambda n: np.ones(n),
         [2, 3],
@@ -142,9 +136,7 @@ def test_nonstreaming_components_reject_single_use_result_iterators():
 
 def test_adaptive_memory_plan_recomputes_implicit_result_window():
     workload = ParallelWorkload(100, rows=10000000, capability="thread_safe", result_bytes_per_task=100)
-    plan = plan_parallel_execution(
-        -1, workload, cpu_count=8, parallel_config={"result_retention": "iterator", "memory_budget_bytes": 500}
-    )
+    plan = plan_parallel_execution(-1, workload, cpu_count=8, parallel_config={"result_retention": "iterator", "memory_budget_bytes": 500})
     assert plan.workers == 2
     assert plan.estimated_peak_bytes == 400
 

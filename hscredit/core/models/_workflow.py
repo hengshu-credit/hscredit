@@ -52,9 +52,7 @@ def evaluate_probability_model(
     labels = validate_labels(y, classes=classes, require_both=False)
     p = positive_probability(probabilities, classes, positive)
     label_method = getattr(model, "_predict_evaluation_labels", None)
-    predicted = (
-        (np.asarray(label_method(X)) == positive).astype(int) if callable(label_method) else (p >= 0.5).astype(int)
-    )
+    predicted = (np.asarray(label_method(X)) == positive).astype(int) if callable(label_method) else (p >= 0.5).astype(int)
     return _evaluate_binary_predictions(
         (labels == positive).astype(int),
         p,
@@ -423,11 +421,7 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         if not callable(getattr(self, "fit", None)):
             raise ValueError("当前对象仅组合已训练模型；需要调参时请使用可训练的基础模型或 ProbabilityCalibrator")
 
-        optimize = {
-            key: kwargs.pop(key)
-            for key in ("timeout", "show_progress_bar", "evaluation_weight", "groups", "catch", "gc_after_trial")
-            if key in kwargs
-        }
+        optimize = {key: kwargs.pop(key) for key in ("timeout", "show_progress_bar", "evaluation_weight", "groups", "catch", "gc_after_trial") if key in kwargs}
         optimize.update(kwargs.pop("optimize_kwargs", {}))
         tuner = ModelTuner(
             self,

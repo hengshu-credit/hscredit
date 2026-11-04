@@ -359,22 +359,11 @@ class MaxComputeAdapter(DBAPIAdapter):
                 table_kwargs={"lifecycle": int(options.get("staging_lifecycle", 1))},
             )
             keys = set(key_columns)
-            condition = " AND ".join(
-                f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}"
-                for column in key_columns
-            )
-            updates = ", ".join(
-                f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}"
-                for column in batch.columns
-                if column not in keys
-            )
+            condition = " AND ".join(f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}" for column in key_columns)
+            updates = ", ".join(f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}" for column in batch.columns if column not in keys)
             columns = ", ".join(self.quote_identifier(str(column)) for column in batch.columns)
             values = ", ".join(f"source.{self.quote_identifier(str(column))}" for column in batch.columns)
-            sql = (
-                f"MERGE INTO {self.quote_qualified_name(table_name)} target "
-                f"USING {self.quote_qualified_name(staging_name)} source "
-                f"ON ({condition})"
-            )
+            sql = f"MERGE INTO {self.quote_qualified_name(table_name)} target " f"USING {self.quote_qualified_name(staging_name)} source " f"ON ({condition})"
             if updates:
                 sql += f" WHEN MATCHED THEN UPDATE SET {updates}"
             sql += f" WHEN NOT MATCHED THEN INSERT ({columns}) VALUES ({values})"

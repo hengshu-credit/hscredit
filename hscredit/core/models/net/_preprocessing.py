@@ -26,9 +26,7 @@ class TabularPreprocessor:
         frame = self._frame(X)
         self.n_features_ = frame.shape[1]
         if categorical_features is None:
-            self.cat_indices_ = [
-                i for i, dtype in enumerate(frame.dtypes) if not is_numeric_dtype(dtype) or is_bool_dtype(dtype)
-            ]
+            self.cat_indices_ = [i for i, dtype in enumerate(frame.dtypes) if not is_numeric_dtype(dtype) or is_bool_dtype(dtype)]
         else:
             if isinstance(categorical_features, (str, bytes)):
                 raise ValidationError("categorical_features 必须是字段名或列位置的列表")
@@ -47,9 +45,7 @@ class TabularPreprocessor:
         self.categories_ = [pd.Index(frame.iloc[:, i].dropna().unique()) for i in self.cat_indices_]
         self.cardinalities_ = [len(values) + 1 for values in self.categories_]
         values = self._numeric(frame)
-        self.medians_ = np.array(
-            [np.median(col[~np.isnan(col)]) if np.any(~np.isnan(col)) else 0.0 for col in values.T]
-        )
+        self.medians_ = np.array([np.median(col[~np.isnan(col)]) if np.any(~np.isnan(col)) else 0.0 for col in values.T])
         filled = np.where(np.isnan(values), self.medians_, values)
         self.means_ = filled.mean(axis=0)
         self.scales_ = filled.std(axis=0)

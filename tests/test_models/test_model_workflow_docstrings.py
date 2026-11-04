@@ -55,11 +55,7 @@ MODELS = {
 
 
 def _entries():
-    paths = [
-        p
-        for p in (ROOT / "hscredit/core/models").rglob("*.py")
-        if "losses" not in p.parts and "explainability" not in p.parts and p.name != "_lifecycle.py"
-    ]
+    paths = [p for p in (ROOT / "hscredit/core/models").rglob("*.py") if "losses" not in p.parts and "explainability" not in p.parts and p.name != "_lifecycle.py"]
     paths += [ROOT / "hscredit/report/model_report.py", ROOT / "hscredit/report/_model_context.py"]
     for path in paths:
         tree = ast.parse(path.read_text(encoding="utf-8-sig"))
@@ -72,18 +68,14 @@ def _entries():
                 if node.name in METHODS:
                     yield f"{path.name}:{owner}.{node.name}", node, ast.get_docstring(node), True
                 elif node.name == "__init__" and owner in MODELS:
-                    yield f"{path.name}:{owner}", node, (ast.get_docstring(scope) or "") + "\n" + (
-                        ast.get_docstring(node) or ""
-                    ), False
+                    yield f"{path.name}:{owner}", node, (ast.get_docstring(scope) or "") + "\n" + (ast.get_docstring(node) or ""), False
 
 
 @pytest.mark.parametrize("entry", list(_entries()), ids=lambda entry: entry[0])
 def test_chain_entry_has_parameters_and_examples(entry):
     title, node, doc, example_required = entry
     assert doc, f"{title} 的文档不可见，docstring 必须是函数/类的第一条语句"
-    names = [
-        a.arg for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs if a.arg not in {"self", "cls"}
-    ]
+    names = [a.arg for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs if a.arg not in {"self", "cls"}]
     names += [a.arg for a in (node.args.vararg, node.args.kwarg) if a is not None]
     missing = [name for name in names if not re.search(r":param\s+(?:[^:\n]+\s+)?" + re.escape(name) + ":", doc)]
     assert not missing, f"{title} 缺少参数说明：{missing}"

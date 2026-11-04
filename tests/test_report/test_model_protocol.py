@@ -54,13 +54,7 @@ def test_overdue_labels_and_basic_definitions_match_independent_rows(operator, d
         compare = {">": np.greater, ">=": np.greater_equal, "<": np.less, "<=": np.less_equal}[operator]
         expected = compare(days, threshold).astype(float)
         expected[pd.isna(days)] = np.nan
-        grey = (
-            ((days > 0) & (days <= threshold))
-            if operator == ">"
-            else ((days > 0) & (days < threshold))
-            if operator == ">="
-            else np.zeros(len(days), dtype=bool)
-        )
+        grey = ((days > 0) & (days <= threshold)) if operator == ">" else ((days > 0) & (days < threshold)) if operator == ">=" else np.zeros(len(days), dtype=bool)
         if del_grey:
             expected[grey] = np.nan
         assert_allclose(report._get_y("样本", f"MOB1@{threshold}"), expected, equal_nan=True)
@@ -76,9 +70,7 @@ def test_overdue_labels_and_basic_definitions_match_independent_rows(operator, d
     assert "标签定义与剔灰规则" not in basic and "实际剔除规则" not in basic
     performance = [c.value for row in book["2-模型性能"] for c in row]
     assert "MOB1@3" in performance
-    assert not any(
-        c.value in {"MOB1>3", "MOB1>=3", "MOB1<3", "MOB1<=3", "MOB1大于3"} for sheet in book for row in sheet for c in row
-    )
+    assert not any(c.value in {"MOB1>3", "MOB1>=3", "MOB1<3", "MOB1<=3", "MOB1大于3"} for sheet in book for row in sheet for c in row)
     book.close()
 
 
@@ -111,9 +103,7 @@ def test_score_transformer_defaults_to_transform_and_reports_actual_formula(meth
     options = {"n_quantiles": 5} if method == "quantile" else {"lmbda": 0.5} if method == "boxcox" else {}
     p = np.array([0, 0.01, 0.1, 0.3, 0.6, 0.8, 0.95, 1.0])
     y = (p > 0.4).astype(int)
-    transformer = ScoreTransformer(method=method, lower=450, upper=550, direction=direction, decimal=0, **options).fit(
-        p
-    )
+    transformer = ScoreTransformer(method=method, lower=450, upper=550, direction=direction, decimal=0, **options).fit(p)
     X = pd.DataFrame({"原始概率": p})
     report = ModelReport(transformer, datasets={"验证": (X, y)}, n_jobs=1)
     assert report.prediction_method == "transform"

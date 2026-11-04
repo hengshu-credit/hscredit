@@ -113,13 +113,7 @@ def fv(rate, nper, pmt, pv, when="end"):
     result[zero_rate] = -(pv[zero_rate] + pmt[zero_rate] * nper[zero_rate])
 
     non_zero = ~zero_rate
-    result[non_zero] = -(
-        pv[non_zero] * (1 + rate[non_zero]) ** nper[non_zero]
-        + pmt[non_zero]
-        * (1 + rate[non_zero] * when[non_zero])
-        / rate[non_zero]
-        * ((1 + rate[non_zero]) ** nper[non_zero] - 1)
-    )
+    result[non_zero] = -(pv[non_zero] * (1 + rate[non_zero]) ** nper[non_zero] + pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]) / rate[non_zero] * ((1 + rate[non_zero]) ** nper[non_zero] - 1))
 
     return result
 
@@ -177,16 +171,7 @@ def pv(rate, nper, pmt, fv=0, when="end"):
     result[zero_rate] = -(fv[zero_rate] + pmt[zero_rate] * nper[zero_rate])
 
     non_zero = ~zero_rate
-    result[non_zero] = (
-        -(
-            fv[non_zero]
-            + pmt[non_zero]
-            * (1 + rate[non_zero] * when[non_zero])
-            / rate[non_zero]
-            * ((1 + rate[non_zero]) ** nper[non_zero] - 1)
-        )
-        / (1 + rate[non_zero]) ** nper[non_zero]
-    )
+    result[non_zero] = -(fv[non_zero] + pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]) / rate[non_zero] * ((1 + rate[non_zero]) ** nper[non_zero] - 1)) / (1 + rate[non_zero]) ** nper[non_zero]
 
     return result
 
@@ -233,11 +218,7 @@ def pmt(rate, nper, pv, fv=0, when="end"):
     result[zero_rate] = -(fv[zero_rate] + pv[zero_rate]) / nper[zero_rate]
 
     non_zero = ~zero_rate
-    result[non_zero] = (
-        -(fv[non_zero] + pv[non_zero] * (1 + rate[non_zero]) ** nper[non_zero])
-        * rate[non_zero]
-        / ((1 + rate[non_zero] * when[non_zero]) * ((1 + rate[non_zero]) ** nper[non_zero] - 1))
-    )
+    result[non_zero] = -(fv[non_zero] + pv[non_zero] * (1 + rate[non_zero]) ** nper[non_zero]) * rate[non_zero] / ((1 + rate[non_zero] * when[non_zero]) * ((1 + rate[non_zero]) ** nper[non_zero] - 1))
 
     return result
 
@@ -277,19 +258,14 @@ def nper(rate, pmt, pv, fv=0, when="end"):
         if rate == 0:
             return -(fv + pv) / pmt
         else:
-            return np.log((-fv * rate + pmt * (1 + rate * when)) / (pv * rate + pmt * (1 + rate * when))) / np.log(
-                1 + rate
-            )
+            return np.log((-fv * rate + pmt * (1 + rate * when)) / (pv * rate + pmt * (1 + rate * when))) / np.log(1 + rate)
 
     result = np.zeros_like(rate)
     zero_rate = rate == 0
     result[zero_rate] = -(fv[zero_rate] + pv[zero_rate]) / pmt[zero_rate]
 
     non_zero = ~zero_rate
-    result[non_zero] = np.log(
-        (-fv[non_zero] * rate[non_zero] + pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]))
-        / (pv[non_zero] * rate[non_zero] + pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]))
-    ) / np.log(1 + rate[non_zero])
+    result[non_zero] = np.log((-fv[non_zero] * rate[non_zero] + pmt[non_zero] * (1 + rate[non_zero] * when[non_zero])) / (pv[non_zero] * rate[non_zero] + pmt[non_zero] * (1 + rate[non_zero] * when[non_zero]))) / np.log(1 + rate[non_zero])
 
     return result
 
@@ -417,9 +393,7 @@ def rate(nper, pmt, pv, fv=0, when="end", guess=0.1, tol=1e-6, max_iter=100):
     if nper_a.ndim:
         output = np.empty(nper_a.shape, dtype=float)
         for index in np.ndindex(output.shape):
-            output[index] = rate(
-                nper_a[index], pmt_a[index], pv_a[index], fv_a[index], when_a[index], guess_a[index], tol, max_iter
-            )
+            output[index] = rate(nper_a[index], pmt_a[index], pv_a[index], fv_a[index], when_a[index], guess_a[index], tol, max_iter)
         return output
     nper, pmt, pv, fv, when, guess = (value.item() for value in (nper_a, pmt_a, pv_a, fv_a, when_a, guess_a))
 

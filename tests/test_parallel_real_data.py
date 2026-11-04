@@ -50,9 +50,7 @@ def yyp_data():
 def yyp_model(yyp_data):
     """固定样本顺序和随机种子的真实数据模型。"""
     train = yyp_data.iloc[:650]
-    return LogisticRegression(solver="liblinear", random_state=20260805, max_iter=500).fit(
-        train[FEATURES], train[TARGET]
-    )
+    return LogisticRegression(solver="liblinear", random_state=20260805, max_iter=500).fit(train[FEATURES], train[TARGET])
 
 
 def _assert_frame_exact(left, right):
@@ -117,9 +115,7 @@ def test_real_encoder_exact_across_backends(yyp_data, backend):
     """真实商品类别的映射、列顺序、dtype 与编码值完全一致。"""
     inputs = yyp_data[[CATEGORY, FEATURES[0]]]
     serial = WOEEncoder(features=[CATEGORY], regularization=1.0, n_jobs=1).fit(inputs, yyp_data[TARGET])
-    parallel = WOEEncoder(features=[CATEGORY], regularization=1.0, n_jobs=2, parallel_backend=backend).fit(
-        inputs, yyp_data[TARGET]
-    )
+    parallel = WOEEncoder(features=[CATEGORY], regularization=1.0, n_jobs=2, parallel_backend=backend).fit(inputs, yyp_data[TARGET])
 
     _assert_nested_value_exact(serial.export_mapping(), parallel.export_mapping())
     _assert_frame_exact(serial.transform(inputs), parallel.transform(inputs))

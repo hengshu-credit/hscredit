@@ -119,9 +119,7 @@ class TestRulesClassifier:
         """测试基本的拟合和预测."""
         X = sample_data
 
-        clf = RulesClassifier(
-            rules=[Rule("age < 20"), Rule("income > 7000"), Rule("score < 400")], logic="or", output_mode="final"
-        )
+        clf = RulesClassifier(rules=[Rule("age < 20"), Rule("income > 7000"), Rule("score < 400")], logic="or", output_mode="final")
 
         clf.fit(X)
         result = clf.predict(X)
@@ -530,9 +528,7 @@ class TestRulesClassifierAdvanced:
         X = sample_data
 
         # 权重数量与规则数量不匹配
-        clf = RulesClassifier(
-            rules=[Rule("age < 20"), Rule("income > 7000")], weights=[1.0]  # 只有一个权重，但有两条规则
-        )
+        clf = RulesClassifier(rules=[Rule("age < 20"), Rule("income > 7000")], weights=[1.0])  # 只有一个权重，但有两条规则
 
         with pytest.raises(ValueError, match="weights长度"):
             clf.fit(X)

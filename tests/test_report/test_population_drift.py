@@ -67,9 +67,5 @@ def test_population_drift_generates_expected_sheets(tmp_path):
 
     score_sheet = workbook["评分分布对比"]
     assert score_sheet["B2"].value == "特征名"
-    score_features = {
-        score_sheet.cell(row=row_idx, column=2).value
-        for row_idx in range(3, score_sheet.max_row + 1)
-        if score_sheet.cell(row=row_idx, column=2).value
-    }
+    score_features = {score_sheet.cell(row=row_idx, column=2).value for row_idx in range(3, score_sheet.max_row + 1) if score_sheet.cell(row=row_idx, column=2).value}
     assert score_features == {"score"}

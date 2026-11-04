@@ -64,11 +64,7 @@ def _measure_medians(name, serial_call, parallel_call, metadata):
     serial_times = []
     parallel_times = []
     for run in range(REPEATS):
-        calls = (
-            (("serial", serial_call), ("parallel", parallel_call))
-            if run % 2 == 0
-            else (("parallel", parallel_call), ("serial", serial_call))
-        )
+        calls = (("serial", serial_call), ("parallel", parallel_call)) if run % 2 == 0 else (("parallel", parallel_call), ("serial", serial_call))
         for mode, call in calls:
             started = perf_counter()
             call()
@@ -78,12 +74,7 @@ def _measure_medians(name, serial_call, parallel_call, metadata):
     serial_median = median(serial_times)
     parallel_median = median(parallel_times)
     speedup = serial_median / parallel_median
-    diagnostic = (
-        f"BENCHMARK {name} {metadata} physical_cpus={get_physical_cpu_count()} "
-        f"serial_runs={serial_times} parallel_runs={parallel_times} "
-        f"serial_median={serial_median:.6f}s parallel_median={parallel_median:.6f}s "
-        f"speedup={speedup:.3f}x"
-    )
+    diagnostic = f"BENCHMARK {name} {metadata} physical_cpus={get_physical_cpu_count()} " f"serial_runs={serial_times} parallel_runs={parallel_times} " f"serial_median={serial_median:.6f}s parallel_median={parallel_median:.6f}s " f"speedup={speedup:.3f}x"
     print(diagnostic)
     return serial_warm, parallel_warm, serial_median, parallel_median, speedup, diagnostic
 

@@ -564,9 +564,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                         return column
             return None
 
-        label_col = next(
-            (c for c in table.columns if (c[-1] if isinstance(c, tuple) else c) == self.bin_label_col), None
-        )
+        label_col = next((c for c in table.columns if (c[-1] if isinstance(c, tuple) else c) == self.bin_label_col), None)
         if label_col is None:
             return
         labels = table[label_col].astype(str)
@@ -591,9 +589,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                 if pd.notna(value):
                     self.overall_rates_[name] = float(value)
             if name not in self.overall_rates_ and sum(weights.values()) > 0:
-                self.overall_rates_[name] = sum(weights.get(label, 0.0) * rate for label, rate in rates.items()) / sum(
-                    weights.values()
-                )
+                self.overall_rates_[name] = sum(weights.get(label, 0.0) * rate for label, rate in rates.items()) / sum(weights.values())
             for rate in rates.values():
                 if not np.isfinite(rate) or not 0 <= rate <= 1:
                     raise ValueError("分箱坏样本率必须为0到1之间的有限数值")
@@ -787,9 +783,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         :param X: 待预估数据
         :return: 包含预估结果的数据
         """
-        rates = self.bin_rates_.get(
-            "_default", self.bin_rates_.get(self.target_names_[0] if self.target_names_ else "target", {})
-        )
+        rates = self.bin_rates_.get("_default", self.bin_rates_.get(self.target_names_[0] if self.target_names_ else "target", {}))
 
         # 为每个样本分配分箱和逾期率
         bin_labels, base_rates = self._assign_bins_and_rates(X[self.feature], rates)
@@ -851,11 +845,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             return self._assign_structured_bins(values, rates)
         # 类别箱只匹配类别值，不能把无法解析的标签视为覆盖全域的数值区间。
         bin_intervals = self._parse_rate_intervals(rates)
-        category_labels = [
-            label
-            for label in rates
-            if label not in bin_intervals and label not in ("missing", "special", "unknown", "合计", "未知")
-        ]
+        category_labels = [label for label in rates if label not in bin_intervals and label not in ("missing", "special", "unknown", "合计", "未知")]
 
         # 按箱矢量化匹配，避免每个样本重复解析类别和遍历Python区间。
         values = values.reset_index(drop=True)
@@ -894,9 +884,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         """先用真实分箱器/语义取得箱号，再取风险率，完全不解析展示文本。"""
         values = values.reset_index(drop=True)
         if hasattr(self, "binner_"):
-            codes = self.binner_.transform(values.to_frame(name=self.feature), metric="indices")[
-                self.feature
-            ].to_numpy()
+            codes = self.binner_.transform(values.to_frame(name=self.feature), metric="indices")[self.feature].to_numpy()
         else:
             codes = np.full(len(values), None, dtype=object)
             assigned = np.zeros(len(values), dtype=bool)
@@ -906,14 +894,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
                     raise ValueError("bin_specs存在重叠分箱，同一样本不能匹配多个箱")
                 codes[mask] = bin_id
                 assigned |= mask
-        labels = [
-            (
-                self.bin_labels_.get(int(code), "missing" if int(code) == -1 else "未知")
-                if code is not None and not pd.isna(code)
-                else "未知"
-            )
-            for code in codes
-        ]
+        labels = [(self.bin_labels_.get(int(code), "missing" if int(code) == -1 else "未知") if code is not None and not pd.isna(code) else "未知") for code in codes]
         baseline = self._get_overall_rate(rates)
         return labels, [rates.get(label, baseline) for label in labels]
 
@@ -1090,9 +1071,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
 
         # 添加系数信息
         if self.coefficients is not None:
-            coefficients_map = self._resolve_coefficients(
-                self.bin_rates_.get("_default", list(self.bin_rates_.values())[0] if self.bin_rates_ else {})
-            )
+            coefficients_map = self._resolve_coefficients(self.bin_rates_.get("_default", list(self.bin_rates_.values())[0] if self.bin_rates_ else {}))
 
             if isinstance(table.columns, pd.MultiIndex):
                 # 多级表头：在第一个目标下添加系数列

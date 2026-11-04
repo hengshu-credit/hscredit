@@ -43,9 +43,7 @@ from ._ranking import _binary_ranking_curve, _binary_roc_statistics, _prepare_bi
 from scipy.stats import ks_2samp as _ks_2samp
 
 
-def ks(
-    y_true: Union[np.ndarray, pd.Series], y_prob: Union[np.ndarray, pd.Series], *, pos_label=1, sample_weight=None
-) -> float:
+def ks(y_true: Union[np.ndarray, pd.Series], y_prob: Union[np.ndarray, pd.Series], *, pos_label=1, sample_weight=None) -> float:
     """计算Kolmogorov-Smirnov统计量.
 
     KS值衡量模型区分正负样本的能力，值越大区分效果越好。
@@ -80,9 +78,7 @@ def ks(
     标准指标，定义见 Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     经验阈值：KS<0.2 区分弱、0.2~0.4 可用、0.4~0.6 强、>0.75 需排查标签泄漏。
     """
-    y_true, y_prob, weights = _prepare_binary_scores(
-        y_true, y_prob, pos_label, allow_single_class=True, sample_weight=sample_weight
-    )
+    y_true, y_prob, weights = _prepare_binary_scores(y_true, y_prob, pos_label, allow_single_class=True, sample_weight=sample_weight)
     if np.unique(y_true).size < 2:
         return 0.0
     _, cum_neg, cum_pos = _binary_ranking_curve(y_true, y_prob, weights)
@@ -213,9 +209,7 @@ def gini(
     Gini = 2·AUC − 1，是信用风险领域衡量区分度的常用指标，见
     Siddiqi, N. (2006). *Credit Risk Scorecards.* Wiley。
     """
-    return (
-        2 * auc(y_true, y_prob, pos_label=pos_label, score_direction=score_direction, sample_weight=sample_weight) - 1
-    )
+    return 2 * auc(y_true, y_prob, pos_label=pos_label, score_direction=score_direction, sample_weight=sample_weight) - 1
 
 
 def accuracy(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series]) -> float:
@@ -243,9 +237,7 @@ def accuracy(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.
     return accuracy_score(y_true, y_pred)
 
 
-def precision(
-    y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], average: str = "binary"
-) -> float:
+def precision(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], average: str = "binary") -> float:
     """计算精确率 (Precision).
 
     精确率 = TP / (TP + FP)，即预测为正的样本中真正为正的比例。
@@ -275,9 +267,7 @@ def precision(
     return precision_score(y_true, y_pred, average=average, zero_division=0)
 
 
-def recall(
-    y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], average: str = "binary"
-) -> float:
+def recall(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], average: str = "binary") -> float:
     """计算召回率 (Recall / Sensitivity).
 
     召回率 = TP / (TP + FN)，即所有正样本中被正确预测的比例。
@@ -496,9 +486,7 @@ def roc_curve(
     return result.fpr, result.tpr, result.thresholds
 
 
-def confusion_matrix(
-    y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], labels: Optional[list] = None
-) -> np.ndarray:
+def confusion_matrix(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], labels: Optional[list] = None) -> np.ndarray:
     """计算混淆矩阵.
 
     混淆矩阵展示分类器的预测结果与真实标签的对应关系。

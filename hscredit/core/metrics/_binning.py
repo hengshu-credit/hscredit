@@ -106,15 +106,9 @@ def _count_curve_violations(values: np.ndarray, trend: str) -> int:
     if len(vals) < 3:
         return 0
     if trend == "peak":
-        return min(
-            int(np.sum(np.diff(vals[: pivot + 1]) < -tol)) + int(np.sum(np.diff(vals[pivot:]) > tol))
-            for pivot in range(1, len(vals) - 1)
-        )
+        return min(int(np.sum(np.diff(vals[: pivot + 1]) < -tol)) + int(np.sum(np.diff(vals[pivot:]) > tol)) for pivot in range(1, len(vals) - 1))
     if trend == "valley":
-        return min(
-            int(np.sum(np.diff(vals[: pivot + 1]) > tol)) + int(np.sum(np.diff(vals[pivot:]) < -tol))
-            for pivot in range(1, len(vals) - 1)
-        )
+        return min(int(np.sum(np.diff(vals[: pivot + 1]) > tol)) + int(np.sum(np.diff(vals[pivot:]) < -tol)) for pivot in range(1, len(vals) - 1))
     return 0
 
 
@@ -239,9 +233,7 @@ def quadratic_curve_coefficient(
     if len(valid) < 3:
         return 0.0
 
-    curve_values = (
-        valid["LIFT值"].to_numpy(dtype=float) if metric == "lift" else valid["坏样本率"].to_numpy(dtype=float)
-    )
+    curve_values = valid["LIFT值"].to_numpy(dtype=float) if metric == "lift" else valid["坏样本率"].to_numpy(dtype=float)
     if np.allclose(curve_values, curve_values[0], atol=1e-12, rtol=0):
         return 0.0
 
@@ -299,9 +291,7 @@ def _composite_binning_quality_components(
             "n_bins": 0,
         }
 
-    curve_values = (
-        valid["LIFT值"].to_numpy(dtype=float) if metric == "lift" else valid["坏样本率"].to_numpy(dtype=float)
-    )
+    curve_values = valid["LIFT值"].to_numpy(dtype=float) if metric == "lift" else valid["坏样本率"].to_numpy(dtype=float)
     shares = valid["样本占比"].to_numpy(dtype=float)
     bad_rates = valid["坏样本率"].to_numpy(dtype=float)
 
@@ -337,9 +327,7 @@ def _composite_binning_quality_components(
         tail_window = max(1, min(2, len(curve_values)))
         head_cumulative_gain = float(np.sum(curve_values[:head_window] * shares[:head_window]))
         if monotonic == "descending":
-            tail_compression_gain = float(
-                np.sum(np.maximum(1.0 - curve_values[-tail_window:], 0.0) * shares[-tail_window:])
-            )
+            tail_compression_gain = float(np.sum(np.maximum(1.0 - curve_values[-tail_window:], 0.0) * shares[-tail_window:]))
         elif monotonic == "ascending":
             tail_compression_gain = float(np.sum(curve_values[-tail_window:] * shares[-tail_window:]))
         else:
@@ -349,9 +337,7 @@ def _composite_binning_quality_components(
         tail_compression_gain = 0.0
 
     if len(positive_margins) > 1:
-        marginal_decay_penalty = float(
-            np.sum(np.maximum(positive_margins[1:] - positive_margins[:-1], 0.0) * shared_exposure[1:])
-        )
+        marginal_decay_penalty = float(np.sum(np.maximum(positive_margins[1:] - positive_margins[:-1], 0.0) * shared_exposure[1:]))
     else:
         marginal_decay_penalty = 0.0
 
@@ -362,9 +348,7 @@ def _composite_binning_quality_components(
     spread = float(np.max(curve_values) - np.min(curve_values)) if len(curve_values) > 1 else 0.0
     step_sum = float(np.sum(np.abs(np.diff(curve_values)))) if len(curve_values) > 1 else 0.0
     tail_slope_bonus = float(max(0.0, positive_margins[-1]) * tail_share) if len(positive_margins) > 0 else 0.0
-    zero_pairs_penalty = (
-        float(np.sum((bad_rates[:-1] <= 1e-12) & (bad_rates[1:] <= 1e-12))) * 0.5 if len(bad_rates) > 1 else 0.0
-    )
+    zero_pairs_penalty = float(np.sum((bad_rates[:-1] <= 1e-12) & (bad_rates[1:] <= 1e-12))) * 0.5 if len(bad_rates) > 1 else 0.0
     violations = _count_curve_violations(curve_values, monotonic)
     monotonic_bonus = 0.15 if violations == 0 else -0.25 * float(violations)
     n_bins_bonus = len(valid) * 0.04
@@ -1085,12 +1069,7 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
             group = _column_group(col)
             bad_sample_col = _resolve_count_column("坏样本数", group)
             sample_total_col = _resolve_count_column("样本总数", group)
-            valid = (
-                bad_sample_col is not None
-                and sample_total_col is not None
-                and total_row[bad_sample_col] > 0
-                and total_row[sample_total_col] > 0
-            )
+            valid = bad_sample_col is not None and sample_total_col is not None and total_row[bad_sample_col] > 0 and total_row[sample_total_col] > 0
             if col_name in {"LIFT值", "累积LIFT值"}:
                 total_row[col] = 1.0 if valid else 0.0
             elif col_name in {"坏账改善", "风险拒绝比"}:
@@ -1121,11 +1100,7 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
         if (col[1] if is_multi else col) != "目标值总和":
             continue
         group = _column_group(col)
-        columns = {
-            (candidate[1] if is_multi else candidate): candidate
-            for candidate in table.columns
-            if _column_group(candidate) == group
-        }
+        columns = {(candidate[1] if is_multi else candidate): candidate for candidate in table.columns if _column_group(candidate) == group}
         count_col = _resolve_count_column("样本总数", group)
         if count_col is None:
             continue
@@ -1142,11 +1117,7 @@ def add_margins(table: pd.DataFrame) -> pd.DataFrame:
         }
         for metric, operation in [("目标值最小值", "min"), ("目标值最大值", "max"), ("目标值占比", "sum")]:
             if metric in columns:
-                totals[metric] = (
-                    table[columns[metric]].sum(min_count=1)
-                    if operation == "sum"
-                    else getattr(table[columns[metric]], operation)()
-                )
+                totals[metric] = table[columns[metric]].sum(min_count=1) if operation == "sum" else getattr(table[columns[metric]], operation)()
         if "目标值标准差" in columns:
             totals["目标值标准差"] = np.nan
             if "目标值均值" in columns and count > 0:
@@ -1254,9 +1225,7 @@ def _chi2_by_bin(bins: np.ndarray, y: np.ndarray) -> Tuple[float, float, np.ndar
 
 
 # 分箱优化相关的辅助函数，供binning模块使用
-def woe_iv_vectorized(
-    good_counts: np.ndarray, bad_counts: np.ndarray, epsilon: float = 1e-10
-) -> Tuple[np.ndarray, np.ndarray, float]:
+def woe_iv_vectorized(good_counts: np.ndarray, bad_counts: np.ndarray, epsilon: float = 1e-10) -> Tuple[np.ndarray, np.ndarray, float]:
     """向量化计算WOE和IV（供binning模块使用）.
 
     :param good_counts: 每个箱的好样本数
@@ -1299,9 +1268,7 @@ def ks_for_splits(x: np.ndarray, y: np.ndarray, splits: List[float]) -> float:
     return max_ks
 
 
-def compare_splits_iv(
-    x: np.ndarray, y: np.ndarray, splits1: List[float], splits2: List[float], epsilon: float = 1e-10
-) -> Tuple[float, float, str]:
+def compare_splits_iv(x: np.ndarray, y: np.ndarray, splits1: List[float], splits2: List[float], epsilon: float = 1e-10) -> Tuple[float, float, str]:
     """比较两组分割点的IV值（供binning模块使用）.
 
     :param x: 特征数组
@@ -1318,9 +1285,7 @@ def compare_splits_iv(
     return iv1, iv2, better
 
 
-def compare_splits_ks(
-    x: np.ndarray, y: np.ndarray, splits1: List[float], splits2: List[float]
-) -> Tuple[float, float, str]:
+def compare_splits_ks(x: np.ndarray, y: np.ndarray, splits1: List[float], splits2: List[float]) -> Tuple[float, float, str]:
     """比较两组分割点的KS值（供binning模块使用）.
 
     :param x: 特征数组

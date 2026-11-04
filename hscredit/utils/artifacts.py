@@ -97,12 +97,7 @@ class ArtifactTransaction:
             overwrite = output.get("overwrite", False)
         self.output_dir = Path(directory).expanduser().resolve()
         self.name = str(name)
-        if (
-            not self.name
-            or Path(self.name).name != self.name
-            or any(c in self.name for c in "/\\")
-            or self.name in {".", ".."}
-        ):
+        if not self.name or Path(self.name).name != self.name or any(c in self.name for c in "/\\") or self.name in {".", ".."}:
             raise self.error_type(code="ARTIFACT_WRITE_FAILED", message="制品名称必须是非空文件名，不能包含目录")
         self.overwrite = bool(overwrite)
         self.staging_dir: Optional[Path] = None

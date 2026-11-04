@@ -260,11 +260,7 @@ class StepwiseSelector(BaseFeatureSelector):
             raise ValueError("direction 必须是 'forward'、'backward' 或 'both'")
         if self.criterion not in {"aic", "bic", "ks", "auc"}:
             raise ValueError("criterion 必须是 'aic'、'bic'、'ks' 或 'auc'")
-        if (
-            isinstance(self.max_iter, (bool, np.bool_))
-            or not isinstance(self.max_iter, (int, np.integer))
-            or int(self.max_iter) < 1
-        ):
+        if isinstance(self.max_iter, (bool, np.bool_)) or not isinstance(self.max_iter, (int, np.integer)) or int(self.max_iter) < 1:
             raise ValueError("max_iter 必须是正整数")
 
         if y is None:
@@ -277,12 +273,7 @@ class StepwiseSelector(BaseFeatureSelector):
         initialize_history(self)
         for name in ("p_enter", "p_remove", "p_value_enter"):
             value = getattr(self, name)
-            if (
-                isinstance(value, (bool, np.bool_))
-                or not isinstance(value, (int, float, np.number))
-                or not np.isfinite(value)
-                or value < 0
-            ):
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.number)) or not np.isfinite(value) or value < 0:
                 raise ValueError(f"{name} 必须为有限的非负数")
         if self.p_value_enter > 1:
             raise ValueError("p_value_enter 必须在 [0, 1] 范围内")
@@ -334,9 +325,7 @@ class StepwiseSelector(BaseFeatureSelector):
             if selected:
                 initial_result = self._fit_model(X, y, selected)
                 if initial_result["result"] is None:
-                    raise ValueError(
-                        f"强制保留特征的起始模型拟合失败：{initial_result.get('failure_reason', '统计量不可得')}"
-                    )
+                    raise ValueError(f"强制保留特征的起始模型拟合失败：{initial_result.get('failure_reason', '统计量不可得')}")
                 best_score = initial_result["criterion"]
             else:
                 best_score = self._get_initial_score(y)
@@ -384,9 +373,7 @@ class StepwiseSelector(BaseFeatureSelector):
 
             else:
                 # 前向选择或双向选择
-                improved, selected, remaining, best_score = self._forward_step(
-                    X, y, selected, remaining, best_score, max_features
-                )
+                improved, selected, remaining, best_score = self._forward_step(X, y, selected, remaining, best_score, max_features)
 
                 if not improved:
                     if self.verbose:
@@ -780,11 +767,7 @@ class StepwiseSelector(BaseFeatureSelector):
         remaining = [f for f in remaining if f != best_feature]
 
         if self.verbose:
-            logger.info(
-                f"步骤 {len(self.history_) + 1}: 添加特征 '{best_feature}', "
-                f"{self.criterion} = {best_criterion:.4f}, "
-                f"当前特征数: {len(selected)}"
-            )
+            logger.info(f"步骤 {len(self.history_) + 1}: 添加特征 '{best_feature}', " f"{self.criterion} = {best_criterion:.4f}, " f"当前特征数: {len(selected)}")
 
         self._append_history(
             {
@@ -880,9 +863,7 @@ class StepwiseSelector(BaseFeatureSelector):
             if not candidate.get("valid", True):
                 continue
             criterion = candidate["criterion"]
-            if force_remove and (
-                best_candidate_criterion is None or self._is_improvement(criterion, best_candidate_criterion)
-            ):
+            if force_remove and (best_candidate_criterion is None or self._is_improvement(criterion, best_candidate_criterion)):
                 best_candidate_criterion = criterion
                 worst_criterion = criterion
                 worst_feature = candidate["feature"]
@@ -914,9 +895,7 @@ class StepwiseSelector(BaseFeatureSelector):
             )
 
         # 判断改善是否显著
-        if not force_remove and not self._is_significant_improvement(
-            current_criterion, worst_criterion, threshold=self.p_remove
-        ):
+        if not force_remove and not self._is_significant_improvement(current_criterion, worst_criterion, threshold=self.p_remove):
             return False, selected, remaining, best_score
 
         # 移除最差特征
@@ -924,11 +903,7 @@ class StepwiseSelector(BaseFeatureSelector):
         remaining = remaining + [worst_feature]
 
         if self.verbose:
-            logger.info(
-                f"步骤 {len(self.history_) + 1}: 剔除特征 '{worst_feature}', "
-                f"{self.criterion} = {worst_criterion:.4f}, "
-                f"当前特征数: {len(selected)}"
-            )
+            logger.info(f"步骤 {len(self.history_) + 1}: 剔除特征 '{worst_feature}', " f"{self.criterion} = {worst_criterion:.4f}, " f"当前特征数: {len(selected)}")
 
         self._append_history(
             {
@@ -986,10 +961,7 @@ class StepwiseSelector(BaseFeatureSelector):
             item = {key: value for key, value in item.items() if key != "selected"}
             item["n_features"] = len(selected)
         size = event_bytes(item, self.max_report_bytes)
-        if (
-            len(self.history_) < self.max_report_events
-            and getattr(self, "history_bytes_", 0) + size <= self.max_report_bytes
-        ):
+        if len(self.history_) < self.max_report_events and getattr(self, "history_bytes_", 0) + size <= self.max_report_bytes:
             self.history_.append(item)
             self.history_bytes_ = getattr(self, "history_bytes_", 0) + size
         else:
@@ -1087,9 +1059,7 @@ class StepwiseSelector(BaseFeatureSelector):
             # 越大越好（KS/AUC）
             return new_score > old_score
 
-    def _is_significant_improvement(
-        self, old_score: float, new_score: float, threshold: Optional[float] = None
-    ) -> bool:
+    def _is_significant_improvement(self, old_score: float, new_score: float, threshold: Optional[float] = None) -> bool:
         """判断改善是否显著。
 
         :param old_score: 旧分数

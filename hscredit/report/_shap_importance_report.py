@@ -65,11 +65,7 @@ def write_importance(report, writer, sheet, row, filepath, with_plots, title="1�
         data = result.data
         labels = None
         if report.explain_config["data"] is None:
-            key = (
-                report._resolve_dataset_key(report.explain_config["dataset"])
-                if report.explain_config["dataset"] is not None
-                else report._train_key
-            )
+            key = report._resolve_dataset_key(report.explain_config["dataset"]) if report.explain_config["dataset"] is not None else report._train_key
             dataset = report._datasets[key]
             # 使用解释器同一抽样规则保存位置关系，重复索引不能通过 reindex 对齐标签。
             positions = pd.DataFrame({"位置": np.arange(len(dataset.X))}, index=dataset.X.index)
@@ -89,9 +85,7 @@ def write_importance(report, writer, sheet, row, filepath, with_plots, title="1�
             report.model,
             data,
             labels,
-            prediction_method={"probability": "predict_proba", "prediction": "predict", "score": "predict_score"}.get(
-                result.model_output, result.model_output
-            ),
+            prediction_method={"probability": "predict_proba", "prediction": "predict", "score": "predict_score"}.get(result.model_output, result.model_output),
             left_top_n=32,
             right_top_n=10,
             importance_source="raw" if has_native else "shap",

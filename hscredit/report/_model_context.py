@@ -22,13 +22,7 @@ def _constructor_params(model):
             parameters = inspect.signature(type(model).__init__).parameters
         except (TypeError, ValueError):
             return {}
-        return {
-            name: getattr(model, name)
-            for name, parameter in parameters.items()
-            if name != "self"
-            and parameter.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-            and hasattr(model, name)
-        }
+        return {name: getattr(model, name) for name, parameter in parameters.items() if name != "self" and parameter.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD) and hasattr(model, name)}
     try:
         parameters = inspect.signature(method).parameters
     except (TypeError, ValueError):
@@ -112,12 +106,7 @@ def _model_stamp(model, _seen=None):
     if hasattr(model, "steps"):
         return tuple((name, _model_stamp(step, _seen)) for name, step in model.steps)
     if type(model).__module__.startswith("hscredit.core.models"):
-        children = tuple(
-            (key, _model_stamp(value, _seen))
-            for key, value in vars(model).items()
-            if key in {"model_", "base_model", "calibrator", "calibrator_", "lr_model_", "transformer_"}
-            and value is not None
-        )
+        children = tuple((key, _model_stamp(value, _seen)) for key, value in vars(model).items() if key in {"model_", "base_model", "calibrator", "calibrator_", "lr_model_", "transformer_"} and value is not None)
         if hasattr(model, "fit_revision_") or children:
             return (
                 type(model).__qualname__,
@@ -156,7 +145,11 @@ def report_model_current(method):
         finally:
             _REPORT_OPERATIONS.reset(token)
             self._finish_report_operation()
-            self.last_execution_ = {"操作": method.__name__, "耗时秒": perf_counter() - start, "缓存策略": self.cache_policy}
+            self.last_execution_ = {
+                "操作": method.__name__,
+                "耗时秒": perf_counter() - start,
+                "缓存策略": self.cache_policy,
+            }
 
     return checked
 
@@ -174,22 +167,15 @@ class ModelContextMixin:
             from ._model_protocol import final_estimator
 
             estimator = final_estimator(self.model)
-            score_method = self.prediction_method == "predict_score" or (
-                self.prediction_method in ("predict", "transform")
-                and (hasattr(estimator, "scorecard_points") or hasattr(estimator, "direction_"))
-            )
+            score_method = self.prediction_method == "predict_score" or (self.prediction_method in ("predict", "transform") and (hasattr(estimator, "scorecard_points") or hasattr(estimator, "direction_")))
             owner = getattr(estimator, "score_transformer_", getattr(estimator, "transformer_", estimator))
             direction = getattr(owner, "direction_", getattr(owner, "direction", "descending"))
             score_direction = "higher_safe" if score_method and direction == "descending" else "higher_risk"
         self.score_direction = score_direction
         requested = [] if metrics is None else ([metrics] if isinstance(metrics, (str, BaseMetric)) else list(metrics))
         label_names = {"accuracy": "Accuracy", "precision": "Precision", "recall": "Recall", "f1": "F1"}
-        self.label_metrics_ = [
-            item.lower() for item in requested if isinstance(item, str) and item.lower() in label_names
-        ]
-        self.metrics = [
-            get_metric(item) for item in requested if not (isinstance(item, str) and item.lower() in label_names)
-        ]
+        self.label_metrics_ = [item.lower() for item in requested if isinstance(item, str) and item.lower() in label_names]
+        self.metrics = [get_metric(item) for item in requested if not (isinstance(item, str) and item.lower() in label_names)]
         names = [metric.name for metric in self.metrics] + [label_names[name] for name in self.label_metrics_]
         if len(set(names)) != len(names):
             raise ValueError("报告评估指标名称不能重复")
@@ -264,14 +250,8 @@ class ModelContextMixin:
             row = {"统计项": metric.name}
             for key, dataset in self._datasets.items():
                 y, p = self._get_valid_target_arrays(key, label)
-                selected = slice_sample_loss(
-                    metric, np.flatnonzero(self._get_target_valid_mask(key, label)), len(dataset.y)
-                )
-                row[dataset.label] = (
-                    np.nan
-                    if not len(y)
-                    else selected.evaluate(y, p, sample_weight=self._metric_weight(key, label, weighted=weighted))
-                )
+                selected = slice_sample_loss(metric, np.flatnonzero(self._get_target_valid_mask(key, label)), len(dataset.y))
+                row[dataset.label] = np.nan if not len(y) else selected.evaluate(y, p, sample_weight=self._metric_weight(key, label, weighted=weighted))
             rows.append(row)
         if getattr(self, "label_metrics_", []):
             from ..core.models.base import _evaluate_binary_predictions
@@ -320,11 +300,7 @@ class ModelContextMixin:
         from ..core.metrics import auc, ks
 
         result = table.copy()
-        extras = (
-            {row["统计项"]: row for row in self._extra_metric_rows(label, weighted=True)}
-            if self.task_type_ != "regression"
-            else {}
-        )
+        extras = {row["统计项"]: row for row in self._extra_metric_rows(label, weighted=True)} if self.task_type_ != "regression" else {}
         for key, dataset in self._datasets.items():
             y, prediction = self._get_valid_target_arrays(key, label)
             weights = self._metric_weight(key, label, weighted=True)
@@ -335,9 +311,7 @@ class ModelContextMixin:
             else:
                 values = {
                     "KS": _safe_binary_metric(ks, y, prediction, sample_weight=weights),
-                    "AUC": _safe_binary_metric(
-                        auc, y, prediction, score_direction=self.score_direction, sample_weight=weights
-                    ),
+                    "AUC": _safe_binary_metric(auc, y, prediction, score_direction=self.score_direction, sample_weight=weights),
                 }
                 values.update({name: row[dataset.label] for name, row in extras.items()})
             name = f"{dataset.label}（加权）"
@@ -464,28 +438,17 @@ class ModelContextMixin:
                     {"配置项": "搜索指标", "配置值": "、".join(metric.name for metric in tuner.metrics)},
                     {
                         "配置项": "优化方向",
-                        "配置值": "、".join(
-                            f"{metric.name}：{'越大越好' if metric.direction=='maximize' else '越小越好'}"
-                            for metric in tuner.metrics
-                        ),
+                        "配置值": "、".join(f"{metric.name}：{'越大越好' if metric.direction=='maximize' else '越小越好'}" for metric in tuner.metrics),
                     },
                     {"配置项": "验证方式", "配置值": validation.get("验证方式")},
                     {"配置项": "搜索评分数据集", "配置值": validation.get("搜索评分数据集", "交叉验证留出")},
                     {"配置项": "搜索选中试验", "配置值": selected_number},
                 ]
             )
-            relation = (
-                "本报告模型是调参后重训模型" if getattr(tuner, "best_model_", None) is self.model else "搜索过程属于关联调参器，当前报告模型未替换为其重训模型"
-            )
-            result["模型口径"] = pd.concat(
-                [result["模型口径"], pd.DataFrame([{"配置项": "与调参关系", "配置值": relation}])], ignore_index=True
-            )
+            relation = "本报告模型是调参后重训模型" if getattr(tuner, "best_model_", None) is self.model else "搜索过程属于关联调参器，当前报告模型未替换为其重训模型"
+            result["模型口径"] = pd.concat([result["模型口径"], pd.DataFrame([{"配置项": "与调参关系", "配置值": relation}])], ignore_index=True)
             public_history = getattr(tuner, "optimization_history_", None)
-            history = (
-                public_history.set_index("number")
-                if public_history is not None and "number" in public_history
-                else pd.DataFrame()
-            )
+            history = public_history.set_index("number") if public_history is not None and "number" in public_history else pd.DataFrame()
             states = {"COMPLETE": "完成", "FAIL": "失败", "PRUNED": "剪枝", "RUNNING": "运行中", "WAITING": "等待"}
             for trial in tuner.study_.trials:
                 rows.append(
@@ -495,13 +458,7 @@ class ModelContextMixin:
                         "状态": states.get(trial.state.name, trial.state.name),
                         "各目标得分": trial.values,
                         "采样参数": trial.params,
-                        "实际搜索参数": _fit_parameter_snapshot(
-                            {
-                                column[7:]: history.loc[trial.number, column]
-                                for column in history
-                                if column.startswith("params_") and trial.number in history.index
-                            }
-                        ),
+                        "实际搜索参数": _fit_parameter_snapshot({column[7:]: history.loc[trial.number, column] for column in history if column.startswith("params_") and trial.number in history.index}),
                         "耗时秒": None if trial.duration is None else trial.duration.total_seconds(),
                     }
                 )
@@ -536,10 +493,5 @@ class ModelContextMixin:
                 result["各折指标"] = pd.DataFrame(fold_rows)
             if selected_curves and any(not table.empty for table in selected_curves):
                 result["选中试验曲线"] = pd.concat(selected_curves, ignore_index=True)
-            result["最终重训"] = pd.DataFrame(
-                [
-                    {"配置项": key, "配置值": str(value)}
-                    for key, value in _fit_parameter_snapshot(getattr(tuner, "refit_params_", {})).items()
-                ]
-            )
+            result["最终重训"] = pd.DataFrame([{"配置项": key, "配置值": str(value)} for key, value in _fit_parameter_snapshot(getattr(tuner, "refit_params_", {})).items()])
         return copy.deepcopy(result)

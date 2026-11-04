@@ -343,10 +343,4 @@ def test_clickhouse_json_projection_handles_scalar_and_nested_values(adapter):
         json_fields={"payload": {"risk_tags": "$.risk.tags"}},
     )
 
-    assert sql == (
-        "SELECT `hscredit_json_source`.`id`, "
-        "if(JSON_EXISTS(`hscredit_json_source`.`payload`, '$.risk.tags'), "
-        "nullIf(coalesce(nullIf(JSON_QUERY(`hscredit_json_source`.`payload`, '$.risk.tags'), ''), "
-        "JSON_VALUE(`hscredit_json_source`.`payload`, '$.risk.tags')), 'null'), NULL) AS `risk_tags` "
-        "FROM (select id, payload from events) `hscredit_json_source`"
-    )
+    assert sql == ("SELECT `hscredit_json_source`.`id`, " "if(JSON_EXISTS(`hscredit_json_source`.`payload`, '$.risk.tags'), " "nullIf(coalesce(nullIf(JSON_QUERY(`hscredit_json_source`.`payload`, '$.risk.tags'), ''), " "JSON_VALUE(`hscredit_json_source`.`payload`, '$.risk.tags')), 'null'), NULL) AS `risk_tags` " "FROM (select id, payload from events) `hscredit_json_source`")

@@ -195,9 +195,7 @@ class TestNullImportanceSelectorCompat:
         from hscredit.core.selectors import NullImportanceSelector
 
         X, y = data
-        sel = NullImportanceSelector(
-            RandomForestClassifier(n_estimators=10, random_state=42), n_runs=1, cv=2, threshold=0.5
-        )
+        sel = NullImportanceSelector(RandomForestClassifier(n_estimators=10, random_state=42), n_runs=1, cv=2, threshold=0.5)
         sel.fit(X, y)
         assert isinstance(sel.selected_features_, list)
 
@@ -302,9 +300,7 @@ class TestSequentialSelectorCompat:
         from hscredit.core.selectors import SequentialFeatureSelector
 
         X, y = data
-        sel = SequentialFeatureSelector(
-            LogisticRegression(max_iter=1000), n_features_to_select=3, direction="forward", cv=2
-        )
+        sel = SequentialFeatureSelector(LogisticRegression(max_iter=1000), n_features_to_select=3, direction="forward", cv=2)
         sel.fit(X, y)
         assert len(sel.selected_features_) == 3
 
@@ -313,8 +309,6 @@ class TestSequentialSelectorCompat:
         from hscredit.core.selectors import SequentialFeatureSelector
 
         X, y = data
-        sel = SequentialFeatureSelector(
-            RandomForestClassifier(n_estimators=10, random_state=42), n_features_to_select=3, direction="forward", cv=2
-        )
+        sel = SequentialFeatureSelector(RandomForestClassifier(n_estimators=10, random_state=42), n_features_to_select=3, direction="forward", cv=2)
         sel.fit(X, y)
         assert len(sel.selected_features_) == 3

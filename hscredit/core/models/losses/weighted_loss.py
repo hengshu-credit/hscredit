@@ -57,9 +57,7 @@ class WeightedBCELoss(BaseLoss):
     以及 Elkan, C. (2001). *The Foundations of Cost-Sensitive Learning.* IJCAI 2001。
     """
 
-    def __init__(
-        self, pos_weight: float = 1.0, neg_weight: float = 1.0, auto_balance: bool = False, name: str = "weighted_bce"
-    ):
+    def __init__(self, pos_weight: float = 1.0, neg_weight: float = 1.0, auto_balance: bool = False, name: str = "weighted_bce"):
         super().__init__(name)
         nonnegative(pos_weight=pos_weight, neg_weight=neg_weight)
         positive(权重总和=pos_weight + neg_weight)

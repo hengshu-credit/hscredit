@@ -53,9 +53,7 @@ def loans():
 
 @pytest.fixture(scope="module")
 def model(loans):
-    return make_pipeline(SimpleImputer(), StandardScaler(), LogisticRegression(max_iter=500)).fit(
-        loans[FEATURES], loans.FPD
-    )
+    return make_pipeline(SimpleImputer(), StandardScaler(), LogisticRegression(max_iter=500)).fit(loans[FEATURES], loans.FPD)
 
 
 def _column(data, name):
@@ -151,9 +149,7 @@ def test_real_data_modules_count_and_amount_matrix(loans, model, entry, kind, gr
     elif entry == "rule":
         table = Rule(f"`{FEATURES[0]}` > 0.5").report(loans, amount=loans[AMOUNT], margins=True, **options)
     elif entry == "predictor":
-        predictor = OverduePredictor(
-            FEATURES[0], method="quantile", max_n_bins=3, bin_params={"amount": loans[AMOUNT]}, n_jobs=1, **options
-        ).fit(loans)
+        predictor = OverduePredictor(FEATURES[0], method="quantile", max_n_bins=3, bin_params={"amount": loans[AMOUNT]}, n_jobs=1, **options).fit(loans)
         table = predictor.bin_table_
         assert len(predictor.transform(loans)) == len(loans)
     elif entry == "model":
@@ -161,9 +157,7 @@ def test_real_data_modules_count_and_amount_matrix(loans, model, entry, kind, gr
         labels = report._label_names or [None]
         assert len(labels) == len(expected)
         for label, y in zip(labels, expected):
-            _check_table(
-                report.get_bin_table("样本", label=label, max_n_bins=3, amount=loans[AMOUNT]), [y], loans[AMOUNT]
-            )
+            _check_table(report.get_bin_table("样本", label=label, max_n_bins=3, amount=loans[AMOUNT]), [y], loans[AMOUNT])
             _check_table(
                 report.get_feature_bin_table(FEATURES[0], "样本", label=label, max_n_bins=3, amount=loans[AMOUNT]),
                 [y],
@@ -305,9 +299,7 @@ def test_real_data_skill_entry_matrix(loans, model, tmp_path, entry, kind, grey)
 
 @pytest.mark.parametrize("grey", [False, True])
 @pytest.mark.parametrize("kind", KINDS + ["overdue_gt"])
-@pytest.mark.parametrize(
-    "entry", ["group", "ruleset", "rule_group", "tree", "efficiency", "benchmark", "swap", "plots"]
-)
+@pytest.mark.parametrize("entry", ["group", "ruleset", "rule_group", "tree", "efficiency", "benchmark", "swap", "plots"])
 def test_real_data_composite_modules(loans, tmp_path, entry, kind, grey):
     from hscredit.report.feature_analyzer import feature_efficiency_analysis, benchmark_binning_methods
     from hscredit.report.rule_analysis import ruleset_analysis, rule_swap_analysis
@@ -401,9 +393,7 @@ def test_real_data_composite_modules(loans, tmp_path, entry, kind, grey):
             frame = distribution_plot(loans, date=loans[DATE], freq="MS", result=True, **paired_options)
             assert not frame.empty and frame.iloc[:, 0].is_unique
             figures = [
-                bin_overdues_plot(
-                    loans, feature=FEATURES[0], method="quantile", max_n_bins=3, n_jobs=1, **paired_options
-                ),
+                bin_overdues_plot(loans, feature=FEATURES[0], method="quantile", max_n_bins=3, n_jobs=1, **paired_options),
                 bad_rate_trend_plot(loans, date=loans[DATE], freq="MS", **options),
             ]
             for figure in figures:

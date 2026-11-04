@@ -136,12 +136,7 @@ def test_filtered_excel_uses_same_nodes_for_all_labels_and_bases(tree_type, data
         assert table["节点编号"].tolist() == np.repeat(expected, 2).tolist()
     book = load_workbook(path)
     sheet = book.active
-    headers = [
-        (c.row, c.column)
-        for row in sheet
-        for c in row
-        if c.value == "节点编号" and sheet.cell(c.row, c.column + 1).value == "指标含义"
-    ]
+    headers = [(c.row, c.column) for row in sheet for c in row if c.value == "节点编号" and sheet.cell(c.row, c.column + 1).value == "指标含义"]
     assert len(headers) == 6
     for i, (row, col) in enumerate(headers):
         nodes = np.repeat(expected, 1 if i < 2 else 2).tolist()
@@ -204,45 +199,28 @@ def test_group_merges_feature_order_width_and_statistics(tree_type, data, tmp_pa
     assert all(d.width <= 25 for d in feature.column_dimensions.values())
     left, top, right, bottom = range_boundaries(feature.auto_filter.ref)
     assert [feature.cell(top, c).value for c in range(left, left + 4)] == ["数据集", "指标名称", "统计口径", "分箱方法"]
-    rows = pd.DataFrame(
-        list(feature.iter_rows(min_row=top + 1, max_row=bottom, min_col=left, max_col=left + 3, values_only=True))
-    ).ffill()
+    rows = pd.DataFrame(list(feature.iter_rows(min_row=top + 1, max_row=bottom, min_col=left, max_col=left + 3, values_only=True))).ffill()
     assert rows[0].drop_duplicates().tolist() == list(datasets)
     for _, subset in rows.groupby(0, sort=False):
         assert subset[1].drop_duplicates().tolist() == sorted(subset[1].unique())
     for _, subset in rows.groupby([0, 1], sort=False):
         assert subset[2].drop_duplicates().tolist() == ["订单", "金额"]
-        assert list(subset[[2, 3]].itertuples(index=False, name=None)) == sorted(
-            subset[[2, 3]].itertuples(index=False, name=None)
-        )
+        assert list(subset[[2, 3]].itertuples(index=False, name=None)) == sorted(subset[[2, 3]].itertuples(index=False, name=None))
     assert any(r.min_col == left + 1 and r.max_row > r.min_row for r in feature.merged_cells.ranges)
     main = book.active
     features_cell = next(c for row in main for c in row if c.value == "features")
     assert main.cell(features_cell.row, features_cell.column + 1).alignment.horizontal == "left"
-    titles = {
-        c.value: c.row
-        for row in main
-        for c in row
-        if c.value in ["3、数据样本统计", "4、样本分布情况", "二、规则挖掘摘要"]
-    }
+    titles = {c.value: c.row for row in main for c in row if c.value in ["3、数据样本统计", "4、样本分布情况", "二、规则挖掘摘要"]}
     first, last = titles["4、样本分布情况"], titles["二、规则挖掘摘要"]
     dataset_headers = [c for row in main.iter_rows(min_row=first, max_row=last) for c in row if c.value == "数据集"]
     assert len(dataset_headers) == 2
     for header in dataset_headers:
-        dataset_merges = [
-            r
-            for r in main.merged_cells.ranges
-            if r.min_col == r.max_col == header.column and header.row < r.min_row < last
-        ]
-        assert [main.cell(r.min_row, r.min_col).value for r in sorted(dataset_merges, key=lambda r: r.min_row)] == list(
-            datasets
-        )
+        dataset_merges = [r for r in main.merged_cells.ranges if r.min_col == r.max_col == header.column and header.row < r.min_row < last]
+        assert [main.cell(r.min_row, r.min_col).value for r in sorted(dataset_merges, key=lambda r: r.min_row)] == list(datasets)
         # 月份只在各自数据集内合并；不同品类属于同一月份。
         for merged in main.merged_cells.ranges:
             if merged.min_col == merged.max_col == header.column + 1 and header.row < merged.min_row < last:
-                assert any(
-                    parent.min_row <= merged.min_row <= merged.max_row <= parent.max_row for parent in dataset_merges
-                )
+                assert any(parent.min_row <= merged.min_row <= merged.max_row <= parent.max_row for parent in dataset_merges)
     stat_row = titles["3、数据样本统计"] + 5
     order_metrics = [c.value for c in main[stat_row] if c.value is not None]
     expected = ["统计详情", "样本总数", "好样本数", "坏样本数", "坏样本率", "AUC", "KS"]

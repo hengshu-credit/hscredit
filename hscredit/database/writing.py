@@ -40,9 +40,7 @@ def validate_sql_type(value: Any, *, database_type: str) -> str:
         raise ValidationError(f"{database_type} 数据类型必须是非空字符串")
     expression = value.strip()
     allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_<>,() ")
-    if expression[0] not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" or any(
-        character not in allowed for character in expression
-    ):
+    if expression[0] not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" or any(character not in allowed for character in expression):
         raise ValidationError(f"{database_type} 数据类型表达式不安全: {value!r}")
 
     pairs = {"(": ")", "<": ">"}

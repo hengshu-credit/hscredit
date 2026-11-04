@@ -35,9 +35,7 @@ def test_untrusted_expression_cannot_execute_python(expression):
 
 
 def test_trusted_python_is_explicit_opt_in():
-    result = NumExprDerive([("z", "__import__('math').sqrt(4)")], trusted_python=True).fit_transform(
-        pd.DataFrame({"x": [1, 2]})
-    )
+    result = NumExprDerive([("z", "__import__('math').sqrt(4)")], trusted_python=True).fit_transform(pd.DataFrame({"x": [1, 2]}))
     assert result.z.tolist() == [2, 2]
 
 

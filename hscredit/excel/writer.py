@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from openpyxl.cell.cell import Cell
+from openpyxl.comments import Comment
 from openpyxl.drawing.image import Image
 from openpyxl import load_workbook, Workbook
 from openpyxl.worksheet.worksheet import Worksheet
@@ -142,11 +143,7 @@ class ExcelWriter:
         self.fontsize = fontsize
         self.theme_color = theme_color
         self.condition_color = condition_color
-        if max_table_cells is not None and (
-            isinstance(max_table_cells, bool)
-            or not isinstance(max_table_cells, (int, np.integer))
-            or max_table_cells < 1
-        ):
+        if max_table_cells is not None and (isinstance(max_table_cells, bool) or not isinstance(max_table_cells, (int, np.integer)) or max_table_cells < 1):
             raise ValueError("max_table_cells 必须为正整数或 None")
         self.max_table_cells = max_table_cells
 
@@ -242,9 +239,7 @@ class ExcelWriter:
         self._filename = filename
         return self
 
-    def add_conditional_formatting(
-        self, worksheet: Worksheet, start_space: str, end_space: str, condition_color: Optional[str] = None
-    ) -> None:
+    def add_conditional_formatting(self, worksheet: Worksheet, start_space: str, end_space: str, condition_color: Optional[str] = None) -> None:
         """设置条件格式（数据条）。
 
         :param worksheet: 工作表对象
@@ -274,6 +269,30 @@ class ExcelWriter:
         """
         col_letter = column if isinstance(column, str) else get_column_letter(column)
         ExcelWriter._set_column_width_preserving_style(worksheet, col_letter, width)
+
+    @staticmethod
+    def set_row_height(worksheet: Worksheet, row: int, height: float) -> None:
+        """设置单行高度，仅修改行维度的高度，保留已有样式。
+
+        :param worksheet: 工作表对象。
+        :param row: 从 1 开始的行索引。
+        :param height: 行高，单位为磅，必须是有限正数。
+
+        **参考样例**
+
+        >>> writer.set_row_height(worksheet, row=2, height=30)
+        """
+        row = ExcelWriter._validate_row_index(row)
+        if isinstance(height, (bool, np.bool_)) or not isinstance(height, (int, float, np.integer, np.floating)) or not math.isfinite(height) or height <= 0:
+            raise ValueError("行高必须为有限正数，单位为磅")
+        worksheet.row_dimensions[row].height = float(height)
+
+    @staticmethod
+    def _validate_row_index(row: int) -> int:
+        """校验 Excel 行号，避免错误范围引起无效遍历。"""
+        if isinstance(row, (bool, np.bool_)) or not isinstance(row, (int, np.integer)) or not 1 <= row <= 1_048_576:
+            raise ValueError("行索引必须为 1 到 1,048,576 之间的整数")
+        return int(row)
 
     @staticmethod
     def _get_column_dimension_style(worksheet: Worksheet, col_letter: str) -> Any:
@@ -335,48 +354,6 @@ class ExcelWriter:
             column_dimension._style = copy.copy(style_snapshot)
         column_dimension.width = width
 
-    def _get_column_cells_data(self, worksheet: Worksheet, col_letter: str) -> List[Tuple[int, Any, Any]]:
-        """获取指定列的单元格样式快照。
-
-        :param worksheet: 工作表对象
-        :param col_letter: 列字母
-        :return: 列表，每项为 (row_idx, value, style_snapshot)
-        """
-        col_idx = column_index_from_string(col_letter)
-        cells_data = []
-        # 使用模板的max_row作为上限，确保处理所有行（包括空白行）
-        template_max_row = self.style_sheet.max_row if self.style_sheet is not None else 0
-        max_row = max(worksheet.max_row, template_max_row)
-        for row_idx in range(1, max_row + 1):
-            cell = worksheet.cell(row=row_idx, column=col_idx)
-            style_snapshot = copy.copy(cell._style) if cell.has_style else None
-            cells_data.append((row_idx, cell.value, style_snapshot))
-        return cells_data
-
-    def _reapply_styles_to_column(
-        self, worksheet: Worksheet, col_letter: str, cells_data: List[Tuple[int, Any, Any]]
-    ) -> None:
-        """重新应用样式到指定列的单元格。
-
-        :param worksheet: 工作表对象
-        :param col_letter: 列字母
-        :param cells_data: 单元格数据列表
-        """
-        col_idx = column_index_from_string(col_letter)
-
-        for row_idx, value, style_snapshot in cells_data:
-            cell = worksheet.cell(row=row_idx, column=col_idx)
-            # 检查是否需要保留文本格式；绿色错误提示由保存后的 ignoredErrors 声明关闭。
-            need_text_format = isinstance(value, str) and self.is_numeric_like_string(value)
-
-            # 仅恢复调用前已经存在的样式；空白模板区域依赖列维度样式提供白底。
-            cell._style = copy.copy(style_snapshot) if style_snapshot is not None else None
-
-            # 如果值是类似数字的字符串，强制设置为文本格式以保留字符串语义。
-            # 这必须在应用样式之后执行，因为命名样式可能包含数字格式
-            if need_text_format:
-                cell.number_format = "@"
-
     def adjust_columns_width(
         self,
         worksheet: Worksheet,
@@ -384,13 +361,14 @@ class ExcelWriter:
         start_col: Optional[Union[str, int]] = None,
         end_col: Optional[Union[str, int]] = None,
         max_width: float = 50,
-        min_width: float = 8,
+        min_width: Optional[float] = None,
         extra_padding: float = 2.0,
     ) -> None:
         """批量调整多列宽度，确保已有单元格和模板列样式不丢失。
 
-        通过恢复调用前的单元格样式快照，并保留模板列维度样式，避免列宽调整影响空白区域白底。
-        常用整数、小数及百分比格式按显示内容估算，多行文本取最长行；跨列合并单元格不参与单列计宽。
+        只更新列维度并保留模板列样式，不复制或回写单元格样式，避免影响数字格式及空白区域白底。
+        常用整数、小数及百分比格式按显示内容估算，多行文本取最长行。
+        跨列合并内容按各列总宽度判断，不足部分均摊给本次选中的列，并遵守各列的最大宽度。
 
         :param worksheet: 工作表对象
         :type worksheet: Worksheet
@@ -402,8 +380,8 @@ class ExcelWriter:
         :type end_col: Optional[Union[str, int]]
         :param max_width: 最大列宽，默认为50
         :type max_width: float
-        :param min_width: 最小列宽，默认为8
-        :type min_width: float
+        :param min_width: 最小列宽，默认 None 不设下限；显式传入时生效。无可计量内容且未设置下限的列保留原宽度。
+        :type min_width: Optional[float]
         :param extra_padding: 额外填充宽度，默认为2.0
         :type extra_padding: float
 
@@ -417,7 +395,12 @@ class ExcelWriter:
         >>>
         >>> # 自动检测并调整所有有数据的列
         >>> writer.adjust_columns_width(worksheet)
+        >>> # 显式限制最小列宽
+        >>> writer.adjust_columns_width(worksheet, min_width=8)
         """
+        if min_width is not None and (isinstance(min_width, (bool, np.bool_)) or not isinstance(min_width, (int, float, np.integer, np.floating)) or not math.isfinite(min_width) or not 0 <= min_width <= max_width):
+            raise ValueError("min_width 必须为不超过 max_width 的有限非负数，或 None")
+        lower_width = 0.0 if min_width is None else min_width
         # 确定要调整的列
         if columns is not None:
             if isinstance(columns, (str, int)):
@@ -432,17 +415,12 @@ class ExcelWriter:
             max_col = worksheet.max_column
             col_letters = [get_column_letter(i) for i in range(1, max_col + 1)]
 
-        # 保存每列的单元格数据
-        columns_data = {}
-        for col_letter in col_letters:
-            columns_data[col_letter] = self._get_column_cells_data(worksheet, col_letter)
-
-        # 跨列标题不应把全部内容宽度压在首列；仅跨行合并的内容仍需计宽。
+        # 先按单列内容计宽，再按合并区域总宽度补足，避免标题全部压在首列。
         merged_anchors = self._horizontal_merge_anchors(worksheet)
-        # 计算并设置每列的宽度
+        widths = {}
         for col_letter in col_letters:
             col_idx = column_index_from_string(col_letter)
-            max_content_width = min_width
+            max_content_width = lower_width
 
             # 遍历该列所有单元格，计算最大内容宽度
             for row_idx in range(1, worksheet.max_row + 1):
@@ -458,32 +436,203 @@ class ExcelWriter:
                     max_content_width = max(max_content_width, content_width)
 
             # 应用列宽限制
-            final_width = min(max_content_width, max_width)
-            self._set_column_width_preserving_style(worksheet, col_letter, final_width)
+            widths[col_idx] = min(max_content_width, max_width)
 
-        # 重新应用样式到所有列
-        for col_letter, cells_data in columns_data.items():
-            self._reapply_styles_to_column(worksheet, col_letter, cells_data)
+        self._fit_merged_column_widths(worksheet, widths, max_width=max_width, extra_padding=extra_padding)
+        for col_idx, width in widths.items():
+            if width > 0:
+                self._set_column_width_preserving_style(worksheet, get_column_letter(col_idx), width)
+
+    def adjust_rows_height(
+        self,
+        worksheet: Worksheet,
+        rows: Optional[Union[int, List[int]]] = None,
+        start_row: Optional[int] = None,
+        end_row: Optional[int] = None,
+        max_height: float = 120,
+        min_height: Optional[float] = None,
+        extra_padding: float = 2.0,
+    ) -> None:
+        """按内容批量估算行高，保留单元格样式及行的其他属性。
+
+        根据单元格字号、显式换行和现有 wrap_text 设置估算文本行数，每行按字号的 1.2 倍计高。
+        自动换行使用当前列宽，建议先调整列宽再调整行高；本方法不修改换行设置。
+        横向合并单元格按合并后的总宽度计高，跨行合并内容不参与单行计算。
+        结果为近似值，不执行 Excel 的字体排版或公式计算。
+
+        :param worksheet: 工作表对象。
+        :param rows: 单个行索引或行索引列表，从 1 开始；与 start_row/end_row 互斥。
+            默认自动检测含有效内容的行，跳过空行和仅有跨行合并内容的行。
+        :param start_row: 起始行，必须与 end_row 同时指定，范围包含两端。
+        :param end_row: 结束行。
+        :param max_height: 最大行高，默认 120 磅。
+        :param min_height: 最小行高，默认 None 不设下限；显式传入时生效，显式选中的空行也设为此高度。
+            未设置下限时，无可计量内容的行保留原高度。
+        :param extra_padding: 额外上下留白的总高度，默认 2 磅，必须为非负数。
+
+        **参考样例**
+
+        >>> writer.adjust_rows_height(worksheet, rows=[2, 4, 6])
+        >>> writer.adjust_rows_height(worksheet, start_row=2, end_row=20, max_height=90)
+        >>> writer.adjust_columns_width(worksheet)
+        >>> writer.adjust_rows_height(worksheet)
+        >>> writer.adjust_rows_height(worksheet, min_height=15)
+        """
+        if rows is not None and (start_row is not None or end_row is not None):
+            raise ValueError("rows 与 start_row/end_row 不能同时使用")
+        if (start_row is None) != (end_row is None):
+            raise ValueError("start_row 和 end_row 必须同时指定")
+        for name, value in (("max_height", max_height), ("min_height", min_height), ("extra_padding", extra_padding)):
+            if name == "min_height" and value is None:
+                continue
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)) or not math.isfinite(value):
+                raise ValueError(f"{name} 必须为有限数值")
+        if max_height <= 0 or (min_height is not None and not 0 < min_height <= max_height) or extra_padding < 0:
+            raise ValueError("max_height 须为正数；min_height 须为 None 或满足 0 < min_height <= max_height；留白须非负")
+
+        automatic = rows is None and start_row is None
+        if rows is not None:
+            if isinstance(rows, (int, np.integer)):
+                rows = [rows]
+            elif not isinstance(rows, (list, tuple, range, np.ndarray)):
+                raise ValueError("rows 必须为行索引或行索引列表")
+            row_indices = list(dict.fromkeys(self._validate_row_index(row) for row in rows))
+        elif start_row is not None:
+            first, last = self._validate_row_index(start_row), self._validate_row_index(end_row)
+            if first > last:
+                raise ValueError("start_row 不能大于 end_row")
+            row_indices = range(first, last + 1)
+        else:
+            row_indices = range(1, worksheet.max_row + 1)
+
+        merges = {(r.min_row, r.min_col): r for r in worksheet.merged_cells.ranges}
+        column_widths = {}
+        for row_idx in row_indices:
+            height, has_content = 0.0 if min_height is None else min_height, False
+            for row_cells in worksheet.iter_rows(min_row=row_idx, max_row=row_idx):
+                for cell in row_cells:
+                    if cell.value is None:
+                        continue
+                    merged = merges.get((row_idx, cell.column))
+                    if merged is not None and merged.min_row != merged.max_row:
+                        continue
+                    has_content = True
+                    text = self._format_value_for_width(cell.value, cell.number_format)
+                    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+                    fontsize = cell.font.sz or self.fontsize
+                    line_count = len(lines)
+                    if cell.alignment.wrap_text:
+                        end_col = merged.max_col if merged is not None else cell.column
+                        width = 0.0
+                        for col_idx in range(cell.column, end_col + 1):
+                            if col_idx not in column_widths:
+                                column_widths[col_idx] = self._effective_column_width(worksheet, col_idx)
+                            width += column_widths[col_idx]
+                        # 左/右对齐的缩进按每级三个空格估算，避免换行后的行高不足。
+                        indent_width = 0.0
+                        if cell.alignment.horizontal in {"left", "right"}:
+                            indent_width = cell.alignment.indent * 3 * self.english_width * self.fontsize
+                        available_width = max(width - 2.0 - indent_width, 1.0)
+                        line_count = 0
+                        for line in lines:
+                            _, eng_cnt, chi_cnt = self.check_contain_chinese(line)
+                            text_width = (eng_cnt * self.english_width + chi_cnt * self.chinese_width) * fontsize
+                            line_count += max(1, math.ceil(text_width / available_width))
+                    height = max(height, line_count * fontsize * 1.2 + extra_padding)
+            if has_content or (not automatic and min_height is not None):
+                self.set_row_height(worksheet, row_idx, min(height, max_height))
+
+    @staticmethod
+    def _effective_column_width(worksheet: Worksheet, col_idx: int) -> float:
+        """读取单列或模板列范围的有效宽度，不创建新的列维度。"""
+        exact = worksheet.column_dimensions.get(get_column_letter(col_idx))
+        if exact is not None:
+            return exact.width
+        for dimension in worksheet.column_dimensions.values():
+            first = dimension.min or column_index_from_string(dimension.index)
+            last = dimension.max or first
+            if first <= col_idx <= last:
+                return dimension.width
+        default_width = worksheet.sheet_format.defaultColWidth
+        return default_width if default_width is not None else 13.0
 
     @staticmethod
     def _horizontal_merge_anchors(worksheet: Worksheet) -> set:
         """返回跨列合并区域中保存内容的左上角坐标。"""
         return {(r.min_row, r.min_col) for r in worksheet.merged_cells.ranges if r.min_col != r.max_col}
 
+    def _fit_merged_column_widths(
+        self,
+        worksheet: Worksheet,
+        widths: Dict[int, float],
+        max_width: float = 50,
+        extra_padding: float = 2.0,
+    ) -> None:
+        """按合并区域总宽度分摊缺口，只扩大选中的列，且不超过单列上限。"""
+        # 优先满足较窄区域；后续只增加宽度，不会破坏之前已满足的合并布局。
+        ranges = sorted(worksheet.merged_cells.ranges, key=lambda r: (r.max_col - r.min_col, r.min_row, r.min_col))
+        existing_widths = {}
+        for merged in ranges:
+            selected = [col for col in widths if merged.min_col <= col <= merged.max_col]
+            if merged.min_col == merged.max_col or not selected:
+                continue
+            cell = worksheet.cell(merged.min_row, merged.min_col)
+            if cell.value is None:
+                continue
+            required = self._calculate_content_width(
+                cell.value,
+                min_width=0,
+                max_width=float("inf"),
+                extra_padding=extra_padding,
+                number_format=cell.number_format,
+            )
+            available = 0.0
+            for col in range(merged.min_col, merged.max_col + 1):
+                if col in widths:
+                    available += widths[col]
+                else:
+                    if col not in existing_widths:
+                        existing_widths[col] = self._effective_column_width(worksheet, col)
+                    available += existing_widths[col]
+            deficit = required - available
+            candidates = [col for col in selected if widths[col] < max_width]
+            while deficit > 1e-9 and candidates:
+                share = deficit / len(candidates)
+                for col in candidates:
+                    increase = min(share, max_width - widths[col])
+                    widths[col] += increase
+                    deficit -= increase
+                candidates = [col for col in candidates if widths[col] < max_width]
+
     def _calculate_content_width(
         self,
         value: Any,
-        min_width: float = 8,
+        min_width: Optional[float] = None,
         max_width: float = 50,
         extra_padding: float = 2.0,
         number_format: str = "General",
+        fontsize: Optional[float] = None,
     ) -> float:
         """按显示文本最长行及中英文字符权重估算列宽，不改动底层值。
 
         支持报告常用的 0、#,##0、固定小数位及百分比格式；其他格式保留原始文本估算。
         """
+        lower_width = 0.0 if min_width is None else min_width
         if value is None:
-            return min_width
+            return lower_width
+        text = self._format_value_for_width(value, number_format)
+        width = lower_width
+        for line in text.splitlines():
+            _, eng_cnt, chi_cnt = self.check_contain_chinese(line)
+            width = max(
+                width,
+                (eng_cnt * self.english_width + chi_cnt * self.chinese_width) * (self.fontsize if fontsize is None else fontsize) + extra_padding,
+            )
+        return min(width, max_width)
+
+    @staticmethod
+    def _format_value_for_width(value: Any, number_format: str) -> str:
+        """统一行高和列宽估算使用的数字显示文本。"""
         text = str(value)
         if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, (bool, np.bool_)):
             numeric_format = re.fullmatch(r"(0|#,##0)(?:\.(0+))?(%)?", number_format)
@@ -493,14 +642,7 @@ class ExcelWriter:
                 precision = len(decimals or "")
                 kind = "%" if percent else "f"
                 text = format(value, f"{grouping}.{precision}{kind}")
-        width = min_width
-        for line in text.splitlines():
-            _, eng_cnt, chi_cnt = self.check_contain_chinese(line)
-            width = max(
-                width,
-                (eng_cnt * self.english_width + chi_cnt * self.chinese_width) * self.fontsize + extra_padding,
-            )
-        return min(max(width, min_width), max_width)
+        return text
 
     def _initial_fast_widths(
         self,
@@ -509,7 +651,7 @@ class ExcelWriter:
         end_col: int,
     ) -> Dict[int, float]:
         """读取写入前已有内容的列宽基线，不复制或修改单元格样式。"""
-        widths = {col_idx: 8.0 for col_idx in range(start_col, end_col + 1)}
+        widths = {col_idx: 0.0 for col_idx in range(start_col, end_col + 1)}
         merged_anchors = self._horizontal_merge_anchors(worksheet)
         for col_idx in widths:
             for row_idx in range(1, worksheet.max_row + 1):
@@ -523,8 +665,10 @@ class ExcelWriter:
 
     def _apply_fast_widths(self, worksheet: Worksheet, widths: Dict[int, float]) -> None:
         """只更新列维度宽度，保留工作表和单元格已有样式。"""
+        self._fit_merged_column_widths(worksheet, widths)
         for col_idx, width in widths.items():
-            self._set_column_width_preserving_style(worksheet, get_column_letter(col_idx), width)
+            if width > 0:
+                self._set_column_width_preserving_style(worksheet, get_column_letter(col_idx), width)
 
     @staticmethod
     def set_number_format(worksheet: Worksheet, space: str, _format: str) -> None:
@@ -709,17 +853,47 @@ class ExcelWriter:
             if not ignored_cells:
                 self._number_stored_as_text_cells.pop(worksheet, None)
 
+    def _merge_styled_cell(self, worksheet: Worksheet, cell: Cell, end_row: int, end_col: int) -> None:
+        """将单格样式应用到整个合并区域，供普通和快速写入共同使用。"""
+        for target, side in (
+            (worksheet.cell(cell.row, end_col), "right"),
+            (worksheet.cell(end_row, cell.column), "bottom"),
+        ):
+            border = copy.copy(target.border)
+            setattr(border, side, copy.copy(getattr(cell.border, side)))
+            target.border = border
+        self.merge_cells(worksheet, (cell.column, cell.row), (end_col, end_row))
+
     def insert_value2sheet(
         self,
         worksheet: Worksheet,
         insert_space: Union[str, Tuple[int, int]],
         value: Any = "",
-        style: str = "content",
+        style: Optional[Union[str, NamedStyle]] = "content",
         auto_width: bool = False,
         end_space: Optional[Union[str, Tuple[int, int]]] = None,
-        align: Optional[Dict[str, str]] = None,
+        align: Optional[Union[Dict[str, Any], Alignment]] = None,
         max_col_width: int = 50,
         decimal: Optional[int] = 4,
+        *,
+        horizontal: Optional[str] = None,
+        vertical: Optional[str] = None,
+        wrap_text: Optional[bool] = None,
+        indent: Optional[float] = None,
+        bold: Optional[bool] = None,
+        italic: Optional[bool] = None,
+        strike: Optional[bool] = None,
+        font_name: Optional[str] = None,
+        font_size: Optional[float] = None,
+        font_color: Optional[str] = None,
+        background_color: Optional[str] = None,
+        number_format: Optional[str] = None,
+        column_width: Optional[float] = None,
+        row_height: Optional[float] = None,
+        auto_height: bool = False,
+        max_row_height: float = 120,
+        comment: Optional[Union[str, Comment]] = None,
+        comment_author: str = "logo hscredit",
     ) -> Tuple[int, int]:
         """向单元格插入内容。
 
@@ -729,16 +903,35 @@ class ExcelWriter:
         :type insert_space: Union[str, Tuple[int, int]]
         :param value: 插入的内容，默认为""
         :type value: Any
-        :param style: 样式名称，默认为"content"
-        :type style: str
+        :param style: 样式名称或 NamedStyle，默认 "content"；None 保留单元格已有样式，再应用显式覆盖项。
+        :type style: Optional[Union[str, NamedStyle]]
         :param auto_width: 是否自动调整列宽，默认为False（推荐在数据全部写入后使用 adjust_columns_width 批量调整）
         :type auto_width: bool
         :param end_space: 合并单元格的结束位置，默认为None
         :type end_space: Optional[Union[str, Tuple[int, int]]]
-        :param align: 文本对齐方式，默认为None，例如{'horizontal': 'left', 'vertical': 'center'}
-        :type align: Optional[Dict[str, str]]
+        :param align: 对齐属性字典或 Alignment。字典只覆盖传入属性，Alignment 替换完整对齐设置。
+        :type align: Optional[Union[Dict[str, Any], Alignment]]
         :param max_col_width: 最大列宽，默认为50
         :type max_col_width: int
+        :param horizontal: 水平对齐，如 left/center/right；优先于 align，None 保留基础样式。
+        :param vertical: 垂直对齐，如 top/center/bottom；优先于 align，None 保留基础样式。
+        :param wrap_text: 是否内容换行，None 保留基础样式；True 开启，False 关闭。
+        :param indent: 缩进级别，0 到 255；None 保留基础样式。
+        :param bold: 是否加粗，None 保留基础样式，False 可取消加粗。
+        :param italic: 是否斜体，None 保留基础样式。
+        :param strike: 是否删除线，None 保留基础样式。
+        :param font_name: 字体名称，None 保留基础样式。
+        :param font_size: 字号（磅），None 保留基础样式。
+        :param font_color: 文本颜色，支持 RRGGBB、#RRGGBB 或 AARRGGBB。
+        :param background_color: 实色背景颜色，格式同 font_color。
+        :param number_format: Excel 显示格式，如 0.00%、#,##0.00、yyyy-mm-dd；不负责数值舍入。
+            数字样字符串仍强制使用文本格式 @，保留前导零。保留数值完整精度请同时传 decimal=None。
+        :param column_width: 固定列宽，优先于 auto_width；合并区域内每列均设为此宽度。
+        :param row_height: 固定行高（磅），优先于 auto_height；合并区域内每行均设为此高度。
+        :param auto_height: 是否按当前列宽、字号和换行设置估算行高，默认 False；只作用于单行区域。
+        :param max_row_height: 自动行高的上限，默认 120 磅。
+        :param comment: 批注文本或 openpyxl Comment；None 保留已有批注，空字符串删除已有批注。
+        :param comment_author: 文本批注的作者，默认 "logo hscredit"；传入 Comment 时保留该对象的作者和尺寸。
         :return: (下一行行号, 下一列列号)
 
         **参考样例**
@@ -748,6 +941,11 @@ class ExcelWriter:
         >>>
         >>> # 合并单元格
         >>> writer.insert_value2sheet(worksheet, "B2", value="标题", style="header", end_space="D2")
+        >>> writer.insert_value2sheet(
+        ...     worksheet, "B4", value="第一行\\n第二行", horizontal="left", vertical="top",
+        ...     wrap_text=True, bold=True, column_width=25, auto_height=True,
+        ...     font_color="#2639E9", background_color="#EEF0FF", comment="指标说明",
+        ... )
         >>>
         >>> # 批量调整列宽（推荐在所有数据写入完成后调用）
         >>> writer.adjust_columns_width(worksheet, columns=['A', 'B', 'C'])
@@ -757,6 +955,28 @@ class ExcelWriter:
 
         :param decimal: 数值展示的小数位数，影响写入单元格的格式。 默认 ``4``。
         """
+        self._validate_decimal(decimal)
+        for name, option in (("wrap_text", wrap_text), ("bold", bold), ("italic", italic), ("strike", strike)):
+            if option is not None and not isinstance(option, (bool, np.bool_)):
+                raise TypeError(f"{name} 必须为布尔值或 None")
+        if not isinstance(auto_height, (bool, np.bool_)):
+            raise TypeError("auto_height 必须为布尔值")
+        for name, size in (("font_size", font_size), ("column_width", column_width), ("row_height", row_height)):
+            if size is not None and (isinstance(size, (bool, np.bool_)) or not isinstance(size, (int, float, np.integer, np.floating)) or not math.isfinite(size) or size <= 0):
+                raise ValueError(f"{name} 必须为有限正数或 None")
+        colors = {}
+        for name, color in (("font_color", font_color), ("background_color", background_color)):
+            if color is not None:
+                if not isinstance(color, str) or not re.fullmatch(r"#?(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})", color):
+                    raise ValueError(f"{name} 必须为六位或八位十六进制颜色，可带 # 前缀")
+                colors[name] = self._to_argb(color)
+        if comment is not None and not isinstance(comment, (str, Comment)):
+            raise TypeError("comment 必须为批注文本、Comment 对象或 None")
+        if isinstance(comment, str) and not isinstance(comment_author, str):
+            raise TypeError("comment_author 必须为字符串")
+        if number_format is not None and not isinstance(number_format, str):
+            raise TypeError("number_format 必须为 Excel 格式字符串或 None")
+
         # 解析位置
         if isinstance(insert_space, str):
             start_col = re.findall(r"\D+", insert_space)[0]
@@ -765,17 +985,8 @@ class ExcelWriter:
             start_col = get_column_letter(insert_space[1])
             start_row = insert_space[0]
 
-        # 设置单元格
-        cell = worksheet[f"{start_col}{start_row}"]
-        cell.style = style
-
-        # 设置对齐方式
-        if align:
-            _align = {"horizontal": "center", "vertical": "center"}
-            _align.update(align)
-            cell.alignment = Alignment(**_align)
-
-        # 合并单元格
+        start_col_idx = column_index_from_string(start_col)
+        end_col_idx, end_row = start_col_idx, start_row
         if end_space is not None:
             if isinstance(end_space, str):
                 end_col = re.findall(r"\D+", end_space)[0]
@@ -784,43 +995,109 @@ class ExcelWriter:
                 end_col = get_column_letter(end_space[1])
                 end_row = end_space[0]
 
-            if start_col != end_col or start_row != end_row:
-                worksheet.merge_cells(f"{start_col}{start_row}:{end_col}{end_row}")
+            end_col_idx = column_index_from_string(end_col)
+            if end_row < start_row or end_col_idx < start_col_idx:
+                raise ValueError("合并结束位置不能位于起始位置的上方或左侧")
+
+        # 命名样式作为基础，所有细粒度参数仅覆盖明确指定的属性。
+        cell = worksheet.cell(start_row, start_col_idx)
+        if style is not None:
+            cell.style = style
+        if isinstance(align, Alignment):
+            alignment = copy.copy(align)
+            align_options = {}
+        elif align is None or isinstance(align, dict):
+            alignment = copy.copy(cell.alignment)
+            align_options = dict(align or {})
+        else:
+            raise TypeError("align 必须为对齐属性字典、Alignment 对象或 None")
+        align_options.update(
+            {
+                name: option
+                for name, option in (
+                    ("horizontal", horizontal),
+                    ("vertical", vertical),
+                    ("wrap_text", wrap_text),
+                    ("indent", indent),
+                )
+                if option is not None
+            }
+        )
+        allowed_alignment = set(Alignment.__attrs__) | {"wrap_text", "text_rotation", "shrink_to_fit"}
+        for name, option in align_options.items():
+            if name not in allowed_alignment:
+                raise ValueError(f"不支持的对齐属性：{name}")
+            try:
+                setattr(alignment, name, option)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"无效的对齐设置：{name}={option!r}") from exc
+        if align is not None or align_options:
+            cell.alignment = alignment
+
+        font_options = {
+            name: option
+            for name, option in (
+                ("bold", bold),
+                ("italic", italic),
+                ("strike", strike),
+                ("name", font_name),
+                ("size", font_size),
+                ("color", colors.get("font_color")),
+            )
+            if option is not None
+        }
+        if font_options:
+            font = copy.copy(cell.font)
+            for name, option in font_options.items():
+                setattr(font, name, option)
+            cell.font = font
+        if background_color is not None:
+            cell.fill = PatternFill(fill_type="solid", fgColor=colors["background_color"])
+        if number_format is not None:
+            cell.number_format = number_format
 
         # 格式化值
         formatted_value = self.astype_insertvalue(value, decimal=decimal)
 
         # 设置值
-        worksheet[f"{start_col}{start_row}"] = formatted_value
+        cell.value = formatted_value
 
         self._set_number_stored_as_text_cell(worksheet, cell, value)
 
-        # 自动调整列宽
-        if auto_width and (end_space is None or start_col == end_col):
-            # 保存当前列的单元格数据
-            cells_data = self._get_column_cells_data(worksheet, start_col)
+        if end_row != start_row or end_col_idx != start_col_idx:
+            self._merge_styled_cell(worksheet, cell, end_row, end_col_idx)
 
+        # 自动调整列宽
+        if column_width is not None:
+            for col_idx in range(start_col_idx, end_col_idx + 1):
+                self.set_column_width(worksheet, col_idx, column_width)
+        elif auto_width and start_col_idx == end_col_idx:
             # 计算新宽度
-            curr_width = worksheet.column_dimensions[start_col].width
+            curr_width = self._effective_column_width(worksheet, start_col_idx)
             calculated_width = self._calculate_content_width(
                 formatted_value,
-                min_width=max(10, curr_width),
+                min_width=curr_width,
                 max_width=max_col_width,
                 extra_padding=0,
                 number_format=cell.number_format,
+                fontsize=cell.font.sz or self.fontsize,
             )
 
             # 设置列宽
             self._set_column_width_preserving_style(worksheet, start_col, calculated_width)
 
-            # 重新应用样式
-            self._reapply_styles_to_column(worksheet, start_col, cells_data)
+        if row_height is not None:
+            for row_idx in range(start_row, end_row + 1):
+                self.set_row_height(worksheet, row_idx, row_height)
+        elif auto_height and start_row == end_row:
+            self.adjust_rows_height(worksheet, rows=start_row, max_height=max_row_height)
 
-        # 返回下一个位置
-        if end_space is not None:
-            return end_row + 1, column_index_from_string(end_col) + 1
-        else:
-            return start_row + 1, column_index_from_string(start_col) + 1
+        if isinstance(comment, Comment):
+            cell.comment = copy.copy(comment)
+        elif isinstance(comment, str):
+            cell.comment = Comment(comment, comment_author) if comment else None
+
+        return end_row + 1, end_col_idx + 1
 
     def insert_pic2sheet(
         self,
@@ -1105,12 +1382,41 @@ class ExcelWriter:
 
         return self.insert_chart2sheet(worksheet, chart_anchor, bar, width=width, height=height)
 
+    @staticmethod
+    def _resolve_merge_columns(data: pd.DataFrame, columns, *, strict: bool = True) -> List[Any]:
+        """按传入顺序解析合并字段，兼容完整列键、末层名称及列位置。"""
+        if columns is None:
+            return []
+        available = data.columns.tolist()
+        if isinstance(columns, tuple) and columns in available:
+            requested = [columns]
+        elif isinstance(columns, (list, tuple, np.ndarray, pd.Index)):
+            requested = list(columns)
+        else:
+            requested = [columns]
+        resolved = []
+        for column in requested:
+            if column in available:
+                matches = [column]
+            else:
+                matches = [key for key in available if isinstance(key, tuple) and key[-1] == column]
+                if not matches and isinstance(column, (int, np.integer)) and -len(available) <= column < len(available):
+                    matches = [available[column]]
+            if not matches and strict:
+                raise ValueError(f"合并字段不存在：{column!r}")
+            for key in matches:
+                if not isinstance(data.columns.get_loc(key), (int, np.integer)):
+                    raise ValueError(f"合并字段存在重名列，请使用唯一列名：{key!r}")
+                if key not in resolved:
+                    resolved.append(key)
+        return resolved
+
     def insert_df2sheet(
         self,
         worksheet: Worksheet,
         data: pd.DataFrame,
         insert_space: Union[str, Tuple[int, int]],
-        merge_column: Optional[Union[str, List[str]]] = None,
+        merge_column: Optional[Union[str, int, Sequence[Any]]] = None,
         header: bool = True,
         index: bool = False,
         auto_width: bool = False,
@@ -1120,6 +1426,8 @@ class ExcelWriter:
         merge_header: Union[bool, str, int, Sequence[int]] = True,
         decimal: Optional[int] = 4,
         speed: str = "auto",
+        merge_hierarchy: Union[bool, Sequence[Any]] = True,
+        merge_border: bool = False,
     ) -> Tuple[int, int]:
         """向Excel插入DataFrame。
 
@@ -1129,8 +1437,8 @@ class ExcelWriter:
         :type data: pd.DataFrame
         :param insert_space: 插入位置，如'B2'或(2, 2)
         :type insert_space: Union[str, Tuple[int, int]]
-        :param merge_column: 需要分组显示的列，默认为None
-        :type merge_column: Optional[Union[str, List[str]]]
+        :param merge_column: 需要分组显示的列，默认为None；默认按传入顺序从父层到子层合并
+        :type merge_column: Optional[Union[str, int, Sequence[Any]]]
         :param header: 是否存储DataFrame的header，默认为True
         :type header: bool
         :param index: 是否存储DataFrame的index，默认为False
@@ -1147,6 +1455,13 @@ class ExcelWriter:
             可传False/ ``"none"`` 不合并，或传层级序号/序号列表仅合并指定层级
 
         :type merge_header: Union[bool, str, int, Sequence[int]]
+        :param merge_hierarchy: 默认 True，子层只在所有父层的连续分组内合并；False 为各列独立合并。
+            也可传入从父到子的列名列表指定层级，须包含所有 merge_column 字段；额外父层字段只用于限定边界。
+            未指定 merge_column 时，以该列表作为待合并列。实际合并仍需 merge=True，不改变数据行顺序。
+        :type merge_hierarchy: Union[bool, Sequence[Any]]
+        :param merge_border: 默认 False；True 时仅在 fill=True 且 merge=True 时为待合并列的分组添加
+            主题色上下边框（包含单行分组）。内部边界为细线，数据首行上边框和末行下边框为加粗线。
+        :type merge_border: bool
         :param decimal: 浮点值保留小数位数，默认4；None表示不主动舍入
         :type decimal: Optional[int]
         :param speed: 写入速度，可选 ``"auto"`` 、 ``"normal"`` 或 ``"fast"`` ，默认 ``"auto"`` ；
@@ -1171,8 +1486,12 @@ class ExcelWriter:
         >>>
         >>> # 分组显示
         >>> writer.insert_df2sheet(worksheet, df, "B30", merge_column='A', merge=True)
+        >>> # 默认按 A -> B 的层级合并；B 不跨 A 的分组边界
+        >>> writer.insert_df2sheet(worksheet, df, "B40", merge_column=['A', 'B'], merge=True)
         """
         self._validate_decimal(decimal)
+        if not isinstance(merge_border, (bool, np.bool_)):
+            raise TypeError("merge_border 必须为布尔值")
         resolved_speed = self._resolve_write_speed(data, speed, index=index)
         fast = resolved_speed == "fast"
 
@@ -1189,21 +1508,12 @@ class ExcelWriter:
         table_end_col_idx = start_col_idx + len(data.columns) + (data.index.nlevels if index else 0)
         row_count = len(data) + (data.columns.nlevels if header else 0)
         column_count = table_end_col_idx - start_col_idx
-        if (
-            start_row < 1
-            or start_col_idx < 1
-            or start_row + max(row_count, 1) - 1 > 1_048_576
-            or table_end_col_idx - 1 > 16_384
-        ):
+        if start_row < 1 or start_col_idx < 1 or start_row + max(row_count, 1) - 1 > 1_048_576 or table_end_col_idx - 1 > 16_384:
             raise ValueError("表格超出Excel单工作表上限（1,048,576行、16,384列），请分表或导出明细文件")
         if self.max_table_cells is not None and row_count * column_count > self.max_table_cells:
-            raise ValueError(
-                f"表格预计写入 {row_count * column_count} 个单元格，超过 max_table_cells={self.max_table_cells}"
-            )
+            raise ValueError(f"表格预计写入 {row_count * column_count} 个单元格，超过 max_table_cells={self.max_table_cells}")
         df = data if fast else data.copy()
-        fast_widths = (
-            self._initial_fast_widths(worksheet, start_col_idx, table_end_col_idx - 1) if fast and auto_width else None
-        )
+        fast_widths = self._initial_fast_widths(worksheet, start_col_idx, table_end_col_idx - 1) if fast and auto_width else None
         fast_row_kwargs = {"widths": fast_widths} if fast else {}
 
         # 计算合并行
@@ -1218,46 +1528,38 @@ class ExcelWriter:
 
         # 处理索引合并
         if index and merge_index:
-            merge_index_cols = {
-                i: get_column_letter(column_index_from_string(start_col) + i) for i in range(df.index.nlevels)
-            }
-            merge_index_rows = {
-                i: get_merge_rows(
-                    df.index.get_level_values(i).tolist(), start_row + df.columns.nlevels if header else start_row
-                )
-                for i in range(df.index.nlevels)
-            }
+            merge_index_cols = {i: get_column_letter(column_index_from_string(start_col) + i) for i in range(df.index.nlevels)}
+            merge_index_rows = {i: get_merge_rows(df.index.get_level_values(i).tolist(), start_row + df.columns.nlevels if header else start_row) for i in range(df.index.nlevels)}
         else:
             merge_index_cols = None
             merge_index_rows = None
 
-        # 处理列合并
+        # 统一普通与快速路径的分组边界；父层边界逐层累积，避免子层跨组串联。
+        if isinstance(merge_hierarchy, (bool, np.bool_)):
+            hierarchical = bool(merge_hierarchy)
+            hierarchy_columns = self._resolve_merge_columns(df, merge_column)
+        elif isinstance(merge_hierarchy, (list, tuple, np.ndarray, pd.Index)):
+            hierarchical = True
+            hierarchy_columns = self._resolve_merge_columns(df, merge_hierarchy)
+            if merge_column is None:
+                merge_column = hierarchy_columns
+        else:
+            raise TypeError("merge_hierarchy 仅支持布尔值或从父层到子层的列名列表")
+        merge_column = self._resolve_merge_columns(df, merge_column)
+        missing_levels = [col for col in merge_column if col not in hierarchy_columns]
+        if missing_levels:
+            raise ValueError(f"merge_hierarchy 必须包含全部待合并字段：{missing_levels}")
         if merge_column:
-            if not isinstance(merge_column, (list, np.ndarray)):
-                merge_column = [merge_column]
-
-            if isinstance(merge_column[0], (int, float)) and (merge_column[0] not in df.columns):
-                merge_column = [df.columns.tolist()[col] if col not in df.columns else col for col in merge_column]
-
-            if index:
-                merge_cols = {
-                    col: get_column_letter(
-                        df.columns.get_loc(col) + column_index_from_string(start_col) + df.index.nlevels
-                    )
-                    for col in merge_column
-                }
-            else:
-                merge_cols = {
-                    col: get_column_letter(df.columns.get_loc(col) + column_index_from_string(start_col))
-                    for col in merge_column
-                }
-
-            if header:
-                merge_rows = {
-                    col: get_merge_rows(df[col].tolist(), start_row + df.columns.nlevels) for col in merge_column
-                }
-            else:
-                merge_rows = {col: get_merge_rows(df[col].tolist(), start_row) for col in merge_column}
+            merge_cols = {col: get_column_letter(df.columns.get_loc(col) + start_col_idx + (df.index.nlevels if index else 0)) for col in merge_column}
+            data_start_row = start_row + (df.columns.nlevels if header else 0)
+            merge_rows, parent_boundaries = {}, set()
+            for col in hierarchy_columns:
+                boundaries = set(get_merge_rows(df[col].tolist(), data_start_row))
+                if hierarchical:
+                    boundaries.update(parent_boundaries)
+                    parent_boundaries = boundaries
+                if col in merge_cols:
+                    merge_rows[col] = sorted(boundaries)
         else:
             merge_cols = None
             merge_rows = None
@@ -1363,34 +1665,14 @@ class ExcelWriter:
                     # 根据行数奇偶选择样式
                     if df.columns.nlevels % 2 == 1:
                         if i % 2 == 1:
-                            style = (
-                                "middle_odd_last"
-                                if (header and i == len(df) + df.columns.nlevels - 1)
-                                or (not header and i + 1 == len(df))
-                                else "middle_odd"
-                            )
+                            style = "middle_odd_last" if (header and i == len(df) + df.columns.nlevels - 1) or (not header and i + 1 == len(df)) else "middle_odd"
                         else:
-                            style = (
-                                "middle_even_last"
-                                if (header and i == len(df) + df.columns.nlevels - 1)
-                                or (not header and i + 1 == len(df))
-                                else "middle_even"
-                            )
+                            style = "middle_even_last" if (header and i == len(df) + df.columns.nlevels - 1) or (not header and i + 1 == len(df)) else "middle_even"
                     else:
                         if i % 2 == 1:
-                            style = (
-                                "middle_even_last"
-                                if (header and i == len(df) + df.columns.nlevels - 1)
-                                or (not header and i + 1 == len(df))
-                                else "middle_even"
-                            )
+                            style = "middle_even_last" if (header and i == len(df) + df.columns.nlevels - 1) or (not header and i + 1 == len(df)) else "middle_even"
                         else:
-                            style = (
-                                "middle_odd_last"
-                                if (header and i == len(df) + df.columns.nlevels - 1)
-                                or (not header and i + 1 == len(df))
-                                else "middle_odd"
-                            )
+                            style = "middle_odd_last" if (header and i == len(df) + df.columns.nlevels - 1) or (not header and i + 1 == len(df)) else "middle_odd"
 
                     insert_row(
                         worksheet,
@@ -1478,6 +1760,16 @@ class ExcelWriter:
                 merge_row = merge_rows[col]
 
                 for s, e in zip(merge_row[:-1], merge_row[1:]):
+                    if fill and merge_border:
+                        # 在合并前设置两端边框，由 merge_cells 保留并传播到合并区域边缘。
+                        for row_idx, side_name, outer in (
+                            (s, "top", s == data_start_row),
+                            (e - 1, "bottom", e == data_start_row + len(df)),
+                        ):
+                            cell = worksheet[f"{merge_col}{row_idx}"]
+                            border = copy.copy(cell.border)
+                            setattr(border, side_name, Side(style="medium" if outer else "thin", color=self.theme_color))
+                            cell.border = border
                     if e - s > 1:
                         self.merge_cells(worksheet, f"{merge_col}{s}", f"{merge_col}{e - 1}")
 
@@ -1512,20 +1804,14 @@ class ExcelWriter:
         else:
             cell._style = copy.copy(style_array)
 
-        if end_col is not None and end_col != col_index:
-            worksheet.merge_cells(
-                start_row=row_index,
-                start_column=col_index,
-                end_row=row_index,
-                end_column=end_col,
-            )
-
         formatted_value = self.astype_insertvalue(value, decimal=decimal)
         cell.value = formatted_value
         self._set_number_stored_as_text_cell(worksheet, cell, value)
+        if end_col is not None and end_col != col_index:
+            self._merge_styled_cell(worksheet, cell, row_index, end_col)
         if widths is not None and (end_col is None or end_col == col_index):
             widths[col_index] = max(
-                widths.get(col_index, 8.0),
+                widths.get(col_index, 0.0),
                 self._calculate_content_width(formatted_value, number_format=cell.number_format),
             )
 
@@ -1738,10 +2024,8 @@ class ExcelWriter:
                             decimal=decimal,
                         )
 
-    def merge_cells(
-        self, worksheet: Worksheet, start: Union[str, Tuple[int, int]], end: Union[str, Tuple[int, int]]
-    ) -> None:
-        """合并单元格并保证样式正确合并。
+    def merge_cells(self, worksheet: Worksheet, start: Union[str, Tuple[int, int]], end: Union[str, Tuple[int, int]]) -> None:
+        """合并单元格并保留首格样式，统一合并区域填充及外沿边框。
 
         :param worksheet: 工作表对象
         :type worksheet: Worksheet
@@ -1771,37 +2055,36 @@ class ExcelWriter:
         if start_row > end_row:
             start_row, end_row = end_row, start_row
 
-        # 获取左上角单元格的样式
+        if start_col == end_col and start_row == end_row:
+            return
+
+        # 保留完整首格样式，不通过命名样式重置字体、填充、对齐和数字格式。
         top_left_cell = worksheet[f"{get_column_letter(start_col)}{start_row}"]
-        cell_style = copy.deepcopy(top_left_cell.style)
-
-        # 获取各边框样式
-        top_border = top_left_cell.border.top
-        left_cell = worksheet[f"{get_column_letter(start_col)}{start_row}"]
-        left_border = left_cell.border.left
+        fill = copy.copy(top_left_cell.fill)
+        border_style = copy.copy(top_left_cell.border)
+        # 上、左沿用首格；右、下分别取右上角和左下角，避免右下角残留边框混入。
         right_cell = worksheet[f"{get_column_letter(end_col)}{start_row}"]
-        right_border = right_cell.border.right
         bottom_cell = worksheet[f"{get_column_letter(start_col)}{end_row}"]
-        bottom_border = bottom_cell.border.bottom
-
-        # 创建合并后的边框样式
-        border_style = Border(
-            top=Side(style=top_border.style, color=top_border.color) if top_border else None,
-            left=Side(style=left_border.style, color=left_border.color) if left_border else None,
-            right=Side(style=right_border.style, color=right_border.color) if right_border else None,
-            bottom=Side(style=bottom_border.style, color=bottom_border.color) if bottom_border else None,
-        )
-
-        # 将单元格样式应用到左上角单元格
-        merged_cell = worksheet[f"{get_column_letter(start_col)}{start_row}"]
-        merged_cell.style = cell_style
-        merged_cell.border = border_style
+        border_style.right = copy.copy(right_cell.border.right)
+        border_style.bottom = copy.copy(bottom_cell.border.bottom)
 
         # 合并单元格
         start_cell = f"{get_column_letter(start_col)}{start_row}"
         end_cell = f"{get_column_letter(end_col)}{end_row}"
-        if start_cell != end_cell:
-            worksheet.merge_cells(f"{start_cell}:{end_cell}")
+        worksheet.merge_cells(f"{start_cell}:{end_cell}")
+
+        # openpyxl 会从右下角补入右/下边框，并丢弃非首格的填充；显式重建外沿，确保末行两角一致。
+        top_left_cell.border = border_style
+        edge_borders = {}
+        for row in worksheet.iter_rows(min_row=start_row, max_row=end_row, min_col=start_col, max_col=end_col):
+            for cell in row:
+                if cell is top_left_cell:
+                    continue
+                edges = (cell.row == start_row, cell.column == start_col, cell.column == end_col, cell.row == end_row)
+                if edges not in edge_borders:
+                    edge_borders[edges] = Border(**{side: copy.copy(getattr(border_style, side)) if is_edge else None for side, is_edge in zip(("top", "left", "right", "bottom"), edges)})
+                cell.border = edge_borders[edges]
+                cell.fill = fill
 
     @staticmethod
     def check_contain_chinese(check_str: str) -> Tuple[List[bool], int, int]:
@@ -1822,9 +2105,7 @@ class ExcelWriter:
     @staticmethod
     def _validate_decimal(decimal: Optional[int]) -> None:
         """校验写入 Excel 时的浮点数精度。"""
-        if decimal is not None and (
-            isinstance(decimal, (bool, np.bool_)) or not isinstance(decimal, (int, np.integer)) or int(decimal) < 0
-        ):
+        if decimal is not None and (isinstance(decimal, (bool, np.bool_)) or not isinstance(decimal, (int, np.integer)) or int(decimal) < 0):
             raise ValueError("decimal 必须是大于等于 0 的整数或 None")
 
     @classmethod
@@ -1841,11 +2122,7 @@ class ExcelWriter:
 
         rows = len(data)
         columns = len(data.columns) + (data.index.nlevels if index else 0)
-        if (
-            rows >= cls.AUTO_FAST_MIN_ROWS
-            or columns >= cls.AUTO_FAST_MIN_COLUMNS
-            or rows * columns >= cls.AUTO_FAST_MIN_CELLS
-        ):
+        if rows >= cls.AUTO_FAST_MIN_ROWS or columns >= cls.AUTO_FAST_MIN_COLUMNS or rows * columns >= cls.AUTO_FAST_MIN_CELLS:
             return "fast"
         return "normal"
 
@@ -2095,9 +2372,7 @@ class ExcelWriter:
         alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
         content_fill = PatternFill(fill_type="solid", start_color="FFFFFF")
         content_font = Font(size=fontsize, name=font, color="000000")
-        even_fill = PatternFill(
-            fill_type="solid", start_color=self.calculate_rgba_color(self.theme_color, self.opacity, prefix="")
-        )
+        even_fill = PatternFill(fill_type="solid", start_color=self.calculate_rgba_color(self.theme_color, self.opacity, prefix=""))
 
         # 设置header样式
         for style in [header_style, header_left_style, header_middle_style, header_right_style]:
@@ -2109,18 +2384,10 @@ class ExcelWriter:
         header_middle_style.alignment = alignment
         header_right_style.alignment = alignment
 
-        header_style.border = self.itlubber_border(
-            ["medium", "medium", "medium", "medium"], [theme_color, theme_color, theme_color, theme_color], white=True
-        )
-        header_left_style.border = self.itlubber_border(
-            ["medium", "thin", "medium", "medium"], [theme_color, "FFFFFF", theme_color, theme_color], white=True
-        )
-        header_middle_style.border = self.itlubber_border(
-            ["thin", "thin", "medium", "medium"], ["FFFFFF", "FFFFFF", theme_color, theme_color], white=True
-        )
-        header_right_style.border = self.itlubber_border(
-            ["thin", "medium", "medium", "medium"], ["FFFFFF", theme_color, theme_color, theme_color], white=True
-        )
+        header_style.border = self.itlubber_border(["medium", "medium", "medium", "medium"], [theme_color, theme_color, theme_color, theme_color], white=True)
+        header_left_style.border = self.itlubber_border(["medium", "thin", "medium", "medium"], [theme_color, "FFFFFF", theme_color, theme_color], white=True)
+        header_middle_style.border = self.itlubber_border(["thin", "thin", "medium", "medium"], ["FFFFFF", "FFFFFF", theme_color, theme_color], white=True)
+        header_right_style.border = self.itlubber_border(["thin", "medium", "medium", "medium"], ["FFFFFF", theme_color, theme_color, theme_color], white=True)
 
         # 设置last样式
         for style in [last_style, last_left_style, last_middle_style, last_right_style]:
@@ -2128,16 +2395,10 @@ class ExcelWriter:
             style.fill = content_fill
             style.alignment = alignment
 
-        last_style.border = self.itlubber_border(
-            ["medium", "medium", "medium"], [theme_color, theme_color, theme_color]
-        )
-        last_left_style.border = self.itlubber_border(
-            ["medium", "thin", "medium"], [theme_color, "FFFFFF", theme_color]
-        )
+        last_style.border = self.itlubber_border(["medium", "medium", "medium"], [theme_color, theme_color, theme_color])
+        last_left_style.border = self.itlubber_border(["medium", "thin", "medium"], [theme_color, "FFFFFF", theme_color])
         last_middle_style.border = self.itlubber_border(["thin", "thin", "medium"], ["FFFFFF", "FFFFFF", theme_color])
-        last_right_style.border = self.itlubber_border(
-            ["thin", "medium", "medium"], ["FFFFFF", theme_color, theme_color]
-        )
+        last_right_style.border = self.itlubber_border(["thin", "medium", "medium"], ["FFFFFF", theme_color, theme_color])
 
         # 设置content样式
         for style in [content_style, left_style, middle_style, right_style]:
@@ -2145,9 +2406,7 @@ class ExcelWriter:
             style.fill = content_fill
             style.alignment = alignment
 
-        content_style.border = self.itlubber_border(
-            ["medium", "medium", "thin"], [theme_color, theme_color, theme_color]
-        )
+        content_style.border = self.itlubber_border(["medium", "medium", "thin"], [theme_color, theme_color, theme_color])
         left_style.border = self.itlubber_border(["medium", "thin", "thin"], [theme_color, "FFFFFF", theme_color])
         middle_style.border = self.itlubber_border(["thin", "medium", "thin"], ["FFFFFF", "FFFFFF", theme_color])
         right_style.border = self.itlubber_border(["thin", "medium", "thin"], ["FFFFFF", theme_color, theme_color])
@@ -2169,18 +2428,10 @@ class ExcelWriter:
             style.fill = content_fill
             style.alignment = alignment
 
-        first_style.border = self.itlubber_border(
-            ["medium", "medium", "thin", "medium"], [theme_color, theme_color, theme_color, theme_color]
-        )
-        first_left_style.border = self.itlubber_border(
-            ["medium", "thin", "thin", "medium"], [theme_color, "FFFFFF", theme_color, theme_color]
-        )
-        first_middle_style.border = self.itlubber_border(
-            ["thin", "thin", "thin", "medium"], ["FFFFFF", "FFFFFF", theme_color, theme_color]
-        )
-        first_right_style.border = self.itlubber_border(
-            ["thin", "medium", "thin", "medium"], ["FFFFFF", theme_color, theme_color, theme_color]
-        )
+        first_style.border = self.itlubber_border(["medium", "medium", "thin", "medium"], [theme_color, theme_color, theme_color, theme_color])
+        first_left_style.border = self.itlubber_border(["medium", "thin", "thin", "medium"], [theme_color, "FFFFFF", theme_color, theme_color])
+        first_middle_style.border = self.itlubber_border(["thin", "thin", "thin", "medium"], ["FFFFFF", "FFFFFF", theme_color, theme_color])
+        first_right_style.border = self.itlubber_border(["thin", "medium", "thin", "medium"], ["FFFFFF", theme_color, theme_color, theme_color])
 
         # 创建奇偶行样式
         middle_odd_style = NamedStyle(name="middle_odd")
@@ -2430,17 +2681,9 @@ class ExcelWriter:
         groups = []
         for spec in specs:
             attr_str = "".join(f' {k}="{v}"' for k, v in spec["attrs"].items())
-            color_str = "".join(
-                f'<x14:{tag} rgb="{spec["colors"][tag]}"/>' for tag in color_order if tag in spec["colors"]
-            )
-            sparkline_str = "".join(
-                f"<x14:sparkline><xm:f>{f_ref}</xm:f><xm:sqref>{sqref}</xm:sqref></x14:sparkline>"
-                for f_ref, sqref in spec["sparklines"]
-            )
-            groups.append(
-                f"<x14:sparklineGroup{attr_str}>{color_str}"
-                f"<x14:sparklines>{sparkline_str}</x14:sparklines></x14:sparklineGroup>"
-            )
+            color_str = "".join(f'<x14:{tag} rgb="{spec["colors"][tag]}"/>' for tag in color_order if tag in spec["colors"])
+            sparkline_str = "".join(f"<x14:sparkline><xm:f>{f_ref}</xm:f><xm:sqref>{sqref}</xm:sqref></x14:sparkline>" for f_ref, sqref in spec["sparklines"])
+            groups.append(f"<x14:sparklineGroup{attr_str}>{color_str}" f"<x14:sparklines>{sparkline_str}</x14:sparklines></x14:sparklineGroup>")
         return "".join(groups)
 
     def _inject_sparklines(self, filename: str) -> None:
@@ -2498,13 +2741,7 @@ class ExcelWriter:
 
                 sheet_xml = zin.read(part).decode("utf-8")
                 groups_xml = self._build_sparkline_groups_xml(specs)
-                ext_xml = (
-                    '<ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
-                    'uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}">'
-                    '<x14:sparklineGroups xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">'
-                    + groups_xml
-                    + "</x14:sparklineGroups></ext>"
-                )
+                ext_xml = '<ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" ' 'uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}">' '<x14:sparklineGroups xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">' + groups_xml + "</x14:sparklineGroups></ext>"
 
                 if "</extLst>" in sheet_xml:
                     # 已存在 extLst，将 ext 追加到最后一个 extLst 内
@@ -2787,9 +3024,7 @@ class ExcelWriter:
         pivot_sheet = worksheet.title
         pivot_anchor = self._parse_anchor(pivot_anchor)
 
-        existing_pivot_names = {
-            pivot.name for sheet in self.workbook.worksheets for pivot in getattr(sheet, "_pivots", [])
-        }
+        existing_pivot_names = {pivot.name for sheet in self.workbook.worksheets for pivot in getattr(sheet, "_pivots", [])}
         existing_pivot_names.update(spec["name"] for spec in self._pivot_specs)
         if name is None:
             sequence = 1
@@ -3050,8 +3285,7 @@ class ExcelWriter:
             existing_part_indices = []
             for part in names:
                 match = re.fullmatch(
-                    r"xl/(?:pivotTables/pivotTable|pivotCache/pivotCacheDefinition|"
-                    r"pivotCache/pivotCacheRecords)(\d+)\.xml",
+                    r"xl/(?:pivotTables/pivotTable|pivotCache/pivotCacheDefinition|" r"pivotCache/pivotCacheRecords)(\d+)\.xml",
                     part,
                 )
                 if match:
@@ -3083,25 +3317,13 @@ class ExcelWriter:
                 new_parts[cache_def_part] = cache_def_xml.encode("utf-8")
                 new_parts[cache_rec_part] = cache_rec_xml.encode("utf-8")
                 new_parts[pivot_part] = pivot_xml.encode("utf-8")
-                new_parts[cache_def_rels] = (
-                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
-                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                    '<Relationship Id="rId1" Type="{}" Target="pivotCacheRecords{}.xml"/>'
-                    "</Relationships>".format(_pivot.REL_CACHE_REC, part_index)
-                ).encode("utf-8")
-                new_parts[pivot_rels] = (
-                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
-                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                    '<Relationship Id="rId1" Type="{}" Target="../pivotCache/pivotCacheDefinition{}.xml"/>'
-                    "</Relationships>".format(_pivot.REL_CACHE_DEF, part_index)
-                ).encode("utf-8")
+                new_parts[cache_def_rels] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' '<Relationship Id="rId1" Type="{}" Target="pivotCacheRecords{}.xml"/>' "</Relationships>".format(_pivot.REL_CACHE_REC, part_index)).encode("utf-8")
+                new_parts[pivot_rels] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' '<Relationship Id="rId1" Type="{}" Target="../pivotCache/pivotCacheDefinition{}.xml"/>' "</Relationships>".format(_pivot.REL_CACHE_DEF, part_index)).encode("utf-8")
 
                 # workbook -> cacheDefinition 关系 + pivotCaches 条目
                 rid = "rId{}".format(next_rid)
                 next_rid += 1
-                wb_new_rels.append(
-                    (rid, _pivot.REL_CACHE_DEF, "pivotCache/pivotCacheDefinition{}.xml".format(part_index))
-                )
+                wb_new_rels.append((rid, _pivot.REL_CACHE_DEF, "pivotCache/pivotCacheDefinition{}.xml".format(part_index)))
                 wb_pivotcache_entries.append((spec["cache_id"], rid))
 
                 # sheet -> pivotTable 关系
@@ -3116,9 +3338,7 @@ class ExcelWriter:
                 ct_overrides.append(("/" + pivot_part, _pivot.CT_PIVOT_TABLE))
 
             # 1) [Content_Types].xml 追加 Override
-            override_xml = "".join(
-                '<Override PartName="{}" ContentType="{}"/>'.format(pn, ct) for pn, ct in ct_overrides
-            )
+            override_xml = "".join('<Override PartName="{}" ContentType="{}"/>'.format(pn, ct) for pn, ct in ct_overrides)
             content_types = content_types.replace("</Types>", override_xml + "</Types>")
 
             # 1.5) styles.xml 注入 hscredit 主题透视表样式与自定义数字格式
@@ -3133,9 +3353,7 @@ class ExcelWriter:
                 )
 
             # 2) workbook.xml 追加 <pivotCaches>（位于 extLst / </workbook> 之前）
-            pivotcache_entries_xml = "".join(
-                '<pivotCache cacheId="{}" r:id="{}"/>'.format(cid, rid) for cid, rid in wb_pivotcache_entries
-            )
+            pivotcache_entries_xml = "".join('<pivotCache cacheId="{}" r:id="{}"/>'.format(cid, rid) for cid, rid in wb_pivotcache_entries)
             existing_pivotcaches_end = re.search(r"</(?:[\w.-]+:)?pivotCaches\s*>", workbook_xml)
             if existing_pivotcaches_end:
                 idx = existing_pivotcaches_end.start()
@@ -3156,9 +3374,7 @@ class ExcelWriter:
                 )
 
             # 3) workbook.xml.rels 追加 workbook->cacheDefinition 关系
-            wb_rel_add = "".join(
-                '<Relationship Id="{}" Type="{}" Target="{}"/>'.format(rid, typ, tgt) for rid, typ, tgt in wb_new_rels
-            )
+            wb_rel_add = "".join('<Relationship Id="{}" Type="{}" Target="{}"/>'.format(rid, typ, tgt) for rid, typ, tgt in wb_new_rels)
             wb_rels = wb_rels.replace("</Relationships>", wb_rel_add + "</Relationships>")
 
             # 4) 各 sheet 的 _rels 追加 sheet->pivotTable 关系（无则新建）
@@ -3182,12 +3398,7 @@ class ExcelWriter:
                         add += '<Relationship Id="rId{}" Type="{}" Target="{}"/>'.format(sid, typ, tgt)
                         sid += 1
                     # 新建的 rels 部件须加入 new_parts，否则不会写入 zip
-                    new_parts[sheet_rels_part] = (
-                        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
-                        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                        + add
-                        + "</Relationships>"
-                    ).encode("utf-8")
+                    new_parts[sheet_rels_part] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + add + "</Relationships>").encode("utf-8")
 
             # 5) 透视图：向对应 chart XML 注入 pivotSource
             chart_modifications = self._build_pivot_chart_modifications(zin, names)
@@ -3248,9 +3459,7 @@ class ExcelWriter:
                     continue
                 prefix = m.group(1) or ""
                 name_ref = "{}!{}".format(sheet, pc["pivot_name"])
-                pivot_source = "<{p}pivotSource><{p}name>{n}</{p}name>" '<{p}fmtId val="0"/></{p}pivotSource>'.format(
-                    p=prefix, n=_pivot._esc(name_ref)
-                )
+                pivot_source = "<{p}pivotSource><{p}name>{n}</{p}name>" '<{p}fmtId val="0"/></{p}pivotSource>'.format(p=prefix, n=_pivot._esc(name_ref))
                 # pivotSource 是 chartSpace 的子元素，须位于 chart 元素之前
                 idx = m.start()
                 xml = xml[:idx] + pivot_source + xml[idx:]
@@ -3326,10 +3535,7 @@ class ExcelWriter:
         with zipfile.ZipFile(filename, "r") as zin:
             names = set(zin.namelist())
             workbook_root = ET.fromstring(zin.read("xl/workbook.xml"))
-            name_to_rid = {
-                sheet.attrib["name"]: sheet.attrib[f"{{{document_rel_ns}}}id"]
-                for sheet in workbook_root.findall(f".//{{{spreadsheet_ns}}}sheet")
-            }
+            name_to_rid = {sheet.attrib["name"]: sheet.attrib[f"{{{document_rel_ns}}}id"] for sheet in workbook_root.findall(f".//{{{spreadsheet_ns}}}sheet")}
 
             relationships_root = ET.fromstring(zin.read("xl/_rels/workbook.xml.rels"))
             rid_to_target = {}
@@ -3345,10 +3551,7 @@ class ExcelWriter:
                 if not part or part not in names:
                     continue
 
-                ignored_error_xml = "".join(
-                    f'<ignoredError sqref="{" ".join(refs[index:index + 8192])}" numberStoredAsText="1"/>'
-                    for index in range(0, len(refs), 8192)
-                )
+                ignored_error_xml = "".join(f'<ignoredError sqref="{" ".join(refs[index:index + 8192])}" numberStoredAsText="1"/>' for index in range(0, len(refs), 8192))
                 sheet_xml = zin.read(part).decode("utf-8")
                 ignored_errors_end = re.search(r"</(?:[\w.-]+:)?ignoredErrors\s*>", sheet_xml)
                 if ignored_errors_end:
@@ -3357,8 +3560,7 @@ class ExcelWriter:
                 else:
                     ignored_errors_xml = f"<ignoredErrors>{ignored_error_xml}</ignoredErrors>"
                     following_element = re.search(
-                        r"<(?:[\w.-]+:)?(?:smartTags|drawing|legacyDrawing|legacyDrawingHF|picture|"
-                        r"oleObjects|controls|webPublishItems|tableParts|extLst)\b",
+                        r"<(?:[\w.-]+:)?(?:smartTags|drawing|legacyDrawing|legacyDrawingHF|picture|" r"oleObjects|controls|webPublishItems|tableParts|extLst)\b",
                         sheet_xml,
                     )
                     insert_at = following_element.start() if following_element else sheet_xml.rfind("</worksheet>")
@@ -3412,9 +3614,7 @@ class ExcelWriter:
                             _worksheet.cell(row=i + 1, column=j + 1).style = cell.style
 
                             if i == _workbook[_sheet_name].max_row - 1:
-                                _worksheet.column_dimensions[get_column_letter(j + 1)].width = (
-                                    _workbook[_sheet_name].column_dimensions[get_column_letter(j + 1)].width
-                                )
+                                _worksheet.column_dimensions[get_column_letter(j + 1)].width = _workbook[_sheet_name].column_dimensions[get_column_letter(j + 1)].width
 
             _workbook.close()
 
@@ -3619,6 +3819,10 @@ def dataframe2excel(
     auto_filter: bool = False,
     decimal: Optional[int] = 4,
     speed: str = "auto",
+    merge_hierarchy: Union[bool, Sequence[Any]] = True,
+    merge_border: bool = False,
+    auto_width: bool = False,
+    auto_height: bool = False,
     **kwargs,
 ) -> Tuple[int, int]:
     """快速将DataFrame写入Excel。
@@ -3693,6 +3897,17 @@ def dataframe2excel(
         自动模式在行数不少于500、有效列数不少于50或有效单元格数不少于10000时使用快速路径
 
     :type speed: str
+    :param merge_hierarchy: 合并列的层级规则，默认 True 按 merge_column 的传入顺序合并；
+        False 为逐列独立合并，也可传入从父到子的列名列表。需同时传入 merge=True。
+    :type merge_hierarchy: Union[bool, Sequence[Any]]
+    :param merge_border: 默认 False；True 时为 fill=True 且 merge=True 的数据列分组添加主题色上下边框，
+        内部分隔线为细线，数据首行上边框及末行下边框为加粗线。
+    :type merge_border: bool
+    :param auto_width: 默认 False；全部内容、合并和格式设置完成后，对本次写入的列统一调整一次宽度。
+    :type auto_width: bool
+    :param auto_height: 默认 False；全部内容、合并和格式设置完成后，对本次写入的行统一调整一次高度。
+        同时开启自动列宽时先调整列宽，再计算行高；保持已有换行设置。
+    :type auto_height: bool
     :param kwargs: 其他参数，传递给insert_df2sheet
     :return: (下一行行号, 下一列列号)
 
@@ -3737,6 +3952,7 @@ def dataframe2excel(
         worksheet = writer.get_sheet_by_name(sheet_name or "Sheet1")
 
     image_bottom_padding_rows = 0 if image_bottom_padding_rows is None else max(int(image_bottom_padding_rows), 0)
+    content_start_row = start_row
 
     # 插入标题
     if title:
@@ -3747,6 +3963,8 @@ def dataframe2excel(
             value=title,
             style="header",
             end_space=(start_row, start_col + col_width - 1),
+            auto_width=False,
+            auto_height=False,
         )
         start_row += 1
 
@@ -3763,78 +3981,52 @@ def dataframe2excel(
                 if i == 0:
                     start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, start_col), figsize=figsize)
                 else:
-                    start_row, end_col = writer.insert_pic2sheet(
-                        worksheet, pic, (pic_row, end_col - 1), figsize=figsize
-                    )
+                    start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
 
             start_row += image_bottom_padding_rows
 
     # 处理merge_column参数
-    if "merge_column" in kwargs and kwargs["merge_column"]:
-        if not isinstance(kwargs["merge_column"][0], (tuple, list)):
-            kwargs["merge_column"] = [
-                c
-                for c in data.columns
-                if (isinstance(c, tuple) and c[-1] in kwargs["merge_column"])
-                or (not isinstance(c, tuple) and c in kwargs["merge_column"])
-            ]
+    if kwargs.get("merge_column") is not None:
+        # 保留便捷入口忽略不存在字段的兼容行为，但不再按 DataFrame 顺序重排。
+        kwargs["merge_column"] = writer._resolve_merge_columns(data, kwargs["merge_column"], strict=False)
 
     # 插入DataFrame
     end_row, end_col = writer.insert_df2sheet(
-        worksheet, data, (start_row, start_col), fill=fill, header=header, decimal=decimal, speed=speed, **kwargs
+        worksheet,
+        data,
+        (start_row, start_col),
+        fill=fill,
+        header=header,
+        decimal=decimal,
+        speed=speed,
+        merge_hierarchy=merge_hierarchy,
+        merge_border=merge_border,
+        auto_width=False,
+        **kwargs,
     )
 
     # 设置百分比格式列
     if percent_cols and len(data) > 0:
         if not isinstance(percent_cols[0], (tuple, list)):
-            percent_cols = [
-                c
-                for c in data.columns
-                if (isinstance(c, tuple) and c[-1] in percent_cols) or (not isinstance(c, tuple) and c in percent_cols)
-            ]
+            percent_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in percent_cols) or (not isinstance(c, tuple) and c in percent_cols)]
         for c in [c for c in percent_cols if c in data.columns]:
-            conditional_column = get_column_letter(
-                start_col + data.columns.get_loc(c) + data.index.nlevels
-                if kwargs.get("index", False)
-                else start_col + data.columns.get_loc(c)
-            )
-            writer.set_number_format(
-                worksheet, f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", "0.00%"
-            )
+            conditional_column = get_column_letter(start_col + data.columns.get_loc(c) + data.index.nlevels if kwargs.get("index", False) else start_col + data.columns.get_loc(c))
+            writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", "0.00%")
 
     # 设置自定义格式列
     if custom_cols and len(data) > 0:
         if not isinstance(custom_cols[0], (tuple, list)):
-            custom_cols = [
-                c
-                for c in data.columns
-                if (isinstance(c, tuple) and c[-1] in custom_cols) or (not isinstance(c, tuple) and c in custom_cols)
-            ]
+            custom_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in custom_cols) or (not isinstance(c, tuple) and c in custom_cols)]
         for c in [c for c in custom_cols if c in data.columns]:
-            conditional_column = get_column_letter(
-                start_col + data.columns.get_loc(c) + data.index.nlevels
-                if kwargs.get("index", False)
-                else start_col + data.columns.get_loc(c)
-            )
-            writer.set_number_format(
-                worksheet, f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", custom_format
-            )
+            conditional_column = get_column_letter(start_col + data.columns.get_loc(c) + data.index.nlevels if kwargs.get("index", False) else start_col + data.columns.get_loc(c))
+            writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", custom_format)
 
     # 设置条件格式列
     if condition_cols and len(data) > 0:
         if not isinstance(condition_cols[0], (tuple, list)):
-            condition_cols = [
-                c
-                for c in data.columns
-                if (isinstance(c, tuple) and c[-1] in condition_cols)
-                or (not isinstance(c, tuple) and c in condition_cols)
-            ]
+            condition_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in condition_cols) or (not isinstance(c, tuple) and c in condition_cols)]
         for c in [c for c in condition_cols if c in data.columns]:
-            conditional_column = get_column_letter(
-                start_col + data.columns.get_loc(c) + data.index.nlevels
-                if kwargs.get("index", False)
-                else start_col + data.columns.get_loc(c)
-            )
+            conditional_column = get_column_letter(start_col + data.columns.get_loc(c) + data.index.nlevels if kwargs.get("index", False) else start_col + data.columns.get_loc(c))
             writer.add_conditional_formatting(
                 worksheet,
                 f"{conditional_column}{end_row - len(data)}",
@@ -3845,25 +4037,15 @@ def dataframe2excel(
     # 设置颜色渐变列
     if color_cols and len(data) > 0:
         if not isinstance(color_cols[0], (tuple, list)):
-            color_cols = [
-                c
-                for c in data.columns
-                if (isinstance(c, tuple) and c[-1] in color_cols) or (not isinstance(c, tuple) and c in color_cols)
-            ]
+            color_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in color_cols) or (not isinstance(c, tuple) and c in color_cols)]
         for c in [c for c in color_cols if c in data.columns]:
             try:
                 rule = _build_color_scale_rule(
                     data[c],
                     _resolve_condition_value(condition_color, c, default_condition_color),
                 )
-                conditional_column = get_column_letter(
-                    start_col + data.columns.get_loc(c) + data.index.nlevels
-                    if kwargs.get("index", False)
-                    else start_col + data.columns.get_loc(c)
-                )
-                worksheet.conditional_formatting.add(
-                    f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", rule
-                )
+                conditional_column = get_column_letter(start_col + data.columns.get_loc(c) + data.index.nlevels if kwargs.get("index", False) else start_col + data.columns.get_loc(c))
+                worksheet.conditional_formatting.add(f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", rule)
             except Exception:
                 import traceback
 
@@ -3872,20 +4054,10 @@ def dataframe2excel(
     # 设置百分比格式行
     if percent_rows:
         if not isinstance(percent_rows[0], (tuple, list)):
-            percent_rows = [
-                c
-                for c in data.index
-                if (isinstance(c, tuple) and c[-1] in percent_rows) or (not isinstance(c, tuple) and c in percent_rows)
-            ]
+            percent_rows = [c for c in data.index if (isinstance(c, tuple) and c[-1] in percent_rows) or (not isinstance(c, tuple) and c in percent_rows)]
         for c in [c for c in percent_rows if c in data.index]:
-            insert_row = (
-                data.index.get_loc(c).start
-                if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float))
-                else data.index.get_loc(c)
-            )
-            index_row = (
-                start_row + insert_row + data.columns.nlevels if kwargs.get("header", True) else start_row + insert_row
-            )
+            insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
+            index_row = start_row + insert_row + data.columns.nlevels if header else start_row + insert_row
             index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
             writer.set_number_format(
                 worksheet,
@@ -3896,20 +4068,10 @@ def dataframe2excel(
     # 设置自定义格式行
     if custom_rows:
         if not isinstance(custom_rows[0], (tuple, list)):
-            custom_rows = [
-                c
-                for c in data.index
-                if (isinstance(c, tuple) and c[-1] in custom_rows) or (not isinstance(c, tuple) and c in custom_rows)
-            ]
+            custom_rows = [c for c in data.index if (isinstance(c, tuple) and c[-1] in custom_rows) or (not isinstance(c, tuple) and c in custom_rows)]
         for c in [c for c in custom_rows if c in data.index]:
-            insert_row = (
-                data.index.get_loc(c).start
-                if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float))
-                else data.index.get_loc(c)
-            )
-            index_row = (
-                start_row + insert_row + data.columns.nlevels if kwargs.get("header", True) else start_row + insert_row
-            )
+            insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
+            index_row = start_row + insert_row + data.columns.nlevels if header else start_row + insert_row
             index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
             writer.set_number_format(
                 worksheet,
@@ -3920,21 +4082,10 @@ def dataframe2excel(
     # 设置条件格式行
     if condition_rows:
         if not isinstance(condition_rows[0], (tuple, list)):
-            condition_rows = [
-                c
-                for c in data.index
-                if (isinstance(c, tuple) and c[-1] in condition_rows)
-                or (not isinstance(c, tuple) and c in condition_rows)
-            ]
+            condition_rows = [c for c in data.index if (isinstance(c, tuple) and c[-1] in condition_rows) or (not isinstance(c, tuple) and c in condition_rows)]
         for c in [c for c in condition_rows if c in data.index]:
-            insert_row = (
-                data.index.get_loc(c).start
-                if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float))
-                else data.index.get_loc(c)
-            )
-            index_row = (
-                start_row + insert_row + data.columns.nlevels if kwargs.get("header", True) else start_row + insert_row
-            )
+            insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
+            index_row = start_row + insert_row + data.columns.nlevels if header else start_row + insert_row
             index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
             writer.add_conditional_formatting(
                 worksheet,
@@ -3946,27 +4097,15 @@ def dataframe2excel(
     # 设置颜色渐变行
     if color_rows:
         if not isinstance(color_rows[0], (tuple, list)):
-            color_rows = [
-                c
-                for c in data.index
-                if (isinstance(c, tuple) and c[-1] in color_rows) or (not isinstance(c, tuple) and c in color_rows)
-            ]
+            color_rows = [c for c in data.index if (isinstance(c, tuple) and c[-1] in color_rows) or (not isinstance(c, tuple) and c in color_rows)]
         for c in [c for c in color_rows if c in data.index]:
             try:
-                insert_row = (
-                    data.index.get_loc(c).start
-                    if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float))
-                    else data.index.get_loc(c)
-                )
+                insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
                 rule = _build_color_scale_rule(
                     data.loc[c],
                     _resolve_condition_value(condition_color, c, default_condition_color),
                 )
-                index_row = (
-                    start_row + insert_row + data.columns.nlevels
-                    if kwargs.get("header", True)
-                    else start_row + insert_row
-                )
+                index_row = start_row + insert_row + data.columns.nlevels if header else start_row + insert_row
                 index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
                 worksheet.conditional_formatting.add(
                     f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns) - 1)}{index_row}",
@@ -3979,8 +4118,6 @@ def dataframe2excel(
 
     # 应用自定义列对齐（仅数据行，非表头）
     if left_cols or right_cols:
-        from openpyxl.styles import Alignment
-
         # 计算表头行数（1行或 MultiIndex 层数）
         n_header_rows = data.columns.nlevels if header else 0
         data_start_row = start_row + n_header_rows
@@ -4011,24 +4148,26 @@ def dataframe2excel(
 
         left_idx_set = _resolve_col_items(left_cols, data.columns)
         right_idx_set = _resolve_col_items(right_cols, data.columns)
-        alignments = {
-            "left": Alignment(horizontal="left", vertical="center"),
-            "right": Alignment(horizontal="right", vertical="center"),
-        }
-
         for col_idx in left_idx_set | right_idx_set:
             horiz = "left" if col_idx in left_idx_set else "right"
             excel_col = start_col + col_idx + idx_levels
             for row in range(data_start_row, data_end_row + 1):
-                worksheet.cell(row=row, column=excel_col).alignment = alignments[horiz]
+                cell = worksheet.cell(row=row, column=excel_col)
+                alignment = copy.copy(cell.alignment)
+                alignment.horizontal = horiz
+                cell.alignment = alignment
 
     # 添加自动筛选（必须在保存之前，否则保存并关闭 workbook 后筛选不会写入文件）
     if auto_filter:
         last_data_row = end_row - 1
         last_data_col = end_col - 1
-        writer.add_auto_filter(
-            worksheet, f"{get_column_letter(start_col)}{start_row}:{get_column_letter(last_data_col)}{last_data_row}"
-        )
+        writer.add_auto_filter(worksheet, f"{get_column_letter(start_col)}{start_row}:{get_column_letter(last_data_col)}{last_data_row}")
+
+    # 最终显示格式和合并范围已确定；普通/快速模式均只在这里批量调整一次。
+    if auto_width and end_col > start_col:
+        writer.adjust_columns_width(worksheet, start_col=start_col, end_col=end_col - 1)
+    if auto_height and end_row > content_start_row:
+        writer.adjust_rows_height(worksheet, start_row=content_start_row, end_row=end_row - 1)
 
     # 保存文件（如果不是传入的ExcelWriter对象）
     if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet_name, Worksheet):

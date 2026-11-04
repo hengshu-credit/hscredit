@@ -121,9 +121,7 @@ def test_constructor_features_selects_only_requested_fields(feature_data, factor
         pytest.param(["debt", "score"], ["debt", "score"], id="list"),
     ],
 )
-def test_fit_feature_names_accepts_str_and_overrides_constructor(
-    feature_data, factory, state_attribute, feature_names, expected
-):
+def test_fit_feature_names_accepts_str_and_overrides_constructor(feature_data, factory, state_attribute, feature_names, expected):
     """fit 的 feature_names 若未覆盖构造配置，最终仍会使用构造器中的 score 字段。"""
     miner = factory(features=["score"]).fit(feature_data, features=feature_names)
 
@@ -167,9 +165,7 @@ def test_single_feature_report_includes_feature_meaning(feature_data):
     report = miner.get_top_rules(top_n=3, min_lift=0.0, min_samples=1)
 
     assert not report.empty
-    assert report[["入参字段", "字段含义"]].drop_duplicates().to_dict("records") == [
-        {"入参字段": "score", "字段含义": "信用评分"}
-    ]
+    assert report[["入参字段", "字段含义"]].drop_duplicates().to_dict("records") == [{"入参字段": "score", "字段含义": "信用评分"}]
 
 
 def test_single_feature_summary_includes_input_field_and_meaning(feature_data):
@@ -191,9 +187,7 @@ def test_multi_feature_report_includes_each_feature_meaning(feature_data):
     report = miner.get_cross_rules("score", "debt", top_n=3, min_lift=0.0, min_samples=1)
 
     assert not report.empty
-    assert report[["入参字段", "字段含义"]].drop_duplicates().to_dict("records") == [
-        {"入参字段": "score × debt", "字段含义": "信用评分 × 负债水平"}
-    ]
+    assert report[["入参字段", "字段含义"]].drop_duplicates().to_dict("records") == [{"入参字段": "score × debt", "字段含义": "信用评分 × 负债水平"}]
 
 
 def test_tree_rule_dataframe_includes_used_feature_meanings(feature_data):

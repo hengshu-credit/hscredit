@@ -371,9 +371,7 @@ class Metric:
             if unwrapped is TuningObjective.lift_head_monotonic:
                 accepted = False
         if not accepted:
-            raise ValueError(
-                f"指标 {self.name} 暂不支持评估权重；请移除 evaluation_weight 或使用支持 sample_weight 的指标"
-            )
+            raise ValueError(f"指标 {self.name} 暂不支持评估权重；请移除 evaluation_weight 或使用支持 sample_weight 的指标")
 
     @property
     def uses_label_predictions(self):

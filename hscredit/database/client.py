@@ -69,9 +69,7 @@ class Database:
                 adapter_options=self.adapter_options,
             )
         except Exception as exc:
-            raise DatabaseConnectionError(
-                f"初始化 {self.database_type} 数据库适配器失败，请检查连接参数和可选依赖"
-            ) from exc
+            raise DatabaseConnectionError(f"初始化 {self.database_type} 数据库适配器失败，请检查连接参数和可选依赖") from exc
 
     @property
     def closed(self) -> bool:
@@ -886,9 +884,7 @@ class Database:
         """
         self._ensure_open()
         capabilities = getattr(self.adapter, "capabilities", None)
-        if getattr(self.adapter, "database_type", None) != "mysql" or not getattr(
-            capabilities, "atomic_replace", False
-        ):
+        if getattr(self.adapter, "database_type", None) != "mysql" or not getattr(capabilities, "atomic_replace", False):
             raise DatabaseCapabilityError("当前后端不支持经验证的暂存表原子替换；不会退回清空或删除重建")
         if not isinstance(keep_backup, bool):
             raise ValidationError("keep_backup 必须为布尔值")
@@ -956,18 +952,14 @@ class Database:
                 result.phase = "published_cleanup_warning"
                 result.consistency = "目标已发布，但资源或备份清理未全部完成；不要重放数据"
             else:
-                result.consistency = "全部数据确认写入暂存后，通过一次多表RENAME发布；旧表备份" + (
-                    "保留" if keep_backup else "已清理"
-                )
+                result.consistency = "全部数据确认写入暂存后，通过一次多表RENAME发布；旧表备份" + ("保留" if keep_backup else "已清理")
             return result
         except BaseException as exc:
             update_receipt()
             result.failed_batch = 0 if result.phase == "preparing" else result.batches_staged + 1
             result.completed = False
             cleanup_error = session.cleanup_errors[0] if session is not None and session.cleanup_errors else None
-            if isinstance(
-                exc, (KeyboardInterrupt, SystemExit, DatabaseCapabilityError, ValidationError, InputValidationError)
-            ):
+            if isinstance(exc, (KeyboardInterrupt, SystemExit, DatabaseCapabilityError, ValidationError, InputValidationError)):
                 exc.result = result
                 if cleanup_error is not None:
                     exc.cleanup_errors = tuple(session.cleanup_errors)

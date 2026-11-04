@@ -112,9 +112,7 @@ class AmountWeightedLoss(BaseLoss):
         if w.ndim != 1 or not np.all(np.isfinite(w)) or np.any(w < 0):
             raise ValueError("金额必须是一维非负有限数组。")
         if len(w) != n_samples:
-            raise ValueError(
-                f"金额数组长度 ({len(w)}) 与样本数 ({n_samples}) 不一致，" f"请通过 set_sample_params() 更新金额数组。"
-            )
+            raise ValueError(f"金额数组长度 ({len(w)}) 与样本数 ({n_samples}) 不一致，" f"请通过 set_sample_params() 更新金额数组。")
 
         # 下限截断
         w = np.maximum(w, 0)

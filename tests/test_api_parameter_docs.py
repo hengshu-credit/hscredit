@@ -17,15 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def rendered_api(tmp_path_factory):
     source = tmp_path_factory.mktemp("api-docs")
     (source / "conf.py").write_text(
-        "import runpy, sys\n"
-        f"sys.path.insert(0, {str(ROOT)!r})\n"
-        f"config = runpy.run_path({str(ROOT / 'docs/conf.py')!r})\n"
-        "extensions = ['sphinx.ext.autodoc', 'sphinx.ext.napoleon']\n"
-        "autodoc_typehints = 'description'\n"
-        "language = 'zh_CN'\n"
-        "def setup(app):\n"
-        "    app.connect('object-description-transform', config['merge_api_field_lists'], priority=600)\n"
-        "    app.connect('autodoc-process-docstring', config['_process_docstring'])\n",
+        "import runpy, sys\n" f"sys.path.insert(0, {str(ROOT)!r})\n" f"config = runpy.run_path({str(ROOT / 'docs/conf.py')!r})\n" "extensions = ['sphinx.ext.autodoc', 'sphinx.ext.napoleon']\n" "autodoc_typehints = 'description'\n" "language = 'zh_CN'\n" "def setup(app):\n" "    app.connect('object-description-transform', config['merge_api_field_lists'], priority=600)\n" "    app.connect('autodoc-process-docstring', config['_process_docstring'])\n",
         encoding="utf-8",
     )
     (source / "index.rst").write_text(
@@ -34,14 +26,7 @@ def rendered_api(tmp_path_factory):
     )
     (source / "api").mkdir()
     (source / "api/report.rst").write_text(
-        "报告\n====\n\n"
-        ".. autoclass:: hscredit.report.ReportResult\n   :members:\n\n"
-        ".. autoclass:: hscredit.report.ReportSectionResult\n\n"
-        ".. autoclass:: hscredit.report.ReportGenerationError\n\n"
-        ".. autoclass:: hscredit.report.ModelReport\n   :class-doc-from: both\n\n"
-        ".. autoclass:: hscredit.core.selectors.IVSelector\n\n"
-        ".. autofunction:: hscredit.report.feature_bin_stats\n\n"
-        ".. autofunction:: hscredit.report.feature_bin_stats_2d\n",
+        "报告\n====\n\n" ".. autoclass:: hscredit.report.ReportResult\n   :members:\n\n" ".. autoclass:: hscredit.report.ReportSectionResult\n\n" ".. autoclass:: hscredit.report.ReportGenerationError\n\n" ".. autoclass:: hscredit.report.ModelReport\n   :class-doc-from: both\n\n" ".. autoclass:: hscredit.core.selectors.IVSelector\n\n" ".. autofunction:: hscredit.report.feature_bin_stats\n\n" ".. autofunction:: hscredit.report.feature_bin_stats_2d\n",
         encoding="utf-8",
     )
     warnings = io.StringIO()
@@ -84,11 +69,7 @@ def test_validator_rejects_empty_and_duplicate_parameters(tmp_path):
     api = tmp_path / "api"
     api.mkdir()
     (api / "sample.html").write_text(
-        '<dl class="py function"><dt id="hscredit.example">函数</dt><dd>'
-        '<dl class="field-list"><dt>参数:</dt><dd><ul>'
-        "<li><p><strong>x</strong> (<em>str</em>)</p></li>"
-        "<li><p><strong>x</strong> -- 字段名</p></li>"
-        "</ul></dd></dl></dd></dl>",
+        '<dl class="py function"><dt id="hscredit.example">函数</dt><dd>' '<dl class="field-list"><dt>参数:</dt><dd><ul>' "<li><p><strong>x</strong> (<em>str</em>)</p></li>" "<li><p><strong>x</strong> -- 字段名</p></li>" "</ul></dd></dl></dd></dl>",
         encoding="utf-8",
     )
     errors = collect_parameter_doc_errors(tmp_path)
@@ -99,12 +80,7 @@ def test_validator_rejects_empty_and_duplicate_parameters(tmp_path):
 
 @pytest.mark.parametrize("separator", [" -- ", " – ", " — ", "&nbsp;&ndash;&nbsp;"])
 def test_parameter_descriptions_support_sphinx_smart_punctuation(separator):
-    html = (
-        '<dl class="py function"><dt id="hscredit.example">函数</dt><dd>'
-        '<dl class="field-list"><dt>参数:</dt><dd><p><strong>x</strong> (<em>str</em>)'
-        + separator
-        + "<code>auto</code> 表示自动选择。</p></dd></dl></dd></dl>"
-    )
+    html = '<dl class="py function"><dt id="hscredit.example">函数</dt><dd>' '<dl class="field-list"><dt>参数:</dt><dd><p><strong>x</strong> (<em>str</em>)' + separator + "<code>auto</code> 表示自动选择。</p></dd></dl></dd></dl>"
     assert parameter_docs(html)["hscredit.example"] == [("x", "auto 表示自动选择。")]
 
 
@@ -112,9 +88,7 @@ def test_type_annotation_separator_does_not_count_as_a_description(tmp_path):
     api = tmp_path / "api"
     api.mkdir()
     (api / "example.html").write_text(
-        '<dl class="py function"><dt id="hscredit.example">函数</dt><dd>'
-        '<dl class="field-list"><dt>参数:</dt><dd><p><strong>x</strong>'
-        " (<em>Literal[' -- ']</em>)</p></dd></dl></dd></dl>",
+        '<dl class="py function"><dt id="hscredit.example">函数</dt><dd>' '<dl class="field-list"><dt>参数:</dt><dd><p><strong>x</strong>' " (<em>Literal[' -- ']</em>)</p></dd></dl></dd></dl>",
         encoding="utf-8",
     )
     assert collect_parameter_doc_errors(tmp_path) == ["hscredit.example.x: 缺少参数说明"]

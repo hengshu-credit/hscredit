@@ -37,9 +37,7 @@ class BaseNetModel(BaseRiskModel):
                 updates.setdefault(name, {})[child] = params.pop(key)
         for name, update in updates.items():
             params[name] = {**(params.get(name, getattr(self, name)) or {}), **update}
-        extensible = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in inspect.signature(self.__init__).parameters.values()
-        )
+        extensible = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in inspect.signature(self.__init__).parameters.values())
         if not extensible:
             unknown = {key.split("__", 1)[0] for key in params} - set(self.get_params(deep=False))
             if unknown:
@@ -167,9 +165,7 @@ class BaseNetModel(BaseRiskModel):
         y = self._validate_y(y)
         weights = validate_sample_weight(sample_weight, len(y))
         prediction = self.predict(X)
-        requested = (
-            ["rmse", "mae", "r2"] if metrics is None else [metrics] if isinstance(metrics, str) else list(metrics)
-        )
+        requested = ["rmse", "mae", "r2"] if metrics is None else [metrics] if isinstance(metrics, str) else list(metrics)
         result = {}
         for metric in requested:
             if metric == "mse":
@@ -201,11 +197,7 @@ class BaseNetModel(BaseRiskModel):
         self._require_representation_fitted()
         return {
             "模型类型": type(self).__name__,
-            "任务类型": (
-                "特征重建预训练"
-                if getattr(self, "_pretrain_only_", False)
-                else "二分类" if self.objective_ == "binary" else "回归"
-            ),
+            "任务类型": ("特征重建预训练" if getattr(self, "_pretrain_only_", False) else "二分类" if self.objective_ == "binary" else "回归"),
             "特征数量": self.n_features_in_,
             "嵌入维度": getattr(self, "embedding_dim_", None),
             "最佳迭代": self.best_iteration_,

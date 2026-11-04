@@ -296,9 +296,7 @@ def safe_divide(
     :return: 除法结果
     """
     if isinstance(denominator, (np.ndarray, pd.Series)):
-        result = np.divide(
-            numerator, denominator, out=np.full_like(denominator, default, dtype=float), where=denominator != 0
-        )
+        result = np.divide(numerator, denominator, out=np.full_like(denominator, default, dtype=float), where=denominator != 0)
         return result
     else:
         return numerator / denominator if denominator != 0 else default

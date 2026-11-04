@@ -57,11 +57,7 @@ def _minimum_gap_pixels(fig):
 def _metric_summary_artists(fig):
     summaries = []
     for axis in fig.axes:
-        summaries.extend(
-            artist
-            for artist in [*axis.texts, *axis.artists]
-            if artist.get_visible() and artist.get_gid() == "bin-metric-summary"
-        )
+        summaries.extend(artist for artist in [*axis.texts, *axis.artists] if artist.get_visible() and artist.get_gid() == "bin-metric-summary")
     return summaries
 
 

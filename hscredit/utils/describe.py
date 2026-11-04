@@ -98,9 +98,7 @@ def feature_describe(
         describe.update(quantile.to_dict())
 
         # 按固定顺序排列
-        order = (
-            ["样本数", "非空数", "查得率", "最小值", "平均值"] + [f"{int(i * 100)}%" for i in percentiles] + ["最大值"]
-        )
+        order = ["样本数", "非空数", "查得率", "最小值", "平均值"] + [f"{int(i * 100)}%" for i in percentiles] + ["最大值"]
         return pd.Series(describe, name=feature).reindex(order)
 
 

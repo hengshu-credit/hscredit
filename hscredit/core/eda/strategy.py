@@ -441,11 +441,7 @@ def roll_rate_matrix(
     if labels is None:
         default_labels = ["D0", "D1-7", "D8-15", "D16-30", "D31-60", "D61-90", "D91-120", "D120+"]
         n_intervals = len(bins) - 1
-        labels = (
-            default_labels[:n_intervals]
-            if n_intervals <= len(default_labels)
-            else [f"D_bin{i}" for i in range(n_intervals)]
-        )
+        labels = default_labels[:n_intervals] if n_intervals <= len(default_labels) else [f"D_bin{i}" for i in range(n_intervals)]
 
     df = df.copy()
     df[dpd_t0] = pd.to_numeric(df[dpd_t0], errors="coerce")
@@ -490,10 +486,7 @@ def roll_rate_matrix(
     order_prop_data = []
     for state in labels:
         i = labels.index(state)
-        row_vals = [
-            round(float(prop_cnt.loc[state, col]), 6) if state in prop_cnt.index and col in prop_cnt.columns else 0.0
-            for col in labels
-        ]
+        row_vals = [round(float(prop_cnt.loc[state, col]), 6) if state in prop_cnt.index and col in prop_cnt.columns else 0.0 for col in labels]
         back = round(sum(row_vals[:i]), 6)
         keep = round(row_vals[i], 6)
         fwd = round(sum(row_vals[i + 1 :]), 6)
@@ -552,14 +545,7 @@ def roll_rate_matrix(
         amt_prop_data = []
         for state in labels:
             i = labels.index(state)
-            row_vals = [
-                (
-                    round(float(prop_amt.loc[state, col]), 6)
-                    if state in prop_amt.index and col in prop_amt.columns
-                    else 0.0
-                )
-                for col in labels
-            ]
+            row_vals = [(round(float(prop_amt.loc[state, col]), 6) if state in prop_amt.index and col in prop_amt.columns else 0.0) for col in labels]
             back = round(sum(row_vals[:i]), 6)
             keep = round(row_vals[i], 6)
             fwd = round(sum(row_vals[i + 1 :]), 6)
@@ -597,11 +583,7 @@ def roll_rate_matrix(
 
     result["元信息"] = pd.DataFrame(meta_rows).reset_index(drop=True)
     # reorder so 元信息 is first
-    result = {
-        k: result[k]
-        for k in ["元信息", "计数矩阵", "订单比例矩阵"]
-        + [k for k in result if k not in ("元信息", "计数矩阵", "订单比例矩阵")]
-    }
+    result = {k: result[k] for k in ["元信息", "计数矩阵", "订单比例矩阵"] + [k for k in result if k not in ("元信息", "计数矩阵", "订单比例矩阵")]}
 
     return result
 

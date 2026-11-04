@@ -35,9 +35,7 @@ def _data_xy(context, parameters: Mapping[str, Any]):
     y = _input(context, "y", required=False)
     if y is None:
         if target not in frame.columns:
-            raise SkillExecutionError(
-                code="COLUMN_MISSING", message=f"数据缺少目标字段“{target}”", field="parameters.target"
-            )
+            raise SkillExecutionError(code="COLUMN_MISSING", message=f"数据缺少目标字段“{target}”", field="parameters.target")
         y = frame[target]
         X = frame.drop(columns=[target])
     else:
@@ -70,9 +68,7 @@ def _write_tables(context, tables: Mapping[str, pd.DataFrame]) -> None:
 def _artifact(context, value: Any, name: str, artifact_type: str = "hscredit-artifact") -> None:
     staged = context.artifacts.stage_path(name)
     if not hasattr(value, "save_artifact"):
-        raise SkillExecutionError(
-            code="ARTIFACT_WRITE_FAILED", message=f"对象不支持 hscredit 制品保存：{type(value).__name__}"
-        )
+        raise SkillExecutionError(code="ARTIFACT_WRITE_FAILED", message=f"对象不支持 hscredit 制品保存：{type(value).__name__}")
     value.save_artifact(staged)
     context.artifacts.publish(staged, name, artifact_type=artifact_type)
 
@@ -144,9 +140,7 @@ def _model_calibrate(context) -> dict:
     X, y = _data_xy(context, params)
     from hscredit.core.models import calibrate_model
 
-    calibrated = calibrate_model(
-        model, X, y, method=params.get("method", "platt"), target=params.get("target", "target")
-    )
+    calibrated = calibrate_model(model, X, y, method=params.get("method", "platt"), target=params.get("target", "target"))
     _artifact(context, calibrated, f"{context.request.output.name}.joblib")
     return {"summary": {"method": params.get("method", "platt"), "rows": len(X)}}
 
@@ -171,9 +165,7 @@ def _loss_info(context) -> dict:
     import hscredit.core.models as models
 
     if not hasattr(models, name) or not name.endswith(("Loss", "Metric")):
-        raise SkillExecutionError(
-            code="SCHEMA_INVALID", message=f"不允许的损失或指标名称“{name}”", field="parameters.loss"
-        )
+        raise SkillExecutionError(code="SCHEMA_INVALID", message=f"不允许的损失或指标名称“{name}”", field="parameters.loss")
     cls = getattr(models, name)
     obj = cls(**context.request.parameters.get("params", {}))
     return {"summary": {"name": name, "class": f"{cls.__module__}.{cls.__name__}", "repr": repr(obj)}}
@@ -197,9 +189,7 @@ def _rule_objects(value):
         return [Rule(value)]
     if isinstance(value, list):
         return [item if isinstance(item, Rule) else Rule(item) for item in value]
-    raise SkillExecutionError(
-        code="SCHEMA_INVALID", message="rules 必须是表达式字符串或字符串列表", field="parameters.rules"
-    )
+    raise SkillExecutionError(code="SCHEMA_INVALID", message="rules 必须是表达式字符串或字符串列表", field="parameters.rules")
 
 
 def _rule_report(context) -> dict:
@@ -301,9 +291,7 @@ def _selector_fit(context) -> dict:
     params = dict(context.request.parameters)
     name = params.pop("selector", "IVSelector")
     if name not in _SELECTOR_NAMES:
-        raise SkillExecutionError(
-            code="SCHEMA_INVALID", message=f"不允许的筛选器名称“{name}”", field="parameters.selector"
-        )
+        raise SkillExecutionError(code="SCHEMA_INVALID", message=f"不允许的筛选器名称“{name}”", field="parameters.selector")
     import hscredit.core.selectors as selectors
 
     selector_params = params.pop("selector_params", {})
@@ -383,9 +371,7 @@ def _viz_plot(context) -> dict:
     params = dict(context.request.parameters)
     plot_name = params.pop("plot")
     if plot_name not in _VIZ_NAMES:
-        raise SkillExecutionError(
-            code="SCHEMA_INVALID", message=f"不允许的可视化名称“{plot_name}”", field="parameters.plot"
-        )
+        raise SkillExecutionError(code="SCHEMA_INVALID", message=f"不允许的可视化名称“{plot_name}”", field="parameters.plot")
     import hscredit.core.viz as viz
 
     function = getattr(viz, plot_name)
@@ -463,9 +449,7 @@ def _excel_workbook(context) -> dict:
     for name, spec in context.request.inputs.items():
         value = context.resolver.resolve(spec)
         if not isinstance(value, pd.DataFrame):
-            raise SkillExecutionError(
-                code="SCHEMA_INVALID", message=f"inputs.{name} 必须是 DataFrame", field=f"inputs.{name}"
-            )
+            raise SkillExecutionError(code="SCHEMA_INVALID", message=f"inputs.{name} 必须是 DataFrame", field=f"inputs.{name}")
         tables[name] = value
     params = resolve(context, dict(context.request.parameters))
     writer_params = params.pop("writer_params", {})

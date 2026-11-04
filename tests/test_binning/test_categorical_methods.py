@@ -113,11 +113,7 @@ def _make_binner(binner_cls, category_order=None):
 def _groups_from_numeric_transform(binner, ordered_categories):
     codes = pd.DataFrame({"category": np.arange(len(ordered_categories), dtype=float)})
     indices = binner.transform(codes, metric="indices")["category"].to_numpy(dtype=int)
-    return [
-        [category for category, bin_index in zip(ordered_categories, indices) if bin_index == expected_index]
-        for expected_index in sorted(set(indices.tolist()))
-        if expected_index >= 0
-    ]
+    return [[category for category, bin_index in zip(ordered_categories, indices) if bin_index == expected_index] for expected_index in sorted(set(indices.tolist())) if expected_index >= 0]
 
 
 def _make_optimal_binner(method, order):

@@ -35,12 +35,7 @@ class _ProbabilityScoreCardMixin:
         if invalid:
             raise ValueError(f"不支持的评分卡参数: {invalid}")
         prior = supplied.get("base_bad_rate")
-        if prior is not None and (
-            isinstance(prior, (bool, np.bool_))
-            or not isinstance(prior, (int, float, np.integer, np.floating))
-            or not np.isfinite(prior)
-            or not 0 < prior < 1
-        ):
+        if prior is not None and (isinstance(prior, (bool, np.bool_)) or not isinstance(prior, (int, float, np.integer, np.floating)) or not np.isfinite(prior) or not 0 < prior < 1):
             raise ValueError("base_bad_rate 必须为 (0, 1) 内的有限业务先验坏率")
 
         self.scorecard_params = scorecard_params

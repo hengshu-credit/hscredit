@@ -176,9 +176,7 @@ class CountEncoder(BaseEncoder):
         :param y: 目标变量（可选），计数编码器不需要
         """
         total_count = len(X)
-        self._fit_columns(
-            X, y, state_attrs=("mapping_", "infrequent_categories_"), shared_state={"total_count_": total_count}
-        )
+        self._fit_columns(X, y, state_attrs=("mapping_", "infrequent_categories_"), shared_state={"total_count_": total_count})
         self.total_count_ = total_count
 
     def _fit_column(self, column, values, y=None):

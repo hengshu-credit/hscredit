@@ -167,9 +167,7 @@ def test_probability_calibration_algorithms_use_same_metric(name, loan_data):
     calibrator = getattr(hc, name)().fit(y_prob=model.predict_proba(X)[:, 1], y_true=y)
     p = model.predict_proba(VX)[:, 1]
     metric = hc.get_metric("classification_cost", fn_cost=7)
-    assert calibrator.evaluate(p, vy, metrics=metric, sample_weight=weights)[metric.name] == pytest.approx(
-        metric(vy, calibrator.calibrate(p), sample_weight=weights)
-    )
+    assert calibrator.evaluate(p, vy, metrics=metric, sample_weight=weights)[metric.name] == pytest.approx(metric(vy, calibrator.calibrate(p), sample_weight=weights))
     assert calibrator.get_training_history().iloc[-1]["状态"] == "完成"
 
 
@@ -196,9 +194,7 @@ def test_calibrated_model_reports_actual_calibrated_probability(loan_data):
     model = hc.CalibratedModel(base, calibrator)
     metric = hc.get_metric("classification_cost", fn_cost=7)
     report = model.model_report(datasets={"验证": (VX, vy)}, metrics=metric, verbose=False)
-    assert report.get_metrics().set_index("统计项").loc[metric.name, "验证"] == pytest.approx(
-        model.evaluate(VX, vy, metrics=metric)[metric.name]
-    )
+    assert report.get_metrics().set_index("统计项").loc[metric.name, "验证"] == pytest.approx(model.evaluate(VX, vy, metrics=metric)[metric.name])
     assert "底层模型训练记录" in report.get_training_process()
 
 

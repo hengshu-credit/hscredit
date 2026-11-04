@@ -12,9 +12,7 @@ def test_unit_amounts_preserve_all_binary_statistics(round_digits):
     bins = np.repeat([0, 1, 2, -1, -2], 4)
     y = np.array([0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1])
     count = compute_bin_stats(bins, y, round_digits=round_digits)
-    weighted = compute_bin_stats(
-        bins, y, target_type="amount_weighted", amount=np.ones(len(y)), round_digits=round_digits
-    )
+    weighted = compute_bin_stats(bins, y, target_type="amount_weighted", amount=np.ones(len(y)), round_digits=round_digits)
     pd.testing.assert_frame_equal(count, weighted, check_dtype=False, atol=1e-12, rtol=1e-12)
 
 
@@ -44,9 +42,7 @@ def test_no_effective_good_or_bad_amount_has_no_woe_or_iv(y, amount):
 
 def test_amount_raw_precision_is_retained_until_formatting():
     amounts = np.array([1.123456, 2.234567, 3.345678, 4.456789])
-    raw = compute_bin_stats(
-        [0, 0, 1, 1], [0, 1, 0, 1], target_type="amount_weighted", amount=amounts, round_digits=False
-    )
+    raw = compute_bin_stats([0, 0, 1, 1], [0, 1, 0, 1], target_type="amount_weighted", amount=amounts, round_digits=False)
     shown = compute_bin_stats([0, 0, 1, 1], [0, 1, 0, 1], target_type="amount_weighted", amount=amounts)
     np.testing.assert_allclose(raw["样本总数"], [amounts[:2].sum(), amounts[2:].sum()], atol=1e-14, rtol=0)
     np.testing.assert_allclose(raw["坏样本率"], [amounts[1] / amounts[:2].sum(), amounts[3] / amounts[2:].sum()])
@@ -75,9 +71,7 @@ def test_ks_bucket_cumulative_rates_are_class_distributions(reverse):
 @pytest.mark.parametrize("offset", [0, 1e12])
 def test_continuous_margins_reconstruct_overall_moments(multi, offset):
     values = np.array([1.0, 3.0, 10.0, 14.0]) + offset
-    table = compute_bin_stats(
-        [0, 0, 1, 1], values, target_type="continuous", bin_labels=["低", "高"], round_digits=False
-    )
+    table = compute_bin_stats([0, 0, 1, 1], values, target_type="continuous", bin_labels=["低", "高"], round_digits=False)
     if multi:
         table.columns = pd.MultiIndex.from_product([["金额"], table.columns])
     original = table.copy(deep=True)

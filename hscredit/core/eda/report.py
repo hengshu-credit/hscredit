@@ -139,9 +139,7 @@ def eda_summary(
 
     :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
     """
-    result = _execute_eda_report(
-        df, target, features, date, {}, n_jobs, parallel_backend, parallel_config, mode, False, handle_missing_target
-    )
+    result = _execute_eda_report(df, target, features, date, {}, n_jobs, parallel_backend, parallel_config, mode, False, handle_missing_target)
     return result if return_result else dict(result)
 
 
@@ -292,9 +290,7 @@ def export_report_to_excel(
         writer.save(filepath)
     if structured:
         report.sheet_mapping = sheet_mapping
-        report.artifacts.append(
-            {"类型": "Excel", "路径": str(filepath), "完整": report.complete, "章节工作表": dict(sheet_mapping)}
-        )
+        report.artifacts.append({"类型": "Excel", "路径": str(filepath), "完整": report.complete, "章节工作表": dict(sheet_mapping)})
 
     logger.info("报告已导出至: %s", filepath)
 
@@ -316,8 +312,7 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
     html_parts = []
 
     # HTML头部
-    html_parts.append(
-        f"""
+    html_parts.append(f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -336,8 +331,7 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
     </head>
     <body>
         <h1>{title}</h1>
-    """
-    )
+    """)
 
     # 各章节
     for section_name, df in report.items():
@@ -348,13 +342,11 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
             html_parts.append("<p>无数据</p>")
 
     # HTML尾部
-    html_parts.append(
-        f"""
+    html_parts.append(f"""
         <p class="timestamp">生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
     </body>
     </html>
-    """
-    )
+    """)
 
     # 写入文件
     with open(filepath, "w", encoding="utf-8") as f:

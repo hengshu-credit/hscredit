@@ -71,9 +71,7 @@ def resolve_objective(
             raise ValueError(f"目标 '{objective}' 的 objective_params 无效: {exc}") from exc
         return objective, factory(**params)
     else:
-        raise ValueError(
-            f"不支持的 objective: {objective!r}；可选 {list(native_names + COMPOSITE_OBJECTIVES)} 或自定义函数"
-        )
+        raise ValueError(f"不支持的 objective: {objective!r}；可选 {list(native_names + COMPOSITE_OBJECTIVES)} 或自定义函数")
     try:
         parameters = signature(callback)
     except (TypeError, ValueError):
@@ -82,9 +80,7 @@ def resolve_objective(
         try:
             parameters.bind([], 0, 0, **params)
         except TypeError as exc:
-            raise ValueError(
-                "自定义 objective 必须接受 (bin_stats, total_good, total_bad) 及 objective_params"
-            ) from exc
+            raise ValueError("自定义 objective 必须接受 (bin_stats, total_good, total_bad) 及 objective_params") from exc
     return name, partial(callback, **params) if params else callback
 
 

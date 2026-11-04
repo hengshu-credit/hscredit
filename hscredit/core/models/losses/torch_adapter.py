@@ -42,9 +42,7 @@ class TorchLossAdapter:
         if reduction not in ("none", "mean", "sum"):
             raise ValidationError("reduction 必须为 none、mean 或 sum")
         if not self.loss.is_additive or type(self.loss).loss_values is BaseLoss.loss_values:
-            raise ValidationError(
-                "小批次网络训练只支持可逐样本分解的 BaseLoss；全量排序、动态权重或绑定样本数组的损失不适用"
-            )
+            raise ValidationError("小批次网络训练只支持可逐样本分解的 BaseLoss；全量排序、动态权重或绑定样本数组的损失不适用")
         try:
             import torch
         except ImportError as exc:

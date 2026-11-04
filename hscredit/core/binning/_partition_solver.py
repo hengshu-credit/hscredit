@@ -169,11 +169,7 @@ def solve_partition(
     if target_bad_rates is not None:
         thresholds = np.asarray(target_bad_rates, dtype=float)
         for region in range(len(thresholds) + 1):
-            members = [
-                edge
-                for key, edge in edges.items()
-                if np.searchsorted(thresholds, rates[key] / rate_scale, side="left") == region
-            ]
+            members = [edge for key, edge in edges.items() if np.searchsorted(thresholds, rates[key] / rate_scale, side="left") == region]
             if strict_target:
                 # 每个坏率档位只对应一个区间；空档是否允许由调用方明确选择。
                 model.Add(sum(members) <= 1 if merge_empty_bins else sum(members) == 1)
@@ -270,11 +266,7 @@ def solve_partition(
         raise TimeoutError("分箱求解达到 time_limit，尚未找到满足全部约束的可行解")
     if status == cp_model.FEASIBLE or use_seed:
         warnings.warn("分箱求解达到 time_limit，返回当前可行解，尚未证明最优", RuntimeWarning, stacklevel=2)
-    result = (
-        [float(candidates[j - 1]) for j in seed]
-        if use_seed
-        else [float(candidates[j - 1]) for j in active if solver.BooleanValue(active[j])]
-    )
+    result = [float(candidates[j - 1]) for j in seed] if use_seed else [float(candidates[j - 1]) for j in active if solver.BooleanValue(active[j])]
     if info is not None:
         from ._candidate_search import _score_partition
 

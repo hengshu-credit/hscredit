@@ -97,21 +97,12 @@ def test_api_layout_checks_actual_object_parentage(tmp_path, page_level):
 
     api = tmp_path / "api"
     api.mkdir()
-    body = (
-        '<dl class="py class"><dt id="hscredit.Example">类</dt><dd>'
-        '<dl class="py method"><dt id="hscredit.Example.fit">方法</dt></dl></dd></dl>'
-    )
-    nav = (
-        f'<li class="toctree-l{page_level} current"><a href="#">模块</a><ul>'
-        f'<li class="toctree-l{page_level + 1}"><a href="#hscredit.Example">类</a><ul>'
-        f'<li class="toctree-l{page_level + 2}"><a href="#hscredit.Example.fit">方法</a></li></ul></li></ul></li>'
-    )
+    body = '<dl class="py class"><dt id="hscredit.Example">类</dt><dd>' '<dl class="py method"><dt id="hscredit.Example.fit">方法</dt></dl></dd></dl>'
+    nav = f'<li class="toctree-l{page_level} current"><a href="#">模块</a><ul>' f'<li class="toctree-l{page_level + 1}"><a href="#hscredit.Example">类</a><ul>' f'<li class="toctree-l{page_level + 2}"><a href="#hscredit.Example.fit">方法</a></li></ul></li></ul></li>'
     path = api / "example.html"
     path.write_text(nav + body, encoding="utf-8")
     assert collect_api_layout_errors(tmp_path) == []
     path.write_text(nav.replace(f"toctree-l{page_level + 1}", f"toctree-l{page_level + 2}") + body, encoding="utf-8")
-    assert any(
-        f"hscredit.Example 应位于第 {page_level + 1} 层" in error for error in collect_api_layout_errors(tmp_path)
-    )
+    assert any(f"hscredit.Example 应位于第 {page_level + 1} 层" in error for error in collect_api_layout_errors(tmp_path))
     path.write_text(body, encoding="utf-8")
     assert any("API 页面目录入口" in error for error in collect_api_layout_errors(tmp_path))

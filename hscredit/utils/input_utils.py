@@ -174,9 +174,7 @@ def convert_to_dataframe(X: ArrayLike, columns: Optional[List[str]] = None) -> p
     raise InputTypeError(f"不支持的输入类型: {type(X).__name__}，" "只支持DataFrame, numpy数组, list, tuple或Series")
 
 
-def extract_target_from_df(
-    df: pd.DataFrame, target: str = "target", drop: bool = True
-) -> Tuple[pd.DataFrame, pd.Series]:
+def extract_target_from_df(df: pd.DataFrame, target: str = "target", drop: bool = True) -> Tuple[pd.DataFrame, pd.Series]:
     """从 DataFrame 中提取目标变量。
 
     :param df: 输入 ``DataFrame``

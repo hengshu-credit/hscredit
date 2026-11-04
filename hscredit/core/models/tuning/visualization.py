@@ -30,9 +30,7 @@ class _OptunaVisualization:
         try:
             function = getattr(self._module(), name)
         except AttributeError as exc:
-            raise AttributeError(
-                f"当前 Optuna 可视化模块没有 {name!r}，请用 dir(tuner.visualization) 查看可用入口"
-            ) from exc
+            raise AttributeError(f"当前 Optuna 可视化模块没有 {name!r}，请用 dir(tuner.visualization) 查看可用入口") from exc
         if not name.startswith("plot_") or not callable(function):
             return function
 

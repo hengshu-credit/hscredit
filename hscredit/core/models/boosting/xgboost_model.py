@@ -59,9 +59,7 @@ class _KSEvaluationCallback(xgb.callback.TrainingCallback if XGBOOST_AVAILABLE e
         for index, matrix in enumerate(self.matrices):
             prediction = model.predict(matrix, iteration_range=(0, epoch + 1))
             fpr, tpr, _ = roc_curve(matrix.get_label(), prediction, pos_label=1)
-            evals_log.setdefault(f"validation_{index}", {}).setdefault("ks", []).append(
-                float(np.max(np.abs(tpr - fpr)))
-            )
+            evals_log.setdefault(f"validation_{index}", {}).setdefault("ks", []).append(float(np.max(np.abs(tpr - fpr))))
         return self.early_stopping.after_iteration(model, epoch, evals_log) if self.early_stopping else False
 
     def after_training(self, model):
@@ -294,9 +292,7 @@ class XGBoost(BaseRiskModel):
             raise ImportError("XGBoost未安装，请使用 pip install xgboost 安装")
 
         # sklearn clone 必须能够原样往返构造输入，原生覆盖值只用于实际训练。
-        self._constructor_params = {
-            name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}
-        }
+        self._constructor_params = {name: value for name, value in locals().items() if name not in {"self", "kwargs", "__class__"}}
         self._constructor_kwargs = dict(kwargs)
         # 保存原生params参数
         self.params = params  # 用于sklearn get_params兼容性
@@ -408,15 +404,11 @@ class XGBoost(BaseRiskModel):
         original_objective = objective
         auto_loss_metric = eval_metric is None and isinstance(objective, BaseLoss)
         if auto_loss_metric and eval_set is not None and bound_sample_params(objective):
-            raise ValueError(
-                "绑定逐行金融参数的损失使用外部 eval_set 时，请显式提供该数据集的 eval_metric；不能复用训练金额"
-            )
+            raise ValueError("绑定逐行金融参数的损失使用外部 eval_set 时，请显式提供该数据集的 eval_metric；不能复用训练金额")
         if eval_metric is None and isinstance(objective, BaseLoss):
             eval_metric = objective.metric()
         metric_object = eval_metric if isinstance(eval_metric, BaseMetric) else None
-        early_stopping_rounds = fit_params.pop(
-            "early_stopping_rounds", self._native_params.get("early_stopping_rounds", self.early_stopping_rounds)
-        )
+        early_stopping_rounds = fit_params.pop("early_stopping_rounds", self._native_params.get("early_stopping_rounds", self.early_stopping_rounds))
         # 准备数据（支持从X中提取target）
         X, y, sample_weight = self._prepare_data(X, y, sample_weight, extract_target=True, training=True)
         scorecard_sample_weight = sample_weight
@@ -513,18 +505,11 @@ class XGBoost(BaseRiskModel):
                             metric_name=self.early_stopping_metric or metric_object.name,
                             data_name=self.early_stopping_data,
                             save_best=True,
-                            maximize=(
-                                metric_object.greater_is_better
-                                if metric_object is not None
-                                and self.early_stopping_metric in (None, metric_object.name)
-                                else (True if str(self.early_stopping_metric).lower() == "ks" else None)
-                            ),
+                            maximize=(metric_object.greater_is_better if metric_object is not None and self.early_stopping_metric in (None, metric_object.name) else (True if str(self.early_stopping_metric).lower() == "ks" else None)),
                         )
                     )
                     if self.verbose:
-                        logger.info(
-                            f"使用早停: rounds={early_stopping_rounds}, " f"metric='{self.early_stopping_metric}'"
-                        )
+                        logger.info(f"使用早停: rounds={early_stopping_rounds}, " f"metric='{self.early_stopping_metric}'")
                 except ImportError:
                     # 回退到旧方式
                     params["early_stopping_rounds"] = early_stopping_rounds
@@ -543,13 +528,7 @@ class XGBoost(BaseRiskModel):
         params.update(self.kwargs)
 
         # 最后更新原生params（优先级最高）
-        params.update(
-            {
-                key: value
-                for key, value in self._native_params.items()
-                if key not in {"eval_metric", "early_stopping_rounds", "callbacks", "scale_pos_weight"}
-            }
-        )
+        params.update({key: value for key, value in self._native_params.items() if key not in {"eval_metric", "early_stopping_rounds", "callbacks", "scale_pos_weight"}})
         user_callbacks = self._native_params.get("callbacks", self.kwargs.get("callbacks", []))
         callbacks.extend(copy.deepcopy(list(user_callbacks or [])))
         callbacks.extend(copy.deepcopy(list(fit_params.pop("callbacks", []) or [])))
@@ -569,11 +548,7 @@ class XGBoost(BaseRiskModel):
                     maximize=True,
                     save_best=True,
                 )
-                callbacks = [
-                    callback
-                    for callback in callbacks
-                    if not isinstance(callback, (_KSEvaluationCallback, xgb.callback.EarlyStopping))
-                ]
+                callbacks = [callback for callback in callbacks if not isinstance(callback, (_KSEvaluationCallback, xgb.callback.EarlyStopping))]
                 callbacks.append(_KSEvaluationCallback(eval_set, stopper))
                 params["callbacks"] = callbacks
                 params.pop("early_stopping_rounds", None)
@@ -582,9 +557,7 @@ class XGBoost(BaseRiskModel):
 
         # 解析自定义损失（BaseLoss 实例 -> sklearn 包装器可用的目标函数）
         # 旧版 sklearn 目标回调不传权重，已完成自动划分的训练权重作为兼容回退。
-        params["objective"] = resolve_custom_objective(
-            objective if objective is not original_objective else params.get("objective"), sample_weight=sample_weight
-        )
+        params["objective"] = resolve_custom_objective(objective if objective is not original_objective else params.get("objective"), sample_weight=sample_weight)
 
         # 旧版在 fit 接收早停和回调，新版在构造器接收。
         from packaging.version import Version
@@ -600,9 +573,7 @@ class XGBoost(BaseRiskModel):
                     fit_params[name] = params.pop(name)
             if callable(fit_params.get("eval_metric")):
                 if metric_object is not None:
-                    fit_params["eval_metric"] = metric_object.to_xgboost(
-                        api="native", raw_score=callable(params.get("objective"))
-                    )
+                    fit_params["eval_metric"] = metric_object.to_xgboost(api="native", raw_score=callable(params.get("objective")))
                 else:
                     metric = fit_params["eval_metric"]
                     fit_params["eval_metric"] = lambda prediction, data: (
@@ -639,9 +610,7 @@ class XGBoost(BaseRiskModel):
         self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
         from .._workflow import record_boosting_evaluation
 
-        record_boosting_evaluation(
-            self, eval_set, eval_metric=eval_metric, weights=fit_kwargs.get("sample_weight_eval_set")
-        )
+        record_boosting_evaluation(self, eval_set, eval_metric=eval_metric, weights=fit_kwargs.get("sample_weight_eval_set"))
 
         return self
 
@@ -735,9 +704,7 @@ class XGBoost(BaseRiskModel):
         importances = np.array([scores.get(name, 0.0) for name in names])
 
         # 创建Series
-        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(
-            ascending=False
-        )
+        importance_series = pd.Series(importances, index=self.feature_names_in_, name="importance").sort_values(ascending=False)
 
         self._feature_importances = importance_series
 
@@ -846,8 +813,6 @@ class XGBoost(BaseRiskModel):
         self.n_features_in_ = self._model.n_features_in_
         names = self._model.get_booster().feature_names
         self._feature_names_known_ = names is not None
-        self.feature_names_in_ = (
-            list(names) if names is not None else [f"feature_{i}" for i in range(self.n_features_in_)]
-        )
+        self.feature_names_in_ = list(names) if names is not None else [f"feature_{i}" for i in range(self.n_features_in_)]
         self._load_score_transformer_sidecar(path)
         return self

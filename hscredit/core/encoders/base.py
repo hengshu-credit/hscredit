@@ -243,9 +243,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             self.__dict__.setdefault("_legacy_string_keys_", True)
         if type(self).__name__ == "CountEncoder":
             self.__dict__.setdefault("infrequent_categories_", {})
-            self.__dict__.setdefault(
-                "_legacy_other_routing_", any("__OTHER__" in mapping for mapping in self.mapping_.values())
-            )
+            self.__dict__.setdefault("_legacy_other_routing_", any("__OTHER__" in mapping for mapping in self.mapping_.values()))
         for mapping in getattr(self, "mapping_", {}).values():
             if not isinstance(mapping, dict):
                 continue
@@ -369,12 +367,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 rows=len(X),
                 columns=len(columns),
                 data_bytes=int(X.loc[:, self.cols_ or []].memory_usage(deep=True).sum()),
-                cost_per_item=(
-                    10.0
-                    if self.__class__.__name__
-                    in {"WOEEncoder", "TargetEncoder", "CatBoostEncoder", "QuantileEncoder", "GBMEncoder"}
-                    else 3.0
-                ),
+                cost_per_item=(10.0 if self.__class__.__name__ in {"WOEEncoder", "TargetEncoder", "CatBoostEncoder", "QuantileEncoder", "GBMEncoder"} else 3.0),
                 capability="process_safe",
                 has_parallel_children=has_parallel_children,
                 auto_max_workers=8,
@@ -406,9 +399,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         """只读并行转换各列，并按学习列顺序恢复索引、dtype 与列布局。"""
         contexts = contexts or {}
         columns = list(self.cols_ or [])
-        tasks = (
-            (ordinal, column, self, X[column].copy(), y, contexts.get(column)) for ordinal, column in enumerate(columns)
-        )
+        tasks = ((ordinal, column, self, X[column].copy(), y, contexts.get(column)) for ordinal, column in enumerate(columns))
         results = self._parallel_execute(
             _transform_encoder_column_worker,
             tasks,
@@ -556,9 +547,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             columns.append(self.target)
         return np.asarray(columns, dtype=object)
 
-    def fit_transform(
-        self, X: pd.DataFrame, y: Optional[pd.Series] = None, *, groups=None
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def fit_transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None, *, groups=None) -> Union[pd.DataFrame, np.ndarray]:
         """拟合并转换数据。
 
         支持两种API风格:
@@ -594,11 +583,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         cv = getattr(self, "cv", 5)
         groups = _validate_groups(groups, len(features))
         if isinstance(cv, (int, np.integer)) and not isinstance(cv, (bool, np.bool_)):
-            cv = (
-                GroupKFold(n_splits=int(cv))
-                if groups is not None
-                else KFold(n_splits=int(cv), shuffle=True, random_state=getattr(self, "random_state", 42))
-            )
+            cv = GroupKFold(n_splits=int(cv)) if groups is not None else KFold(n_splits=int(cv), shuffle=True, random_state=getattr(self, "random_state", 42))
         if not hasattr(cv, "split"):
             raise ValueError("cv 必须是至少两折的整数或具有 split 方法的切分器")
         # 全训练集只决定最终推理状态与无监督列schema；每行训练编码仍只来自其训练折。
@@ -891,10 +876,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             candidate.cols_ = unpack(mapping["cols_"])
             if not isinstance(candidate.mapping_, dict) or not isinstance(candidate.cols_, list):
                 raise ValueError("编码映射状态结构无效")
-            if any(
-                column not in candidate.mapping_ or not isinstance(candidate.mapping_[column], dict)
-                for column in candidate.cols_
-            ):
+            if any(column not in candidate.mapping_ or not isinstance(candidate.mapping_[column], dict) for column in candidate.cols_):
                 raise ValueError("编码映射缺少已学习字段状态")
             candidate._import_extra_state(unpack(mapping["extra_state"]))
             schema = unpack(mapping["schema"])
@@ -1019,9 +1001,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
     def _map_with_typed_float_nan(cls, values: pd.Series, mapping: Dict) -> pd.Series:
         """按 typed NaN 桶修正 pandas map，避免依赖 NaN 对象身份。"""
         result = values.map(mapping)
-        typed_lookup = {
-            bucket: value for key, value in mapping.items() if (bucket := cls._float_nan_bucket(key)) is not None
-        }
+        typed_lookup = {bucket: value for key, value in mapping.items() if (bucket := cls._float_nan_bucket(key)) is not None}
         if not typed_lookup:
             return result
 

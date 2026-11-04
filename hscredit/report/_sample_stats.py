@@ -89,16 +89,9 @@ def build_sample_stats_table(
             metrics = ["样本总数", "好样本数", "坏样本数", "坏样本率"]
             columns = [(metric, display_labels.get(label, label)) for metric in metrics for label in label_names]
         else:
-            columns = [("统计详情", "样本总数")] + [
-                (metric, display_labels.get(label, label))
-                for metric in ["好样本数", "坏样本数", "坏样本率"]
-                for label in label_names
-            ]
+            columns = [("统计详情", "样本总数")] + [(metric, display_labels.get(label, label)) for metric in ["好样本数", "坏样本数", "坏样本率"] for label in label_names]
         multi_cols = pd.MultiIndex.from_tuples(columns, names=["统计详情", ""])
-        tasks = [
-            (y_map, label_names, display_labels, True, flat_total_col, dataset_label, target_specific_totals)
-            for dataset_label, y_map in zip(dataset_labels, y_by_dataset)
-        ]
+        tasks = [(y_map, label_names, display_labels, True, flat_total_col, dataset_label, target_specific_totals) for dataset_label, y_map in zip(dataset_labels, y_by_dataset)]
         rows = parallel_execute(
             _sample_stats_row,
             tasks,
@@ -120,10 +113,7 @@ def build_sample_stats_table(
         result.index.name = "数据集"
         return result, [c for c in multi_cols if c[0] == "坏样本率"]
 
-    tasks = [
-        (y_map, label_names, display_labels, False, flat_total_col, dataset_label, target_specific_totals)
-        for dataset_label, y_map in zip(dataset_labels, y_by_dataset)
-    ]
+    tasks = [(y_map, label_names, display_labels, False, flat_total_col, dataset_label, target_specific_totals) for dataset_label, y_map in zip(dataset_labels, y_by_dataset)]
     rows = parallel_execute(
         _sample_stats_row,
         tasks,

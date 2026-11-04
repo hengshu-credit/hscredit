@@ -21,9 +21,7 @@ def load_finetuning():
         from tabpfn.finetuning import FinetunedTabPFNClassifier, FinetunedTabPFNRegressor
         from tabpfn.base import ModelSpecs
     except ImportError as exc:
-        raise DependencyError(
-            "TabPFN 微调和 X-only 预训练需要 Python 3.10+ 及 tabpfn>=9.2；普通推理仍支持旧版后端"
-        ) from exc
+        raise DependencyError("TabPFN 微调和 X-only 预训练需要 Python 3.10+ 及 tabpfn>=9.2；普通推理仍支持旧版后端") from exc
     return FinetunedTabPFNClassifier, FinetunedTabPFNRegressor, ModelSpecs
 
 
@@ -82,17 +80,9 @@ def fine_tune(model, X, y, params, native_params, validation=None):
             if native in options:
                 raise ValidationError(f"微调参数 {name} 与 {native} 不能同时提供")
             options[native] = options.pop(name)
-    if "epochs" in options and (
-        isinstance(options["epochs"], (bool, np.bool_))
-        or not isinstance(options["epochs"], (int, np.integer))
-        or options["epochs"] < 1
-    ):
+    if "epochs" in options and (isinstance(options["epochs"], (bool, np.bool_)) or not isinstance(options["epochs"], (int, np.integer)) or options["epochs"] < 1):
         raise ValidationError("max_epochs/epochs 必须为正整数")
-    if "learning_rate" in options and (
-        not isinstance(options["learning_rate"], Real)
-        or not np.isfinite(options["learning_rate"])
-        or options["learning_rate"] <= 0
-    ):
+    if "learning_rate" in options and (not isinstance(options["learning_rate"], Real) or not np.isfinite(options["learning_rate"]) or options["learning_rate"] <= 0):
         raise ValidationError("learning_rate 必须为有限正数")
     if "early_stopping_rounds" in options:
         rounds = options.pop("early_stopping_rounds")
@@ -170,41 +160,27 @@ def _field_tasks(train, valid, objective):
         if numeric and objective == "regression":
             values = raw.to_numpy(dtype=float, na_value=np.nan)
             valid_values = None if valid is None else valid[column].to_numpy(dtype=float, na_value=np.nan)
-            yield index, str(column), values, observed, valid_values, (
-                None if valid is None else np.isfinite(valid_values)
-            )
+            yield index, str(column), values, observed, valid_values, (None if valid is None else np.isfinite(valid_values))
             continue
         if numeric:
             name = "重建目标"
             # 等频切点不依赖 y；统一分箱统计接口要求双类，使用本字段最小值指示作辅助统计标签。
             # 关闭单调约束，实际预训练目标只取等频箱编号，不读取任何业务标签或分箱指标。
             clean = raw[observed].to_numpy()
-            binner = QuantileBinning(max_n_bins=8, force_numerical=True, monotonic=False, n_jobs=1).fit(
-                pd.DataFrame({name: clean}), (clean > clean.min()).astype(int)
-            )
+            binner = QuantileBinning(max_n_bins=8, force_numerical=True, monotonic=False, n_jobs=1).fit(pd.DataFrame({name: clean}), (clean > clean.min()).astype(int))
             codes = binner.transform(pd.DataFrame({name: raw.to_numpy()}), metric="indices")[name].to_numpy(dtype=int)
-            valid_codes = (
-                None
-                if valid is None
-                else binner.transform(pd.DataFrame({name: valid[column].to_numpy()}), metric="indices")[name].to_numpy(
-                    dtype=int
-                )
-            )
+            valid_codes = None if valid is None else binner.transform(pd.DataFrame({name: valid[column].to_numpy()}), metric="indices")[name].to_numpy(dtype=int)
             valid_observed = None if valid is None else valid[column].notna().to_numpy()
         else:
             categories = pd.Index(raw[observed].unique())
             codes = pd.Categorical(raw, categories=categories).codes.astype(int)
-            valid_codes = (
-                None if valid is None else pd.Categorical(valid[column], categories=categories).codes.astype(int)
-            )
+            valid_codes = None if valid is None else pd.Categorical(valid[column], categories=categories).codes.astype(int)
             valid_observed = None if valid is None else valid_codes >= 0
         for bit in range(max(1, int(np.ceil(np.log2(int(codes[observed].max()) + 1))))):
             values = ((codes >> bit) & 1).astype(float)
             if np.unique(values[observed]).size < 2:
                 continue
-            yield index, f"{column}：位{bit+1}", values, observed, (
-                None if valid is None else ((valid_codes >> bit) & 1).astype(float)
-            ), valid_observed
+            yield index, f"{column}：位{bit+1}", values, observed, (None if valid is None else ((valid_codes >> bit) & 1).astype(float)), valid_observed
 
 
 def pretrain_pfn(model, X, eval_set, ratio, max_epochs, batch_size, finetune_params):
@@ -238,11 +214,7 @@ def pretrain_pfn(model, X, eval_set, ratio, max_epochs, batch_size, finetune_par
     valid = None
     indices = np.arange(len(frame))
     if eval_set is not None:
-        values = (
-            list(eval_set.values())
-            if isinstance(eval_set, dict)
-            else list(eval_set) if isinstance(eval_set, (list, tuple)) else [eval_set]
-        )
+        values = list(eval_set.values()) if isinstance(eval_set, dict) else list(eval_set) if isinstance(eval_set, (list, tuple)) else [eval_set]
         if len(values) != 1:
             raise ValidationError("TabPFN 预训练请提供一个无标签验证集")
         value = model.feature_schema_.align(unlabeled_input(values[0], model.target))
@@ -291,12 +263,8 @@ def pretrain_pfn(model, X, eval_set, ratio, max_epochs, batch_size, finetune_par
         model._evals_result[name] = {"字段重建损失": losses}
     if state is None:
         raise ValidationError("X 中没有足够的非恒定观测字段用于 TabPFN 掩码预训练")
-    model._pretrained_state_ = PretrainedState(
-        "TabPFN", copy.deepcopy(model.feature_schema_), None, {"objective": model.objective_}, state
-    )
+    model._pretrained_state_ = PretrainedState("TabPFN", copy.deepcopy(model.feature_schema_), None, {"objective": model.objective_}, state)
     model._pretrain_only_ = True
     model.pretraining_summary_ = model.training_summary_
-    model.pretraining_summary_.update(
-        训练阶段="掩码字段预测预训练", 字段任务数=count, 自监督目标数=cells, 遮盖比例=ratio
-    )
+    model.pretraining_summary_.update(训练阶段="掩码字段预测预训练", 字段任务数=count, 自监督目标数=cells, 遮盖比例=ratio)
     return model

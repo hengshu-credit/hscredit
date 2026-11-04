@@ -155,10 +155,7 @@ def _extract_tree_from_multiway(tree):
         )
         if not binary:
             node["metric_rows"] = [("样本总数", str(n)), ("样本占比", f"{n / total:.2%}")]
-            node["metric_rows"] += [
-                (str(label), f"{int(count)} / {count / n:.2%}" if n else "0 / 0.00%")
-                for label, count in zip(tree.classes_, current.counts)
-            ]
+            node["metric_rows"] += [(str(label), f"{int(count)} / {count / n:.2%}" if n else "0 / 0.00%") for label, count in zip(tree.classes_, current.counts)]
         nodes.append(node)
         for child, spec in zip(current.children, current.branches):
             label = spec.label(precision=5)
@@ -215,9 +212,7 @@ def _extract_tree_from_sklearn(clf, feature_names: Optional[List[str]] = None) -
     values = [list(v) for v in tree.value]
     impurity = list(tree.impurity)
     feat_names = list(feature_names) if feature_names is not None else []
-    n_features_in_ = (
-        getattr(clf, "n_features_in_", None) or getattr(tree, "n_features_in_", None) or getattr(tree, "n_features", 0)
-    )
+    n_features_in_ = getattr(clf, "n_features_in_", None) or getattr(tree, "n_features_in_", None) or getattr(tree, "n_features", 0)
     if not feat_names:
         feat_names = [f"特征[{i}]" for i in range(n_features_in_)]
     n_classes = _normalize_n_classes(getattr(clf, "n_classes_", getattr(tree, "n_classes", 2)))
@@ -459,9 +454,7 @@ def _compute_node_depths(n_nodes: int, children_left: List[int], children_right:
     return depths
 
 
-def _build_gradient_stops(
-    min_br: float, max_br: float, center_br: Optional[float] = None
-) -> List[Tuple[float, Tuple[int, int, int]]]:
+def _build_gradient_stops(min_br: float, max_br: float, center_br: Optional[float] = None) -> List[Tuple[float, Tuple[int, int, int]]]:
     """根据实际坏账率区间生成色阶。
 
     浅蓝（低风险） → 浅蓝白（整体坏账率附近） → 浅粉红（高风险）
@@ -1333,17 +1326,7 @@ def plot_tree_pyecharts(
         _tip_color = _COLOR_DANGER if bad_rate > 0.3 else (_COLOR_WARNING if bad_rate > 0.1 else _COLOR_SUCCESS)
         _gini_line = f"<b>Gini:</b> {node['gini']:.4f}<br/>" if not is_leaf else ""
         _manual_line = "<span style='color:#F76E6C'>★ 人工分裂节点</span>" if is_manual else ""
-        tooltip = (
-            "<div style='font-family:Arial,sans-serif;font-size:12px;'>"
-            f"<b style='color:#1D2129'>{title_text}</b><br/>"
-            "<hr style='margin:4px 0'/>"
-            f"<b>条件:</b> {node['condition']}<br/>"
-            f"<b>样本总数:</b> {n_samples:,} ({node['sample_pct']:.1%})<br/>"
-            f"<b>好样本数:</b> {good:,}<br/>"
-            f"<b>坏样本数:</b> {bad:,}<br/>"
-            f"<b>坏样本率:</b> <span style='color:{_tip_color};font-weight:bold'>{bad_rate:.2%}</span><br/>"
-            f"{_gini_line}{_manual_line}</div>"
-        )
+        tooltip = "<div style='font-family:Arial,sans-serif;font-size:12px;'>" f"<b style='color:#1D2129'>{title_text}</b><br/>" "<hr style='margin:4px 0'/>" f"<b>条件:</b> {node['condition']}<br/>" f"<b>样本总数:</b> {n_samples:,} ({node['sample_pct']:.1%})<br/>" f"<b>好样本数:</b> {good:,}<br/>" f"<b>坏样本数:</b> {bad:,}<br/>" f"<b>坏样本率:</b> <span style='color:{_tip_color};font-weight:bold'>{bad_rate:.2%}</span><br/>" f"{_gini_line}{_manual_line}</div>"
         if "metric_rows" in node:
             tooltip = "<br/>".join(f"{html.escape(str(k))}: {html.escape(str(v))}" for k, v in _tree_metric_rows(node))
 
@@ -1648,9 +1631,7 @@ def plot_tree_graphviz(
     dot_lines: List[str] = []
     dot_lines.append("digraph Tree {")
     dot_lines.append(f"    // {title}")
-    dot_lines.append(
-        f'    graph [ranksep=0.6, nodesep=0.35, splines=line, bgcolor="#FAFBFF", pad=0.5, dpi={dpi}{size_attr}, concentrate=false];'
-    )
+    dot_lines.append(f'    graph [ranksep=0.6, nodesep=0.35, splines=line, bgcolor="#FAFBFF", pad=0.5, dpi={dpi}{size_attr}, concentrate=false];')
     # shape=plaintext：完全由 HTML-like label 自行定义节点外观，避免节点自身的
     # 形状尺寸算法与 label 内嵌套表格的尺寸算法相互干扰（二者叠加会把徽章单元格
     # 异常拉宽），卡片边框改为在 label 的最外层 <TABLE> 上通过 BORDER/COLOR 绘制
@@ -1684,13 +1665,7 @@ def plot_tree_graphviz(
         # 无表头两列指标表格：第一列（指标名）右对齐，第二列（指标值）左对齐，
         # 内容、顺序与 plot_tree_matplotlib 完全一致
         metric_rows = _tree_metric_rows(node)
-        rows_html = "".join(
-            f"<TR>"
-            f'<TD ALIGN="RIGHT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#1D2129">{html.escape(str(label))}</FONT></TD>'
-            f'<TD ALIGN="LEFT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="Arial" COLOR="#1D2129">{html.escape(str(value))}</FONT></TD>'
-            f"</TR>"
-            for label, value in metric_rows
-        )
+        rows_html = "".join(f"<TR>" f'<TD ALIGN="RIGHT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="SimHei,Microsoft YaHei,Arial" COLOR="#1D2129">{html.escape(str(label))}</FONT></TD>' f'<TD ALIGN="LEFT"><FONT POINT-SIZE="{BODY_FONT_PT}" FACE="Arial" COLOR="#1D2129">{html.escape(str(value))}</FONT></TD>' f"</TR>" for label, value in metric_rows)
 
         # 卡片整体采用直角矩形（不加 STYLE="ROUNDED"），与 plot_tree_matplotlib 的
         # plt.Rectangle 直角节点风格一致（避免「外框圆角、内部矩形直角」的风格冲突）。
@@ -1757,11 +1732,7 @@ def plot_tree_graphviz(
         else:
             label_str = " " * LABEL_PAD + label_text  # 左侧补空格 → 符号偏右
 
-        dot_lines.append(
-            f'    {edge["source"]}:s -> {edge["target"]}:n '
-            f'[label={json.dumps(label_str, ensure_ascii=False)}, fontcolor="{edge_color}", '
-            f'color="{edge_color}", style=solid, fontsize={font_size}] ;'
-        )
+        dot_lines.append(f'    {edge["source"]}:s -> {edge["target"]}:n ' f'[label={json.dumps(label_str, ensure_ascii=False)}, fontcolor="{edge_color}", ' f'color="{edge_color}", style=solid, fontsize={font_size}] ;')
 
     dot_lines.append("}")
 
@@ -1955,10 +1926,7 @@ def _extract_tree_data(tree_obj: Any, feature_names: Optional[List[str]] = None)
         fn = feature_names if feature_names is not None else getattr(tree_obj, "feature_names_in_", None)
         return _extract_tree_from_sklearn(tree_obj, fn)
     else:
-        raise TypeError(
-            f"不支持的树对象类型: {type(tree_obj).__name__}\n"
-            "请传入 MultiwayTreeExtractor / ManualTreeExtractor / sklearn DecisionTreeClassifier / DecisionTreeAnalyzer"
-        )
+        raise TypeError(f"不支持的树对象类型: {type(tree_obj).__name__}\n" "请传入 MultiwayTreeExtractor / ManualTreeExtractor / sklearn DecisionTreeClassifier / DecisionTreeAnalyzer")
 
 
 def plot_tree(
@@ -2036,9 +2004,7 @@ def tree_leaf_comparison_plot(
         bad_rates = pd.to_numeric(plot_data["坏样本率"], errors="coerce").fillna(0).to_numpy()
         colors = make_risk_cmap("hscredit_tree_leaf")(np.linspace(0.15, 0.85, max(len(plot_data), 1)))
         bars = ax.bar(positions, bad_rates, color=colors[: len(plot_data)], alpha=0.85)
-        ax.axhline(
-            overall_bad_rate, color=DEFAULT_COLORS[0], linestyle="--", label=f"总体坏样本率 {overall_bad_rate:.2%}"
-        )
+        ax.axhline(overall_bad_rate, color=DEFAULT_COLORS[0], linestyle="--", label=f"总体坏样本率 {overall_bad_rate:.2%}")
         ax.set_xticks(positions)
         ax.set_xticklabels([f"N{int(node)}" for node in plot_data["节点编号"]], rotation=45)
         ax.set_xlabel("节点编号")

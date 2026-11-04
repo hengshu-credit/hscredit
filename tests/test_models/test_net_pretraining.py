@@ -68,11 +68,7 @@ def test_pretrain_updates_encoder_without_labels_and_reuses_weights(cls, frame, 
     m.pretrain(frame.assign(FPD=np.arange(len(frame))))
     assert not m._is_fitted and "FPD" not in m.feature_names_in_
     parameter_names = set(dict(m._model.named_parameters()))
-    assert any(
-        not runtime.equal(v, initial[k])
-        for k, v in m._pretrained_state_.weights.items()
-        if k in parameter_names and not k.startswith("head.")
-    )
+    assert any(not runtime.equal(v, initial[k]) for k, v in m._pretrained_state_.weights.items() if k in parameter_names and not k.startswith("head."))
     assert m.get_embeddings(frame[:4]).shape == (4, 16)
     with pytest.raises(NotFittedError):
         m.predict(frame)
@@ -169,14 +165,7 @@ def test_pfn_finetune_switch_and_config_overrides(objective, frame, pfn_backend)
     assert options["epochs"] == 4 and options["learning_rate"] == 0.001
     assert options["early_stopping_patience"] == 3
     assert options["n_estimators_final_inference"] == 2
-    assert (
-        str(
-            options["extra_classifier_kwargs" if objective == "binary" else "extra_regressor_kwargs"][
-                "inference_precision"
-            ]
-        )
-        == "torch.float32"
-    )
+    assert str(options["extra_classifier_kwargs" if objective == "binary" else "extra_regressor_kwargs"]["inference_precision"]) == "torch.float32"
     assert pfn_backend[-1][3]["X_val"].equals(frame[:9])
     assert config["max_epochs"] == 2
     assert m.finetune_ and m.n_iter_ == 1
@@ -192,10 +181,7 @@ def test_pfn_x_only_pretraining_masks_targets_and_chains_weights(objective, fram
     m = TabPFN(objective=objective, target="FPD", finetune_params={"validation_fraction": 0}, random_state=2)
     m.pretrain(frame.assign(FPD="不得使用"), max_epochs=1, batch_size=32)
     assert len(pfn_backend) > 1 and "FPD" not in m.feature_names_in_
-    assert (
-        "model_path"
-        in pfn_backend[1][0]["extra_classifier_kwargs" if objective == "binary" else "extra_regressor_kwargs"]
-    )
+    assert "model_path" in pfn_backend[1][0]["extra_classifier_kwargs" if objective == "binary" else "extra_regressor_kwargs"]
     for _, X, y, _ in pfn_backend:
         assert "FPD" not in X and X.isna().all(axis=0).any()
         assert len(y) == len(X) and np.isfinite(y).all()
@@ -239,9 +225,7 @@ def test_pfn_tuner_full_refit_disables_internal_holdout(frame, pfn_backend, pipe
         n_jobs=1,
         fit_params={"模型__finetune" if pipeline else "finetune": None},
     )
-    tuner.fit(
-        frame.iloc[:48], y.iloc[:48], eval_set=(frame.iloc[48:], y.iloc[48:]), n_trials=1, show_progress_bar=False
-    )
+    tuner.fit(frame.iloc[:48], y.iloc[:48], eval_set=(frame.iloc[48:], y.iloc[48:]), n_trials=1, show_progress_bar=False)
     tuner.get_best_model()
     options, X, _, fit_options = pfn_backend[-1]
     assert options["validation_split_ratio"] == 0 and options["early_stopping"] is False

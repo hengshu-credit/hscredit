@@ -41,11 +41,7 @@ def test_real_feature_tables_match_raw_rows(loans, feature, mode, weighted):
         targets = {
             f"MOB1_{threshold}+": (
                 (dpd_values > threshold).astype(int),
-                (
-                    ~((dpd_values > 0) & (dpd_values <= threshold))
-                    if mode == "overdue_grey"
-                    else np.ones(len(loans), dtype=bool)
-                ),
+                (~((dpd_values > 0) & (dpd_values <= threshold)) if mode == "overdue_grey" else np.ones(len(loans), dtype=bool)),
             )
             for threshold in [7, 3, 0]
         }

@@ -357,65 +357,34 @@ def _dataframe_save(
                 pic_row = start_row
                 for i, pic in enumerate(figures):
                     if i == 0:
-                        start_row, end_col = writer.insert_pic2sheet(
-                            worksheet, pic, (pic_row, start_col), figsize=figsize
-                        )
+                        start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, start_col), figsize=figsize)
                     else:
-                        start_row, end_col = writer.insert_pic2sheet(
-                            worksheet, pic, (pic_row, end_col - 1), figsize=figsize
-                        )
+                        start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
 
                 start_row += 0 if image_bottom_padding_rows is None else max(int(image_bottom_padding_rows), 0)
 
         # 处理merge_column参数
         if "merge_column" in kwargs and kwargs["merge_column"]:
             if not isinstance(kwargs["merge_column"][0], (tuple, list)):
-                kwargs["merge_column"] = [
-                    c
-                    for c in self.columns
-                    if (isinstance(c, tuple) and c[-1] in kwargs["merge_column"])
-                    or (not isinstance(c, tuple) and c in kwargs["merge_column"])
-                ]
+                kwargs["merge_column"] = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in kwargs["merge_column"]) or (not isinstance(c, tuple) and c in kwargs["merge_column"])]
 
         # 插入DataFrame
-        end_row, end_col = writer.insert_df2sheet(
-            worksheet, self, (start_row, start_col), fill=fill, header=header, **kwargs
-        )
+        end_row, end_col = writer.insert_df2sheet(worksheet, self, (start_row, start_col), fill=fill, header=header, **kwargs)
 
         # 设置百分比格式列
         if percent_cols:
             if not isinstance(percent_cols[0], (tuple, list)):
-                percent_cols = [
-                    c
-                    for c in self.columns
-                    if (isinstance(c, tuple) and c[-1] in percent_cols)
-                    or (not isinstance(c, tuple) and c in percent_cols)
-                ]
+                percent_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in percent_cols) or (not isinstance(c, tuple) and c in percent_cols)]
             for c in [c for c in percent_cols if c in self.columns]:
-                conditional_column = get_column_letter(
-                    start_col + self.columns.get_loc(c) + self.index.nlevels
-                    if kwargs.get("index", False)
-                    else start_col + self.columns.get_loc(c)
-                )
-                writer.set_number_format(
-                    worksheet, f"{conditional_column}{end_row - len(self)}:{conditional_column}{end_row - 1}", "0.00%"
-                )
+                conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
+                writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(self)}:{conditional_column}{end_row - 1}", "0.00%")
 
         # 设置自定义格式列
         if custom_cols:
             if not isinstance(custom_cols[0], (tuple, list)):
-                custom_cols = [
-                    c
-                    for c in self.columns
-                    if (isinstance(c, tuple) and c[-1] in custom_cols)
-                    or (not isinstance(c, tuple) and c in custom_cols)
-                ]
+                custom_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in custom_cols) or (not isinstance(c, tuple) and c in custom_cols)]
             for c in [c for c in custom_cols if c in self.columns]:
-                conditional_column = get_column_letter(
-                    start_col + self.columns.get_loc(c) + self.index.nlevels
-                    if kwargs.get("index", False)
-                    else start_col + self.columns.get_loc(c)
-                )
+                conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
                 writer.set_number_format(
                     worksheet,
                     f"{conditional_column}{end_row - len(self)}:{conditional_column}{end_row - 1}",
@@ -425,18 +394,9 @@ def _dataframe_save(
         # 设置条件格式列
         if condition_cols:
             if not isinstance(condition_cols[0], (tuple, list)):
-                condition_cols = [
-                    c
-                    for c in self.columns
-                    if (isinstance(c, tuple) and c[-1] in condition_cols)
-                    or (not isinstance(c, tuple) and c in condition_cols)
-                ]
+                condition_cols = [c for c in self.columns if (isinstance(c, tuple) and c[-1] in condition_cols) or (not isinstance(c, tuple) and c in condition_cols)]
             for c in [c for c in condition_cols if c in self.columns]:
-                conditional_column = get_column_letter(
-                    start_col + self.columns.get_loc(c) + self.index.nlevels
-                    if kwargs.get("index", False)
-                    else start_col + self.columns.get_loc(c)
-                )
+                conditional_column = get_column_letter(start_col + self.columns.get_loc(c) + self.index.nlevels if kwargs.get("index", False) else start_col + self.columns.get_loc(c))
                 writer.add_conditional_formatting(
                     worksheet,
                     f"{conditional_column}{end_row - len(self)}",
@@ -604,11 +564,7 @@ def _format_table_value(value, spec=None):
 
 def _is_numeric_table_column(series):
     """仅对实数数值列启用指标数据条，排除容器、文本、布尔及复数。"""
-    return (
-        pd.api.types.is_numeric_dtype(series.dtype)
-        and not pd.api.types.is_bool_dtype(series.dtype)
-        and not pd.api.types.is_complex_dtype(series.dtype)
-    )
+    return pd.api.types.is_numeric_dtype(series.dtype) and not pd.api.types.is_bool_dtype(series.dtype) and not pd.api.types.is_complex_dtype(series.dtype)
 
 
 def _select_table_columns(df, columns):
@@ -723,13 +679,9 @@ def _style_table_column_groups(styler, rgb):
                         "props": [("border-left", f"{width}px solid #ffffff")],
                     }
                 )
-                selectors = [
-                    f"thead th.col_heading.level{child}.col{position}" for child in range(level + 1, last_level + 1)
-                ]
+                selectors = [f"thead th.col_heading.level{child}.col{position}" for child in range(level + 1, last_level + 1)]
                 selectors.append(f"tbody td.col{position}")
-                styles.append(
-                    {"selector": ", ".join(selectors), "props": [("border-left", f"{width}px solid {theme}")]}
-                )
+                styles.append({"selector": ", ".join(selectors), "props": [("border-left", f"{width}px solid {theme}")]})
             previous = group
     return styler.set_table_styles(styles, overwrite=False)
 
@@ -810,9 +762,7 @@ def _apply_table_layout(styler, theme_color="2639E9", fill=True):
     )
 
     if not fill:
-        styler = styler.set_table_styles(
-            [style for style in styler.table_styles if "nth-child" not in style["selector"]]
-        )
+        styler = styler.set_table_styles([style for style in styler.table_styles if "nth-child" not in style["selector"]])
     return _style_table_column_groups(styler, rgb)
 
 
@@ -1081,9 +1031,7 @@ def _style_bin_table(
         if indicator_name_col is not None and indicator_desc_col is not None:
             # 合并为新列
             if is_multi_level:
-                df_display["指标名称_合并"] = (
-                    df_display[indicator_name_col].astype(str) + " - " + df_display[indicator_desc_col].astype(str)
-                )
+                df_display["指标名称_合并"] = df_display[indicator_name_col].astype(str) + " - " + df_display[indicator_desc_col].astype(str)
                 df_display = df_display.drop(columns=[indicator_name_col, indicator_desc_col])
                 # 重建多级索引列名
                 new_columns = []
@@ -1197,15 +1145,7 @@ def _style_bin_table(
     if precision:
         default_precision.update(precision)
 
-    selected_percent = (
-        set(_select_table_columns(df_display, percent_cols))
-        if percent_cols is not None
-        else {
-            col
-            for col in df_display.columns
-            if percent_format and (col[-1] if isinstance(col, tuple) else str(col)) in percent_columns
-        }
-    )
+    selected_percent = set(_select_table_columns(df_display, percent_cols)) if percent_cols is not None else {col for col in df_display.columns if percent_format and (col[-1] if isinstance(col, tuple) else str(col)) in percent_columns}
     format_dict = {}
     for col in df_display.columns:
         col_name = col[-1] if isinstance(col, tuple) else str(col)

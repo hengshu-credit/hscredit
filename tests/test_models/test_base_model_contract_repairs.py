@@ -105,8 +105,7 @@ def test_native_json_roundtrip_must_restore_a_fitted_model(monkeypatch, tmp_path
     model, _, _ = fitted_forest
     path = tmp_path / "broken.json"
     path.write_text(
-        '{"model_class":"hscredit.core.models.classical.sklearn_models.RandomForest",'
-        '"params":{},"classes_":[0,1],"n_features_in_":4,"feature_names_in_":["a","b","c","d"]}',
+        '{"model_class":"hscredit.core.models.classical.sklearn_models.RandomForest",' '"params":{},"classes_":[0,1],"n_features_in_":4,"feature_names_in_":["a","b","c","d"]}',
         encoding="utf-8",
     )
 

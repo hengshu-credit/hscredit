@@ -77,17 +77,9 @@ def test_models_notebook_compares_top_badcases_with_similar_correct_samples(monk
     """模型教程应按坏样本率阈值选取两类 Top2，并对匹配样本成对绘制 SHAP。"""
     notebook_path = Path(__file__).resolve().parents[2] / "examples" / "04_models.ipynb"
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
-    section_indexes = [
-        index
-        for index, cell in enumerate(notebook["cells"])
-        if cell.get("cell_type") == "markdown" and "Badcase" in "".join(cell.get("source", []))
-    ]
+    section_indexes = [index for index, cell in enumerate(notebook["cells"]) if cell.get("cell_type") == "markdown" and "Badcase" in "".join(cell.get("source", []))]
     assert section_indexes, "04_models.ipynb 缺少 Badcase 分析章节"
-    section_source = "\n\n".join(
-        "".join(cell.get("source", []))
-        for cell in notebook["cells"][section_indexes[-1] + 1 :]
-        if cell.get("cell_type") == "code"
-    )
+    section_source = "\n\n".join("".join(cell.get("source", [])) for cell in notebook["cells"][section_indexes[-1] + 1 :] if cell.get("cell_type") == "code")
 
     probabilities = pd.Series(
         [0.95, 0.85, 0.20, 0.10, 0.15, 0.25, 0.05, 0.12, 0.80, 0.75],

@@ -223,9 +223,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
             ]
         ]
         self.executed_stages_ = []
-        self.skipped_stages_ = {
-            i: "配置关闭该阶段" for i, stage in enumerate(self.planned_stages_) if not stage["enabled"]
-        }
+        self.skipped_stages_ = {i: "配置关闭该阶段" for i, stage in enumerate(self.planned_stages_) if not stage["enabled"]}
         return X, y
 
     def _initialize_empty_selection_result(self):
@@ -233,9 +231,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         self.stage_selectors_ = {}
         self.stage_reports_ = []
         self.stage_report_df_ = pd.DataFrame()
-        self.skipped_stages_.update(
-            {i: "父级强制操作后无待筛选特征" for i, stage in enumerate(self.planned_stages_) if stage["enabled"]}
-        )
+        self.skipped_stages_.update({i: "父级强制操作后无待筛选特征" for i, stage in enumerate(self.planned_stages_) if stage["enabled"]})
 
     def fit(
         self,
@@ -383,13 +379,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
 
         if self.stage_reports_:
             self.stage_report_df_ = pd.DataFrame(self.stage_reports_)
-        self.skipped_stages_.update(
-            {
-                i: "上游无剩余特征"
-                for i, stage in enumerate(self.planned_stages_)
-                if stage["enabled"] and i not in self.executed_stages_
-            }
-        )
+        self.skipped_stages_.update({i: "上游无剩余特征" for i, stage in enumerate(self.planned_stages_) if stage["enabled"] and i not in self.executed_stages_})
 
     def _run_stage(
         self,
@@ -403,9 +393,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         """执行单个筛选阶段并记录结果。"""
         input_count = current_X.shape[1]
         selector.fit(current_X, y)
-        self.executed_stages_.append(
-            next(i for i, stage in enumerate(self.planned_stages_) if stage["key"] == stage_key)
-        )
+        self.executed_stages_.append(next(i for i, stage in enumerate(self.planned_stages_) if stage["key"] == stage_key))
 
         self.stage_selectors_[stage_key] = selector
         self.stage_reports_.append(
@@ -476,30 +464,14 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
         self._validate_ratio_threshold(self.corr_threshold, "corr_threshold")
         self._validate_ratio_threshold(self.mode_threshold, "mode_threshold")
 
-        if self._is_stage_enabled(self.iv_threshold) and (
-            not isinstance(self.iv_threshold, (int, float, np.number))
-            or not np.isfinite(self.iv_threshold)
-            or self.iv_threshold < 0
-        ):
+        if self._is_stage_enabled(self.iv_threshold) and (not isinstance(self.iv_threshold, (int, float, np.number)) or not np.isfinite(self.iv_threshold) or self.iv_threshold < 0):
             raise ValueError("iv_threshold 必须是非负有限数值")
-        if (
-            not isinstance(self.iv_regularization, (int, float, np.number))
-            or not np.isfinite(self.iv_regularization)
-            or self.iv_regularization <= 0
-        ):
+        if not isinstance(self.iv_regularization, (int, float, np.number)) or not np.isfinite(self.iv_regularization) or self.iv_regularization <= 0:
             raise ValueError("iv_regularization 必须是正有限数值")
 
         requires_target = self._is_stage_enabled(self.iv_threshold)
-        requires_target = requires_target or (
-            self._is_stage_enabled(self.corr_threshold)
-            and self.corr_weights is None
-            and str(self.corr_metric).lower() == "iv"
-        )
-        requires_target = requires_target or (
-            self._is_stage_enabled(self.corr_threshold)
-            and self.corr_weights is None
-            and str(self.corr_metric).lower() != "iv"
-        )
+        requires_target = requires_target or (self._is_stage_enabled(self.corr_threshold) and self.corr_weights is None and str(self.corr_metric).lower() == "iv")
+        requires_target = requires_target or (self._is_stage_enabled(self.corr_threshold) and self.corr_weights is None and str(self.corr_metric).lower() != "iv")
 
         if check_target and requires_target and y is None:
             raise ValueError("当前筛选配置需要目标变量，请使用 fit(X, y) 或 fit(df) 且 df 包含 target 列")
@@ -547,11 +519,7 @@ class ScorecardFeatureSelection(BaseFeatureSelector):
             self.removed_features_ = []
 
         self.select_columns = list(self.selected_features_)
-        if (
-            not self.target_rm
-            and getattr(self, "target_present_at_fit_", False)
-            and self.target not in self.select_columns
-        ):
+        if not self.target_rm and getattr(self, "target_present_at_fit_", False) and self.target not in self.select_columns:
             self.select_columns.append(self.target)
 
         self.dropped = pd.DataFrame(

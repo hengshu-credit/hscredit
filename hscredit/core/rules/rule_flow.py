@@ -407,9 +407,7 @@ class RuleFlow(ParallelizableMixin):
         if self.mode == "serial":
             text_length = max(map(len, self.rule_labels_)) + len(str(rules))
         else:
-            text_length = (
-                sum(map(len, self.rule_labels_)) + sum(len(str(i)) for i in range(1, rules + 1)) + 2 * (rules - 1)
-            )
+            text_length = sum(map(len, self.rule_labels_)) + sum(len(str(i)) for i in range(1, rules + 1)) + 2 * (rules - 1)
         output_bytes = rows * (2 * rules + 2 + 16 + 160 + 4 * text_length) + int(data.index.memory_usage(deep=True))
         workload = ParallelWorkload(
             task_count=1,
@@ -490,11 +488,7 @@ class RuleFlow(ParallelizableMixin):
             )
             batch_count = min(len(self.rules), plan.workers)
             rule_indices = np.array_split(np.arange(len(self.rules)), batch_count) if batch_count else []
-            batches = [
-                [copy.deepcopy(self.rules[int(index)]) for index in indices]
-                for indices in rule_indices
-                if len(indices) > 0
-            ]
+            batches = [[copy.deepcopy(self.rules[int(index)]) for index in indices] for indices in rule_indices if len(indices) > 0]
             batch_results = self._parallel_execute(
                 _rule_flow_mask_batch_worker,
                 ((batch, data) for batch in batches),

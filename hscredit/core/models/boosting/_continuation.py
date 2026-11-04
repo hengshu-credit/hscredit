@@ -54,9 +54,7 @@ def validate_ngboost_objective(model, objective):
     def signature(value):
         if value is None or isinstance(value, str) and value in ("binary", "binary:logistic"):
             return "binary"
-        return hashlib.sha256(
-            cloudpickle.dumps((type(value).__module__, type(value).__qualname__, vars(value)))
-        ).hexdigest()
+        return hashlib.sha256(cloudpickle.dumps((type(value).__module__, type(value).__qualname__, vars(value)))).hexdigest()
 
     if hasattr(model, "_continuation_objective_") and signature(objective) != signature(model._continuation_objective_):
         raise ValidationError("NGBoost 续训不能改变训练损失或分布，请沿用来源模型配置")

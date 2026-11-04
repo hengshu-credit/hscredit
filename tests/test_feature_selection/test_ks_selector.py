@@ -33,9 +33,7 @@ def test_raw_ks_threshold_and_chinese_report(sample_df):
     selector = selectors.KSSelector(target="目标", threshold=0.5, n_jobs=1)
     result = selector.fit_transform(sample_df)
 
-    assert selector.scores_.to_dict() == pytest.approx(
-        {"正向": 1.0, "反向": 1.0, "边界": 0.5, "无效": 0.0, "常量": 0.0}
-    )
+    assert selector.scores_.to_dict() == pytest.approx({"正向": 1.0, "反向": 1.0, "边界": 0.5, "无效": 0.0, "常量": 0.0})
     assert selector.selected_features_ == ["正向", "反向", "边界"]
     pd.testing.assert_frame_equal(result, sample_df[["正向", "反向", "边界", "目标"]])
     assert selector.get_support().tolist() == [True, True, True, False, False]
@@ -102,9 +100,7 @@ def test_invalid_target_is_rejected(sample_df, y):
 
 
 def test_forced_features_and_empty_selection(sample_df):
-    selector = selectors.KSSelector(
-        target="目标", threshold=1, include=["常量", "反向"], exclude=["反向"], force_drop=["正向"]
-    ).fit(sample_df)
+    selector = selectors.KSSelector(target="目标", threshold=1, include=["常量", "反向"], exclude=["反向"], force_drop=["正向"]).fit(sample_df)
     assert selector.selected_features_ == ["常量"]
     assert set(selector.removed_features_) == {"正向", "反向", "边界", "无效"}
     assert set(selector.scores_.index) == {"边界", "无效"}

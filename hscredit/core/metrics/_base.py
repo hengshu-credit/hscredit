@@ -30,9 +30,7 @@ def _handle_missing_values(*arrays: np.ndarray) -> Tuple[np.ndarray, ...]:
     return tuple(arr[valid_mask] for arr in arrays)
 
 
-def _woe_iv_vectorized(
-    good_counts: np.ndarray, bad_counts: np.ndarray, epsilon: float = 1e-10, woe_clip: Optional[float] = None
-) -> Tuple[np.ndarray, np.ndarray, float]:
+def _woe_iv_vectorized(good_counts: np.ndarray, bad_counts: np.ndarray, epsilon: float = 1e-10, woe_clip: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray, float]:
     """向量化计算WOE和IV.
 
     :param good_counts: 每个箱的好样本数

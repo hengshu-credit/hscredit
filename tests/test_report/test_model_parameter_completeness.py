@@ -69,9 +69,7 @@ def test_calibrated_pipeline_parameters_reach_excel_and_status_stays_in_result(t
     child = _model_parameter_snapshot(calibrator)
     if fit_supplied:
         assert child["model_"]["C"] == pytest.approx(0.123456789)
-    assert not any(
-        any("\u4e00" <= char <= "\u9fff" for char in key) for key in values if isinstance(key, str) and "." in key
-    )
+    assert not any(any("\u4e00" <= char <= "\u9fff" for char in key) for key in values if isinstance(key, str) and "." in key)
     assert "工作表：目录" in result.sections
     assert book["7-训练与调参过程"]["B2"].value == "七、训练与调参过程"
     assert book["7-训练与调参过程"]["B5"].value == "1、训练概览"

@@ -28,9 +28,7 @@ def make_report(**kwargs):
 
 def test_weight_comparison_does_not_change_real_order_statistics():
     y = (np.arange(200) % 3 == 0).astype(int)
-    report = make_report(
-        sample_weight={k: np.where(y == 1, 20, 1) for k in ("train", "test")}, show_weighted_metrics=True
-    )
+    report = make_report(sample_weight={k: np.where(y == 1, 20, 1) for k in ("train", "test")}, show_weighted_metrics=True)
     metrics = report.get_metrics().set_index("统计项")
     assert metrics.loc["坏样本率", "train"] == pytest.approx(0.335)
     assert report.get_bin_table("train").iloc[-1]["坏样本率"] == pytest.approx(0.335)
@@ -156,9 +154,7 @@ def test_dataset_prediction_snapshot_survives_model_buffer_reuse():
 
     first = pd.DataFrame({"x": [0.1, 0.2, 0.8, 0.9]})
     second = pd.DataFrame({"x": [0.9, 0.8, 0.2, 0.1]})
-    report = ModelReport(
-        BufferedModel(), datasets={"train": (first, [0, 0, 1, 1]), "test": (second, [0, 0, 1, 1])}, n_jobs=1
-    )
+    report = ModelReport(BufferedModel(), datasets={"train": (first, [0, 0, 1, 1]), "test": (second, [0, 0, 1, 1])}, n_jobs=1)
     np.testing.assert_array_equal(report._datasets["train"].prediction, first.x)
     np.testing.assert_array_equal(report._datasets["test"].prediction, second.x)
 

@@ -106,11 +106,7 @@ def _configured_rule_report(rule: Rule, data: pd.DataFrame, call_kwargs: Dict[st
     n_jobs = call_kwargs.get("n_jobs", rule.n_jobs)
     parallel_backend = call_kwargs.get("parallel_backend", rule.parallel_backend)
     parallel_config = call_kwargs.get("parallel_config", rule.parallel_config)
-    report_kwargs = {
-        key: deepcopy(value)
-        for key, value in call_kwargs.items()
-        if key not in {"n_jobs", "parallel_backend", "parallel_config"}
-    }
+    report_kwargs = {key: deepcopy(value) for key, value in call_kwargs.items() if key not in {"n_jobs", "parallel_backend", "parallel_config"}}
     rule_copy = _configured_rule_copy(rule, n_jobs, parallel_backend, parallel_config)
     return rule_copy.report(data, **report_kwargs)
 
@@ -579,9 +575,7 @@ def rule_group_hit_table(
         normalized_groups[str(group)] = normalized
         resolved_rule_name = resolved_rule_name or extracted_name
 
-    targets = _ordered_unique(
-        [target for normalized in normalized_groups.values() for target in normalized["逾期指标"].tolist()]
-    )
+    targets = _ordered_unique([target for normalized in normalized_groups.values() for target in normalized["逾期指标"].tolist()])
     rows = []
     for target in targets:
         for bin_name in ("命中", "未命中"):
@@ -1008,9 +1002,7 @@ def _display_target_label(label: Any, target_names: Optional[Mapping[str, str]])
     return target_names.get(normalized, normalized) if target_names else normalized
 
 
-def _rename_target_level(
-    table: pd.DataFrame, target_names: Optional[Mapping[str, str]], level: int = 1
-) -> pd.DataFrame:
+def _rename_target_level(table: pd.DataFrame, target_names: Optional[Mapping[str, str]], level: int = 1) -> pd.DataFrame:
     """规整多层列中某一层的逾期标签（统一形式 + target_names 映射），非标签值保持不变。"""
     mapping = {}
     for label in dict.fromkeys(table.columns.get_level_values(level)):
@@ -1080,9 +1072,7 @@ def _resolve_swap_targets(
         overdue_operator,
         handle_missing_target=handle_missing_target,
     )
-    return OrderedDict(
-        (name, (frame.loc[values.notna()], values.loc[values.notna()])) for name, values in targets.y_map(frame).items()
-    )
+    return OrderedDict((name, (frame.loc[values.notna()], values.loc[values.notna()])) for name, values in targets.y_map(frame).items())
 
 
 def _swap_sample_overview(
@@ -1253,9 +1243,7 @@ def _rule_detail_lines(rules: Sequence["Rule"]) -> List[str]:
     return lines
 
 
-def _align_index_column(
-    worksheet, table: pd.DataFrame, start_row: int, start_col: int, horizontal: str = "right"
-) -> None:
+def _align_index_column(worksheet, table: pd.DataFrame, start_row: int, start_col: int, horizontal: str = "right") -> None:
     """对写入 DataFrame 时输出的索引列数据区设置对齐。"""
     data_start = start_row + table.columns.nlevels
     data_end = data_start + len(table) - 1
@@ -1310,9 +1298,7 @@ def _write_swap_table(
     )
 
 
-def _add_group_databars(
-    writer, worksheet, table: pd.DataFrame, end_row: int, start_col: int, group_names: Sequence[str]
-) -> None:
+def _add_group_databars(writer, worksheet, table: pd.DataFrame, end_row: int, start_col: int, group_names: Sequence[str]) -> None:
     """对多层列下的指标分组（如稳定性的坏样本率/样本占比跨多期）整组添加一条数据条，避免逐列重复着色."""
     from openpyxl.utils import get_column_letter
 
@@ -1616,9 +1602,7 @@ def swap_out_report(
     combined_rule, rule_objs, multi = _resolve_swap_rules(rules)
     methods_list = [methods] if isinstance(methods, str) else list(methods)
     # 统一 target_names 的键形式（兼容 MOB1_7+ / MOB1@7 / MOB1 7+ 三种写法）
-    target_names = (
-        _ExplicitTargetNames(target_names or {}) if target.mode == "target" else _normalize_target_names(target_names)
-    )
+    target_names = _ExplicitTargetNames(target_names or {}) if target.mode == "target" else _normalize_target_names(target_names)
 
     if features is None:
         features = _ordered_unique([col for rule in rule_objs for col in rule.feature_names_in_])
@@ -1775,9 +1759,7 @@ def swap_out_report(
             parallel_config=parallel_config,
             handle_missing_target=handle_missing_target,
         )
-        stability_tasks = [
-            (label, data, rule, {**stability_kwargs, "rule_name": rule.name}) for label, rule in section_rules
-        ]
+        stability_tasks = [(label, data, rule, {**stability_kwargs, "rule_name": rule.name}) for label, rule in section_rules]
         _, stability_groups = _resolve_group_labels(
             data,
             date,

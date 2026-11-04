@@ -190,9 +190,7 @@ class BestIVBinning(BaseBinning):
             constraint_policy=constraint_policy,
         )
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "BestIVBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "BestIVBinning":
         """拟合 Best IV 分箱。
 
         对每个特征预分割为细箱后，在单调性约束下贪心合并以最大化 IV，得到切分点与分箱
@@ -361,12 +359,7 @@ class BestIVBinning(BaseBinning):
 
             # 若新增分割点会引入单调违例，且已满足最小分箱数，则停止扩展
             min_splits_required = max(1, self.min_n_bins - 1)
-            if (
-                enforce_monotonic
-                and best_split is not None
-                and best_violation > 0
-                and len(selected_splits) >= min_splits_required
-            ):
+            if enforce_monotonic and best_split is not None and best_violation > 0 and len(selected_splits) >= min_splits_required:
                 break
 
             if best_split is not None:
@@ -444,9 +437,7 @@ class BestIVBinning(BaseBinning):
         good_counts = np.diff(prefix_good[bounds])
         return float(woe_iv_vectorized(good_counts, bad_counts)[2])
 
-    def _calc_bad_rates_fast(
-        self, x_sorted: np.ndarray, cum_good: np.ndarray, cum_bad: np.ndarray, splits: List[float]
-    ) -> np.ndarray:
+    def _calc_bad_rates_fast(self, x_sorted: np.ndarray, cum_good: np.ndarray, cum_bad: np.ndarray, splits: List[float]) -> np.ndarray:
         """基于累积统计快速计算各箱坏样本率。"""
         if not splits:
             return np.array([], dtype=float)
@@ -591,9 +582,7 @@ class BestIVBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。

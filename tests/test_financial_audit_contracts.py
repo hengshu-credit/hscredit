@@ -34,9 +34,7 @@ def test_when_strings_array_and_two_dimensional_broadcast():
 
 
 def test_interest_and_principal_reconcile():
-    np.testing.assert_allclose(
-        ipmt([0, 0.01], [1, 2], 12, 1000) + ppmt([0, 0.01], [1, 2], 12, 1000), pmt([0, 0.01], 12, 1000)
-    )
+    np.testing.assert_allclose(ipmt([0, 0.01], [1, 2], 12, 1000) + ppmt([0, 0.01], [1, 2], 12, 1000), pmt([0, 0.01], 12, 1000))
 
 
 def test_rate_broadcast_matches_scalar():

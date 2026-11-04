@@ -50,9 +50,7 @@ def test_new_optuna_does_not_import_deprecated_terminator(monkeypatch, version):
     assert len(tuner.get_trial_result(0)["各折"]) == 2
 
 
-@pytest.mark.parametrize(
-    "version,enabled,expected", [("4.8.0", None, True), ("4.8.0", False, False), ("4.9.0", True, True)]
-)
+@pytest.mark.parametrize("version,enabled,expected", [("4.8.0", None, True), ("4.8.0", False, False), ("4.9.0", True, True)])
 def test_legacy_reporting_uses_public_api_only_when_enabled(monkeypatch, version, enabled, expected):
     calls = []
     original = importlib.import_module

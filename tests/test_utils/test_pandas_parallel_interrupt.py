@@ -60,46 +60,25 @@ def test_interrupt_aborts_apply_without_restarting_kernel_or_losing_variables():
         client.wait_for_ready(timeout=30)
         _, setup_messages = _execute(
             client,
-            "import os, pandas as pd, hscredit\n"
-            "中断前变量 = '仍然存在'\n"
-            "中断前PID = os.getpid()\n"
-            "print(f'{中断前PID}|{中断前变量}')",
+            "import os, pandas as pd, hscredit\n" "中断前变量 = '仍然存在'\n" "中断前PID = os.getpid()\n" "print(f'{中断前PID}|{中断前变量}')",
         )
-        setup_stream = "".join(
-            message["content"].get("text", "") for message in setup_messages if message.get("msg_type") == "stream"
-        )
+        setup_stream = "".join(message["content"].get("text", "") for message in setup_messages if message.get("msg_type") == "stream")
         assert "仍然存在" in setup_stream
 
-        long_message_id = client.execute(
-            "from time import sleep\n"
-            "def _触发中断(value):\n"
-            "    if value == 0:\n"
-            "        sleep(2)\n"
-            "        raise KeyboardInterrupt('用户中断')\n"
-            "    sleep(30)\n"
-            "    return value\n"
-            "pd.Series(range(8)).hscredit(n_jobs=2, bar=False, parallel_backend='loky').apply(_触发中断)"
-        )
+        long_message_id = client.execute("from time import sleep\n" "def _触发中断(value):\n" "    if value == 0:\n" "        sleep(2)\n" "        raise KeyboardInterrupt('用户中断')\n" "    sleep(30)\n" "    return value\n" "pd.Series(range(8)).hscredit(n_jobs=2, bar=False, parallel_backend='loky').apply(_触发中断)")
         interrupted_messages = _wait_for_iopub(client, long_message_id, timeout=20)
         interrupt_reply = _wait_for_shell_reply(client, long_message_id, timeout=10)
-        interrupt_errors = [
-            message.get("content", {}) for message in interrupted_messages if message.get("msg_type") == "error"
-        ]
+        interrupt_errors = [message.get("content", {}) for message in interrupted_messages if message.get("msg_type") == "error"]
         assert interrupt_reply.get("content", {}).get("status") == "error", interrupt_reply.get("content")
         assert interrupt_reply.get("content", {}).get("ename") == "KeyboardInterrupt", interrupt_reply.get("content")
-        assert not interrupt_errors or any(
-            message.get("msg_type") == "error" and message.get("content", {}).get("ename") == "KeyboardInterrupt"
-            for message in interrupted_messages
-        ), interrupt_errors
+        assert not interrupt_errors or any(message.get("msg_type") == "error" and message.get("content", {}).get("ename") == "KeyboardInterrupt" for message in interrupted_messages), interrupt_errors
 
         _, recovery_messages = _execute(
             client,
             "print(f'{os.getpid()}|{中断前PID}|{中断前变量}')",
             timeout=10,
         )
-        recovery_stream = "".join(
-            message["content"].get("text", "") for message in recovery_messages if message.get("msg_type") == "stream"
-        )
+        recovery_stream = "".join(message["content"].get("text", "") for message in recovery_messages if message.get("msg_type") == "stream")
         current_pid, original_pid, sentinel = recovery_stream.strip().split("|", 2)
         assert current_pid == original_pid
         assert sentinel == "仍然存在"

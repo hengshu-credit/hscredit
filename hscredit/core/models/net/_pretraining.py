@@ -84,22 +84,13 @@ def pretrain_torch(model, X, eval_set, sample_weight, ratio, options):
     weight = validate_sample_weight(sample_weight, len(X))
     epochs = model.max_epochs if options["max_epochs"] is None else options["max_epochs"]
     batch_size = model.batch_size if options["batch_size"] is None else options["batch_size"]
-    patience = (
-        model.early_stopping_rounds if options["early_stopping_rounds"] is None else options["early_stopping_rounds"]
-    )
+    patience = model.early_stopping_rounds if options["early_stopping_rounds"] is None else options["early_stopping_rounds"]
     fraction = model.validation_fraction if options["validation_fraction"] is None else options["validation_fraction"]
     if any(isinstance(v, bool) or not isinstance(v, (int, np.integer)) or v < 1 for v in (epochs, batch_size)):
         raise ValidationError("max_epochs、batch_size 必须为正整数")
     if model._network_kind == "ResNet" and batch_size < 2:
         raise ValidationError("ResNet 的 batch_size 必须至少为 2")
-    if (
-        not isinstance(fraction, Real)
-        or not 0 <= fraction < 1
-        or (
-            patience is not None
-            and (isinstance(patience, (bool, np.bool_)) or not isinstance(patience, (int, np.integer)) or patience < 1)
-        )
-    ):
+    if not isinstance(fraction, Real) or not 0 <= fraction < 1 or (patience is not None and (isinstance(patience, (bool, np.bool_)) or not isinstance(patience, (int, np.integer)) or patience < 1)):
         raise ValidationError("validation_fraction 必须在 [0, 1)，early_stopping_rounds 必须为正整数或 None")
     indices = np.arange(len(X)) if weight is None else np.flatnonzero(weight > 0)
     validation = []
@@ -156,9 +147,7 @@ def pretrain_torch(model, X, eval_set, sample_weight, ratio, options):
         torch.manual_seed(model.random_state if model.random_state is not None else int(rng.integers(2**32)))
         model._initialize_network()
         numeric_head = nn.Linear(model.d_block, n_numeric).to(model.device_) if n_numeric else None
-        category_heads = nn.ModuleList(
-            [nn.Linear(model.d_block, size - 1) if size > 1 else None for size in model.preprocessor_.cardinalities_]
-        ).to(model.device_)
+        category_heads = nn.ModuleList([nn.Linear(model.d_block, size - 1) if size > 1 else None for size in model.preprocessor_.cardinalities_]).to(model.device_)
         decoder = nn.ModuleDict({"categories": category_heads})
         if numeric_head is not None:
             decoder["numeric"] = numeric_head
@@ -206,9 +195,7 @@ def pretrain_torch(model, X, eval_set, sample_weight, ratio, options):
                     loss_sum, count = 0.0, 0
                     for start in range(0, len(n), batch_size):
                         stop = start + batch_size
-                        values, valid = row_loss(
-                            n[start:stop], c[start:stop], flags[start:stop], numeric_head, category_heads
-                        )
+                        values, valid = row_loss(n[start:stop], c[start:stop], flags[start:stop], numeric_head, category_heads)
                         loss_sum += float(values[valid].sum())
                         count += int(valid.sum())
                     if count == 0:

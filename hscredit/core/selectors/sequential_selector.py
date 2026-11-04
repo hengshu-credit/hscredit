@@ -271,15 +271,7 @@ class SequentialFeatureSelector(BaseFeatureSelector):
         if not needs_search:
             self.selection_input_features_ = []
             for feature in X.columns:
-                self.selection_reasons_[feature] = (
-                    "强制保留"
-                    if feature in forced
-                    else (
-                        "总数量预算已由强制保留字段占满，未执行交叉验证搜索"
-                        if fixed_budget
-                        else "总数量预算保留全部字段，无需交叉验证搜索"
-                    )
-                )
+                self.selection_reasons_[feature] = "强制保留" if feature in forced else ("总数量预算已由强制保留字段占满，未执行交叉验证搜索" if fixed_budget else "总数量预算保留全部字段，无需交叉验证搜索")
         self.selection_history_ = []
         self.selection_history_bytes_ = 0
         self.selection_history_truncated_ = 0
@@ -290,11 +282,7 @@ class SequentialFeatureSelector(BaseFeatureSelector):
         self.effective_threshold_ = n_to_select
         iteration = 0
         while len(selected) < n_to_select if self.direction == "forward" else len(selected) > n_to_select:
-            candidates = (
-                [feature for feature in X.columns if feature not in selected]
-                if self.direction == "forward"
-                else [feature for feature in selected if feature not in forced]
-            )
+            candidates = [feature for feature in X.columns if feature not in selected] if self.direction == "forward" else [feature for feature in selected if feature not in forced]
             tasks = [
                 (
                     ordinal,
@@ -345,11 +333,7 @@ class SequentialFeatureSelector(BaseFeatureSelector):
                     "补充信息": {"总保留数量预算": n_to_select},
                 }
                 if self.report_history == "full":
-                    subset = (
-                        selected + [feature]
-                        if self.direction == "forward"
-                        else [name for name in selected if name != feature]
-                    )
+                    subset = selected + [feature] if self.direction == "forward" else [name for name in selected if name != feature]
                     event["补充信息"].update({"候选子集": subset, "折评分": folds})
                 record_event(self, event, diagnostic=valid)
                 if valid:
@@ -367,10 +351,7 @@ class SequentialFeatureSelector(BaseFeatureSelector):
                 action = "remove"
             history_item = {"轮次": iteration, "动作": action, "特征": best_feature, "得分": best_score}
             history_bytes = event_bytes(history_item, self.max_report_bytes)
-            if (
-                len(self.selection_history_) < self.max_report_events
-                and self.selection_history_bytes_ + history_bytes <= self.max_report_bytes
-            ):
+            if len(self.selection_history_) < self.max_report_events and self.selection_history_bytes_ + history_bytes <= self.max_report_bytes:
                 self.selection_history_.append(history_item)
                 self.selection_history_bytes_ += history_bytes
             else:

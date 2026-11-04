@@ -43,11 +43,7 @@ def target_values(frame, value, name, handle_missing_target="drop"):
             raise ValueError("回归目标索引必须与数据完全匹配")
         value = value.reindex(frame.index)
     try:
-        values = (
-            value.to_numpy(dtype=float, na_value=np.nan)
-            if isinstance(value, pd.Series)
-            else np.asarray(value, dtype=float)
-        )
+        values = value.to_numpy(dtype=float, na_value=np.nan) if isinstance(value, pd.Series) else np.asarray(value, dtype=float)
     except (ValueError, TypeError) as exc:
         raise ValueError("回归报告目标必须为数值") from exc
     if values.ndim != 1 or len(values) != len(frame) or not len(values):
@@ -100,18 +96,10 @@ def metric_table(report):
             目标均值=float(np.average(y, weights=weights)) if len(y) else np.nan,
             预测均值=float(np.average(prediction, weights=weights)) if len(y) else np.nan,
             平均残差=float(np.average(prediction - y, weights=weights)) if len(y) else np.nan,
-            基准均方根误差=(
-                float(np.sqrt(mean_squared_error(y, np.full(len(y), reference), sample_weight=weights)))
-                if len(y) and np.isfinite(reference)
-                else np.nan
-            ),
+            基准均方根误差=(float(np.sqrt(mean_squared_error(y, np.full(len(y), reference), sample_weight=weights))) if len(y) and np.isfinite(reference) else np.nan),
         )
         if len(report._datasets) > 1:
-            values["PSI"] = (
-                np.nan
-                if key == report._train_key
-                else float(psi(report._datasets[report._train_key].prediction, dataset.prediction))
-            )
+            values["PSI"] = np.nan if key == report._train_key else float(psi(report._datasets[report._train_key].prediction, dataset.prediction))
         columns[dataset.label] = values
     return pd.DataFrame(columns).rename_axis("统计项").reset_index()
 
@@ -139,11 +127,7 @@ def bin_table(report, dataset, method, max_n_bins, margins, feature=None, amount
     # 关闭单调及比例约束，舍弃该辅助统计，再以真实连续目标独立计算全部报告统计。
     rules = report.rules
     if isinstance(rules, dict):
-        rules = (
-            rules.get(feature)
-            if feature is not None
-            else rules.get("__score__", rules.get("score") if "score" not in report.feature_names else None)
-        )
+        rules = rules.get(feature) if feature is not None else rules.get("__score__", rules.get("score") if "score" not in report.feature_names else None)
     elif feature is not None:
         rules = None
     from joblib import hash as stable_hash
@@ -227,7 +211,7 @@ def export_excel(report, filepath, options):
     from ..excel import ExcelWriter, dataframe2excel
     from ..core.viz.style import get_palette, get_font_sizes, get_defaults
     from ..core.viz.utils import _create_subplots, setup_axis_style, save_figure
-    from ._model_layout import configuration_table, fit_metadata_sheet, record_identifier
+    from ._model_layout import configuration_table, fit_metadata_sheet, record_identifier, write_model_contents
 
     result = report._execution_result
     for column in (options["date"], options["group"], options["amount"]):
@@ -236,12 +220,7 @@ def export_excel(report, filepath, options):
             if missing:
                 raise ValueError(f"请求字段 {column} 在以下数据集中缺失: {missing}")
     metrics = report.get_metrics()
-    bins = {
-        key: report.get_bin_table(
-            key, method=options["method"], max_n_bins=options["max_n_bins"], amount=options["amount"]
-        )
-        for key in report._datasets
-    }
+    bins = {key: report.get_bin_table(key, method=options["method"], max_n_bins=options["max_n_bins"], amount=options["amount"]) for key in report._datasets}
     result.success("核心数据计算")
     result.current_section = "工作簿渲染"
     writer = ExcelWriter()
@@ -271,14 +250,8 @@ def export_excel(report, filepath, options):
                 row = 5
             section_counts[sheet_name] = section_counts.get(sheet_name, 0) + 1
             title = f"{section_counts[sheet_name]}、{title}"
-        writer.insert_value2sheet(
-            ws, (row, 2), value=title, style="header", end_space=(row, max(4, len(table.columns) + 1))
-        )
-        printable = (
-            table.map(lambda v: str(v) if isinstance(v, (dict, list, tuple)) else v)
-            if hasattr(table, "map")
-            else table.applymap(lambda v: str(v) if isinstance(v, (dict, list, tuple)) else v)
-        )
+        writer.insert_value2sheet(ws, (row, 2), value=title, style="header", end_space=(row, max(4, len(table.columns) + 1)))
+        printable = table.map(lambda v: str(v) if isinstance(v, (dict, list, tuple)) else v) if hasattr(table, "map") else table.applymap(lambda v: str(v) if isinstance(v, (dict, list, tuple)) else v)
         if "样本占比" in table:
             kwargs.setdefault("percent_cols", ["样本占比"])
         end, _ = dataframe2excel(
@@ -295,10 +268,22 @@ def export_excel(report, filepath, options):
         positions[sheet_name] = max(end + 3, row + len(table) + 5)
         return ws
 
-    contents = pd.DataFrame({"章节": sheet_names})
-    section("目录", options["model_name"] or "回归模型评估报告", contents)
-    for i, name in enumerate(sheet_names):
-        writer.insert_hyperlink2sheet(writer.get_sheet_by_name("目录"), (5 + i, 2), hyperlink=f"#'{name}'!B2")
+    descriptions = [
+        "项目目标、样本选取与连续目标分布",
+        "预测误差、均值基准与预测分箱",
+        "变量描述、相关性与特征重要性",
+        "预测分布 PSI、分期及分组误差",
+        "模型参数与训练配置",
+        "入模变量信息与连续预测样例",
+        "预测口径、训练记录、曲线、参数搜索及最终重训",
+    ]
+    contents = pd.DataFrame([{"序号": int(name.split("-")[0]), "内容": name, "备注": description} for name, description in zip(sheet_names, descriptions)])
+    write_model_contents(
+        writer,
+        contents,
+        options["model_name"] or report.model.__class__.__name__,
+        title="回归模型评估报告",
+    )
     basic = []
     for dataset in report._datasets.values():
         y = np.asarray(dataset.y, dtype=float)
@@ -321,18 +306,26 @@ def export_excel(report, filepath, options):
         "评估口径",
         pd.DataFrame(
             {
-                "配置项": ["任务", "目标", "残差", "基准预测", "分箱统计", "项目说明", "数据来源", "预测函数", "加权性能对照"],
+                "配置项": [
+                    "任务",
+                    "目标",
+                    "残差",
+                    "基准预测",
+                    "分箱统计",
+                    "项目说明",
+                    "数据来源",
+                    "预测函数",
+                    "加权性能对照",
+                ],
                 "配置值": [
                     "回归",
                     report._target_name,
                     "预测值减实际值",
                     "固定为首个训练数据集的实际目标均值",
-                    "训练集确定切点，按件数统计" if report.binning_reference == "train" else "各数据集独立分箱，按件数统计",
+                    ("训练集确定切点，按件数统计" if report.binning_reference == "train" else "各数据集独立分箱，按件数统计"),
                     options["project_desc"],
                     options["data_source"],
-                    report.prediction_method
-                    if isinstance(report.prediction_method, str)
-                    else getattr(report.prediction_method, "__name__", "自定义函数"),
+                    (report.prediction_method if isinstance(report.prediction_method, str) else getattr(report.prediction_method, "__name__", "自定义函数")),
                     "是" if report.show_weighted_metrics else "否",
                 ],
             }
@@ -389,9 +382,7 @@ def export_excel(report, filepath, options):
         sheet = writer.get_sheet_by_name("3-入模变量分析")
         writer.insert_value2sheet(sheet, "B2", "3、入模变量分析", style="header")
         section_counts[sheet.title] = 1
-        positions[sheet.title] = write_importance(
-            report, writer, sheet, 5, filepath, options["with_plots"], title="3.1、SHAP 特征重要性"
-        )
+        positions[sheet.title] = write_importance(report, writer, sheet, 5, filepath, options["with_plots"], title="3.1、SHAP 特征重要性")
     train = report._datasets[report._train_key]
     described = train.X[report.feature_names].describe(include="all").T.reset_index()
     described = described.rename(
@@ -423,9 +414,7 @@ def export_excel(report, filepath, options):
         section(
             "3-入模变量分析",
             f"{feature}训练分箱",
-            report.get_feature_bin_table(
-                feature, report._train_key, max_n_bins=options["max_n_bins"], method=options["method"]
-            ),
+            report.get_feature_bin_table(feature, report._train_key, max_n_bins=options["max_n_bins"], method=options["method"]),
         )
     stability = metrics.loc[metrics["统计项"].eq("PSI")]
     if not stability.empty:
@@ -458,9 +447,7 @@ def export_excel(report, filepath, options):
     section(
         "6-模型部署需求",
         "模型输入字段",
-        pd.DataFrame(
-            {"入参字段": report.feature_names, "数据类型": [str(train.X[name].dtype) for name in report.feature_names]}
-        ),
+        pd.DataFrame({"入参字段": report.feature_names, "数据类型": [str(train.X[name].dtype) for name in report.feature_names]}),
     )
     if options["include_sample_records"]:
         sample_tables = []

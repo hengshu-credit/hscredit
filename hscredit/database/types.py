@@ -181,11 +181,7 @@ class RedisPoolOptions:
 
     def _validate(self) -> None:
         if self.max_connections is not None:
-            if (
-                isinstance(self.max_connections, bool)
-                or not isinstance(self.max_connections, int)
-                or self.max_connections <= 0
-            ):
+            if isinstance(self.max_connections, bool) or not isinstance(self.max_connections, int) or self.max_connections <= 0:
                 raise ValidationError("Redis 连接池参数 max_connections 必须是正整数或 None")
         if not isinstance(self.blocking, bool):
             raise ValidationError("Redis 连接池参数 blocking 必须是布尔值")

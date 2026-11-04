@@ -336,9 +336,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         labels = self._resolved_labels()
         label_names = self._resolved_label_names()
 
-        lift_columns = [
-            f"{label_names[i]}_LIFT" if i < len(label_names) else f"{label}_LIFT" for i, label in enumerate(labels)
-        ]
+        lift_columns = [f"{label_names[i]}_LIFT" if i < len(label_names) else f"{label}_LIFT" for i, label in enumerate(labels)]
 
         def effective(rule):
             return [rule.get(column, 0) >= min_lift for column in lift_columns]
@@ -350,9 +348,7 @@ class MultiLabelRuleMiner(BaseRuleMiner):
         elif effectiveness == "short_only":
             rules = [rule for rule in rules if effective(rule) and effective(rule)[0] and not any(effective(rule)[1:])]
         elif effectiveness == "long_only":
-            rules = [
-                rule for rule in rules if effective(rule) and effective(rule)[-1] and not any(effective(rule)[:-1])
-            ]
+            rules = [rule for rule in rules if effective(rule) and effective(rule)[-1] and not any(effective(rule)[:-1])]
         elif effectiveness != "all":
             raise ValueError("effectiveness 必须为 both、any、short_only、long_only 或 all")
 

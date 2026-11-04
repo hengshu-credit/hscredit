@@ -91,10 +91,7 @@ def build_model_explanation(model, config: Dict[str, Any]) -> Dict[str, Any]:
                 random_state=config["random_state"],
             ),
             "代表样本": representatives,
-            "样本解释": {
-                sample_id: explainer.get_sample_report(result, sample_id=sample_id)
-                for sample_id in representatives["样本索引"]
-            },
+            "样本解释": {sample_id: explainer.get_sample_report(result, sample_id=sample_id) for sample_id in representatives["样本索引"]},
             "原因码": explainer.get_reason_codes(result, risk_direction=config["risk_direction"]),
             "解释结果": result,
             "解释器": explainer,

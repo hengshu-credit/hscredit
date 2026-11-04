@@ -103,11 +103,7 @@ def _write_report_table(data, excel_writer, *, amount_basis=False, merge_columns
         if metric in identifiers:
             continue
         numeric = pd.api.types.is_numeric_dtype(data[column])
-        percent = (
-            column in (kwargs.get("percent_cols") or ())
-            or metric.endswith(("率", "占比", "KS值"))
-            or metric in {"KS", "坏账改善", "累积坏账改善"}
-        )
+        percent = column in (kwargs.get("percent_cols") or ()) or metric.endswith(("率", "占比", "KS值")) or metric in {"KS", "坏账改善", "累积坏账改善"}
         if percent:
             number_format = "0.00%"
         elif "金额" in metric or (metric in counts and amount_basis):
@@ -213,11 +209,7 @@ def _tree_evaluation_worker(task):
         apply_rule_filter=False,
     )
     full = worker.report(frame, **options, **kwargs)
-    orders = (
-        full
-        if kwargs.get("amount") is None
-        else worker.report(frame, **options, **{key: value for key, value in kwargs.items() if key != "amount"})
-    )
+    orders = full if kwargs.get("amount") is None else worker.report(frame, **options, **{key: value for key, value in kwargs.items() if key != "amount"})
     return orders, full
 
 
@@ -289,14 +281,7 @@ def tree_report_excel(
         raise TypeError("excel_writer 必须是 hscredit.excel.ExcelWriter 实例")
     if not isinstance(sheet, str) or not sheet or len(sheet) > 24 or any(c in sheet for c in "[]:*?/\\"):
         raise ValueError("sheet_name 必须是 1 至 24 字符的有效 Excel 工作表名称")
-    frames = (
-        datasets
-        if isinstance(datasets, dict)
-        else {
-            f"数据集{i + 1}": frame
-            for i, frame in enumerate(datasets if isinstance(datasets, (list, tuple)) else [datasets])
-        }
-    )
+    frames = datasets if isinstance(datasets, dict) else {f"数据集{i + 1}": frame for i, frame in enumerate(datasets if isinstance(datasets, (list, tuple)) else [datasets])}
     if not frames:
         raise ValueError("导出挖掘报告至少需要一个数据集")
     full_reports, order_reports, y_maps, date_values, plot_labels, contexts = {}, {}, [], [], {}, {}
@@ -306,11 +291,7 @@ def tree_report_excel(
         actual_target = target
         if target is None and overdue is None:
             classes = getattr(tree, "classes_", [0, 1])
-            actual_target = (
-                tree.target
-                if set(classes).issubset({0, 1})
-                else {f"类别_{value}": frame[tree.target].eq(value).astype(int) for value in classes}
-            )
+            actual_target = tree.target if set(classes).issubset({0, 1}) else {f"类别_{value}": frame[tree.target].eq(value).astype(int) for value in classes}
         prepared, bound = bind_targets(
             frame,
             actual_target,
@@ -383,16 +364,10 @@ def tree_report_excel(
     ]
     try:
         ws = writer.get_sheet_by_name(basic)
-        row, _ = writer.insert_value2sheet(
-            ws, (2, 2), value="一、基本信息", style="header_middle", align={"horizontal": "left"}
-        )
+        row, _ = writer.insert_value2sheet(ws, (2, 2), value="一、基本信息", style="header_middle", align={"horizontal": "left"})
         description = project_desc or "使用树规则划分客群，并比较各数据集的规则命中效果"
-        row, _ = writer.insert_value2sheet(
-            ws, (row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"}
-        )
-        row, _ = writer.insert_value2sheet(
-            ws, (row, 2), value=description, style="middle", align={"horizontal": "left"}
-        )
+        row, _ = writer.insert_value2sheet(ws, (row + 2, 2), value="1、项目目标", style="header_middle", align={"horizontal": "left"})
+        row, _ = writer.insert_value2sheet(ws, (row, 2), value=description, style="middle", align={"horizontal": "left"})
         info = [
             {"统计项": "模型名称", "统计内容": type(tree).__name__},
             {"统计项": "取样逻辑", "统计内容": project_desc or ""},
@@ -400,11 +375,7 @@ def tree_report_excel(
             {"统计项": "指标口径", "统计内容": "、".join(y_maps[0])},
             {
                 "统计项": "规则范围",
-                "统计内容": (
-                    "按训练集订单指标筛选，条件见树的参数配置"
-                    if apply_rule_filter and getattr(tree, "rule_filter", None) is not None
-                    else ("仅叶节点" if leaf_only else "全部节点（父子规则存在重叠）")
-                ),
+                "统计内容": ("按训练集订单指标筛选，条件见树的参数配置" if apply_rule_filter and getattr(tree, "rule_filter", None) is not None else ("仅叶节点" if leaf_only else "全部节点（父子规则存在重叠）")),
             },
         ]
         if date is not None:
@@ -592,9 +563,7 @@ def _prediction_metrics(tree, frames, y_maps, amount, predictions=None):
                     cached = predictions.setdefault(name, {})
                     if class_index not in cached:
                         cached[class_index] = np.array(_tree_score(tree, frame, class_index), copy=True)
-                    ks_value, auc_value, _, _ = _binary_metric_worker(
-                        (target[valid], cached[class_index][valid], "higher_risk", weights)
-                    )
+                    ks_value, auc_value, _, _ = _binary_metric_worker((target[valid], cached[class_index][valid], "higher_risk", weights))
                 ks_values.append(ks_value)
                 auc_values.append(auc_value)
             result[(basis, label, "KS")] = ks_values
@@ -654,9 +623,7 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount, s
                 "叶子节点数": leaves,
                 "中间节点数": len(nodes) - leaves,
                 "树深度（根为0）": max(node["depth"] for node in nodes),
-                "人工调整节点数": int(
-                    training[("分箱详情", "是否调整") if isinstance(training.columns, pd.MultiIndex) else "是否调整"].eq("是").sum()
-                ),
+                "人工调整节点数": int(training[("分箱详情", "是否调整") if isinstance(training.columns, pd.MultiIndex) else "是否调整"].eq("是").sum()),
             }
         ]
     )
@@ -705,17 +672,13 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount, s
     return row
 
 
-def _sample_tables(
-    tree, frames, y_maps, amount_reports, amount, long_format, target_specific_totals=None, predictions=None
-):
+def _sample_tables(tree, frames, y_maps, amount_reports, amount, long_format, target_specific_totals=None, predictions=None):
     """整体与分组统计共用模型报告样本统计和性能入口，不混合订单/金额分母。"""
     labels = list(y_maps[0])
     filtered = any(pd.isna(values).any() for mapping in y_maps for values in mapping.values())
     if target_specific_totals is not None:
         filtered = target_specific_totals
-    orders, _ = build_sample_stats_table(
-        list(frames), y_maps, labels, flat_total_col="样本总数", target_specific_totals=filtered, n_jobs=1
-    )
+    orders, _ = build_sample_stats_table(list(frames), y_maps, labels, flat_total_col="样本总数", target_specific_totals=filtered, n_jobs=1)
     amounts = orders.copy() if amount else None
     if amounts is not None:
         multi = isinstance(amounts.columns, pd.MultiIndex)
@@ -763,12 +726,7 @@ def _stats_format(table, labels, long_format, detail_group="统计详情", index
         output["_row"] = np.arange(len(output))
         output["_label"] = ordinal
         outputs.append(output)
-    return (
-        pd.concat(outputs, ignore_index=True)
-        .sort_values(["_row", "_label"], kind="stable")
-        .drop(columns=["_row", "_label"])
-        .reset_index(drop=True)
-    )
+    return pd.concat(outputs, ignore_index=True).sort_values(["_row", "_label"], kind="stable").drop(columns=["_row", "_label"]).reset_index(drop=True)
 
 
 def _distribution_tables(
@@ -861,9 +819,7 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
     left_col = 2
     right_col = left_col + len(left.columns) + 1
     end_col = right_col + len(right.columns) - 1 if right is not None else left_col + len(left.columns) - 1
-    writer.insert_value2sheet(
-        ws, (row, left_col), value=title, style="header_middle", align={"horizontal": "left"}, end_space=(row, end_col)
-    )
+    writer.insert_value2sheet(ws, (row, left_col), value=title, style="header_middle", align={"horizontal": "left"}, end_space=(row, end_col))
     writer.insert_value2sheet(
         ws,
         (row + 1, left_col),
@@ -929,9 +885,7 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
     return end_row + 1
 
 
-def _write_tree_pair(
-    tree, orders, amounts, writer, sheet, row, title, temporary, node_order, long_format, plot_label=None
-):
+def _write_tree_pair(tree, orders, amounts, writer, sheet, row, title, temporary, node_order, long_format, plot_label=None):
     from ...core.viz import plot_tree
     import matplotlib.pyplot as plt
 
@@ -948,9 +902,7 @@ def _write_tree_pair(
         node_col = ("分箱详情", "节点编号") if isinstance(full.columns, pd.MultiIndex) else "节点编号"
         strategy = _strategy_table(full, False).set_index(node_col, drop=False).loc[node_order].reset_index(drop=True)
         tables.append(format_rule_tables(strategy, long_format))
-    description = (
-        f"{len(node_order)} 条节点规则，保持训练集规则顺序；树图标签：{plot_label or label}。" "命中率按各标签有效样本计算，LIFT=命中坏率/整体坏率；金额表按金额加权。"
-    )
+    description = f"{len(node_order)} 条节点规则，保持训练集规则顺序；树图标签：{plot_label or label}。" "命中率按各标签有效样本计算，LIFT=命中坏率/整体坏率；金额表按金额加权。"
     return _write_pair(writer, sheet, row, title, tables[0], tables[1], description, paths)
 
 
@@ -977,14 +929,7 @@ def _write_feature_binning(
     from openpyxl.worksheet.table import Table, TableStyleInfo
     from openpyxl.utils import get_column_letter
 
-    features = list(
-        dict.fromkeys(
-            feature
-            for rule in tree.get_rules(leaf_only=False)
-            if int(rule.name.rsplit("_", 1)[1].lstrip("N")) in node_order
-            for feature in rule.feature_names_in_
-        )
-    )
+    features = list(dict.fromkeys(feature for rule in tree.get_rules(leaf_only=False) if int(rule.name.rsplit("_", 1)[1].lstrip("N")) in node_order for feature in rule.feature_names_in_))
     name = f"{sheet}_特征分箱"
     if name in writer.workbook.sheetnames:
         del writer.workbook[name]
@@ -1025,9 +970,7 @@ def _write_feature_binning(
                 if any(pd.notna(value) for value in values.values()):
                     summary[(metric, label)] = summary[("分箱详情", "指标名称")].map(values)
             metadata = [c for c in summary if c[0] == "分箱详情"]
-            ordered = metadata + [
-                c for metric in ["KS", "AUC", "LIFT值", "指标IV值", "坏样本数", "坏样本率"] for c in summary if c[0] == metric
-            ]
+            ordered = metadata + [c for metric in ["KS", "AUC", "LIFT值", "指标IV值", "坏样本数", "坏样本率"] for c in summary if c[0] == metric]
             summary = summary[ordered]
             summary.insert(0, ("分箱详情", "数据集"), dataset)
             summary.insert(1, ("分箱详情", "统计口径"), basis)
@@ -1053,16 +996,7 @@ def _write_feature_binning(
     ).sort_values(["dataset", "feature", "basis", "method"], kind="stable")
     summary = summary.loc[order.index].reset_index(drop=True)
     labels = [column[1] for column in summary if column[0] == "坏样本率"]
-    summary = summary[
-        metadata
-        + [column for column in summary if column[0] == "分箱详情" and column not in metadata]
-        + [
-            (metric, label)
-            for metric in ["KS", "AUC", "LIFT值", "指标IV值", "坏样本数", "坏样本率"]
-            for label in labels
-            if (metric, label) in summary
-        ]
-    ]
+    summary = summary[metadata + [column for column in summary if column[0] == "分箱详情" and column not in metadata] + [(metric, label) for metric in ["KS", "AUC", "LIFT值", "指标IV值", "坏样本数", "坏样本率"] for label in labels if (metric, label) in summary]]
 
     def write_filter_table(table, row, col, title=None):
         wide = isinstance(table.columns, pd.MultiIndex)
@@ -1081,9 +1015,7 @@ def _write_feature_binning(
         # 宽表保留合并分层表头，使用工作表筛选；明细长表使用多个原生 Table。
         if wide:
             header_row = end - len(table) - 1
-            writer.add_auto_filter(
-                ws, f"{get_column_letter(col)}{header_row}:" f"{get_column_letter(col + len(table.columns)-1)}{end-1}"
-            )
+            writer.add_auto_filter(ws, f"{get_column_letter(col)}{header_row}:" f"{get_column_letter(col + len(table.columns)-1)}{end-1}")
             return end
         # Worksheet 的 AutoFilter 只有一个范围；用原生 Table 为各数据集提供筛选按钮。
         identifiers = {key for worksheet in writer.workbook for key in worksheet.tables}
@@ -1093,9 +1025,7 @@ def _write_feature_binning(
         header_row = row + 2 if title else row
         ref = f"{get_column_letter(col)}{header_row}:{get_column_letter(col + len(table.columns)-1)}{end-1}"
         native_table = Table(displayName=f"TreeFeatureBins{ordinal}", ref=ref)
-        native_table.tableStyleInfo = TableStyleInfo(
-            name=None, showFirstColumn=False, showLastColumn=False, showRowStripes=False, showColumnStripes=False
-        )
+        native_table.tableStyleInfo = TableStyleInfo(name=None, showFirstColumn=False, showLastColumn=False, showRowStripes=False, showColumnStripes=False)
         ws.add_table(native_table)
         return end
 

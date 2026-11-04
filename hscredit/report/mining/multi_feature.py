@@ -236,11 +236,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         # 分类特征
         working.numerical_features_ = working._get_numeric_features(X)
         working.categorical_features_ = working._get_categorical_features(X)
-        working.features_ = (
-            list(X.columns)
-            if working._features_explicit_
-            else working.numerical_features_ + working.categorical_features_
-        )
+        working.features_ = list(X.columns) if working._features_explicit_ else working.numerical_features_ + working.categorical_features_
 
         # 计算整体坏账率
         working.overall_badrate_ = y.mean()
@@ -295,13 +291,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         unique_count = values.nunique(dropna=False)
         specs = {}
         if feature in self.numerical_features_ and (custom_splits is not None or unique_count > self.max_n_bins):
-            binner = self._get_binning_instance(
-                **(
-                    {"user_splits": {feature: list(custom_splits)[1:-1]}, "user_splits_fixed": True}
-                    if custom_splits is not None
-                    else {}
-                )
-            )
+            binner = self._get_binning_instance(**({"user_splits": {feature: list(custom_splits)[1:-1]}, "user_splits_fixed": True} if custom_splits is not None else {}))
             binner.fit(self.X_[[feature]], self.y_)
             self._binner_instances_[feature] = binner
             codes = binner.transform(self.X_[[feature]])[feature].astype(int)
@@ -413,12 +403,8 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         joint = row_ids * width + col_ids
         shape = (len(row_levels), width)
         counts = np.bincount(joint, minlength=shape[0] * shape[1]).reshape(shape)
-        bad_counts = np.bincount(joint, weights=self.y_.to_numpy(dtype=float), minlength=shape[0] * shape[1]).reshape(
-            shape
-        )
-        count_matrix = pd.DataFrame(
-            counts, index=pd.Index(row_levels, name=feature1), columns=pd.Index(col_levels, name=feature2)
-        )
+        bad_counts = np.bincount(joint, weights=self.y_.to_numpy(dtype=float), minlength=shape[0] * shape[1]).reshape(shape)
+        count_matrix = pd.DataFrame(counts, index=pd.Index(row_levels, name=feature1), columns=pd.Index(col_levels, name=feature2))
         bad_count_matrix = pd.DataFrame(bad_counts, index=count_matrix.index, columns=count_matrix.columns)
 
         # 坏账率矩阵
@@ -436,11 +422,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         total_bad = float(self.y_.sum())
         total_good = len(self.y_) - total_bad
         # 二值命中分数的 KS 可由同一组计数直接计算。
-        ks_matrix = (
-            (bad_count_matrix / total_bad - (count_matrix - bad_count_matrix) / total_good).abs()
-            if total_bad > 0 and total_good > 0
-            else count_matrix.astype(float) * 0
-        )
+        ks_matrix = (bad_count_matrix / total_bad - (count_matrix - bad_count_matrix) / total_good).abs() if total_bad > 0 and total_good > 0 else count_matrix.astype(float) * 0
 
         # 构建MultiIndex DataFrame
         metrics = ["count", "bad_count", "badrate", "sample_ratio", "lift"]
@@ -531,9 +513,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         rows = []
         feature_map = resolve_feature_map(self.feature_map)
         input_fields = f"{feature1} × {feature2}"
-        field_meanings = (
-            f"{feature_map.get(feature1, '')} × {feature_map.get(feature2, '')}" if feature_map is not None else ""
-        )
+        field_meanings = f"{feature_map.get(feature1, '')} × {feature_map.get(feature2, '')}" if feature_map is not None else ""
         for _, row in long_df.head(top_n).iterrows():
             v1, v2 = row["feature1_value"], row["feature2_value"]
             spec1, spec2 = self._feature_specs_[feature1][int(v1)], self._feature_specs_[feature2][int(v2)]
@@ -646,9 +626,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             # 数值特征不足 10 个时，按类别基数补足候选特征。
             remaining = 10 - len(selected_features)
             if remaining > 0:
-                categorical_cardinality = (
-                    self.X_[self.categorical_features_].nunique(dropna=False).sort_values(ascending=False)
-                )
+                categorical_cardinality = self.X_[self.categorical_features_].nunique(dropna=False).sort_values(ascending=False)
                 selected_features.extend(categorical_cardinality.head(remaining).index.tolist())
         else:
             selected_features = all_features
@@ -832,9 +810,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
         :param min_samples: 候选交叉区域最小样本数；None 继承构造参数。 默认 ``None``。
         :param min_lift: 候选交叉区域最小 LIFT；None 继承构造参数。 默认 ``None``。
         """
-        return self.get_rules(
-            top_n=top_n, metric=metric, target=target, datasets=datasets, min_samples=min_samples, min_lift=min_lift
-        )
+        return self.get_rules(top_n=top_n, metric=metric, target=target, datasets=datasets, min_samples=min_samples, min_lift=min_lift)
 
     def get_binning_table(self, feature: str) -> Optional[pd.DataFrame]:
         """获取特征的分箱统计表（如果使用了hscredit分箱方法）.
@@ -985,9 +961,7 @@ class MultiFeatureRuleMiner(BaseRuleMiner):
             cmap = "RdYlGn" if metric in ["lift", "badrate"] else "Blues"
 
         fig = plt.figure(figsize=figsize)
-        gs = gridspec.GridSpec(
-            nrows=2, ncols=2, height_ratios=[0.9, 8.0], width_ratios=[8.0, 1.4], hspace=0.02, wspace=0.02
-        )
+        gs = gridspec.GridSpec(nrows=2, ncols=2, height_ratios=[0.9, 8.0], width_ratios=[8.0, 1.4], hspace=0.02, wspace=0.02)
 
         ax_top = fig.add_subplot(gs[0, 0])
         ax_main = fig.add_subplot(gs[1, 0], sharex=ax_top)

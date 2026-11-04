@@ -328,9 +328,7 @@ class TreeRuleExtractor(BaseRuleMiner):
                 raise ValueError(f"算法 '{self._resolved_algorithm}' 需要目标变量y")
 
             # 划分训练集和测试集
-            X_train, X_test, y_train, y_test = train_test_split(
-                X_encoded, y, test_size=self.test_size, random_state=self.random_state
-            )
+            X_train, X_test, y_train, y_test = train_test_split(X_encoded, y, test_size=self.test_size, random_state=self.random_state)
 
             self.X_train_ = X_train
             self.X_test_ = X_test
@@ -704,10 +702,7 @@ class TreeRuleExtractor(BaseRuleMiner):
 
         anomaly_mask = scores < threshold
 
-        tasks = [
-            (self, estimator, tree_idx, scores, anomaly_mask)
-            for tree_idx, estimator in enumerate(native_model.estimators_)
-        ]
+        tasks = [(self, estimator, tree_idx, scores, anomaly_mask) for tree_idx, estimator in enumerate(native_model.estimators_)]
         extracted = self._parallel_execute(
             _isolation_tree_extract_worker,
             tasks,
@@ -864,22 +859,12 @@ class TreeRuleExtractor(BaseRuleMiner):
         for rule in rules:
             # 生成规则签名
             conditions = rule["conditions"]
-            signature = "|".join(
-                [
-                    f"{c['feature']}{c['operator']}{c['threshold']:.4f}"
-                    for c in sorted(conditions, key=lambda x: x["feature"])
-                ]
-            )
+            signature = "|".join([f"{c['feature']}{c['operator']}{c['threshold']:.4f}" for c in sorted(conditions, key=lambda x: x["feature"])])
 
             # 检查是否已存在相似规则
             is_duplicate = False
             for existing in unique_rules:
-                existing_sig = "|".join(
-                    [
-                        f"{c['feature']}{c['operator']}{c['threshold']:.4f}"
-                        for c in sorted(existing["conditions"], key=lambda x: x["feature"])
-                    ]
-                )
+                existing_sig = "|".join([f"{c['feature']}{c['operator']}{c['threshold']:.4f}" for c in sorted(existing["conditions"], key=lambda x: x["feature"])])
 
                 # 计算相似度
                 if signature == existing_sig:
@@ -971,9 +956,7 @@ class TreeRuleExtractor(BaseRuleMiner):
         :param target: 评估标签列名；None 使用构造参数 target。 默认 ``None``。
         :param datasets: 可选评估数据；传入时用 Rule.report 回填命中指标，不传时保留树规则原始信息。 默认 ``None``。
         """
-        return self.get_rules(
-            top_n=top_n, min_samples=min_samples, min_confidence=min_confidence, target=target, datasets=datasets
-        )
+        return self.get_rules(top_n=top_n, min_samples=min_samples, min_confidence=min_confidence, target=target, datasets=datasets)
 
     def get_rules_dataframe(
         self,
@@ -1046,19 +1029,13 @@ class TreeRuleExtractor(BaseRuleMiner):
             if isinstance(threshold, np.generic):
                 threshold = threshold.item()
             operation = c["operator"]
-            compare = {"<=": np.less_equal, ">": np.greater, "<": np.less, ">=": np.greater_equal, "==": np.equal}[
-                operation
-            ]
+            compare = {"<=": np.less_equal, ">": np.greater, "<": np.less, ">=": np.greater_equal, "==": np.equal}[operation]
             categories = getattr(self, "_raw_category_values_", {}).get(feature)
             if categories is not None:
-                selected = [
-                    value for code, members in categories.items() if compare(code, threshold) for value in members
-                ]
+                selected = [value for code, members in categories.items() if compare(code, threshold) for value in members]
                 missing = any(pd.isna(value) for value in selected)
                 values = tuple(value for value in selected if not pd.isna(value))
-                expression = BinSpec(
-                    feature, 0, kind="categories", values=values, include_missing=missing
-                ).to_expression()
+                expression = BinSpec(feature, 0, kind="categories", values=values, include_missing=missing).to_expression()
             else:
                 # sklearn 树先将输入转 float32；将边界逆映射到原始 float64，
                 # 包括 midpoint 的 ties-to-even，保证贴边样本与叶节点一致。
@@ -1091,9 +1068,7 @@ class TreeRuleExtractor(BaseRuleMiner):
 
         importance = native_model.feature_importances_
 
-        result = pd.DataFrame({"feature": self.feature_names_, "importance": importance}).sort_values(
-            "importance", ascending=False
-        )
+        result = pd.DataFrame({"feature": self.feature_names_, "importance": importance}).sort_values("importance", ascending=False)
         feature_map = resolve_feature_map(self.feature_map)
         if feature_map is not None:
             result.insert(1, "入参字段", result["feature"])

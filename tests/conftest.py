@@ -22,9 +22,7 @@ _DATABASE_TEST_ENVIRONMENTS = frozenset(
         "HSCREDIT_TEST_STARROCKS_HOST",
     }
 )
-_ALLOWED_DATABASE_SKIP_REASONS = frozenset(
-    f"未配置 {environment_variable}" for environment_variable in _DATABASE_TEST_ENVIRONMENTS
-)
+_ALLOWED_DATABASE_SKIP_REASONS = frozenset(f"未配置 {environment_variable}" for environment_variable in _DATABASE_TEST_ENVIRONMENTS)
 
 # 工作簿存在时不排除任何测试模块。
 collect_ignore = []

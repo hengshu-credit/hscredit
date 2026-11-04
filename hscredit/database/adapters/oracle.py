@@ -191,15 +191,10 @@ class OracleAdapter(DBAPIAdapter):
         for column, comment in dict(options.get("column_comments") or {}).items():
             if column not in data.columns:
                 raise InputValidationError(f"Oracle 字段注释引用未知字段: {column!r}")
-            self.execute(
-                f"COMMENT ON COLUMN {self.quote_qualified_name(table_name)}."
-                f"{self.quote_identifier(str(column))} IS {self._quote_literal(comment)}"
-            )
+            self.execute(f"COMMENT ON COLUMN {self.quote_qualified_name(table_name)}." f"{self.quote_identifier(str(column))} IS {self._quote_literal(comment)}")
         table_comment = options.get("table_comment") or options.get("comment")
         if table_comment is not None:
-            self.execute(
-                f"COMMENT ON TABLE {self.quote_qualified_name(table_name)} " f"IS {self._quote_literal(table_comment)}"
-            )
+            self.execute(f"COMMENT ON TABLE {self.quote_qualified_name(table_name)} " f"IS {self._quote_literal(table_comment)}")
         return ddl
 
     def table_exists(self, table_name: str) -> bool:
@@ -239,11 +234,7 @@ ORDER BY cc.POSITION
             result="records",
         )
         normalized = [{str(key).lower(): value for key, value in row.items()} for row in rows]
-        return tuple(
-            str(row["column_name"])
-            for row in sorted(normalized, key=lambda row: int(row.get("position") or 0))
-            if row.get("column_name") is not None
-        )
+        return tuple(str(row["column_name"]) for row in sorted(normalized, key=lambda row: int(row.get("position") or 0)) if row.get("column_name") is not None)
 
     def resolve_key_columns(
         self,
@@ -275,25 +266,14 @@ ORDER BY cc.POSITION
             raise ValidationError("Oracle MERGE 只支持 a/r 模式")
         if not key_columns:
             raise DatabaseCapabilityError("Oracle MERGE 必须指定主键字段")
-        source_columns = ", ".join(
-            f":{index} AS {self.quote_identifier(str(column))}" for index, column in enumerate(columns, start=1)
-        )
-        on_clause = " AND ".join(
-            f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}"
-            for column in key_columns
-        )
-        sql = (
-            f"MERGE INTO {self.quote_qualified_name(table_name)} target "
-            f"USING (SELECT {source_columns} FROM dual) source ON ({on_clause})"
-        )
+        source_columns = ", ".join(f":{index} AS {self.quote_identifier(str(column))}" for index, column in enumerate(columns, start=1))
+        on_clause = " AND ".join(f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}" for column in key_columns)
+        sql = f"MERGE INTO {self.quote_qualified_name(table_name)} target " f"USING (SELECT {source_columns} FROM dual) source ON ({on_clause})"
         if mode == "r":
             keys = set(key_columns)
             update_columns = [column for column in columns if column not in keys]
             if update_columns:
-                assignments = ", ".join(
-                    f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}"
-                    for column in update_columns
-                )
+                assignments = ", ".join(f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}" for column in update_columns)
                 sql += f" WHEN MATCHED THEN UPDATE SET {assignments}"
         insert_columns = ", ".join(self.quote_identifier(str(column)) for column in columns)
         insert_values = ", ".join(f"source.{self.quote_identifier(str(column))}" for column in columns)
@@ -399,11 +379,7 @@ ORDER BY cc.POSITION
     ) -> BatchWriteResult:
         del batch_index, dialect_options
         columns = [str(column) for column in batch.columns]
-        sql = (
-            self.build_merge_sql(table_name, columns, key_columns or (), mode=mode)
-            if mode in {"a", "r"}
-            else self._build_insert_sql(table_name, columns)
-        )
+        sql = self.build_merge_sql(table_name, columns, key_columns or (), mode=mode) if mode in {"a", "r"} else self._build_insert_sql(table_name, columns)
         values = [tuple(self._dbapi_value(value) for value in row) for row in batch.itertuples(index=False, name=None)]
         affected = self.executemany(sql, values)
         if mode == "a":

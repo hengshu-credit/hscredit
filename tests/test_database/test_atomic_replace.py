@@ -87,9 +87,7 @@ class Cursor:
             self.rows = [
                 (
                     "target",
-                    "CREATE target (id BIGINT, name TEXT) ENGINE=InnoDB"
-                    + state.ddl_options
-                    + (" CHANGED" if state.schema_drift and state.commits else ""),
+                    "CREATE target (id BIGINT, name TEXT) ENGINE=InnoDB" + state.ddl_options + (" CHANGED" if state.schema_drift and state.commits else ""),
                 )
             ]
         elif sql.startswith("CREATE TABLE"):
@@ -188,9 +186,7 @@ class Connection:
 
 class FakeMySQL(MySQLAdapter):
     def __init__(self, *, connect_kwargs, pool_options, adapter_options):
-        BaseDatabaseAdapter.__init__(
-            self, connect_kwargs=connect_kwargs, pool_options=pool_options, adapter_options=adapter_options
-        )
+        BaseDatabaseAdapter.__init__(self, connect_kwargs=connect_kwargs, pool_options=pool_options, adapter_options=adapter_options)
         state = connect_kwargs["state"]
 
         def connect(**kwargs):
@@ -221,14 +217,8 @@ def test_atomic_replace_only_publishes_once_and_keeps_old_backup():
     assert state.tables["risk.target"] == list(data().itertuples(index=False, name=None))
     assert result.staging_table not in state.tables
     assert state.rename_calls == 1 and state.connects == 1
-    rename_position = next(
-        i for i, call in enumerate(state.calls) if call[0] == "execute" and call[1].startswith("RENAME")
-    )
-    assert all(
-        i < rename_position
-        for i, call in enumerate(state.calls)
-        if call[0] == "execute" and call[1].startswith("INSERT")
-    )
+    rename_position = next(i for i, call in enumerate(state.calls) if call[0] == "execute" and call[1].startswith("RENAME"))
+    assert all(i < rename_position for i, call in enumerate(state.calls) if call[0] == "execute" and call[1].startswith("INSERT"))
     assert not any("TRUNCATE" in str(call) or "DROP TABLE `risk`.`target`" in str(call) for call in state.calls)
 
 
@@ -385,9 +375,7 @@ def test_session_strict_mode_and_finite_lock_timeout_apply_only_to_owned_connect
     assert "ALLOW_INVALID_DATES" not in modes
     assert any(call[:2] == ("execute", "SET SESSION lock_wait_timeout=30") for call in state.calls)
     sql_calls = [call[1] for call in state.calls if call[0] == "execute"]
-    assert sql_calls.index("SET SESSION lock_wait_timeout=30") < next(
-        i for i, sql in enumerate(sql_calls) if sql.startswith("LOCK TABLES")
-    )
+    assert sql_calls.index("SET SESSION lock_wait_timeout=30") < next(i for i, sql in enumerate(sql_calls) if sql.startswith("LOCK TABLES"))
     for index, call in enumerate(state.calls):
         if call[0] == "execute" and call[1].startswith("INSERT"):
             assert state.calls[index + 1][:2] == ("execute", "SHOW COUNT(*) WARNINGS")

@@ -268,18 +268,10 @@ def test_every_public_parallel_entry_exposes_common_defaults(entry):
 @pytest.mark.parametrize("module", PUBLIC_PARALLEL_ENTRIES)
 def test_explicit_parallel_manifest_covers_every_exported_callable(module):
     """显式清单必须完整覆盖 __all__，标量辅助入口不得伪装成批量入口。"""
-    exported_callables = {
-        name
-        for name in module.__all__
-        if inspect.isclass(getattr(module, name)) or inspect.isfunction(getattr(module, name))
-    }
+    exported_callables = {name for name in module.__all__ if inspect.isclass(getattr(module, name)) or inspect.isfunction(getattr(module, name))}
     assert exported_callables == PUBLIC_PARALLEL_ENTRIES[module] | NON_BATCH_EXPORTS[module]
 
-    detected_parallel = {
-        name
-        for name in exported_callables
-        if all(parameter in _callable_signature(getattr(module, name)).parameters for parameter in COMMON_PARAMETERS)
-    }
+    detected_parallel = {name for name in exported_callables if all(parameter in _callable_signature(getattr(module, name)).parameters for parameter in COMMON_PARAMETERS)}
     assert detected_parallel == PUBLIC_PARALLEL_ENTRIES[module]
 
 
@@ -326,11 +318,7 @@ def _required_constructor_arguments(cls):
         "feature": "特征",
     }
     signature = inspect.signature(cls.__init__)
-    return {
-        name: values[name]
-        for name, parameter in signature.parameters.items()
-        if name != "self" and parameter.default is inspect.Parameter.empty and name in values
-    }
+    return {name: values[name] for name, parameter in signature.parameters.items() if name != "self" and parameter.default is inspect.Parameter.empty and name in values}
 
 
 def _sklearn_parallel_classes():

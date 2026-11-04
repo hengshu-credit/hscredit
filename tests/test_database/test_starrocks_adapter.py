@@ -399,8 +399,4 @@ def test_starrocks_json_projection_uses_get_json_string(adapter):
         json_fields={"payload": {"city": "$.address.city"}},
     )
 
-    assert sql == (
-        "SELECT `hscredit_json_source`.`id`, "
-        "GET_JSON_STRING(`hscredit_json_source`.`payload`, '$.address.city') AS `city` "
-        "FROM (select id, payload from risk.events) `hscredit_json_source`"
-    )
+    assert sql == ("SELECT `hscredit_json_source`.`id`, " "GET_JSON_STRING(`hscredit_json_source`.`payload`, '$.address.city') AS `city` " "FROM (select id, payload from risk.events) `hscredit_json_source`")

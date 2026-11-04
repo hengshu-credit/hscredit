@@ -93,9 +93,7 @@ class BinStatsAccumulator:
         if not isinstance(other, BinStatsAccumulator) or self.spec != other.spec:
             raise ValueError("只能合并相同字段、目标和分箱版本的统计")
         if other.bin_dtype_ is not None:
-            self.bin_dtype_ = (
-                other.bin_dtype_ if self.bin_dtype_ is None else np.result_type(self.bin_dtype_, other.bin_dtype_)
-            )
+            self.bin_dtype_ = other.bin_dtype_ if self.bin_dtype_ is None else np.result_type(self.bin_dtype_, other.bin_dtype_)
         for code, (good, bad) in list(other.counts_.items()):
             old_good, old_bad = self.counts_.get(code, (0, 0))
             self.counts_[code] = (old_good + good, old_bad + bad)

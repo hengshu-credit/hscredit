@@ -26,19 +26,10 @@ class TorchTabularModel(BaseNetModel):
         if self._network_kind == "ResNet":
             if self.batch_size < 2:
                 raise ValidationError("ResNet 的 batch_size 必须至少为 2，以支持批归一化")
-            if (
-                isinstance(self.cat_embedding_dim, bool)
-                or not isinstance(self.cat_embedding_dim, Integral)
-                or self.cat_embedding_dim < 1
-            ):
+            if isinstance(self.cat_embedding_dim, bool) or not isinstance(self.cat_embedding_dim, Integral) or self.cat_embedding_dim < 1:
                 raise ValidationError("cat_embedding_dim 必须为正整数")
         elif self._network_kind == "FTTransformer":
-            if (
-                isinstance(self.n_heads, bool)
-                or not isinstance(self.n_heads, Integral)
-                or self.n_heads < 1
-                or self.d_block % self.n_heads
-            ):
+            if isinstance(self.n_heads, bool) or not isinstance(self.n_heads, Integral) or self.n_heads < 1 or self.d_block % self.n_heads:
                 raise ValidationError("n_heads 必须是正整数，且 d_block 必须能被 n_heads 整除")
         elif self._network_kind == "TabM":
             if isinstance(self.k, bool) or not isinstance(self.k, Integral) or self.k < 1:
@@ -60,11 +51,7 @@ class TorchTabularModel(BaseNetModel):
                 raise ValidationError(f"{name} 必须是 [{lower}, {upper}) 内的有限数值")
         if self.learning_rate == 0:
             raise ValidationError("learning_rate 必须大于 0")
-        if self.early_stopping_rounds is not None and (
-            isinstance(self.early_stopping_rounds, bool)
-            or not isinstance(self.early_stopping_rounds, Integral)
-            or self.early_stopping_rounds < 1
-        ):
+        if self.early_stopping_rounds is not None and (isinstance(self.early_stopping_rounds, bool) or not isinstance(self.early_stopping_rounds, Integral) or self.early_stopping_rounds < 1):
             raise ValidationError("early_stopping_rounds 必须为正整数或 None")
 
     @record_training
@@ -127,18 +114,10 @@ class TorchTabularModel(BaseNetModel):
             raise ValidationError(f"{self._network_kind} 至少需要两个正权重训练样本")
         train_weight = np.ones(len(indices)) if weight is None else weight[indices]
         train_weight = train_weight / train_weight.mean()
-        self.preprocessor_ = (
-            copy.deepcopy(pretrained.preprocessor)
-            if pretrained is not None
-            else TabularPreprocessor().fit(train_X, self.categorical_features)
-        )
+        self.preprocessor_ = copy.deepcopy(pretrained.preprocessor) if pretrained is not None else TabularPreprocessor().fit(train_X, self.categorical_features)
         numeric, categorical = self.preprocessor_.transform(train_X)
         self.target_mean_ = float(np.average(train_y, weights=train_weight)) if self.objective_ == "regression" else 0.0
-        self.target_scale_ = (
-            float(np.sqrt(np.average((train_y - self.target_mean_) ** 2, weights=train_weight)))
-            if self.objective_ == "regression"
-            else 1.0
-        ) or 1.0
+        self.target_scale_ = (float(np.sqrt(np.average((train_y - self.target_mean_) ** 2, weights=train_weight))) if self.objective_ == "regression" else 1.0) or 1.0
         target = (train_y - self.target_mean_) / self.target_scale_
         try:
             import torch
@@ -156,10 +135,7 @@ class TorchTabularModel(BaseNetModel):
                 if required != original:
                     raise ValidationError("网络结构与预训练快照不一致，请沿用预训练的结构参数")
                 self._model.load_state_dict(pretrained.weights)
-            tensors = tuple(
-                torch.as_tensor(value)
-                for value in (numeric, categorical, target.astype(np.float32), train_weight.astype(np.float32))
-            )
+            tensors = tuple(torch.as_tensor(value) for value in (numeric, categorical, target.astype(np.float32), train_weight.astype(np.float32)))
             self._train(tensors, sets or [])
         self._model.eval()
         self._is_fitted = True
@@ -223,14 +199,8 @@ class TorchTabularModel(BaseNetModel):
             else:
                 from ._networks import TabularNetwork as Network
         except ImportError as exc:
-            raise DependencyError(
-                '网络训练需要 torch 及对应的 rtdl/tabm 依赖，请安装 pip install "hscredit[net]"'
-            ) from exc
-        device = (
-            "cuda"
-            if self.device == "auto" and torch.cuda.is_available()
-            else "cpu" if self.device == "auto" else self.device
-        )
+            raise DependencyError('网络训练需要 torch 及对应的 rtdl/tabm 依赖，请安装 pip install "hscredit[net]"') from exc
+        device = "cuda" if self.device == "auto" and torch.cuda.is_available() else "cpu" if self.device == "auto" else self.device
         try:
             self.device_ = torch.device(device)
             torch.empty(0, device=self.device_)
@@ -300,11 +270,7 @@ class TorchTabularModel(BaseNetModel):
                 raw = self._infer_arrays(numeric, categorical)
                 if raw.ndim == 2:
                     # 官方 TabM：验证集评估集成预测，训练时则独立优化每个成员。
-                    raw = (
-                        logit(np.clip(expit(raw.astype(float)).mean(axis=1), 1e-12, 1 - 1e-12))
-                        if self.objective_ == "binary"
-                        else raw.mean(axis=1)
-                    )
+                    raw = logit(np.clip(expit(raw.astype(float)).mean(axis=1), 1e-12, 1 - 1e-12)) if self.objective_ == "binary" else raw.mean(axis=1)
                 with torch.no_grad():
                     value = float(
                         loss_values(
@@ -323,9 +289,7 @@ class TorchTabularModel(BaseNetModel):
             if valid_losses and self.early_stopping_rounds is not None:
                 if valid_losses[0] < best_loss:
                     best_loss, stale = valid_losses[0], 0
-                    best_state = {
-                        name: value.detach().cpu().clone() for name, value in self._model.state_dict().items()
-                    }
+                    best_state = {name: value.detach().cpu().clone() for name, value in self._model.state_dict().items()}
                     self._best_iteration, self._best_score = epoch + 1, best_loss
                 else:
                     stale += 1

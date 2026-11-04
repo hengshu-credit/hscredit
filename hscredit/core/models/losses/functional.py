@@ -55,9 +55,7 @@ class CallableMetric(BaseMetric):
         super().__init__(name, bool(greater_is_better))
         self.function = function
         self.kwargs = deepcopy(kwargs)
-        self.supports_sample_weight = "sample_weight" in parameters or any(
-            item.kind == Parameter.VAR_KEYWORD for item in parameters.values()
-        )
+        self.supports_sample_weight = "sample_weight" in parameters or any(item.kind == Parameter.VAR_KEYWORD for item in parameters.values())
 
     def __call__(self, y_true, y_pred, sample_weight=None):
         """校验并计算原始指标值，不按方向改变正负号。

@@ -62,11 +62,7 @@ def _manual_score_from_points(scorecard: RoundScoreCard, X_raw: pd.DataFrame):
             categorical_bins = getattr(scorecard.binner, "_cat_bins_", {}).get(feature)
             for row_index, row in feature_points.iterrows():
                 bin_label = row["变量分箱"]
-                descriptor = (
-                    categorical_bins[row_index]
-                    if categorical_bins is not None and row_index < len(categorical_bins)
-                    else bin_label
-                )
+                descriptor = categorical_bins[row_index] if categorical_bins is not None and row_index < len(categorical_bins) else bin_label
                 condition = scorecard._bin_label_to_python_condition("value", descriptor, special_codes=special_codes)
                 matched = eval(condition, {"pd": pd}, {"value": value})
 
@@ -79,11 +75,7 @@ def _manual_score_from_points(scorecard: RoundScoreCard, X_raw: pd.DataFrame):
                 fallback_bins = [(row["变量分箱"], float(row["对应分数"])) for _, row in feature_points.iterrows()]
                 matched_score = float(scorecard._get_deployment_default_score(fallback_bins))
                 for label, score in fallback_bins:
-                    if (
-                        float(score) == matched_score
-                        and not scorecard._is_missing_descriptor(label)
-                        and not scorecard._is_special_descriptor(label)
-                    ):
+                    if float(score) == matched_score and not scorecard._is_missing_descriptor(label) and not scorecard._is_special_descriptor(label):
                         matched_label = label
                         break
 
@@ -186,9 +178,7 @@ def test_round_scorecard_consistency_for_details_and_deployment():
 
     namespace = {}
     exec(scorecard.export_deployment_code(language="python"), namespace)
-    deployed_scores = sample.apply(lambda row: namespace["calculate_score"](row.to_dict()), axis=1).to_numpy(
-        dtype=float
-    )
+    deployed_scores = sample.apply(lambda row: namespace["calculate_score"](row.to_dict()), axis=1).to_numpy(dtype=float)
     np.testing.assert_allclose(predicted, deployed_scores, atol=1e-9)
 
     transformed_bins = binner.transform(sample, metric="bins")[scorecard.feature_names_]

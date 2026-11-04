@@ -92,10 +92,7 @@ class BaseDatabaseAdapter:
         capabilities = self.capabilities_for_table(table_name, table_metadata)
         if mode not in capabilities.write_modes:
             available = sorted(capabilities.write_modes)
-            raise DatabaseCapabilityError(
-                f"数据库 {self.database_type} 的目标表 {table_name!r} 不支持写入模式 {mode!r}，"
-                f"当前可用模式: {available}"
-            )
+            raise DatabaseCapabilityError(f"数据库 {self.database_type} 的目标表 {table_name!r} 不支持写入模式 {mode!r}，" f"当前可用模式: {available}")
         return capabilities
 
     def build_count_sql(self, sql: str) -> str:

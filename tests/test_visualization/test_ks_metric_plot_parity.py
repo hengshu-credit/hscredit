@@ -33,20 +33,14 @@ def test_ks_and_roc_curves_match_metrics_and_reference_with_ties(direction, targ
         expected_ks = ks_2samp(score[target == 0], score[target == 1]).statistic
         assert max(ks_line.get_ydata()) == pytest.approx(expected_ks)
         assert max(ks_line.get_ydata()) == pytest.approx(ks(target, score))
-        np.testing.assert_allclose(
-            ks_line.get_ydata(), np.abs(np.asarray(bad_line.get_ydata()) - good_line.get_ydata())
-        )
+        np.testing.assert_allclose(ks_line.get_ydata(), np.abs(np.asarray(bad_line.get_ydata()) - good_line.get_ydata()))
         assert coverage[0] == 0.0
         assert coverage[-1] == 1.0
         assert len(coverage) == len(np.unique(score)) + 1
         assert np.all(np.diff(coverage) > 0)
         np.testing.assert_allclose(
             coverage,
-            (
-                np.asarray(bad_line.get_ydata()) * target.sum()
-                + np.asarray(good_line.get_ydata()) * (len(target) - target.sum())
-            )
-            / len(target),
+            (np.asarray(bad_line.get_ydata()) * target.sum() + np.asarray(good_line.get_ydata()) * (len(target) - target.sum())) / len(target),
         )
         assert any(f"KS: {round(expected_ks, 4)}" in text.get_text() for text in ks_ax.texts)
         expected_auc = auc(target, score, score_direction=direction)
@@ -106,9 +100,7 @@ def test_both_roc_plot_entries_share_exact_auc_curve_and_formatting(direction, w
             assert curve_auc(line.get_xdata(), line.get_ydata()) == expected
         assert first.axes[1].texts[0].get_text() == f"AUC: {expected:.4f}"
         assert f"AUC = {expected:.4f}" in second.axes[0].lines[0].get_label()
-        assert max(first.axes[0].lines[0].get_ydata()) == pytest.approx(
-            ks(target, score, pos_label="坏", sample_weight=weights)
-        )
+        assert max(first.axes[0].lines[0].get_ydata()) == pytest.approx(ks(target, score, pos_label="坏", sample_weight=weights))
     finally:
         plt.close(first)
         plt.close(second)

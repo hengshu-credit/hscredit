@@ -598,9 +598,7 @@ class Rule(ParallelizableMixin):
             default_target="target",
             handle_missing_target=handle_missing_target,
         )
-        del_grey = targets.needs_filtering(datasets) or (
-            del_grey and (targets.mode == "target" or targets.operator in (">", ">="))
-        )
+        del_grey = targets.needs_filtering(datasets) or (del_grey and (targets.mode == "target" or targets.operator in (">", ">=")))
         detail_group_name = "分箱详情"
         return_cols = [
             "指标名称",
@@ -630,9 +628,7 @@ class Rule(ParallelizableMixin):
             列名与 feature_bin_stats 保持一致，便于统一处理。
             """
             if prior_rules:
-                prior_tables = prior_rules.report(
-                    data, target=target, desc=desc, prior_rules=None, margins=margins, amount=amount
-                )
+                prior_tables = prior_rules.report(data, target=target, desc=desc, prior_rules=None, margins=margins, amount=amount)
                 prior_tables["规则分类"] = "先验规则"
                 data = data.loc[~prior_rules.predict(data)]
             else:
@@ -641,9 +637,7 @@ class Rule(ParallelizableMixin):
             # 标签、命中掩码和金额分开保存，避免用户字段名与表达式覆盖内部列。
             hits = np.asarray(self.predict(data), dtype=bool)
             labels = data[target].to_numpy()
-            weights = (
-                validate_amounts(data[amount], len(data)) if amount is not None else np.ones(len(data), dtype=np.int64)
-            )
+            weights = validate_amounts(data[amount], len(data)) if amount is not None else np.ones(len(data), dtype=np.int64)
             total = weights.sum()
             total_bad = weights[labels == 1].sum()
             total_good = total - total_bad
@@ -747,10 +741,7 @@ class Rule(ParallelizableMixin):
             labels = targets.names("space")
             task_data = datasets
             expression_rules = [self] + ([prior_rules] if prior_rules is not None else [])
-            if all(
-                type(rule) is Rule and getattr(rule.predict, "__func__", None) is Rule.predict
-                for rule in expression_rules
-            ):
+            if all(type(rule) is Rule and getattr(rule.predict, "__func__", None) is Rule.predict for rule in expression_rules):
                 # 标签已绑定；标准表达式规则只携带所需字段，避免每个标签复制整张宽表。
                 # 自定义 predict 的依赖不可由表达式推断，保持其完整输入。
                 required = set(targets.columns)
@@ -764,10 +755,7 @@ class Rule(ParallelizableMixin):
                     required = set(datasets.columns)
                 if datasets.columns.is_unique and required.issubset(datasets.columns):
                     task_data = datasets.loc[:, [column for column in datasets.columns if column in required]]
-            tasks = (
-                (copy.deepcopy(self), task_data, definition.column, desc, copy.deepcopy(prior_rules), amount, margins)
-                for definition in targets.labels
-            )
+            tasks = ((copy.deepcopy(self), task_data, definition.column, desc, copy.deepcopy(prior_rules), amount, margins) for definition in targets.labels)
             tables = self._parallel_execute(
                 _rule_report_target_worker,
                 tasks,
@@ -788,16 +776,8 @@ class Rule(ParallelizableMixin):
             merge_keys.columns = pd.MultiIndex.from_tuples([(detail_group_name, column) for column in merge_columns])
             table = pd.DataFrame()
             for position, (label, current) in enumerate(zip(labels, tables)):
-                current.columns = pd.MultiIndex.from_tuples(
-                    [(detail_group_name if column in merge_columns else label, column) for column in current.columns]
-                )
-                table = (
-                    current
-                    if position == 0
-                    else table.merge(
-                        current, on=[(detail_group_name, column) for column in merge_columns], how="outer", sort=False
-                    )
-                )
+                current.columns = pd.MultiIndex.from_tuples([(detail_group_name if column in merge_columns else label, column) for column in current.columns])
+                table = current if position == 0 else table.merge(current, on=[(detail_group_name, column) for column in merge_columns], how="outer", sort=False)
             table = merge_keys.merge(table, on=list(merge_keys.columns), how="left", sort=False)
         else:
             column = targets.columns[0]

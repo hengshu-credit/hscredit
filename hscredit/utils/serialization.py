@@ -24,11 +24,7 @@ ARTIFACT_VERSION = 1
 
 
 def _validate_digest(expected_sha256):
-    if (
-        not isinstance(expected_sha256, str)
-        or len(expected_sha256) != 64
-        or any(char not in "0123456789abcdefABCDEF" for char in expected_sha256)
-    ):
+    if not isinstance(expected_sha256, str) or len(expected_sha256) != 64 or any(char not in "0123456789abcdefABCDEF" for char in expected_sha256):
         raise SerializationError("制品SHA256摘要必须为64位十六进制字符串")
 
 
@@ -130,9 +126,7 @@ class ArtifactSerializableMixin:
 
     artifact_kind = "通用制品"
 
-    def save_deployment(
-        self, directory, *, name="model", validation_data=None, prediction_method=None, overwrite=False
-    ):
+    def save_deployment(self, directory, *, name="model", validation_data=None, prediction_method=None, overwrite=False):
         """原子发布部署制品及清单。
 
         :param directory: 部署目录，字符串或 Path。
@@ -181,11 +175,7 @@ class ArtifactSerializableMixin:
             "class": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
             "dependencies": dependencies,
             "history_policy": getattr(self, "history_policy", "unspecified"),
-            "features": (
-                list(getattr(self, "feature_names_in_", []))
-                if getattr(self, "feature_names_in_", None) is not None
-                else None
-            ),
+            "features": (list(getattr(self, "feature_names_in_", [])) if getattr(self, "feature_names_in_", None) is not None else None),
         }
 
     def save_artifact(

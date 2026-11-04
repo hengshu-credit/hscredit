@@ -233,9 +233,7 @@ def test_all_grey_still_has_decisions_and_undefined_observed_risk():
 
 def test_original_pass_series_aligns_by_unique_labels_and_base_is_consistent():
     data = _data().set_axis(list(reversed(range(12))))
-    result = _call(
-        data, original_pass=data["旧通过"].sort_index(), rules_base=[Rule("编号 < 2")], rules_out=[Rule("编号 >= 6")]
-    )
+    result = _call(data, original_pass=data["旧通过"].sort_index(), rules_base=[Rule("编号 < 2")], rules_out=[Rule("编号 >= 6")])
     _assert_summary(result, data["旧通过"], data["旧通过"] & (data["编号"] < 6), 1)
     with pytest.raises(ValueError, match="rules_base"):
         _call(data, original_pass="旧通过", rules_base=[Rule("编号 == 2")])
@@ -285,9 +283,7 @@ def test_real_workbook_raw_row_approval_matrix(survival, mode, backend):
     # 直接在原始列上计算，不调用 Rule 或生产掩码函数作为期望值。
     base = (data["欺诈"] >= 0.7) | (data["评分"] >= 0.23)
     out = ~base & ((data["多头"] >= 75) | (data["青云"] < 520))
-    ins = (
-        ~base & ~out & (((data["青云"] >= 680) & (data["评分"] < 0.1)) | ((data["多头"] <= 50) & (data["评分"] < 0.06)))
-    )
+    ins = ~base & ~out & (((data["青云"] >= 680) & (data["评分"] < 0.1)) | ((data["多头"] <= 50) & (data["评分"] < 0.06)))
     kept = ~(base | out | ins)
     result = _call(
         data,

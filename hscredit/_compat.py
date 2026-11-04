@@ -121,24 +121,12 @@ def needs_lightgbm_dask_pandas_compat(
     dask_version: Optional[Version],
 ) -> bool:
     """判断是否需要为旧 Dask 恢复 Pandas 字符串访问器别名。"""
-    return (
-        lightgbm_version is not None
-        and Version("3.2.0") <= lightgbm_version < Version("4.7.0")
-        and pandas_version is not None
-        and pandas_version >= Version("2.0.0")
-        and dask_version is not None
-        and dask_version < Version("2023.2.0")
-    )
+    return lightgbm_version is not None and Version("3.2.0") <= lightgbm_version < Version("4.7.0") and pandas_version is not None and pandas_version >= Version("2.0.0") and dask_version is not None and dask_version < Version("2023.2.0")
 
 
 def needs_lightgbm_sklearn_compat(lightgbm_version: Optional[Version], sklearn_version: Optional[Version]) -> bool:
     """判断是否需要转换 LightGBM 调用 scikit-learn 的校验参数名。"""
-    return (
-        lightgbm_version is not None
-        and lightgbm_version < Version("4.6.0")
-        and sklearn_version is not None
-        and sklearn_version >= Version("1.6.0")
-    )
+    return lightgbm_version is not None and lightgbm_version < Version("4.6.0") and sklearn_version is not None and sklearn_version >= Version("1.6.0")
 
 
 def needs_lightgbm_verbosity_compat(lightgbm_version: Optional[Version]) -> bool:
@@ -153,12 +141,7 @@ def needs_logistic_regression_parallel_compat(sklearn_version: Optional[Version]
 
 def needs_seaborn_pandas_compat(seaborn_version: Optional[Version], pandas_version: Optional[Version]) -> bool:
     """判断是否需要为旧 Seaborn 恢复已移除的 Pandas 配置项。"""
-    return (
-        seaborn_version is not None
-        and Version("0.11.0") <= seaborn_version < Version("0.12.2")
-        and pandas_version is not None
-        and pandas_version >= Version("2.0.0")
-    )
+    return seaborn_version is not None and Version("0.11.0") <= seaborn_version < Version("0.12.2") and pandas_version is not None and pandas_version >= Version("2.0.0")
 
 
 def _wrap_lightgbm_validation_keyword(func):

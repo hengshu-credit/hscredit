@@ -81,11 +81,7 @@ def test_constructors_only_store_public_parameters():
     concrete = []
     for name in selectors.__all__:
         cls = getattr(selectors, name)
-        if (
-            isinstance(cls, type)
-            and issubclass(cls, BaseFeatureSelector)
-            and cls not in {BaseFeatureSelector, CompositeFeatureSelector}
-        ):
+        if isinstance(cls, type) and issubclass(cls, BaseFeatureSelector) and cls not in {BaseFeatureSelector, CompositeFeatureSelector}:
             required = {
                 "RegexSelector": {"pattern": "甲"},
                 "FeatureImportanceSelector": {"estimator": CustomImportanceClassifier()},

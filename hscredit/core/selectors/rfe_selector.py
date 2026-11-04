@@ -277,6 +277,4 @@ class RFESelector(BaseFeatureSelector):
         self.selection_stopping_reason_ = "达到包含强制保留字段的总数量预算"
         self.n_iterations_ = iteration
         self.importance_history_ = pd.DataFrame(self.selection_events_)
-        self._drop_reason = (
-            "总数量预算已由强制保留字段占满，未参与递归筛选" if fixed_budget else "递归消除后未进入总保留数量预算"
-        )
+        self._drop_reason = "总数量预算已由强制保留字段占满，未参与递归筛选" if fixed_budget else "递归消除后未进入总保留数量预算"

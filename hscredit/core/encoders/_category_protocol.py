@@ -144,9 +144,7 @@ def unpack(record):
             result[key] = unpack(value_record)
         return result
     if kind == "series":
-        return pd.Series(
-            unpack(record["values"]), index=unpack(record["index"]), name=unpack(record["name"]), dtype=record["dtype"]
-        )
+        return pd.Series(unpack(record["values"]), index=unpack(record["index"]), name=unpack(record["name"]), dtype=record["dtype"])
     if kind == "array":
         return np.asarray(unpack(record["values"]), dtype=record["dtype"]).reshape(record["shape"])
     raise ValueError(f"编码映射包含不支持的类型记录: {kind}")

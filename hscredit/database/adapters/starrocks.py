@@ -106,9 +106,7 @@ class StarRocksAdapter(MySQLAdapter):
         table_metadata: Optional[Mapping[str, Any]] = None,
     ) -> DatabaseCapabilities:
         del table_name
-        model = self._normalize_table_model(
-            (table_metadata or {}).get("table_model") or (table_metadata or {}).get("model")
-        )
+        model = self._normalize_table_model((table_metadata or {}).get("table_model") or (table_metadata or {}).get("model"))
         modes = {"o", "d"}
         if model in {"PRIMARY KEY", "UNIQUE KEY"}:
             modes.add("r")
@@ -142,9 +140,7 @@ class StarRocksAdapter(MySQLAdapter):
         if not profile.all_strings or profile.non_null_count == 0:
             return "VARCHAR(65533)"
         if profile.max_utf8_bytes > 65_533:
-            raise InputValidationError(
-                "StarRocks 单个字符串字段超过 VARCHAR/STRING 上限 65533 字节，请拆分字段或改用外部存储"
-            )
+            raise InputValidationError("StarRocks 单个字符串字段超过 VARCHAR/STRING 上限 65533 字节，请拆分字段或改用外部存储")
         length = resolve_bounded_string_length(
             profile.max_utf8_bytes,
             maximum=65_533,
@@ -206,11 +202,7 @@ class StarRocksAdapter(MySQLAdapter):
 
         if_not_exists = " IF NOT EXISTS" if options.get("if_not_exists", True) else ""
         quoted_keys = ", ".join(self.quote_identifier(str(column)) for column in keys)
-        ddl = (
-            f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  "
-            + ",\n  ".join(definitions)
-            + f"\n) ENGINE=OLAP\n{model} ({quoted_keys})"
-        )
+        ddl = f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  " + ",\n  ".join(definitions) + f"\n) ENGINE=OLAP\n{model} ({quoted_keys})"
         table_comment = options.get("table_comment") or options.get("comment")
         if table_comment is not None:
             ddl += f"\nCOMMENT {self._quote_double(table_comment)}"
@@ -224,9 +216,7 @@ class StarRocksAdapter(MySQLAdapter):
             ddl += f" BUCKETS {buckets}"
         properties = dict(options.get("properties") or {})
         if properties:
-            items = ", ".join(
-                f"{self._quote_double(key)}={self._quote_double(value)}" for key, value in properties.items()
-            )
+            items = ", ".join(f"{self._quote_double(key)}={self._quote_double(value)}" for key, value in properties.items())
             ddl += f"\nPROPERTIES ({items})"
         return ddl
 
@@ -262,17 +252,11 @@ class StarRocksAdapter(MySQLAdapter):
     def get_json_columns(self, table_name: str) -> Tuple[str, ...]:
         schema, table = self._schema_and_table(table_name)
         rows = self.query(
-            "SELECT COLUMN_NAME FROM information_schema.columns "
-            "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s AND UPPER(DATA_TYPE)='JSON' "
-            "ORDER BY ORDINAL_POSITION",
+            "SELECT COLUMN_NAME FROM information_schema.columns " "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s AND UPPER(DATA_TYPE)='JSON' " "ORDER BY ORDINAL_POSITION",
             params=(schema, table),
             result="records",
         )
-        return tuple(
-            str(row.get("COLUMN_NAME", row.get("column_name")))
-            for row in rows
-            if row.get("COLUMN_NAME", row.get("column_name")) is not None
-        )
+        return tuple(str(row.get("COLUMN_NAME", row.get("column_name"))) for row in rows if row.get("COLUMN_NAME", row.get("column_name")) is not None)
 
     def get_key_columns(self, table_name: str) -> Tuple[str, ...]:
         schema, table = self._schema_and_table(table_name)
@@ -305,9 +289,7 @@ ORDER BY ORDINAL_POSITION
         if key_columns is not None:
             return tuple(key_columns)
         options = dict(dialect_options or {})
-        model = self._normalize_table_model(
-            options.get("table_model") or options.get("model") or self.get_table_model(table_name)
-        )
+        model = self._normalize_table_model(options.get("table_model") or options.get("model") or self.get_table_model(table_name))
         if model in {"PRIMARY KEY", "UNIQUE KEY"}:
             keys = self.get_key_columns(table_name)
             if not keys:
@@ -394,10 +376,7 @@ ORDER BY ORDINAL_POSITION
             {"table_model": model},
         )
         if mode not in capabilities.write_modes:
-            raise DatabaseCapabilityError(
-                f"StarRocks {model} 表 {table_name!r} 不支持模式 {mode!r}，"
-                f"当前可用模式: {sorted(capabilities.write_modes)}"
-            )
+            raise DatabaseCapabilityError(f"StarRocks {model} 表 {table_name!r} 不支持模式 {mode!r}，" f"当前可用模式: {sorted(capabilities.write_modes)}")
         if mode == "r" and not key_columns:
             raise DatabaseCapabilityError(f"StarRocks {model} 覆盖写入必须指定键字段")
 

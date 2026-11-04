@@ -124,20 +124,13 @@ def _feature_report_workload(
         dpds = params.get("dpds")
         dpd_count = len(dpds) if isinstance(dpds, (list, tuple, np.ndarray)) else 1
         resolved_target = params.get("target")
-        target_count = (
-            len(resolved_target)
-            if isinstance(resolved_target, (BoundTargets, dict))
-            else max(1, overdue_count * dpd_count)
-        )
+        target_count = len(resolved_target) if isinstance(resolved_target, (BoundTargets, dict)) else max(1, overdue_count * dpd_count)
         configured = params.get("max_n_bins")
         configured_bins = int(configured) if isinstance(configured, (int, np.integer)) and configured > 0 else 5
         for config_name in ("rules", "user_splits"):
             rules = params.get(config_name)
             collections = rules.values() if isinstance(rules, dict) else [rules]
-            configured_bins = max(
-                [configured_bins]
-                + [len(values) + 1 for values in collections if isinstance(values, (list, tuple, np.ndarray))]
-            )
+            configured_bins = max([configured_bins] + [len(values) + 1 for values in collections if isinstance(values, (list, tuple, np.ndarray))])
         fitted = params.get("binner")
         for item in fitted.values() if isinstance(fitted, dict) else [fitted]:
             configured_bins = max([configured_bins] + list(getattr(item, "n_bins_", {}).values()))
@@ -161,9 +154,7 @@ def _feature_report_workload(
         operation=operation,
         working_bytes_per_task=max(item[0] for item in estimates),
         result_bytes_per_task=max(item[1] for item in estimates),
-        output_rows_per_task=(
-            max(item[2] for item in estimates) if output_rows_per_task is None else output_rows_per_task
-        ),
+        output_rows_per_task=(max(item[2] for item in estimates) if output_rows_per_task is None else output_rows_per_task),
     )
 
 
@@ -201,9 +192,7 @@ def _auto_feature_compute_call(task):
         margins,
         bin_params,
     ) = task
-    data, target = bind_targets(
-        data, target, overdue, dpds, bin_params.get("del_grey", False), bin_params.get("overdue_operator", ">")
-    )
+    data, target = bind_targets(data, target, overdue, dpds, bin_params.get("del_grey", False), bin_params.get("overdue_operator", ">"))
     overdue, dpds = None, None
     cols_needed = list(dict.fromkeys([feature] + target.columns))
     if use_amount:
@@ -416,18 +405,12 @@ def _benchmark_binning_wide_table(
     validate_overdue_operator(overdue_operator)
     key_columns = {"分箱方法", "逾期字段", "逾期阈值"}
     metric_columns = [column for column in table.columns if column not in key_columns]
-    labels = [
-        (overdue_name, dpd, overdue_label(overdue_name, dpd, overdue_operator))
-        for overdue_name in overdue_columns
-        for dpd in dpd_values
-    ]
+    labels = [(overdue_name, dpd, overdue_label(overdue_name, dpd, overdue_operator)) for overdue_name in overdue_columns for dpd in dpd_values]
     columns = [("分箱详情", "分箱方法")]
     columns.extend((label, metric) for _, _, label in labels for metric in metric_columns)
 
     method_names = table["分箱方法"].drop_duplicates().tolist() if "分箱方法" in table else []
-    method_names.extend(
-        method_name for method_name in (f"hscredit-{method}" for method in methods) if method_name not in method_names
-    )
+    method_names.extend(method_name for method_name in (f"hscredit-{method}" for method in methods) if method_name not in method_names)
 
     rows = []
     for method_name in method_names:
@@ -674,9 +657,7 @@ def _summarize_binning_table(
     if not multi_columns and "逾期标签" in table.columns:
         for target_name, group in table.groupby("逾期标签", sort=False):
             valid = group.loc[group["分箱标签"].astype(str) != "合计"]
-            display_name = table.attrs.get("target_display_names", {}).get(
-                target_name, _summary_display_name(target_name)
-            )
+            display_name = table.attrs.get("target_display_names", {}).get(target_name, _summary_display_name(target_name))
             for metric, value in _aggregate_summary_metrics(valid, lambda m: m, metrics).items():
                 result[(metric, display_name)] = value
         return result
@@ -1065,13 +1046,7 @@ def _fit_group_summary_binner(
         "binner",
         "rules",
     }
-    binner_params.update(
-        {
-            name: value
-            for name, value in params.items()
-            if name not in binner_param_names and name not in stats_only_params
-        }
-    )
+    binner_params.update({name: value for name, value in params.items() if name not in binner_param_names and name not in stats_only_params})
 
     if method == "mdlp":
         binner_params.setdefault("lift_refine", True)
@@ -1346,9 +1321,7 @@ def feature_group_binning_summary(
     }
 
     group_field = group or f"{date}@{frequency_name(freq)}"
-    binning_tables: Dict[str, Dict[str, Dict[str, pd.DataFrame]]] = {
-        name: {method: {} for method in normalized_methods} for name in features
-    }
+    binning_tables: Dict[str, Dict[str, Dict[str, pd.DataFrame]]] = {name: {method: {} for method in normalized_methods} for name in features}
     summary_rows = []
     single_target_name = target.names("at")[0]
 
@@ -1448,9 +1421,12 @@ def _finalize_bin_table(
         "标签": targets.names(),
         "逾期比较符": targets.operator if targets.mode == "overdue" else None,
         "剔灰": targets.del_grey,
-        "缺失处理": {"drop": "剔除缺失标签", "positive": "缺失标签归为正样本1", "negative": "缺失标签归为负样本0", "raise": "缺失标签报错"}[
-            targets.handle_missing_target
-        ]
+        "缺失处理": {
+            "drop": "剔除缺失标签",
+            "positive": "缺失标签归为正样本1",
+            "negative": "缺失标签归为负样本0",
+            "raise": "缺失标签报错",
+        }[targets.handle_missing_target]
         + ("；负数按比较符判定" if targets.mode == "overdue" else "；灰样本按 del_grey 独立处理"),
     }
     table = format_bin_stats(table, target_type=target_type, round_digits=round_digits)
@@ -1458,12 +1434,7 @@ def _finalize_bin_table(
         base = ["指标名称", "指标含义", "逾期标签", "分箱标签", "分箱"]
         wanted = list(dict.fromkeys(base + list(return_cols)))
         if isinstance(table.columns, pd.MultiIndex):
-            columns = [
-                (group, name)
-                for group in dict.fromkeys(table.columns.get_level_values(0))
-                for name in wanted
-                if (group, name) in table.columns
-            ]
+            columns = [(group, name) for group in dict.fromkeys(table.columns.get_level_values(0)) for name in wanted if (group, name) in table.columns]
         else:
             columns = [name for name in wanted if name in table.columns]
         table = table.loc[:, columns]
@@ -1496,9 +1467,7 @@ def _create_bin_table(
             woe_clip=woe_clip,
         )
     else:
-        stats = compute_bin_stats(
-            bins, y, target_type="binary", bin_labels=bin_labels, round_digits=False, woe_clip=woe_clip
-        )
+        stats = compute_bin_stats(bins, y, target_type="binary", bin_labels=bin_labels, round_digits=False, woe_clip=woe_clip)
 
     stats.insert(0, "指标含义", desc if desc else feature_name)
     stats.insert(0, "指标名称", feature_name)
@@ -1886,9 +1855,7 @@ def feature_bin_stats(
         handle_missing_target=handle_missing_target,
     )
     overdue, dpds = None, None
-    del_grey = target.needs_filtering(data) or (
-        del_grey and (target.mode == "target" or target.operator in (">", ">="))
-    )
+    del_grey = target.needs_filtering(data) or (del_grey and (target.mode == "target" or target.operator in (">", ">=")))
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     # 统一处理 feature 参数
     if isinstance(feature, str):
@@ -2041,11 +2008,7 @@ def feature_bin_stats(
                 # 按特征名映射的分箱器字典
                 if feat in binner:
                     feat_binner = binner[feat]
-                    if (
-                        getattr(feat_binner, "_is_fitted", False)
-                        and hasattr(feat_binner, "splits_")
-                        and feat in feat_binner.splits_
-                    ):
+                    if getattr(feat_binner, "_is_fitted", False) and hasattr(feat_binner, "splits_") and feat in feat_binner.splits_:
                         current_binner = feat_binner  # 直接使用已训练的分箱器
             elif isinstance(binner, BaseBinning):
                 if getattr(binner, "_is_fitted", False) and hasattr(binner, "splits_") and feat in binner.splits_:
@@ -2141,18 +2104,14 @@ def feature_bin_stats(
             except Exception:
                 x_values = X_feat[feat].values
                 missing_mask = pd.isna(x_values)
-                real_splits = (
-                    splits[~np.isnan(splits)] if isinstance(splits, np.ndarray) and len(splits) > 0 else splits
-                )
+                real_splits = splits[~np.isnan(splits)] if isinstance(splits, np.ndarray) and len(splits) > 0 else splits
                 bins = np.digitize(x_values, real_splits, right=True)
                 bins = bins.astype(float)
                 bins[missing_mask] = -1
             bin_labels = _get_binner_bin_labels(current_binner, feat, bins, fallback_splits=splits)
 
             # 准备金额数据（如果有）
-            amount_values = (
-                analysis_data[amount].values if amount is not None and amount in analysis_data.columns else None
-            )
+            amount_values = analysis_data[amount].values if amount is not None and amount in analysis_data.columns else None
 
             # 创建分箱表
             splits = current_binner.splits_.get(feat)
@@ -2178,9 +2137,7 @@ def feature_bin_stats(
                 n_samples = len(analysis_data)
                 n_bad = y.sum()
                 bad_rate = y.mean()
-                logger.info(
-                    f"特征 {feat} - 目标 {target_name}: 样本数 {n_samples}, 坏样本数 {n_bad}, 坏样本率 {bad_rate:.4f}, 分箱数 {len(bin_table)}"
-                )
+                logger.info(f"特征 {feat} - 目标 {target_name}: 样本数 {n_samples}, 坏样本数 {n_bad}, 坏样本率 {bad_rate:.4f}, 分箱数 {len(bin_table)}")
 
         # 合并多目标表
         if long_format:
@@ -2367,9 +2324,7 @@ def feature_bin_stats_2d(
         handle_missing_target=handle_missing_target,
     )
     overdue, dpds = None, None
-    del_grey = target.needs_filtering(data) or (
-        del_grey and (target.mode == "target" or target.operator in (">", ">="))
-    )
+    del_grey = target.needs_filtering(data) or (del_grey and (target.mode == "target" or target.operator in (">", ">=")))
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     if not isinstance(data, pd.DataFrame) or data.empty:
         raise ValueError("data 必须是非空的 DataFrame")
@@ -2419,9 +2374,7 @@ def feature_bin_stats_2d(
         labels = fitted_binner.transform(analysis_data[features], metric="bins").iloc[:, 0].to_numpy()
         label_lookup = {int(bin_id): label for bin_id, label in zip(indices, labels)}
         bin_labels = [label_lookup[int(bin_id)] for bin_id in np.unique(indices)]
-        amount_values = (
-            analysis_data[amount].to_numpy() if amount is not None and amount in analysis_data.columns else None
-        )
+        amount_values = analysis_data[amount].to_numpy() if amount is not None and amount in analysis_data.columns else None
         table = _create_bin_table(
             bins=indices,
             y=y_values.to_numpy(),
@@ -2642,9 +2595,7 @@ def benchmark_binning_methods(
 
     x = pd.to_numeric(data[feature], errors="coerce")
 
-    def _eval_splits(
-        x_s: pd.Series, y_s: pd.Series, splits: Optional[List], model_name: str, dpd: int
-    ) -> Dict[str, Any]:
+    def _eval_splits(x_s: pd.Series, y_s: pd.Series, splits: Optional[List], model_name: str, dpd: int) -> Dict[str, Any]:
         mask = x_s.notna() & y_s.notna()
         xv = x_s[mask].values.astype(float)
         yv = y_s[mask].values.astype(int)
@@ -2746,9 +2697,7 @@ def benchmark_binning_methods(
         long_table = pd.DataFrame(columns=list(column_names.values()))
         if long_format:
             return long_table
-        return _benchmark_binning_wide_table(
-            long_table, methods, overdue_columns, dpd_values, overdue_operator=overdue_operator
-        )
+        return _benchmark_binning_wide_table(long_table, methods, overdue_columns, dpd_values, overdue_operator=overdue_operator)
 
     for column in internal_columns:
         if column not in result.columns:
@@ -2758,12 +2707,7 @@ def benchmark_binning_methods(
         ascending=[True, True, False, False, False],
         na_position="last",
     )
-    long_table = (
-        result[internal_columns]
-        .rename(columns=column_names)
-        .sort_values("综合评分", ascending=False)
-        .reset_index(drop=True)
-    )
+    long_table = result[internal_columns].rename(columns=column_names).sort_values("综合评分", ascending=False).reset_index(drop=True)
     if targets.mode == "target":
         long_table = long_table.rename(columns={"逾期字段": "目标标签"}).drop(columns="逾期阈值")
         if long_format:
@@ -2782,9 +2726,7 @@ def benchmark_binning_methods(
         return result
     if long_format:
         return long_table
-    return _benchmark_binning_wide_table(
-        long_table, methods, overdue_columns, dpd_values, overdue_operator=overdue_operator
-    )
+    return _benchmark_binning_wide_table(long_table, methods, overdue_columns, dpd_values, overdue_operator=overdue_operator)
 
 
 def _normalize_efficiency_rules(
@@ -3105,16 +3047,8 @@ def feature_efficiency_analysis(
             "auto_rules": {name: value["auto_rules"] for name, value in per_target.items()},
             "comparison_figure": None,
             "comparison_figures": {name: value["comparison_figure"] for name, value in per_target.items()},
-            "trend_figures": {
-                f"{name}:{key}": fig
-                for name, value in per_target.items()
-                for key, fig in value["trend_figures"].items()
-            },
-            "saved_paths": {
-                f"{name}:{key}": path
-                for name, value in per_target.items()
-                for key, path in value["saved_paths"].items()
-            },
+            "trend_figures": {f"{name}:{key}": fig for name, value in per_target.items() for key, fig in value["trend_figures"].items()},
+            "saved_paths": {f"{name}:{key}": path for name, value in per_target.items() for key, path in value["saved_paths"].items()},
         }
     feature_desc = desc or feature
     bin_params = bin_params.copy() if bin_params else {}
@@ -3209,11 +3143,7 @@ def feature_efficiency_analysis(
         orientation=comparison_orientation,
         metric_summary_layout="full_width_center",
     )
-    manual_panel_axes = [
-        axis
-        for axis in comparison_fig.axes
-        if np.allclose(axis.get_position().bounds, comparison_axes[0].get_position().bounds)
-    ]
+    manual_panel_axes = [axis for axis in comparison_fig.axes if np.allclose(axis.get_position().bounds, comparison_axes[0].get_position().bounds)]
     bin_plot(
         auto_table.copy(),
         ax=comparison_axes[1],
@@ -3277,13 +3207,7 @@ def feature_efficiency_analysis(
             auto_trend_params["method"] = method
             auto_trend_params["max_n_bins"] = max_n_bins
             auto_trend_params["min_bin_size"] = min_bin_size
-            auto_trend_params.update(
-                {
-                    key: value
-                    for key, value in bin_params.items()
-                    if key not in {"target", "overdue", "dpds", "del_grey", "overdue_operator"}
-                }
-            )
+            auto_trend_params.update({key: value for key, value in bin_params.items() if key not in {"target", "overdue", "dpds", "del_grey", "overdue_operator"}})
         trend_figures["auto"] = bin_trend_plot(**auto_trend_params)
 
     # Save comparison figure if save path is provided
@@ -3472,11 +3396,7 @@ def auto_feature_analysis(
     parameters.pop("return_result")
     from .result import ReportGenerationError, ReportResult
 
-    result = (
-        ReportResult(mode=mode or "best_effort", metadata={"报告类型": "特征报告", "输入行数": len(data)})
-        if mode is not None or return_result
-        else None
-    )
+    result = ReportResult(mode=mode or "best_effort", metadata={"报告类型": "特征报告", "输入行数": len(data)}) if mode is not None or return_result else None
     if result is not None:
         result.plan("输入与分箱计算", input_rows=len(data))
         result.current_section = "输入与分箱计算"
@@ -3835,12 +3755,7 @@ def _auto_feature_analysis_impl(
         if separator and number.isdigit() and title in section_title_values:
             return 1
         number_levels = number.split(".")
-        if (
-            separator
-            and len(number_levels) == 2
-            and all(level.isdigit() for level in number_levels)
-            and title.startswith("数据字段:")
-        ):
+        if separator and len(number_levels) == 2 and all(level.isdigit() for level in number_levels) and title.startswith("数据字段:"):
             return 2
         return None
 
@@ -3858,11 +3773,7 @@ def _auto_feature_analysis_impl(
                 if cell.value is not None:
                     max_content_col = max(max_content_col, cell.column)
         for cell_range in worksheet.merged_cells.ranges:
-            if (
-                cell_range.max_row >= start_content_row
-                and cell_range.min_row <= end_content_row
-                and cell_range.max_col >= start_col
-            ):
+            if cell_range.max_row >= start_content_row and cell_range.min_row <= end_content_row and cell_range.max_col >= start_col:
                 max_content_col = max(max_content_col, cell_range.max_col)
         return max_content_col
 
@@ -3879,13 +3790,7 @@ def _auto_feature_analysis_impl(
             )
 
     def _adjust_title_merges() -> None:
-        title_rows = [
-            (row_cell.row, level)
-            for row_cells in worksheet.iter_rows(min_col=start_col, max_col=start_col)
-            for row_cell in row_cells
-            for level in [_title_level(row_cell.row, row_cell.value)]
-            if level is not None
-        ]
+        title_rows = [(row_cell.row, level) for row_cells in worksheet.iter_rows(min_col=start_col, max_col=start_col) for row_cell in row_cells for level in [_title_level(row_cell.row, row_cell.value)] if level is not None]
         for idx, (title_row, level) in enumerate(title_rows):
             if level == 0:
                 content_end_row = worksheet.max_row
@@ -3897,9 +3802,7 @@ def _auto_feature_analysis_impl(
                 content_end_row = next_boundary - 1 if next_boundary is not None else worksheet.max_row
             _merge_title_row(title_row, _content_max_col(title_row + 1, content_end_row))
 
-    end_row, end_col = writer.insert_value2sheet(
-        worksheet, (start_row, start_col), value="数据有效性分析报告", style="header_middle"
-    )
+    end_row, end_col = writer.insert_value2sheet(worksheet, (start_row, start_col), value="数据有效性分析报告", style="header_middle")
 
     sample_start_row = end_row + 2
     sample_section_title, _ = _next_section_title("样本总体分布情况")
@@ -3938,11 +3841,7 @@ def _auto_feature_analysis_impl(
             handle_missing_target=handle_missing_target,
         )
         _safe_close_plot_result(distribution_figure)
-        time_title_columns_len = (
-            len(sample_stats.columns) + sample_stats.index.nlevels
-            if isinstance(sample_stats.columns, pd.MultiIndex)
-            else len(sample_stats.columns)
-        )
+        time_title_columns_len = len(sample_stats.columns) + sample_stats.index.nlevels if isinstance(sample_stats.columns, pd.MultiIndex) else len(sample_stats.columns)
         time_section_title, _ = _next_section_title("样本时间分布情况")
         end_row, end_col = writer.insert_value2sheet(
             worksheet,
@@ -3972,11 +3871,7 @@ def _auto_feature_analysis_impl(
 
     feature_summary_start_row = end_row
     summary_section_title, _ = _next_section_title("变量综合统计")
-    feature_summary_percent_cols = [
-        column
-        for column in feature_summary.columns
-        if column in {"KS", "PSI"} or "占比" in str(column) or str(column).endswith("率")
-    ]
+    feature_summary_percent_cols = [column for column in feature_summary.columns if column in {"KS", "PSI"} or "占比" in str(column) or str(column).endswith("率")]
     feature_summary_color_cols = [column for column in ("KS", "IV") if column in feature_summary.columns]
     end_row, end_col = dataframe2excel(
         feature_summary,
@@ -3990,10 +3885,7 @@ def _auto_feature_analysis_impl(
         right_cols=[0],
     )
     feature_name_col = start_col + feature_summary.columns.get_loc("特征名")
-    feature_summary_rows = {
-        str(feat): feature_summary_start_row + 2 + feature_summary.columns.nlevels + position
-        for position, feat in enumerate(feature_summary["特征名"])
-    }
+    feature_summary_rows = {str(feat): feature_summary_start_row + 2 + feature_summary.columns.nlevels + position for position, feat in enumerate(feature_summary["特征名"])}
     end_row += 2
 
     if corr:
@@ -4064,51 +3956,21 @@ def _auto_feature_analysis_impl(
                     _merge_cols_for_title = [("分箱详情", c) for c in merge_columns]
                 else:
                     _merge_cols_for_title = merge_columns
-                sample_title_columns_len = len(
-                    _merge_cols_for_title
-                    + [
-                        c
-                        for c in sample_table.columns
-                        if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
-                        or (not isinstance(c, (tuple, list)) and c in return_cols)
-                        or (
-                            isinstance(return_cols[0], (tuple, list))
-                            and isinstance(c, (tuple, list))
-                            and c in return_cols
-                        )
-                    ]
-                )
+                sample_title_columns_len = len(_merge_cols_for_title + [c for c in sample_table.columns if (isinstance(c, (tuple, list)) and c[-1] in return_cols) or (not isinstance(c, (tuple, list)) and c in return_cols) or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)])
 
                 if use_amount and amount_table is not None:
                     if amount_table.columns.nlevels > 1 and not isinstance(merge_columns[0], tuple):
                         _merge_cols_amt_for_title = [("分箱详情", c) for c in merge_columns]
                     else:
                         _merge_cols_amt_for_title = merge_columns
-                    amount_title_columns_len = len(
-                        _merge_cols_amt_for_title
-                        + [
-                            c
-                            for c in amount_table.columns
-                            if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
-                            or (not isinstance(c, (tuple, list)) and c in return_cols)
-                            or (
-                                isinstance(return_cols[0], (tuple, list))
-                                and isinstance(c, (tuple, list))
-                                and c in return_cols
-                            )
-                        ]
-                    )
+                    amount_title_columns_len = len(_merge_cols_amt_for_title + [c for c in amount_table.columns if (isinstance(c, (tuple, list)) and c[-1] in return_cols) or (not isinstance(c, (tuple, list)) and c in return_cols) or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)])
 
             if pictures and len(pictures) > 0:
                 if "bin" in pictures:
                     if sample_table.columns.nlevels > 1:
                         level1_cols = sample_table.columns.get_level_values(0).unique().tolist()
                         primary_bin_target = targets.names()[0]
-                        target_col = (
-                            primary_bin_target
-                            if primary_bin_target in level1_cols
-                            else next(name for name in level1_cols if name != "分箱详情")
-                        )
+                        target_col = primary_bin_target if primary_bin_target in level1_cols else next(name for name in level1_cols if name != "分箱详情")
                         plot_table = sample_table[["分箱详情", target_col]]
                         plot_table.columns = [c[-1] for c in plot_table.columns]
                     else:
@@ -4128,11 +3990,7 @@ def _auto_feature_analysis_impl(
                 if temp[col].dtypes.name not in ["object", "str", "category"]:
                     if "ks" in pictures:
                         plot_source = temp[[col, actual_target]].dropna().reset_index(drop=True)
-                        has_ks = (
-                            len(plot_source) > 0
-                            and plot_source[col].nunique() > 1
-                            and plot_source[actual_target].nunique() > 1
-                        )
+                        has_ks = len(plot_source) > 0 and plot_source[col].nunique() > 1 and plot_source[actual_target].nunique() > 1
                         if has_ks:
                             ks_figure = ks_plot(
                                 plot_source[col],
@@ -4228,20 +4086,7 @@ def _auto_feature_analysis_impl(
                 else:
                     sample_merge_cols = merge_columns
                 end_row, end_col = dataframe2excel(
-                    sample_table[
-                        sample_merge_cols
-                        + [
-                            c
-                            for c in sample_table.columns
-                            if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
-                            or (not isinstance(c, (tuple, list)) and c in return_cols)
-                            or (
-                                isinstance(return_cols[0], (tuple, list))
-                                and isinstance(c, (tuple, list))
-                                and c in return_cols
-                            )
-                        ]
-                    ],
+                    sample_table[sample_merge_cols + [c for c in sample_table.columns if (isinstance(c, (tuple, list)) and c[-1] in return_cols) or (not isinstance(c, (tuple, list)) and c in return_cols) or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)]],
                     writer,
                     worksheet,
                     percent_cols=[
@@ -4300,20 +4145,7 @@ def _auto_feature_analysis_impl(
                     else:
                         amount_merge_cols = merge_columns
                     dataframe2excel(
-                        amount_table[
-                            amount_merge_cols
-                            + [
-                                c
-                                for c in amount_table.columns
-                                if (isinstance(c, (tuple, list)) and c[-1] in return_cols)
-                                or (not isinstance(c, (tuple, list)) and c in return_cols)
-                                or (
-                                    isinstance(return_cols[0], (tuple, list))
-                                    and isinstance(c, (tuple, list))
-                                    and c in return_cols
-                                )
-                            ]
-                        ],
+                        amount_table[amount_merge_cols + [c for c in amount_table.columns if (isinstance(c, (tuple, list)) and c[-1] in return_cols) or (not isinstance(c, (tuple, list)) and c in return_cols) or (isinstance(return_cols[0], (tuple, list)) and isinstance(c, (tuple, list)) and c in return_cols)]],
                         writer,
                         worksheet,
                         percent_cols=[

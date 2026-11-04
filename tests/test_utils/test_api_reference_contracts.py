@@ -20,11 +20,7 @@ def _constructors():
                 if not isinstance(node, ast.ClassDef) or node.name.startswith("_"):
                     continue
                 init = next(
-                    (
-                        member
-                        for member in node.body
-                        if isinstance(member, ast.FunctionDef) and member.name == "__init__"
-                    ),
+                    (member for member in node.body if isinstance(member, ast.FunctionDef) and member.name == "__init__"),
                     None,
                 )
                 if init is not None:

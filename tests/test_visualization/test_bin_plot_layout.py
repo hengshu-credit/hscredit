@@ -331,9 +331,7 @@ def test_bin_2d_plot_draws_same_distinct_inset_boundaries_on_five_metric_axes(bi
     for axis_index in metric_axis_indexes[1:]:
         actual = _boundary_collections(axes[axis_index])
         assert [artist.get_gid() for artist in actual] == reference_gids
-        assert [
-            [_normalized_segment(segment) for segment in artist.get_segments()] for artist in actual
-        ] == reference_segments
+        assert [[_normalized_segment(segment) for segment in artist.get_segments()] for artist in actual] == reference_segments
         assert np.allclose(
             [artist.get_colors()[0] for artist in actual],
             reference_colors,
@@ -443,12 +441,8 @@ def test_bin_2d_plot_axis_bins_follow_numeric_interval_order():
     ).fit(frame, target, features=["x", "y"])
 
     # 模拟一维分箱表被报表层重排，绘图仍必须按“分箱”列而不是表行序取标签。
-    binner.binner_x_.bin_tables_["x"] = (
-        binner.binner_x_.bin_tables_["x"].sample(frac=1, random_state=3).reset_index(drop=True)
-    )
-    binner.binner_y_.bin_tables_["y"] = (
-        binner.binner_y_.bin_tables_["y"].sample(frac=1, random_state=4).reset_index(drop=True)
-    )
+    binner.binner_x_.bin_tables_["x"] = binner.binner_x_.bin_tables_["x"].sample(frac=1, random_state=3).reset_index(drop=True)
+    binner.binner_y_.bin_tables_["y"] = binner.binner_y_.bin_tables_["y"].sample(frac=1, random_state=4).reset_index(drop=True)
     fig = bin_2d_plot(binner, figsize=(15, 13))
     axes = fig.axes[:9]
 

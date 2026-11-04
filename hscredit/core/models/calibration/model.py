@@ -162,12 +162,7 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         if not isinstance(self.n_bins, int) or isinstance(self.n_bins, bool) or self.n_bins < 1:
             raise ValueError("n_bins必须是大于等于1的整数")
         if self.calib_ratio is not None:
-            if (
-                isinstance(self.calib_ratio, bool)
-                or not np.isscalar(self.calib_ratio)
-                or not np.isfinite(self.calib_ratio)
-                or not 0 < float(self.calib_ratio) < 1
-            ):
+            if isinstance(self.calib_ratio, bool) or not np.isscalar(self.calib_ratio) or not np.isfinite(self.calib_ratio) or not 0 < float(self.calib_ratio) < 1:
                 raise ValueError("calib_ratio必须在(0, 1)范围内，或设为None使用独立校准集")
         if not isinstance(self.target, str) or not self.target:
             raise ValueError("target必须是非空字符串")
@@ -270,9 +265,7 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         # 如果需要划分校准集
         if self.calib_ratio is not None:
             indices = np.arange(len(y))
-            train_indices, calib_indices = train_test_split(
-                indices, test_size=self.calib_ratio, random_state=self.random_state, stratify=y
-            )
+            train_indices, calib_indices = train_test_split(indices, test_size=self.calib_ratio, random_state=self.random_state, stratify=y)
 
             X_train, y_train = take_rows(X, train_indices), take_rows(y, train_indices)
             X, y = take_rows(X, calib_indices), take_rows(y, calib_indices)
@@ -301,13 +294,9 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
 
         # 计算校准前后的指标
         self.calib_metrics_ = {}
-        self.calib_metrics_["original"] = self.calibrator_.compute_calibration_metrics(
-            y_binary, y_prob, sample_weight=calibration_weight
-        )
+        self.calib_metrics_["original"] = self.calibrator_.compute_calibration_metrics(y_binary, y_prob, sample_weight=calibration_weight)
         y_prob_calib = self.calibrator_.calibrate(y_prob)
-        self.calib_metrics_["calibrated"] = self.calibrator_.compute_calibration_metrics(
-            y_binary, y_prob_calib, sample_weight=calibration_weight
-        )
+        self.calib_metrics_["calibrated"] = self.calibrator_.compute_calibration_metrics(y_binary, y_prob_calib, sample_weight=calibration_weight)
 
         self.is_fitted_ = True
         self._is_fitted = True
@@ -482,9 +471,7 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         y_prob_orig = self._get_model_proba(X)
         y_prob_calib = self.predict_proba(X)[:, _class_index(self.classes_, self.positive_class_)]
 
-        return self.calibrator_.plot_reliability_diagram(
-            y_binary, y_prob_orig, y_prob_calib, figsize=figsize, title=title, show=show, colors=colors
-        )
+        return self.calibrator_.plot_reliability_diagram(y_binary, y_prob_orig, y_prob_calib, figsize=figsize, title=title, show=show, colors=colors)
 
     def calibrate_proba(self, y_prob: Union[np.ndarray, pd.Series]) -> np.ndarray:
         """直接校准概率（不通过模型）.

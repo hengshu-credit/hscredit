@@ -79,9 +79,7 @@ def build_reason_codes(
                     "SHAP值": values[position, index],
                     "风险贡献": adverse[index],
                     "原因码": mapping.get("code", f"MODEL_{index + 1:03d}"),
-                    "原因描述": mapping.get(
-                        "description", f"{feature_map.get(feature, feature)}对风险输出产生不利影响"
-                    ),
+                    "原因描述": mapping.get("description", f"{feature_map.get(feature, feature)}对风险输出产生不利影响"),
                     "原因状态": "存在不利贡献",
                     "目标类别": result.target_class,
                     "输出尺度": result.model_output,

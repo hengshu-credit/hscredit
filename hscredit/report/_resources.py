@@ -48,11 +48,7 @@ class ReportResourceMixin:
     def _finish_report_operation(self):
         with self._operation_lock:
             self._active_operations -= 1
-            if (
-                self._active_operations == 0
-                and self.cache_policy == "none"
-                and not getattr(self, "_data_released", False)
-            ):
+            if self._active_operations == 0 and self.cache_policy == "none" and not getattr(self, "_data_released", False):
                 self.release_cache()
 
     def release_cache(self):
@@ -66,11 +62,7 @@ class ReportResourceMixin:
 
     def resource_usage(self):
         """报告数据的估算保留量，不包括外部模型原生内存。"""
-        rows = [
-            item
-            for dataset in self._datasets.values()
-            for item in (dataset.X, dataset.y, dataset.score, dataset.y_dict)
-        ]
+        rows = [item for dataset in self._datasets.values() for item in (dataset.X, dataset.y, dataset.score, dataset.y_dict)]
         caches = {key: value for key, value in vars(self).items() if key.endswith("_cache")}
         return {
             "缓存策略": self.cache_policy,

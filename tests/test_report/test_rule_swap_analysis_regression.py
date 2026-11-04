@@ -272,12 +272,8 @@ def test_independent_rule_order_does_not_change_swap_result():
     rule_a = Rule("x >= 2", name="规则A")
     rule_b = Rule("x >= 3", name="规则B")
 
-    forward = rule_swap_analysis(rules_in=[rule_a, rule_b], **{k: v for k, v in kwargs.items() if k != "rules_in"})[
-        "swap_result"
-    ]
-    backward = rule_swap_analysis(rules_in=[rule_b, rule_a], **{k: v for k, v in kwargs.items() if k != "rules_in"})[
-        "swap_result"
-    ]
+    forward = rule_swap_analysis(rules_in=[rule_a, rule_b], **{k: v for k, v in kwargs.items() if k != "rules_in"})["swap_result"]
+    backward = rule_swap_analysis(rules_in=[rule_b, rule_a], **{k: v for k, v in kwargs.items() if k != "rules_in"})["swap_result"]
 
     pd.testing.assert_frame_equal(forward, backward)
 

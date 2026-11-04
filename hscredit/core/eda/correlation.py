@@ -19,9 +19,7 @@ from .utils import validate_dataframe, vif_rating
 
 
 @analysis_inputs("df", roles=())
-def correlation_matrix(
-    df: pd.DataFrame, features: List[str] = None, method: Literal["pearson", "spearman", "kendall"] = "pearson"
-) -> pd.DataFrame:
+def correlation_matrix(df: pd.DataFrame, features: List[str] = None, method: Literal["pearson", "spearman", "kendall"] = "pearson") -> pd.DataFrame:
     """计算相关性矩阵.
 
     :param df: 输入数据

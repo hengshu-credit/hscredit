@@ -27,9 +27,7 @@ def _data_and_model():
 def test_disabling_sample_records_removes_row_level_table_and_marks_not_applicable(tmp_path, entry):
     data, model = _data_and_model()
     output = tmp_path / "without_records.xlsx"
-    kwargs = dict(
-        with_plots=False, loc_cols="订单标识", include_sample_records=False, mode="strict", return_result=True
-    )
+    kwargs = dict(with_plots=False, loc_cols="订单标识", include_sample_records=False, mode="strict", return_result=True)
     if entry == "auto":
         result = auto_model_report(
             model,

@@ -227,9 +227,7 @@ def test_rule_group_compare_group_order_desc_and_appearance():
 
 
 def test_rule_group_compare_group_order_explicit_sequence_appends_remaining():
-    result = rule_group_compare(
-        _group_order_data(), "score < 500", group="渠道", target="target", group_order=["C", "A"]
-    )
+    result = rule_group_compare(_group_order_data(), "score < 500", group="渠道", target="target", group_order=["C", "A"])
     assert _group_columns(result) == ["C", "A", "B"]
 
 
@@ -299,24 +297,14 @@ def test_swap_out_report_auto_width_preserves_template_column_fill(tmp_path):
     )
 
     with zipfile.ZipFile(output) as zf:
-        worksheet_names = [
-            name for name in zf.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
-        ]
+        worksheet_names = [name for name in zf.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")]
         assert len(worksheet_names) == 2
         for worksheet_name in worksheet_names:
             root = ET.fromstring(zf.read(worksheet_name))
             ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-            adjusted_columns = [
-                col
-                for col in root.findall("x:cols/x:col", ns)
-                if col.attrib.get("min") == col.attrib.get("max") and int(col.attrib["min"]) >= 3
-            ]
+            adjusted_columns = [col for col in root.findall("x:cols/x:col", ns) if col.attrib.get("min") == col.attrib.get("max") and int(col.attrib["min"]) >= 3]
             assert adjusted_columns
-            bad_columns = [
-                (col.attrib.get("min"), col.attrib.get("style"))
-                for col in adjusted_columns
-                if col.attrib.get("style") != "1"
-            ]
+            bad_columns = [(col.attrib.get("min"), col.attrib.get("style")) for col in adjusted_columns if col.attrib.get("style") != "1"]
             assert bad_columns == []
 
     wb = load_workbook(output)
@@ -336,17 +324,12 @@ def test_swap_out_report_auto_width_preserves_template_column_fill(tmp_path):
     assert ws.cell(row=title_cell.row + 1, column=title_cell.column).value is None
     assert ws.cell(row=subtitle_cell.row + 1, column=subtitle_cell.column).value is None
 
-    reject_merged = [
-        rng for rng in ws.merged_cells.ranges if ws.cell(row=rng.min_row, column=rng.min_col).value == "拒绝"
-    ]
+    reject_merged = [rng for rng in ws.merged_cells.ranges if ws.cell(row=rng.min_row, column=rng.min_col).value == "拒绝"]
     assert reject_merged == []
 
     lift_formats = []
     for col_idx in range(1, ws.max_column + 1):
-        has_lift_header = any(
-            ws.cell(row=row_idx, column=col_idx).value in {"LIFT值", "拒绝LIFT", "LIFT指标"}
-            for row_idx in range(1, ws.max_row + 1)
-        )
+        has_lift_header = any(ws.cell(row=row_idx, column=col_idx).value in {"LIFT值", "拒绝LIFT", "LIFT指标"} for row_idx in range(1, ws.max_row + 1))
         if not has_lift_header:
             continue
         for row_idx in range(1, ws.max_row + 1):
@@ -389,9 +372,7 @@ def test_swap_out_report_supports_decimal_dpds_and_target_specific_grey_deletion
     sample_headers = [cell for cell in decimal_headers if main.cell(cell.row - 1, cell.column).value == "样本总数"]
     assert len(sample_headers) == 1
     sample_header = sample_headers[0]
-    zero_headers = [
-        cell for cell in main[sample_header.row] if cell.value == "MOB1 0+" and cell.column == sample_header.column + 1
-    ]
+    zero_headers = [cell for cell in main[sample_header.row] if cell.value == "MOB1 0+" and cell.column == sample_header.column + 1]
     assert len(zero_headers) == 1
     zero_header = zero_headers[0]
     assert main.cell(sample_header.row + 1, sample_header.column).value == 5
@@ -420,12 +401,7 @@ def test_swap_out_report_accepts_scalar_decimal_dpd():
     )
 
     worksheet = writer.get_sheet_by_name("策略迭代")
-    sample_headers = [
-        cell
-        for row in worksheet.iter_rows()
-        for cell in row
-        if cell.value == "MOB1 0.5+" and worksheet.cell(cell.row - 1, cell.column).value == "样本总数"
-    ]
+    sample_headers = [cell for row in worksheet.iter_rows() for cell in row if cell.value == "MOB1 0.5+" and worksheet.cell(cell.row - 1, cell.column).value == "样本总数"]
     assert len(sample_headers) == 1
     header = sample_headers[0]
     assert worksheet.cell(header.row + 1, header.column).value == 3

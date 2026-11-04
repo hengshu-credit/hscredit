@@ -48,9 +48,7 @@ from .._contracts import (
 _SKLEARN_LOGISTIC_PARAMS = set(inspect.signature(SklearnLogisticRegression.__init__).parameters)
 
 
-class LogisticRegression(
-    _ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSerializableMixin, SklearnLogisticRegression
-):
+class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSerializableMixin, SklearnLogisticRegression):
     """扩展逻辑回归模型.
 
     继承 sklearn.linear_model.LogisticRegression，增加统计信息计算功能。
@@ -318,9 +316,7 @@ class LogisticRegression(
 
     def __sklearn_is_fitted__(self) -> bool:
         """按真实训练产物判断拟合状态，避免构造期配置属性造成误判。"""
-        return self.__dict__.get("_is_fitted", True) and all(
-            hasattr(self, attr) for attr in ("coef_", "intercept_", "classes_")
-        )
+        return self.__dict__.get("_is_fitted", True) and all(hasattr(self, attr) for attr in ("coef_", "intercept_", "classes_"))
 
     @record_training
     def fit(
@@ -399,18 +395,12 @@ class LogisticRegression(
         self.native_params_ = {name: getattr(self, name) for name in SklearnLogisticRegression._get_param_names()}
         sample_weight = validate_sample_weight(sample_weight, len(y))
         self._validate_probability_scorecard_labels(y)
-        level = (
-            self.statistics_level if self.statistics_level is not None else ("full" if self.calculate_stats else "none")
-        )
+        level = self.statistics_level if self.statistics_level is not None else ("full" if self.calculate_stats else "none")
         if level not in ("none", "coef", "full"):
             raise ValueError("statistics_level 必须为 none、coef、full 或 None")
         if self.weight_type not in ("frequency", "cost"):
             raise ValueError("weight_type 必须为 frequency 或 cost")
-        if self.max_dense_bytes is not None and (
-            isinstance(self.max_dense_bytes, (bool, np.bool_))
-            or not isinstance(self.max_dense_bytes, (int, np.integer))
-            or self.max_dense_bytes < 1
-        ):
+        if self.max_dense_bytes is not None and (isinstance(self.max_dense_bytes, (bool, np.bool_)) or not isinstance(self.max_dense_bytes, (int, np.integer)) or self.max_dense_bytes < 1):
             raise ValueError("max_dense_bytes 必须为正整数或 None")
         self.statistics_status_ = {"状态": "未执行", "级别": level, "权重口径": self.weight_type}
         self._statistics_requires_weights_ = sample_weight is not None
@@ -475,11 +465,7 @@ class LogisticRegression(
         """预测拟合成功后单独计算有预算的诊断，诊断失败不破坏模型。"""
         import warnings
 
-        if (
-            self.coef_.shape[0] != 1
-            or (sample_weight is not None and self.weight_type == "cost")
-            or self.class_weight is not None
-        ):
+        if self.coef_.shape[0] != 1 or (sample_weight is not None and self.weight_type == "cost") or self.class_weight is not None:
             self.statistics_status_.update(状态="不适用", 原因="当前仅支持二分类、无 class_weight 的频数权重统计；成本权重推断未实现")
             return
         n, p = X.shape
@@ -487,9 +473,7 @@ class LogisticRegression(
         estimate = n * width * 8 * 2 + width * width * 8 * 3
         self.statistics_status_["预计字节"] = estimate
         if self.max_dense_bytes is not None and estimate > self.max_dense_bytes:
-            self.statistics_status_.update(
-                状态="超出预算", 原因=f"统计预计 {estimate} 字节，超过 max_dense_bytes={self.max_dense_bytes}"
-            )
+            self.statistics_status_.update(状态="超出预算", 原因=f"统计预计 {estimate} 字节，超过 max_dense_bytes={self.max_dense_bytes}")
             warnings.warn(self.statistics_status_["原因"], UserWarning)
             return
         try:
@@ -563,9 +547,7 @@ class LogisticRegression(
         elif X is None:
             return self
 
-        level = (
-            self.statistics_level if self.statistics_level is not None else ("full" if self.calculate_stats else "none")
-        )
+        level = self.statistics_level if self.statistics_level is not None else ("full" if self.calculate_stats else "none")
         if X is not None and level != "none":
             if getattr(self, "_statistics_requires_weights_", False) and sample_weight is None:
                 raise ValueError("原模型带权训练，重新计算统计信息时必须提供对应 sample_weight")
@@ -683,9 +665,7 @@ class LogisticRegression(
                 import warnings
 
                 warnings.warn(
-                    f"协方差矩阵条件数过大 ({cond_number:.2e})，存在严重多重共线性。\n"
-                    "建议使用 VIFSelector 或 CorrSelector 剔除高度相关的特征。\n"
-                    "将使用伪逆矩阵计算统计量。",
+                    f"协方差矩阵条件数过大 ({cond_number:.2e})，存在严重多重共线性。\n" "建议使用 VIFSelector 或 CorrSelector 剔除高度相关的特征。\n" "将使用伪逆矩阵计算统计量。",
                     UserWarning,
                 )
                 self.cov_matrix_ = np.linalg.pinv(XTWX)
@@ -741,16 +721,12 @@ class LogisticRegression(
 
                 if inf_vif_count > 0:
                     warnings.warn(
-                        f"检测到 {inf_vif_count} 个特征存在完全共线性（VIF=inf）。\n"
-                        "这表明某些特征可以由其他特征完全线性表示。\n"
-                        "建议使用 VIFSelector 或 CorrSelector 剔除这些特征。",
+                        f"检测到 {inf_vif_count} 个特征存在完全共线性（VIF=inf）。\n" "这表明某些特征可以由其他特征完全线性表示。\n" "建议使用 VIFSelector 或 CorrSelector 剔除这些特征。",
                         UserWarning,
                     )
                 elif high_vif_count > 0:
                     warnings.warn(
-                        f"检测到 {high_vif_count} 个特征存在严重多重共线性（VIF > 10）。\n"
-                        "这可能会影响模型系数的稳定性和解释性。\n"
-                        "建议使用 VIFSelector 或 CorrSelector 降低特征相关性。",
+                        f"检测到 {high_vif_count} 个特征存在严重多重共线性（VIF > 10）。\n" "这可能会影响模型系数的稳定性和解释性。\n" "建议使用 VIFSelector 或 CorrSelector 降低特征相关性。",
                         UserWarning,
                     )
 
@@ -900,26 +876,10 @@ class LogisticRegression(
 
         # 构建统计表
         data = {
-            "Coef.": (
-                np.concatenate([self.intercept_.flatten(), self.coef_.flatten()])
-                if self.fit_intercept
-                else self.coef_.flatten()
-            ),
-            "Std.Err": (
-                np.concatenate([self.std_err_intercept_.flatten(), self.std_err_coef_.flatten()])
-                if self.fit_intercept
-                else self.std_err_coef_.flatten()
-            ),
-            "z": (
-                np.concatenate([self.z_intercept_.flatten(), self.z_coef_.flatten()])
-                if self.fit_intercept
-                else self.z_coef_.flatten()
-            ),
-            "P>|z|": (
-                np.concatenate([self.p_val_intercept_.flatten(), self.p_val_coef_.flatten()])
-                if self.fit_intercept
-                else self.p_val_coef_.flatten()
-            ),
+            "Coef.": (np.concatenate([self.intercept_.flatten(), self.coef_.flatten()]) if self.fit_intercept else self.coef_.flatten()),
+            "Std.Err": (np.concatenate([self.std_err_intercept_.flatten(), self.std_err_coef_.flatten()]) if self.fit_intercept else self.std_err_coef_.flatten()),
+            "z": (np.concatenate([self.z_intercept_.flatten(), self.z_coef_.flatten()]) if self.fit_intercept else self.z_coef_.flatten()),
+            "P>|z|": (np.concatenate([self.p_val_intercept_.flatten(), self.p_val_coef_.flatten()]) if self.fit_intercept else self.p_val_coef_.flatten()),
         }
 
         summary_df = pd.DataFrame(data, index=self.names_)

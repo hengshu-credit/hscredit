@@ -194,9 +194,7 @@ class ProbabilityScoreCard(ExtraParamsMixin, ModelWorkflowMixin, ArtifactSeriali
         if not hasattr(model, "predict_proba"):
             raise ValidationError(f"模型 {type(model).__name__} 不含 predict_proba 方法，无法转换为评分")
         X = align_model_features(self, X)
-        return positive_probability(
-            model.predict_proba(X), getattr(model, "classes_", [0, 1]), getattr(self, "positive_class", None)
-        )
+        return positive_probability(model.predict_proba(X), getattr(model, "classes_", [0, 1]), getattr(self, "positive_class", None))
 
     def _build_transformer(self) -> ScoreTransformer:
         """根据当前参数构建 ScoreTransformer."""

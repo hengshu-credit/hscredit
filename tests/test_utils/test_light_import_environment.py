@@ -16,9 +16,7 @@ assert not any(name in sys.modules for name in ['matplotlib.pyplot', 'shap', 'or
 print(json.dumps(sorted(h.__all__)))
 """
     environment = dict(os.environ, HSCREDIT_LIGHT_IMPORT="1")
-    output = subprocess.check_output(
-        [sys.executable, "-X", "utf8", "-c", source], env=environment, text=True, encoding="utf-8"
-    )
+    output = subprocess.check_output([sys.executable, "-X", "utf8", "-c", source], env=environment, text=True, encoding="utf-8")
     import hscredit
 
     assert json.loads(output) == sorted(hscredit.__all__)

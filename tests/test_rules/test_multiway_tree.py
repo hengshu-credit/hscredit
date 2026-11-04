@@ -85,9 +85,7 @@ def test_manual_boundary_missing_nullable_and_duplicate_index():
     data = sample()
     tree = MultiwayTreeExtractor(max_depth=2).fit(data)
     tree.manual_split(feature="评分", thresholds=[40, 80], missing_branch=1)
-    raw = pd.DataFrame(
-        {"评分": [40, np.nextafter(40.0, -np.inf), np.nextafter(40.0, np.inf), 80, np.nan, -np.inf, np.inf]}
-    )
+    raw = pd.DataFrame({"评分": [40, np.nextafter(40.0, -np.inf), np.nextafter(40.0, np.inf), 80, np.nan, -np.inf, np.inf]})
     raw.index = ["重复"] * len(raw)
     children = tree.nodes_[0].children
     assert tree.apply(raw).tolist() == [children[i] for i in [0, 0, 1, 1, 1, 0, 2]]
@@ -153,9 +151,7 @@ def test_categorical_groups_missing_unknown_and_quoted_categories():
     categories = ["低,风险", '含"引号', "高风险", "其他"]
     data = pd.DataFrame({"类型": categories * 30, "target": [0, 0, 1, 1] * 30})
     tree = MultiwayTreeExtractor(max_depth=2).fit(data)
-    tree.manual_split(
-        feature="类型", category_groups=[categories[:2], [categories[2]], [categories[3]]], missing_branch=2
-    )
+    tree.manual_split(feature="类型", category_groups=[categories[:2], [categories[2]], [categories[3]]], missing_branch=2)
     raw = pd.DataFrame({"类型": pd.Series(categories + [None, "新类别"], dtype="string")})
     assert_rule_partition(tree, raw)
     assert tree.apply(raw)[-2:].tolist() == [tree.nodes_[0].children[2]] * 2
@@ -180,9 +176,7 @@ def test_multiclass_models_reports_and_serialization(tmp_path):
     np.testing.assert_array_equal(restored.predict_proba(data), tree.predict_proba(data))
     ruleset = restored.to_ruleset([restored.nodes_[0].children[0]])
     assert isinstance(ruleset, RuleSet)
-    np.testing.assert_array_equal(
-        ruleset.evaluate(data, return_details=False)[0], restored.apply(data) == restored.nodes_[0].children[0]
-    )
+    np.testing.assert_array_equal(ruleset.evaluate(data, return_details=False)[0], restored.apply(data) == restored.nodes_[0].children[0])
 
 
 def test_dual_api_external_y_and_refit_failure():

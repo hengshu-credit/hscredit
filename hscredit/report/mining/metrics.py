@@ -135,17 +135,11 @@ class RuleMetrics(ParallelizableMixin):
                 result[f"测试_{k}"] = v
 
             # 同一命中口径的坏率差（训练减测试）；无命中人群时不虚构差值。
-            result["badrate_diff"] = (
-                train_metrics["命中坏样本率"] - test_metrics["命中坏样本率"]
-                if train_metrics["命中样本数"] > 0 and test_metrics["命中样本数"] > 0
-                else np.nan
-            )
+            result["badrate_diff"] = train_metrics["命中坏样本率"] - test_metrics["命中坏样本率"] if train_metrics["命中样本数"] > 0 and test_metrics["命中样本数"] > 0 else np.nan
 
         return result
 
-    def _calculate_metrics(
-        self, rule, X: pd.DataFrame, y: pd.Series, amount: Optional[pd.Series] = None
-    ) -> Dict[str, float]:
+    def _calculate_metrics(self, rule, X: pd.DataFrame, y: pd.Series, amount: Optional[pd.Series] = None) -> Dict[str, float]:
         """计算基础指标.
 
         规则效果类指标统一通过 Rule.report 计算得到；
@@ -173,11 +167,7 @@ class RuleMetrics(ParallelizableMixin):
         data = X
         report_df = rule.report(datasets=data, target=y.to_numpy())
 
-        hit = (
-            report_df[report_df["分箱"] == "命中"].iloc[0].to_dict()
-            if "分箱" in report_df.columns and not report_df[report_df["分箱"] == "命中"].empty
-            else {}
-        )
+        hit = report_df[report_df["分箱"] == "命中"].iloc[0].to_dict() if "分箱" in report_df.columns and not report_df[report_df["分箱"] == "命中"].empty else {}
 
         # 分类指标
         y_pred = np.zeros_like(y)
@@ -329,9 +319,7 @@ class RuleMetrics(ParallelizableMixin):
         return gini(y_true, y_score)
 
 
-def calculate_rule_metrics(
-    rule, X: pd.DataFrame, y: pd.Series, X_test: Optional[pd.DataFrame] = None, y_test: Optional[pd.Series] = None
-) -> Dict[str, Any]:
+def calculate_rule_metrics(rule, X: pd.DataFrame, y: pd.Series, X_test: Optional[pd.DataFrame] = None, y_test: Optional[pd.Series] = None) -> Dict[str, Any]:
     """便捷函数：计算规则评估指标.
 
     :param rule: 规则对象

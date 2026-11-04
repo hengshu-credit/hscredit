@@ -52,10 +52,7 @@ def record_event(selector, event, *, diagnostic=False):
     if diagnostic and selector.report_history == "summary":
         return
     size = event_bytes(event, selector.max_report_bytes)
-    if (
-        len(selector.selection_events_) >= selector.max_report_events
-        or selector.report_events_bytes_ + size > selector.max_report_bytes
-    ):
+    if len(selector.selection_events_) >= selector.max_report_events or selector.report_events_bytes_ + size > selector.max_report_bytes:
         selector.report_events_truncated_ += 1
         selector.selection_events_truncated_ += 1
         if diagnostic:

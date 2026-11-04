@@ -163,9 +163,7 @@ def load_pickle(
             return pickle.load(f)
 
     else:
-        raise ValidationError(
-            f"engine 目前只支持 ['auto', 'joblib', 'dill', 'cloudpickle', 'pickle'], " f"不支持 {eng}"
-        )
+        raise ValidationError(f"engine 目前只支持 ['auto', 'joblib', 'dill', 'cloudpickle', 'pickle'], " f"不支持 {eng}")
 
 
 def save_pickle(

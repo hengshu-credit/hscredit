@@ -23,9 +23,7 @@ from hscredit.core.models import DecisionTreeClassifier as HSCreditDecisionTreeC
 @pytest.fixture
 def sample_data():
     """创建测试数据."""
-    X, y = make_classification(
-        n_samples=1000, n_features=10, n_informative=5, n_redundant=2, n_classes=2, random_state=42
-    )
+    X, y = make_classification(n_samples=1000, n_features=10, n_informative=5, n_redundant=2, n_classes=2, random_state=42)
 
     feature_names = [f"feature_{i}" for i in range(10)]
     df = pd.DataFrame(X, columns=feature_names)

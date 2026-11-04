@@ -78,10 +78,7 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     )
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l6"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.fit">'
-        "fit</a></li>"
-        '<li class="toctree-l6"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.predict">'
-        "predict</a></li>",
+        '<li class="toctree-l6"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.fit">' "fit</a></li>" '<li class="toctree-l6"><a href="#hscredit.core.models.boosting.xgboost_model.XGBoost.predict">' "predict</a></li>",
     )
     _write(
         tmp_path / "api" / "eda.html",
@@ -93,25 +90,16 @@ def test_accepts_complete_docs_artifacts(tmp_path):
     )
     _write(
         tmp_path / "api" / "database.html",
-        '<dt id="hscredit.database.client.Database">Database</dt>'
-        '<dt id="hscredit.database.client.Database.stream_query">stream_query</dt>'
-        '<dt id="hscredit.database.stream.QueryStream.to_result">to_result</dt>'
-        '<dt id="hscredit.database.shortcuts.query">query</dt>'
-        '<dt id="hscredit.database.shortcuts.read_query">read_query</dt>'
-        '<dt id="hscredit.database.shortcuts.stream_write">stream_write</dt>',
+        '<dt id="hscredit.database.client.Database">Database</dt>' '<dt id="hscredit.database.client.Database.stream_query">stream_query</dt>' '<dt id="hscredit.database.stream.QueryStream.to_result">to_result</dt>' '<dt id="hscredit.database.shortcuts.query">query</dt>' '<dt id="hscredit.database.shortcuts.read_query">read_query</dt>' '<dt id="hscredit.database.shortcuts.stream_write">stream_write</dt>',
     )
     _write(
         tmp_path / "searchindex.js",
-        'Search.setIndex({"docnames":["api/eda","api/database"],"objects":{'
-        '"hscredit.core.eda":[[0,0,1,"","feature_summary"]],'
-        '"hscredit.database.client":[[1,0,1,"","Database"]]}})',
+        'Search.setIndex({"docnames":["api/eda","api/database"],"objects":{' '"hscredit.core.eda":[[0,0,1,"","feature_summary"]],' '"hscredit.database.client":[[1,0,1,"","Database"]]}})',
     )
     _write(tmp_path / "_static" / "language_data.js", "var Stemmer = function () {};")
     _write(
         tmp_path / "_static" / "custom.css",
-        ".wy-menu-vertical a { box-sizing: border-box; border-left: 3px solid transparent; }"
-        ".wy-menu-vertical li.current > a { border-left: 3px solid transparent; }"
-        ".wy-menu-vertical li.hs-scrollspy-current > a { border-left: 3px solid transparent; }",
+        ".wy-menu-vertical a { box-sizing: border-box; border-left: 3px solid transparent; }" ".wy-menu-vertical li.current > a { border-left: 3px solid transparent; }" ".wy-menu-vertical li.hs-scrollspy-current > a { border-left: 3px solid transparent; }",
     )
 
     assert collect_validation_errors(tmp_path) == []
@@ -149,12 +137,7 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
 
     errors = collect_validation_errors(tmp_path)
 
-    assert any(
-        "模型菜单" in error
-        and "经典模型 hscredit.core.models.classical、提升模型 hscredit.core.models.boosting、神经网络 hscredit.core.models.net、规则模型 hscredit.core.models.rules、评分卡 hscredit.core.models.scorecard、概率校准 hscredit.core.models.calibration、模型解释 hscredit.core.models.explainability、损失函数 hscredit.core.models.losses、参数搜索 hscredit.core.models.tuning"
-        in error
-        for error in errors
-    )
+    assert any("模型菜单" in error and "经典模型 hscredit.core.models.classical、提升模型 hscredit.core.models.boosting、神经网络 hscredit.core.models.net、规则模型 hscredit.core.models.rules、评分卡 hscredit.core.models.scorecard、概率校准 hscredit.core.models.calibration、模型解释 hscredit.core.models.explainability、损失函数 hscredit.core.models.losses、参数搜索 hscredit.core.models.tuning" in error for error in errors)
 
 
 @pytest.mark.parametrize(
@@ -254,12 +237,7 @@ def test_api_package_indexes_cover_source_packages():
         assert actual == set(pages), package
         source = (root / "docs/api" / f"{index}.rst").read_text(encoding="utf-8")
         blocks = re.findall(r"(?m)^\.\. toctree::\n((?:[ \t]+[^\n]*\n|\n)*)", source)
-        entries = {
-            line.strip()
-            for block in blocks
-            for line in block.splitlines()
-            if line.strip() and not line.strip().startswith(":")
-        }
+        entries = {line.strip() for block in blocks for line in block.splitlines() if line.strip() and not line.strip().startswith(":")}
         assert set(pages.values()) <= entries, package
         for page in pages.values():
             assert (root / "docs/api" / f"{page}.rst").is_file()
@@ -328,9 +306,7 @@ def test_rejects_database_api_without_shortcut_method_anchors(tmp_path):
     """数据库 API 页面必须发布类外快捷查询和写入入口。"""
     _write(
         tmp_path / "api" / "database.html",
-        '<dt id="hscredit.database.client.Database">Database</dt>'
-        '<dt id="hscredit.database.client.Database.stream_query">stream_query</dt>'
-        '<dt id="hscredit.database.stream.QueryStream.to_result">to_result</dt>',
+        '<dt id="hscredit.database.client.Database">Database</dt>' '<dt id="hscredit.database.client.Database.stream_query">stream_query</dt>' '<dt id="hscredit.database.stream.QueryStream.to_result">to_result</dt>',
     )
 
     errors = collect_validation_errors(tmp_path)
@@ -361,8 +337,7 @@ def test_rejects_feature_summary_outside_searchable_api_objects(tmp_path):
     """无关元数据中的函数名不能冒充可跳转的 API 搜索结果。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l6"><a href="#XGBoost.fit">fit</a></li>'
-        '<li class="toctree-l6"><a href="#XGBoost.predict">predict</a></li>',
+        '<li class="toctree-l6"><a href="#XGBoost.fit">fit</a></li>' '<li class="toctree-l6"><a href="#XGBoost.predict">predict</a></li>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(
@@ -372,9 +347,7 @@ def test_rejects_feature_summary_outside_searchable_api_objects(tmp_path):
     _write(tmp_path / "_static" / "language_data.js", "var Stemmer = function () {};")
     _write(
         tmp_path / "_static" / "custom.css",
-        ".wy-menu-vertical a { box-sizing: border-box; border-left: 3px solid transparent; }"
-        ".wy-menu-vertical li.current > a { border-left: 3px solid transparent; }"
-        ".wy-menu-vertical li.hs-scrollspy-current > a { border-left: 3px solid transparent; }",
+        ".wy-menu-vertical a { box-sizing: border-box; border-left: 3px solid transparent; }" ".wy-menu-vertical li.current > a { border-left: 3px solid transparent; }" ".wy-menu-vertical li.hs-scrollspy-current > a { border-left: 3px solid transparent; }",
     )
 
     errors = collect_validation_errors(tmp_path)
@@ -386,8 +359,7 @@ def test_rejects_method_anchors_outside_level_six_navigation(tmp_path):
     """正文锚点与无关第六层条目不能冒充类方法菜单入口。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l6"><a href="#unrelated">unrelated</a></li>'
-        '<main><a href="#XGBoost.fit">fit</a><a href="#XGBoost.predict">predict</a></main>',
+        '<li class="toctree-l6"><a href="#unrelated">unrelated</a></li>' '<main><a href="#XGBoost.fit">fit</a><a href="#XGBoost.predict">predict</a></main>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(
@@ -397,9 +369,7 @@ def test_rejects_method_anchors_outside_level_six_navigation(tmp_path):
     _write(tmp_path / "_static" / "language_data.js", "var Stemmer = function () {};")
     _write(
         tmp_path / "_static" / "custom.css",
-        ".wy-menu-vertical a { box-sizing: border-box; border-left: 3px solid transparent; }"
-        ".wy-menu-vertical li.current > a { border-left: 3px solid transparent; }"
-        ".wy-menu-vertical li.hs-scrollspy-current > a { border-left: 3px solid transparent; }",
+        ".wy-menu-vertical a { box-sizing: border-box; border-left: 3px solid transparent; }" ".wy-menu-vertical li.current > a { border-left: 3px solid transparent; }" ".wy-menu-vertical li.hs-scrollspy-current > a { border-left: 3px solid transparent; }",
     )
 
     errors = collect_validation_errors(tmp_path)
@@ -411,8 +381,7 @@ def test_rejects_later_border_shorthand_in_the_same_rule(tmp_path):
     """同一规则内后出现的 border 简写不得破坏稳定左边框。"""
     _write(
         tmp_path / "api" / "boosting.html",
-        '<li class="toctree-l6"><a href="#XGBoost.fit">fit</a></li>'
-        '<li class="toctree-l6"><a href="#XGBoost.predict">predict</a></li>',
+        '<li class="toctree-l6"><a href="#XGBoost.fit">fit</a></li>' '<li class="toctree-l6"><a href="#XGBoost.predict">predict</a></li>',
     )
     _write(tmp_path / "api" / "eda.html", '<dt id="hscredit.core.eda.feature_summary">feature_summary</dt>')
     _write(
@@ -422,9 +391,7 @@ def test_rejects_later_border_shorthand_in_the_same_rule(tmp_path):
     _write(tmp_path / "_static" / "language_data.js", "var Stemmer = function () {};")
     _write(
         tmp_path / "_static" / "custom.css",
-        ".wy-menu-vertical a { box-sizing: border-box; border-left: 3px solid transparent; }"
-        ".wy-menu-vertical li.current > a { border-left: 3px solid transparent; border: none; }"
-        ".wy-menu-vertical li.hs-scrollspy-current > a { border-left: 3px solid transparent; }",
+        ".wy-menu-vertical a { box-sizing: border-box; border-left: 3px solid transparent; }" ".wy-menu-vertical li.current > a { border-left: 3px solid transparent; border: none; }" ".wy-menu-vertical li.hs-scrollspy-current > a { border-left: 3px solid transparent; }",
     )
 
     errors = collect_validation_errors(tmp_path)
@@ -436,8 +403,7 @@ def test_runtime_probe_rejects_throwing_language_data(tmp_path):
     """即使 Stemmer 已定义，加载脚本时抛错也必须阻止发布。"""
     _write(
         tmp_path / "_static" / "language_data.js",
-        "var Stemmer = function () { this.stemWord = function (word) { return word; }; };"
-        "throw new Error('search runtime failed');",
+        "var Stemmer = function () { this.stemWord = function (word) { return word; }; };" "throw new Error('search runtime failed');",
     )
 
     errors = collect_search_runtime_errors(tmp_path)

@@ -115,9 +115,7 @@ def test_xgboost_ks_early_stopping_and_native_callbacks_survive_save(data, tmp_p
     from hscredit.core.models import XGBoost
 
     callback = xgboost.callback.EvaluationMonitor(period=100)
-    model = XGBoost(
-        n_estimators=5, n_jobs=1, eval_metric=["auc", "ks"], early_stopping_rounds=2, callbacks=[callback]
-    ).fit(*data, eval_set=[data])
+    model = XGBoost(n_estimators=5, n_jobs=1, eval_metric=["auc", "ks"], early_stopping_rounds=2, callbacks=[callback]).fit(*data, eval_set=[data])
     restored = XGBoost.load(model.save(tmp_path / "ks.joblib"))
     assert restored.best_score_ is not None
     assert "ks" in restored.evals_result_["validation_0"]
@@ -260,9 +258,7 @@ def test_native_aliases_override_wrapper_defaults(name, data):
 def test_native_xgboost_estimator_can_tune_with_early_stopping(data):
     from xgboost import XGBClassifier
 
-    tuner = ModelTuner(
-        XGBClassifier(n_estimators=4, n_jobs=1, early_stopping_rounds=2), search_space={}, cv=2, n_jobs=1
-    )
+    tuner = ModelTuner(XGBClassifier(n_estimators=4, n_jobs=1, early_stopping_rounds=2), search_space={}, cv=2, n_jobs=1)
     tuner.fit(*data, n_trials=1, show_progress_bar=False)
     assert tuner.get_best_model().predict_proba(data[0]).shape == (len(data[1]), 2)
 
@@ -319,9 +315,7 @@ def test_custom_trial_objective_uses_native_optuna_protocol(data):
         trial.set_user_attr("来源", "原生目标")
         return trial.suggest_float("max_features", 0.2, 0.8)
 
-    tuner = ModelTuner(
-        RandomForest(n_estimators=2, n_jobs=1), trial_objective=objective, metric="auc", search_space={}, cv=2, n_jobs=1
-    )
+    tuner = ModelTuner(RandomForest(n_estimators=2, n_jobs=1), trial_objective=objective, metric="auc", search_space={}, cv=2, n_jobs=1)
     tuner.fit(*data, n_trials=2, show_progress_bar=False)
     assert tuner.best_params_["max_features"] == tuner.study_.best_params["max_features"]
     assert tuner.study_.best_trial.user_attrs["来源"] == "原生目标"
@@ -383,9 +377,7 @@ def test_tuning_does_not_restore_stale_native_aliases(name, initial, space, key,
     from hscredit.core import models
 
     model = getattr(models, name)(params=initial, n_jobs=1)
-    best = model.tune(
-        *data, search_space=space, n_trials=1, cv=2, n_jobs=1, early_stopping_rounds=None, show_progress_bar=False
-    )
+    best = model.tune(*data, search_space=space, n_trials=1, cv=2, n_jobs=1, early_stopping_rounds=None, show_progress_bar=False)
     assert best.get_native_params()[key] == value
 
 
@@ -426,9 +418,7 @@ def test_lightgbm_custom_loss_native_roundtrip_preserves_probability_and_score(d
 def test_json_metadata_can_describe_nested_callable_parameters(data, tmp_path):
     from hscredit.core.models import LightGBM
 
-    model = LightGBM(n_estimators=3, n_jobs=1, eval_metric=["auc", lambda y, p: ("自定义", 0.5, True)]).fit(
-        *data, eval_set=[data]
-    )
+    model = LightGBM(n_estimators=3, n_jobs=1, eval_metric=["auc", lambda y, p: ("自定义", 0.5, True)]).fit(*data, eval_set=[data])
     restored = LightGBM.load(model.save(tmp_path / "nested.json"))
     assert callable(restored.get_params()["eval_metric"][1])
 

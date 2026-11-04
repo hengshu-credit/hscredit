@@ -62,9 +62,7 @@ def adapter():
 
 
 def test_oracle_count_wrapper_has_no_as_keyword(adapter):
-    assert adapter.build_count_sql("select id from events;") == (
-        "SELECT COUNT(1) FROM (select id from events) hscredit_count"
-    )
+    assert adapter.build_count_sql("select id from events;") == ("SELECT COUNT(1) FROM (select id from events) hscredit_count")
 
 
 def test_oracle_recognizes_only_duplicate_table_error(adapter):
@@ -182,9 +180,7 @@ def test_oracle_ensure_table_creates_only_when_missing(adapter):
 
     assert adapter.sql_calls[0][0] == "query"
     assert "FROM ALL_TABLES" in adapter.sql_calls[0][1]
-    assert any(
-        call[0] == "execute" and call[1].startswith('CREATE TABLE "RISK"."NEW_EVENTS"') for call in adapter.sql_calls
-    )
+    assert any(call[0] == "execute" and call[1].startswith('CREATE TABLE "RISK"."NEW_EVENTS"') for call in adapter.sql_calls)
 
     existing = ObservableOracleAdapter(
         connect_kwargs={"user": "risk", "existing_tables": {"RISK.EVENTS"}},
@@ -337,9 +333,4 @@ def test_oracle_json_projection_supports_scalar_and_nested_values(adapter):
         json_fields={"PAYLOAD": {"customer": "$.customer"}},
     )
 
-    assert sql == (
-        'SELECT "hscredit_json_source"."ID", '
-        'COALESCE(JSON_VALUE("hscredit_json_source"."PAYLOAD", \'$.customer\' RETURNING CLOB NULL ON EMPTY '
-        'NULL ON ERROR), JSON_QUERY("hscredit_json_source"."PAYLOAD", \'$.customer\' RETURNING CLOB NULL ON EMPTY '
-        'NULL ON ERROR)) AS "customer" FROM (select ID, PAYLOAD from RISK.EVENTS) "hscredit_json_source"'
-    )
+    assert sql == ('SELECT "hscredit_json_source"."ID", ' 'COALESCE(JSON_VALUE("hscredit_json_source"."PAYLOAD", \'$.customer\' RETURNING CLOB NULL ON EMPTY ' 'NULL ON ERROR), JSON_QUERY("hscredit_json_source"."PAYLOAD", \'$.customer\' RETURNING CLOB NULL ON EMPTY ' 'NULL ON ERROR)) AS "customer" FROM (select ID, PAYLOAD from RISK.EVENTS) "hscredit_json_source"')

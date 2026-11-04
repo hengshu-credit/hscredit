@@ -47,9 +47,7 @@ class TestGBMEncoderMissing:
         assert X_train.isnull().sum().sum() > 0, "测试数据应该包含缺失值"
 
         # 创建编码器
-        encoder = GBMEncoder(
-            model_type="xgboost", n_estimators=10, max_depth=3, output_type="probability", random_state=42
-        )
+        encoder = GBMEncoder(model_type="xgboost", n_estimators=10, max_depth=3, output_type="probability", random_state=42)
 
         # 拟合和转换（应该不报错）
         X_train_enc = encoder.fit_transform(X_train, y_train)
@@ -78,9 +76,7 @@ class TestGBMEncoderMissing:
         X, y = generate_data_with_missing(n_samples=500, missing_ratio=0.15)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        encoder = GBMEncoder(
-            model_type="lightgbm", n_estimators=10, max_depth=3, output_type="probability", random_state=42
-        )
+        encoder = GBMEncoder(model_type="lightgbm", n_estimators=10, max_depth=3, output_type="probability", random_state=42)
 
         X_train_enc = encoder.fit_transform(X_train, y_train)
         X_test_enc = encoder.transform(X_test)
@@ -103,9 +99,7 @@ class TestGBMEncoderMissing:
         X, y = generate_data_with_missing(n_samples=500, missing_ratio=0.15)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        encoder = GBMEncoder(
-            model_type="catboost", n_estimators=10, max_depth=3, output_type="probability", random_state=42
-        )
+        encoder = GBMEncoder(model_type="catboost", n_estimators=10, max_depth=3, output_type="probability", random_state=42)
 
         X_train_enc = encoder.fit_transform(X_train, y_train)
         X_test_enc = encoder.transform(X_test)
@@ -149,9 +143,7 @@ class TestGBMEncoderMissing:
 
         assert X_train.isnull().sum().sum() == 0, "测试数据应该无缺失值"
 
-        encoder = GBMEncoder(
-            model_type="xgboost", n_estimators=10, max_depth=3, output_type="probability", random_state=42
-        )
+        encoder = GBMEncoder(model_type="xgboost", n_estimators=10, max_depth=3, output_type="probability", random_state=42)
 
         X_train_enc = encoder.fit_transform(X_train, y_train)
         X_test_enc = encoder.transform(X_test)
@@ -170,9 +162,7 @@ class TestGBMEncoderMissing:
         X, y = generate_data_with_missing(n_samples=500, missing_ratio=0.3)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        encoder = GBMEncoder(
-            model_type="xgboost", n_estimators=10, max_depth=3, output_type="probability", random_state=42
-        )
+        encoder = GBMEncoder(model_type="xgboost", n_estimators=10, max_depth=3, output_type="probability", random_state=42)
 
         X_train_enc = encoder.fit_transform(X_train, y_train)
         X_test_enc = encoder.transform(X_test)

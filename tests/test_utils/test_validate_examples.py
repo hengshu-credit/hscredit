@@ -56,6 +56,7 @@ def test_discover_examples_defaults_to_notebooks_with_explicit_legacy_opt_in(tmp
     (tmp_path / "20_script.py").write_text("print('script')", encoding="utf-8")
     _write_notebook(tmp_path / "10_notebook.ipynb", "print('notebook')")
     _write_notebook(tmp_path / "nested" / "30_nested.ipynb", "print('nested')")
+    _write_notebook(tmp_path / "建模参考代码.ipynb", "raise RuntimeError('外部业务参考稿')")
     (tmp_path / "ignore.txt").write_text("ignore", encoding="utf-8")
     generated_files = [
         tmp_path / "model_report" / "scorecard_deploy.py",

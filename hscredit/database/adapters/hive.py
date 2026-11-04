@@ -124,9 +124,7 @@ class HiveAdapter(DBAPIAdapter):
         try:
             from impala import dbapi
         except ImportError as exc:
-            raise DependencyError(
-                f"缺少 {self.database_type} 可选依赖，请安装: " f"pip install hscredit[db-{self.database_type}]"
-            ) from exc
+            raise DependencyError(f"缺少 {self.database_type} 可选依赖，请安装: " f"pip install hscredit[db-{self.database_type}]") from exc
         return dbapi
 
     def create_cursor(self, connection: Any, *, stream: bool = False) -> Any:
@@ -223,11 +221,7 @@ class HiveAdapter(DBAPIAdapter):
             raise DatabaseCapabilityError("Hive 事务表必须使用 ORC 存储格式")
         definitions = self._column_definitions(data, options)
         if_not_exists = " IF NOT EXISTS" if options.get("if_not_exists", True) else ""
-        ddl = (
-            f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  "
-            + ",\n  ".join(definitions)
-            + "\n)"
-        )
+        ddl = f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  " + ",\n  ".join(definitions) + "\n)"
         table_comment = options.get("table_comment") or options.get("comment")
         if table_comment is not None:
             ddl += f"\nCOMMENT {self._quote_literal(table_comment)}"
@@ -347,22 +341,12 @@ class HiveAdapter(DBAPIAdapter):
         key_columns: Sequence[str],
     ) -> str:
         source = ", ".join(f"%s AS {self.quote_identifier(str(column))}" for column in columns)
-        condition = " AND ".join(
-            f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}"
-            for column in key_columns
-        )
+        condition = " AND ".join(f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}" for column in key_columns)
         keys = set(key_columns)
-        updates = ", ".join(
-            f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}"
-            for column in columns
-            if column not in keys
-        )
+        updates = ", ".join(f"target.{self.quote_identifier(str(column))}=" f"source.{self.quote_identifier(str(column))}" for column in columns if column not in keys)
         insert_columns = ", ".join(self.quote_identifier(str(column)) for column in columns)
         insert_values = ", ".join(f"source.{self.quote_identifier(str(column))}" for column in columns)
-        sql = (
-            f"MERGE INTO {self.quote_qualified_name(table_name)} target "
-            f"USING (SELECT {source}) source ON ({condition})"
-        )
+        sql = f"MERGE INTO {self.quote_qualified_name(table_name)} target " f"USING (SELECT {source}) source ON ({condition})"
         if updates:
             sql += f" WHEN MATCHED THEN UPDATE SET {updates}"
         return sql + f" WHEN NOT MATCHED THEN INSERT ({insert_columns}) VALUES ({insert_values})"
@@ -396,11 +380,7 @@ class HiveAdapter(DBAPIAdapter):
     ) -> BatchWriteResult:
         del batch_index, dialect_options
         columns = [str(column) for column in batch.columns]
-        sql = (
-            self._merge_sql(table_name, columns, key_columns or ())
-            if mode == "r"
-            else self._insert_sql(table_name, columns)
-        )
+        sql = self._merge_sql(table_name, columns, key_columns or ()) if mode == "r" else self._insert_sql(table_name, columns)
         values = [tuple(self._dbapi_value(value) for value in row) for row in batch.itertuples(index=False, name=None)]
         affected = self.executemany(sql, values)
         inserted = int(affected) if int(affected) >= 0 else None

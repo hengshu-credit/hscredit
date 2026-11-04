@@ -166,9 +166,7 @@ class NullSelector(BaseFeatureSelector):
             self.dropped_ = pd.DataFrame(
                 {
                     "特征": dropped_cols,
-                    "剔除原因": [
-                        f"缺失率({null_rates[col]:.2%}) >= 阈值({self.threshold:.2%})" for col in dropped_cols
-                    ],
+                    "剔除原因": [f"缺失率({null_rates[col]:.2%}) >= 阈值({self.threshold:.2%})" for col in dropped_cols],
                     "缺失率": [null_rates[col] for col in dropped_cols],
                     "阈值": [self.threshold] * len(dropped_cols),
                 }

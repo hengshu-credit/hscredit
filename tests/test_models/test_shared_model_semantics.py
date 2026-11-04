@@ -33,9 +33,7 @@ def test_explicit_y_overrides_target_without_label_leakage(kind, data):
     factories = {
         "forest": lambda: RandomForest(n_estimators=4, n_jobs=1, random_state=3, target="标签"),
         "lr": lambda: LogisticRegression(calculate_stats=False, target="标签"),
-        "calibration": lambda: ProbabilityCalibrator(
-            model=DecisionTreeClassifier(max_depth=3, random_state=3), target="标签", random_state=3
-        ),
+        "calibration": lambda: ProbabilityCalibrator(model=DecisionTreeClassifier(max_depth=3, random_state=3), target="标签", random_state=3),
         "probability_card": lambda: ProbabilityScoreCard(model=NativeLogisticRegression(), target="标签"),
         "scorecard": lambda: ScoreCard(target="标签", calculate_stats=False),
     }
@@ -151,14 +149,8 @@ def test_tree_explanation_reconstructs_selected_class_and_output(output, target,
     X, y = data
     model = XGBoost(n_estimators=4, max_depth=2, n_jobs=1, random_state=5).fit(X, y)
     explained = X.iloc[:4]
-    result = ModelExplainer(model, background_data=X.iloc[:20], model_output=output, target_class=target).explain(
-        explained
-    )
-    expected = (
-        model.predict_proba(explained)[:, target]
-        if output == "probability"
-        else model.predict(explained, output_margin=True) * (1 if target else -1)
-    )
+    result = ModelExplainer(model, background_data=X.iloc[:20], model_output=output, target_class=target).explain(explained)
+    expected = model.predict_proba(explained)[:, target] if output == "probability" else model.predict(explained, output_margin=True) * (1 if target else -1)
     np.testing.assert_allclose(result.base_values + result.values.sum(axis=1), expected, atol=1e-5)
     np.testing.assert_allclose(result.metadata["模型输出"], expected)
 
@@ -187,9 +179,7 @@ def test_explanation_cache_is_invalidated_by_model_refit(data):
     model.fit(X, 1 - y)
     second = explainer.explain(X.head())
     assert not np.allclose(first.values, second.values)
-    np.testing.assert_allclose(
-        second.base_values + second.values.sum(axis=1), model.predict_proba(X.head())[:, 1], atol=1e-5
-    )
+    np.testing.assert_allclose(second.base_values + second.values.sum(axis=1), model.predict_proba(X.head())[:, 1], atol=1e-5)
 
 
 def test_scorecard_rejects_pipeline_that_did_not_train_lr_on_woe(data):

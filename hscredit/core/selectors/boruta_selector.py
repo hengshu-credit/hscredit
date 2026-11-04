@@ -188,17 +188,9 @@ class BorutaSelector(BaseFeatureSelector):
 
         if y is None:
             raise ValueError("BorutaSelector 需要目标变量 y")
-        if (
-            isinstance(self.max_iter, (bool, np.bool_))
-            or not isinstance(self.max_iter, (int, np.integer))
-            or int(self.max_iter) < 1
-        ):
+        if isinstance(self.max_iter, (bool, np.bool_)) or not isinstance(self.max_iter, (int, np.integer)) or int(self.max_iter) < 1:
             raise ValueError("max_iter 必须是正整数")
-        if (
-            isinstance(self.n_estimators, (bool, np.bool_))
-            or not isinstance(self.n_estimators, (int, np.integer))
-            or int(self.n_estimators) < 1
-        ):
+        if isinstance(self.n_estimators, (bool, np.bool_)) or not isinstance(self.n_estimators, (int, np.integer)) or int(self.n_estimators) < 1:
             raise ValueError("n_estimators 必须是正整数")
         if isinstance(self.alpha, (bool, np.bool_)) or not 0 < float(self.alpha) < 1:
             raise ValueError("alpha 必须在 (0, 1) 范围内")
@@ -250,9 +242,7 @@ class BorutaSelector(BaseFeatureSelector):
             model = clone(base_estimator)
             model_params = model.get_params(deep=False) if hasattr(model, "get_params") else {}
             if "random_state" in model_params:
-                base_random_state = (
-                    self.random_state if self.random_state is not None else int(rng.randint(0, np.iinfo(np.int32).max))
-                )
+                base_random_state = self.random_state if self.random_state is not None else int(rng.randint(0, np.iinfo(np.int32).max))
                 model.set_params(random_state=(int(base_random_state) + iteration) % np.iinfo(np.int32).max)
             with self._estimator_parallel_context():
                 model.fit(X_with_shadow, y)
@@ -260,10 +250,7 @@ class BorutaSelector(BaseFeatureSelector):
             # 获取特征重要性（兼容所有模型类型）
             importances = np.asarray(get_feature_importances(model), dtype=float).reshape(-1)
             if importances.size != 2 * n_features:
-                raise ValueError(
-                    "Boruta 基模型返回的特征重要性长度与真实特征和影子特征总数不一致: "
-                    f"期望 {2 * n_features}，实际 {importances.size}"
-                )
+                raise ValueError("Boruta 基模型返回的特征重要性长度与真实特征和影子特征总数不一致: " f"期望 {2 * n_features}，实际 {importances.size}")
             if not np.isfinite(importances).all():
                 raise ValueError("Boruta 模型重要性必须全部为有限数值")
 
@@ -347,10 +334,6 @@ class BorutaSelector(BaseFeatureSelector):
                     "指标值": float(self.p_values_[feature]),
                     "有效阈值": corrected_alpha,
                     "是否有效": True,
-                    "原因": (
-                        "多重比较校正后显著"
-                        if self.support_[feature]
-                        else ("待确认，未达到显著性要求" if self.support_weak_[feature] else "未显著优于影子特征")
-                    ),
+                    "原因": ("多重比较校正后显著" if self.support_[feature] else ("待确认，未达到显著性要求" if self.support_weak_[feature] else "未显著优于影子特征")),
                 },
             )

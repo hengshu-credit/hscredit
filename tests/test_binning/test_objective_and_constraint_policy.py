@@ -19,20 +19,14 @@ def sample():
 
 
 def settings(method):
-    return (
-        {"population_size": 10, "generations": 4}
-        if method == "genetic"
-        else {"n_prebins": 6, "max_candidates": 8, "time_limit": 5}
-    )
+    return {"population_size": 10, "generations": 4} if method == "genetic" else {"n_prebins": 6, "max_candidates": 8, "time_limit": 5}
 
 
 @pytest.mark.parametrize("method", ["or_tools", "cp_sat", "genetic"])
 @pytest.mark.parametrize("name", CustomObjectives.names())
 def test_named_and_callable_objectives_select_identical_rules(method, name, sample):
     X, y = sample
-    common = dict(
-        method=method, max_n_bins=3, min_bin_size=0.05, monotonic=False, random_state=42, n_jobs=1, **settings(method)
-    )
+    common = dict(method=method, max_n_bins=3, min_bin_size=0.05, monotonic=False, random_state=42, n_jobs=1, **settings(method))
     params = {"iv_weight": 0.8}
     named = OptimalBinning(objective=name, objective_params=params, **common).fit(X, y)
     callback = OptimalBinning(objective=CustomObjectives.get(name, **params), **common).fit(X, y)
@@ -136,9 +130,7 @@ def test_legacy_categorical_and_2d_constraints_preserve_population():
     model = OptimalBinning(method="quantile", min_bin_size=0.2, constraint_policy="legacy", n_jobs=1).fit(X, y)
     assert model.constraint_violations_["类别"]
     assert model.get_bin_table("类别")["样本总数"].sum() == 100
-    two = OptimalBinning2D(min_bin_size=1000, constraint_policy="legacy", n_jobs=1).fit(
-        pd.DataFrame({"甲": np.arange(20.0), "乙": np.arange(20.0)}), pd.Series([0, 1] * 10)
-    )
+    two = OptimalBinning2D(min_bin_size=1000, constraint_policy="legacy", n_jobs=1).fit(pd.DataFrame({"甲": np.arange(20.0), "乙": np.arange(20.0)}), pd.Series([0, 1] * 10))
     assert two.constraint_violations_
     assert two.binner_x_.constraint_policy == two.binner_y_.constraint_policy == "legacy"
     assert len(two.transform(pd.DataFrame({"甲": np.arange(20.0), "乙": np.arange(20.0)}))) == 20
@@ -152,9 +144,7 @@ def test_callback_errors_are_not_relaxed_by_legacy_policy(method, sample):
         raise RuntimeError("回调故意失败")
 
     with pytest.raises((ValueError, ParallelExecutionError), match="回调故意失败"):
-        OptimalBinning(
-            method=method, objective=broken, constraint_policy="legacy", n_jobs=1, random_state=42, **settings(method)
-        ).fit(X, y)
+        OptimalBinning(method=method, objective=broken, constraint_policy="legacy", n_jobs=1, random_state=42, **settings(method)).fit(X, y)
 
 
 @pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf, True, [1.0]])
@@ -215,9 +205,7 @@ def test_objective_callback_respects_woe_clip_for_genetic(sample):
         assert max(abs(s["woe"]) for s in rows) <= 0.2 + 1e-12
         return sum(s["iv"] for s in rows)
 
-    model = OptimalBinning(
-        method="genetic", objective=clipped, woe_clip=0.2, random_state=42, n_jobs=1, **settings("genetic")
-    ).fit(X, y)
+    model = OptimalBinning(method="genetic", objective=clipped, woe_clip=0.2, random_state=42, n_jobs=1, **settings("genetic")).fit(X, y)
     assert model._binner.woe_clip == 0.2
 
 
@@ -342,9 +330,7 @@ def test_two_dimensional_artifact_keeps_callable_axis_config(sample, tmp_path):
     X, y = sample
     both = pd.DataFrame({"甲": X["数值"], "乙": np.arange(len(X), dtype=float)})
     score = lambda rows, good, bad: sum(s["iv"] for s in rows)
-    model = OptimalBinning2D(
-        max_n_bins=3, n_jobs=1, x_params={"method": "cp_sat", "objective": score, "n_prebins": 6, "time_limit": 5}
-    ).fit(both, y)
+    model = OptimalBinning2D(max_n_bins=3, n_jobs=1, x_params={"method": "cp_sat", "objective": score, "n_prebins": 6, "time_limit": 5}).fit(both, y)
     path = tmp_path / "two.joblib"
     model.save_artifact(path)
     restored = OptimalBinning2D.load_artifact(path, trusted=True)

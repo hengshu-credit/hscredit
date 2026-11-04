@@ -152,12 +152,7 @@ class KSSelector(BaseFeatureSelector):
 
     def _check_input(self, X, y=None):
         """在分箱或跳过强制字段前校验参数，始终将目标列排除在特征之外。"""
-        if (
-            isinstance(self.threshold, (bool, np.bool_))
-            or not isinstance(self.threshold, Real)
-            or not np.isfinite(self.threshold)
-            or not 0 <= self.threshold <= 1
-        ):
+        if isinstance(self.threshold, (bool, np.bool_)) or not isinstance(self.threshold, Real) or not np.isfinite(self.threshold) or not 0 <= self.threshold <= 1:
             raise ValidationError("KS 阈值必须是 [0, 1] 范围内的有限数值")
         if y is not None and np.asarray(y).ndim != 1:
             raise ValidationError("KSSelector 要求目标变量为一维数组")
@@ -182,16 +177,7 @@ class KSSelector(BaseFeatureSelector):
         record_counts(self, X)
         self.threshold_ = self.threshold
         self.score_name_, self.score_direction_ = "KS值", "越大越好"
-        self.metric_methods_ = pd.Series(
-            {
-                column: (
-                    "分箱累计KS"
-                    if binned
-                    else ("原始数值KS" if is_numeric_dtype(X[column].dtype) else "类别坏率排序KS")
-                )
-                for column in X
-            }
-        )
+        self.metric_methods_ = pd.Series({column: ("分箱累计KS" if binned else ("原始数值KS" if is_numeric_dtype(X[column].dtype) else "类别坏率排序KS")) for column in X})
         results = self._parallel_execute(
             _compute_ks_feature,
             ((column, X[column], y, binned) for column in X.columns),
@@ -216,9 +202,7 @@ class KSSelector(BaseFeatureSelector):
         self.dropped_ = pd.DataFrame(
             {
                 "特征": dropped_columns,
-                "剔除原因": [
-                    f"KS值({self.scores_[column]:.4f}) < 阈值({self.threshold})" for column in dropped_columns
-                ],
+                "剔除原因": [f"KS值({self.scores_[column]:.4f}) < 阈值({self.threshold})" for column in dropped_columns],
                 "KS值": [self.scores_[column] for column in dropped_columns],
                 "阈值": [self.threshold] * len(dropped_columns),
             }

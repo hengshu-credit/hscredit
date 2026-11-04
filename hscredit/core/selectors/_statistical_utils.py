@@ -8,14 +8,7 @@ import pandas as pd
 
 def validate_real(value, name, minimum=None, maximum=None, allow_infinite=False):
     """拒绝布尔值、NaN 和范围外实数；仅显式兼容入口允许无穷阈值。"""
-    if (
-        isinstance(value, (bool, np.bool_))
-        or not isinstance(value, Real)
-        or np.isnan(value)
-        or (not allow_infinite and not np.isfinite(value))
-        or (minimum is not None and value < minimum)
-        or (maximum is not None and value > maximum)
-    ):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real) or np.isnan(value) or (not allow_infinite and not np.isfinite(value)) or (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
         bounds = f"，范围为 [{minimum}, {maximum}]" if minimum is not None or maximum is not None else ""
         raise ValueError(f"{name} 必须是有效{'实数' if allow_infinite else '有限实数'}{bounds}")
 
@@ -32,12 +25,7 @@ def validate_binary_target(y, name):
 
 def is_categorical(series):
     """统一识别 object、string、category、bool 字段。"""
-    return bool(
-        pd.api.types.is_object_dtype(series.dtype)
-        or pd.api.types.is_string_dtype(series.dtype)
-        or isinstance(series.dtype, pd.CategoricalDtype)
-        or pd.api.types.is_bool_dtype(series.dtype)
-    )
+    return bool(pd.api.types.is_object_dtype(series.dtype) or pd.api.types.is_string_dtype(series.dtype) or isinstance(series.dtype, pd.CategoricalDtype) or pd.api.types.is_bool_dtype(series.dtype))
 
 
 def record_counts(selector, X):

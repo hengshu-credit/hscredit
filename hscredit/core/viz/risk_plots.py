@@ -1667,11 +1667,7 @@ def bad_rate_trend_plot(
         partition_data = definition.overdue if using_overdue else "标签"
         target_groups.setdefault(partition_data, []).append((name, df[definition.column]))
 
-    all_targets = [
-        (target_label, target_values)
-        for grouped_targets in target_groups.values()
-        for target_label, target_values in grouped_targets
-    ]
+    all_targets = [(target_label, target_values) for grouped_targets in target_groups.values() for target_label, target_values in grouped_targets]
 
     # 传入ax时复用该ax绘制主曲线，样本数柱状图作为附加面板挂载在同一figure上，
     # 而不是整体重新plt.subplots()丢弃调用方传入的ax
@@ -1697,9 +1693,7 @@ def bad_rate_trend_plot(
                 ]
             )
     elif show_sample_count:
-        fig, (ax_line, ax_bar) = plt.subplots(
-            2, 1, figsize=figsize, sharex=True, gridspec_kw={"height_ratios": [3, 1], "hspace": 0.1}
-        )
+        fig, (ax_line, ax_bar) = plt.subplots(2, 1, figsize=figsize, sharex=True, gridspec_kw={"height_ratios": [3, 1], "hspace": 0.1})
     else:
         fig, ax_line = get_or_create_ax(figsize=figsize, ax=ax)
 
@@ -1739,9 +1733,7 @@ def bad_rate_trend_plot(
                 break
         return palette
 
-    requested_series_colors = (
-        [BAD_RATE_COLOR, *get_series_colors(len(all_targets) + 1)] if colors is None else list(colors)
-    )
+    requested_series_colors = [BAD_RATE_COLOR, *get_series_colors(len(all_targets) + 1)] if colors is None else list(colors)
     series_colors = _unique_series_palette(requested_series_colors, len(all_targets))
 
     dimensions = None
@@ -1781,17 +1773,8 @@ def bad_rate_trend_plot(
             if group:
                 working["_dimension"] = df[group]
                 for dimension_index, dimension in enumerate(dimensions):
-                    dimension_rates = (
-                        working[working["_dimension"] == dimension]
-                        .groupby("_period", observed=False)["_target"]
-                        .mean()
-                        .reindex(periods)
-                    )
-                    legend_label = (
-                        str(dimension)
-                        if not using_overdue and len(all_targets) == 1
-                        else f"{target_label} · {dimension}"
-                    )
+                    dimension_rates = working[working["_dimension"] == dimension].groupby("_period", observed=False)["_target"].mean().reindex(periods)
+                    legend_label = str(dimension) if not using_overdue and len(all_targets) == 1 else f"{target_label} · {dimension}"
                     color_index = target_index * len(dimensions) + dimension_index
                     line_color = dimension_series_colors[color_index % len(dimension_series_colors)]
                     (line,) = rate_ax.plot(
@@ -1849,9 +1832,7 @@ def bad_rate_trend_plot(
 
     # 多坐标轴必须共享同一自适应百分比范围，否则成比例的序列会被各自缩放成完全重合的像素轨迹。
     if len(rate_axes) > 1:
-        plotted_rates = np.concatenate(
-            [np.asarray(line.get_ydata(), dtype=float) for rate_ax in rate_axes for line in rate_ax.lines]
-        )
+        plotted_rates = np.concatenate([np.asarray(line.get_ydata(), dtype=float) for rate_ax in rate_axes for line in rate_ax.lines])
         finite_rates = plotted_rates[np.isfinite(plotted_rates)]
         if finite_rates.size:
             rate_min = float(finite_rates.min())
@@ -1915,9 +1896,7 @@ def bad_rate_trend_plot(
     right_artists = []
     for rate_ax in rate_axes[1:]:
         right_artists.extend([rate_ax.yaxis.label, *rate_ax.get_yticklabels()])
-    right_edges = [
-        artist.get_window_extent(renderer).x1 for artist in right_artists if artist.get_visible() and artist.get_text()
-    ]
+    right_edges = [artist.get_window_extent(renderer).x1 for artist in right_artists if artist.get_visible() and artist.get_text()]
     padding_pixels = 6.0 * fig.dpi / 72.0
     if right_edges:
         overflow = max(right_edges) - (fig.bbox.x1 - padding_pixels)

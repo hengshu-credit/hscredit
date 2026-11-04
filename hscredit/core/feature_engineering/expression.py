@@ -99,23 +99,13 @@ def _parse_expression(expression):
         if isinstance(node, ast.Name) and node.id.startswith("__"):
             raise ValueError("衍生表达式不允许访问内部名称")
         if isinstance(node, ast.Attribute):
-            if (
-                not isinstance(node.value, ast.Name)
-                or node.value.id != "np"
-                or node.attr not in {*_FUNCTIONS, "nan", "inf"}
-            ):
+            if not isinstance(node.value, ast.Name) or node.value.id != "np" or node.attr not in {*_FUNCTIONS, "nan", "inf"}:
                 raise ValueError("衍生表达式不允许任意属性访问")
         if isinstance(node, ast.Call):
-            name = (
-                node.func.id
-                if isinstance(node.func, ast.Name)
-                else node.func.attr if isinstance(node.func, ast.Attribute) else None
-            )
+            name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else None
             if name not in {*_FUNCTIONS, "col"}:
                 raise ValueError("衍生表达式仅允许白名单函数")
-            if len(node.args) > _MAX_ARGS.get(name, 1) or any(
-                keyword.arg not in _KEYWORDS for keyword in node.keywords
-            ):
+            if len(node.args) > _MAX_ARGS.get(name, 1) or any(keyword.arg not in _KEYWORDS for keyword in node.keywords):
                 raise ValueError("衍生表达式的函数参数不受支持；禁止参数展开和原地输出")
     return tree.body
 
@@ -134,9 +124,7 @@ def _evaluate_expression(node, context):
             return getattr(np, node.attr)
         raise ValueError("函数名称只能用于调用")
     if isinstance(node, ast.BinOp):
-        return _BINARY[type(node.op)](
-            _evaluate_expression(node.left, context), _evaluate_expression(node.right, context)
-        )
+        return _BINARY[type(node.op)](_evaluate_expression(node.left, context), _evaluate_expression(node.right, context))
     if isinstance(node, ast.UnaryOp):
         return _UNARY[type(node.op)](_evaluate_expression(node.operand, context))
     if isinstance(node, ast.BoolOp):
@@ -156,12 +144,7 @@ def _evaluate_expression(node, context):
     if isinstance(node, ast.Call):
         name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
         if name == "col":
-            if (
-                len(node.args) != 1
-                or node.keywords
-                or not isinstance(node.args[0], ast.Constant)
-                or not isinstance(node.args[0].value, str)
-            ):
+            if len(node.args) != 1 or node.keywords or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
                 raise ValueError("col 必须接收一个常量字段名字符串")
             column = node.args[0].value
             if column not in context:
@@ -415,11 +398,7 @@ class NumExprDerive(BaseEstimator, TransformerMixin):
             else:
                 tree = _parse_expression(expr)
                 # 保持常见 ndarray 表达式的 numexpr 路径；扩展语法走同一安全 AST。
-                if any(
-                    isinstance(node, (ast.Attribute, ast.BoolOp))
-                    or (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "col")
-                    for node in ast.walk(tree)
-                ):
+                if any(isinstance(node, (ast.Attribute, ast.BoolOp)) or (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "col") for node in ast.walk(tree)):
                     X_derived[:, i] = _evaluate_expression(tree, context)
                 else:
                     X_derived[:, i] = ne.evaluate(expr, local_dict=context, global_dict={})

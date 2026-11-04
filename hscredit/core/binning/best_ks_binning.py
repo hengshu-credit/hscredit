@@ -184,9 +184,7 @@ class BestKSBinning(BaseBinning):
             constraint_policy=constraint_policy,
         )
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "BestKSBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "BestKSBinning":
         """拟合 Best KS 分箱。
 
         对每个特征预分割为细箱后，在单调性约束下贪心选择切分点以最大化 KS 统计量。
@@ -322,9 +320,7 @@ class BestKSBinning(BaseBinning):
                 test_splits = sorted(selected_splits + [candidate])
                 split_positions = [np.searchsorted(x_sorted, s, side="left") for s in test_splits]
                 split_positions = [0] + split_positions + [len(x_sorted)]
-                if any(
-                    (split_positions[j + 1] - split_positions[j]) < min_samples for j in range(len(split_positions) - 1)
-                ):
+                if any((split_positions[j + 1] - split_positions[j]) < min_samples for j in range(len(split_positions) - 1)):
                     continue
                 ks = self._calc_ks_fast(x_sorted, y_sorted, cum_good, cum_bad, total_good, total_bad, test_splits)
 
@@ -495,9 +491,7 @@ class BestKSBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         将原始特征值转换为分箱索引、分箱标签或WOE值。

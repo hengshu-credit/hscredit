@@ -242,16 +242,7 @@ def _fit_parameter_snapshot(value, *, policy="summary", _depth=0):
 def training_history_table(model):
     """不在训练摘要表中重复复制逐轮数组。"""
     records = getattr(model, "training_history_", [])
-    return pd.DataFrame(
-        [
-            {
-                key: _fit_parameter_snapshot(value)
-                for key, value in record.items()
-                if key not in {"评估曲线", "最终评估", "训练位置", "验证位置"}
-            }
-            for record in records
-        ]
-    )
+    return pd.DataFrame([{key: _fit_parameter_snapshot(value) for key, value in record.items() if key not in {"评估曲线", "最终评估", "训练位置", "验证位置"}} for record in records])
 
 
 def learning_curve_table(curves, *, context=None, names=None):
@@ -301,12 +292,7 @@ def model_learning_curve(model, revision=None):
     for offset, record in enumerate(history, current - len(history) + 1):
         if record.get("训练修订", offset) == revision:
             curves = record.get("评估曲线") or {}
-            if revision == current and any(
-                isinstance(values, dict)
-                for dataset in curves.values()
-                if isinstance(dataset, dict)
-                for values in dataset.values()
-            ):
+            if revision == current and any(isinstance(values, dict) for dataset in curves.values() if isinstance(dataset, dict) for values in dataset.values()):
                 curves = getattr(model, "_evals_result", curves)
             return learning_curve_table(curves, context={"训练修订": revision}, names=record.get("评估集名称"))
     raise ValueError(f"未保留训练修订 {revision}，请检查 max_history 或历史制品")

@@ -18,9 +18,7 @@ def test_single_class_bin_ks_is_zero_instead_of_perfect_separation(label, weight
 
 @pytest.mark.parametrize("scale", [1e-12, 1.0, 1e12])
 def test_amount_ks_is_invariant_to_currency_scale(scale):
-    table = compute_bin_stats(
-        [0, 0, 1, 1], [0, 0, 1, 1], target_type="amount_weighted", amount=np.full(4, scale), round_digits=False
-    )
+    table = compute_bin_stats([0, 0, 1, 1], [0, 0, 1, 1], target_type="amount_weighted", amount=np.full(4, scale), round_digits=False)
     np.testing.assert_array_equal(table["分档KS值"], [0, 1])
 
 

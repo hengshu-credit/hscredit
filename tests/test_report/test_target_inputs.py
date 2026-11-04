@@ -68,9 +68,7 @@ def test_all_single_input_forms_share_grey_semantics(frame, kind, grey):
         "partial": partial(derive, column="target"),
     }
     original = frame.copy(deep=True)
-    table = feature_bin_stats(
-        frame, "score", target=inputs[kind], del_grey=grey, rules=[3.5, 7.5], margins=True, n_jobs=1
-    )
+    table = feature_bin_stats(frame, "score", target=inputs[kind], del_grey=grey, rules=[3.5, 7.5], margins=True, n_jobs=1)
     valid = frame.target.isin([0, 1]) if grey else frame.target.notna()
     assert table.iloc[-1]["样本总数"] == valid.sum()
     assert table.iloc[-1]["坏样本数"] == (valid & frame.target.eq(1)).sum()
@@ -138,15 +136,11 @@ def test_callables_run_once_on_full_acting_data(frame, entry):
 @pytest.mark.parametrize("grey", [False, True])
 def test_multi_labels_keep_names_counts_amounts_and_shared_bins(frame, amount, grey):
     targets = definitions(frame)
-    wide = feature_bin_stats(
-        frame, "score", target=targets, del_grey=grey, amount=amount, rules=[3.5, 7.5], margins=True, n_jobs=1
-    )
+    wide = feature_bin_stats(frame, "score", target=targets, del_grey=grey, amount=amount, rules=[3.5, 7.5], margins=True, n_jobs=1)
     assert list(wide.columns.get_level_values(0).unique()) == ["分箱详情", *targets]
     for name, raw in targets.items():
         raw = raw(frame) if callable(raw) else raw
-        single = feature_bin_stats(
-            frame, "score", target=raw, del_grey=grey, amount=amount, rules=[3.5, 7.5], margins=True, n_jobs=1
-        )
+        single = feature_bin_stats(frame, "score", target=raw, del_grey=grey, amount=amount, rules=[3.5, 7.5], margins=True, n_jobs=1)
         total = wide.iloc[-1]
         count_group = name  # 当前多标签数据含缺失，分母必须按各标签独立统计。
         assert total[(count_group, "样本总数")] == single.iloc[-1]["样本总数"]
@@ -155,9 +149,7 @@ def test_multi_labels_keep_names_counts_amounts_and_shared_bins(frame, amount, g
     assert set(summary.columns.get_level_values(1)) >= set(targets)
 
 
-@pytest.mark.parametrize(
-    "fn,args", [(bad_rate_by_dimension, ("group",)), (bad_rate_trend, ("date",)), (bad_rate_by_bins, ("score",))]
-)
+@pytest.mark.parametrize("fn,args", [(bad_rate_by_dimension, ("group",)), (bad_rate_trend, ("date",)), (bad_rate_by_bins, ("score",))])
 def test_eda_multi_labels_exclude_grey_independently(frame, fn, args):
     results = fn(frame, *args, target=definitions(frame), del_grey=True)
     assert results["自定义_7+"]["样本数"].sum() == 8
@@ -273,9 +265,7 @@ def test_auto_report_uses_full_data_once_and_preserves_custom_names(frame, tmp_p
     [
         lambda d: feature_bin_stats(d, "score", target="target", overdue="MOB1", dpds=[3]),
         lambda d: Rule("score>1").report(d, target="target", overdue="MOB1", dpds=[3]),
-        lambda d: ModelReport(
-            ProbabilityModel(), datasets={"样本": d}, features=["score"], target="target", overdue="MOB1", dpds=[3]
-        ),
+        lambda d: ModelReport(ProbabilityModel(), datasets={"样本": d}, features=["score"], target="target", overdue="MOB1", dpds=[3]),
         lambda d: bad_rate_overall(d, target="target", overdue="MOB1", dpds=[3]),
     ],
 )
@@ -316,9 +306,7 @@ def test_parallel_features_reuse_parent_evaluated_targets(frame):
         max_n_bins=2,
     )
     serial = feature_bin_stats(frame, n_jobs=1, **kwargs)
-    parallel = feature_bin_stats(
-        frame, n_jobs=2, parallel_backend="loky", parallel_config={"adaptive": False}, **kwargs
-    )
+    parallel = feature_bin_stats(frame, n_jobs=2, parallel_backend="loky", parallel_config={"adaptive": False}, **kwargs)
     assert_frame_equal(serial, parallel)
     assert calls == [1, 1]
 
@@ -327,9 +315,7 @@ def test_tree_reports_parse_target_once_and_keep_explicit_names(frame):
     from hscredit.report.mining import DecisionTreeAnalyzer
 
     data = frame.assign(fit_target=frame.MOB1.gt(0).astype(int))
-    tree = DecisionTreeAnalyzer(target="fit_target", features=["score"], tree_params={"max_depth": 2}, n_jobs=1).fit(
-        data
-    )
+    tree = DecisionTreeAnalyzer(target="fit_target", features=["score"], tree_params={"max_depth": 2}, n_jobs=1).fit(data)
     calls = []
 
     def label(current):
@@ -390,10 +376,7 @@ def test_explicit_labels_match_overdue_count_and_amount_on_real_loans():
     from hscredit.utils.overdue import make_overdue_target
 
     for operator in (">", ">=", "<", "<="):
-        targets = {
-            f"MOB1{operator}{threshold}": make_overdue_target(data.MOB1, threshold, True, operator)
-            for threshold in (7, 3, 0)
-        }
+        targets = {f"MOB1{operator}{threshold}": make_overdue_target(data.MOB1, threshold, True, operator) for threshold in (7, 3, 0)}
         for amount in (None, "放款金额"):
             manual = feature_bin_stats(
                 data,

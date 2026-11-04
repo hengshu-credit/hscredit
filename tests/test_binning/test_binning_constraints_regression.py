@@ -398,9 +398,7 @@ class TestNotebookTargetFieldRegression(unittest.TestCase):
                 valid = table[table["分箱"] >= 0].reset_index(drop=True)
                 bad_rates = valid["坏样本率"].to_numpy(dtype=float)
 
-                zero_pairs = (
-                    int(np.sum((bad_rates[:-1] <= 1e-12) & (bad_rates[1:] <= 1e-12))) if len(bad_rates) > 1 else 0
-                )
+                zero_pairs = int(np.sum((bad_rates[:-1] <= 1e-12) & (bad_rates[1:] <= 1e-12))) if len(bad_rates) > 1 else 0
                 self.assertEqual(zero_pairs, 0, msg=f"{method} bad_rates={bad_rates.tolist()}")
 
                 if len(valid) >= 3:

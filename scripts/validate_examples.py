@@ -26,6 +26,8 @@ EXCLUDED_EXAMPLE_DIRS = {
     "model_report_demo",
     "tree_viz_output",
 }
+# 外部业务参考稿不属于 hscredit 演示，依赖其独立数据库和业务文件。
+EXCLUDED_EXAMPLE_FILES = {"建模参考代码.ipynb"}
 
 
 @dataclass
@@ -48,6 +50,7 @@ def discover_examples(examples_dir: Path, include_python: bool = False) -> list[
             for path in examples_dir.rglob("*")
             if path.is_file()
             and path.suffix.lower() in suffixes
+            and path.relative_to(examples_dir).as_posix() not in EXCLUDED_EXAMPLE_FILES
             and not EXCLUDED_EXAMPLE_DIRS.intersection(path.relative_to(examples_dir).parts[:-1])
         ),
         key=lambda path: path.relative_to(examples_dir).as_posix(),

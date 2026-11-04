@@ -48,9 +48,7 @@ def make_selector(name):
         "BorutaSelector": {"estimator": model, "max_iter": 3, "n_estimators": 4},
         "PSISelector": {"n_splits": 2},
         "ScorecardFeatureSelection": {"iv_threshold": 0, "corr_threshold": None},
-        "CompositeFeatureSelector": {
-            "selectors": [selectors.NullSelector(n_jobs=1), selectors.VarianceSelector(n_jobs=1)]
-        },
+        "CompositeFeatureSelector": {"selectors": [selectors.NullSelector(n_jobs=1), selectors.VarianceSelector(n_jobs=1)]},
     }
     options.update(special.get(name, {}))
     return getattr(selectors, name)(**options)
@@ -128,13 +126,7 @@ def test_all_selectors_share_full_details_and_metric_schema(name, data):
 def test_all_exported_selector_classes_have_native_report():
     from hscredit.core.selectors.base import BaseFeatureSelector
 
-    exported = {
-        name
-        for name in selectors.__all__
-        if isinstance(getattr(selectors, name), type)
-        and issubclass(getattr(selectors, name), BaseFeatureSelector)
-        and name != "BaseFeatureSelector"
-    }
+    exported = {name for name in selectors.__all__ if isinstance(getattr(selectors, name), type) and issubclass(getattr(selectors, name), BaseFeatureSelector) and name != "BaseFeatureSelector"}
     assert exported == set(_NAMES)
     assert all(callable(getattr(getattr(selectors, name), "report", None)) for name in exported)
 
@@ -252,9 +244,7 @@ def test_unfitted_errors_and_legitimate_skip_is_not_failure(data):
 
 def test_scorecard_disabled_steps_have_explicit_status(data):
     X, y = data
-    selector = selectors.ScorecardFeatureSelection(
-        iv_threshold=None, corr_threshold=None, mode_threshold=None, n_jobs=1
-    ).fit(X, y)
+    selector = selectors.ScorecardFeatureSelection(iv_threshold=None, corr_threshold=None, mode_threshold=None, n_jobs=1).fit(X, y)
     report = collect_selection_report(selector)
     assert len(report.summary) == 5
     assert (report.summary["执行状态"] == "未执行").sum() == 3
@@ -440,9 +430,7 @@ def test_date_labels_keep_distinct_python_types(tmp_path):
 )
 def test_loader_rejects_corrupt_protocol(tmp_path, tamper, data):
     X, _ = data
-    saved = collect_selection_report(selectors.NullSelector(n_jobs=1).fit(X)).save(
-        tmp_path / "report", formats=("json",)
-    )
+    saved = collect_selection_report(selectors.NullSelector(n_jobs=1).fit(X)).save(tmp_path / "report", formats=("json",))
     path = Path(saved["路径"]["json"])
     payload = json.loads(path.read_text("utf-8"))
     if tamper == "missing_column":
@@ -479,9 +467,7 @@ def test_report_result_adapter_preserves_completeness(data):
     assert not collect_selection_report([], strict=False).to_report_result().complete
 
 
-@pytest.mark.parametrize(
-    "name", ["CorrSelector", "RFESelector", "BorutaSelector", "StabilityAwareSelector", "SequentialFeatureSelector"]
-)
+@pytest.mark.parametrize("name", ["CorrSelector", "RFESelector", "BorutaSelector", "StabilityAwareSelector", "SequentialFeatureSelector"])
 def test_main_metric_threshold_and_direction_have_matching_units(name, data):
     X, y = data
     selector = make_selector(name).fit(X, y)
@@ -532,9 +518,7 @@ def test_nested_pipeline_preserves_trailing_transform_field_boundary():
 
 def test_stability_reports_each_threshold_in_its_own_units(data):
     X, y = data
-    selector = selectors.StabilityAwareSelector(iv_threshold=0.1, psi_threshold=0.2, score_threshold=0.3, n_jobs=1).fit(
-        X, y
-    )
+    selector = selectors.StabilityAwareSelector(iv_threshold=0.1, psi_threshold=0.2, score_threshold=0.3, n_jobs=1).fit(X, y)
     metrics = selector.get_selection_result().metrics
     for label, threshold, comparison in (("IV", 0.1, ">="), ("PSI", 0.2, "<="), ("综合分", 0.3, ">=")):
         part = metrics[(metrics["指标名称"] == label) & (metrics["统计口径"] == "拟合时保存")]

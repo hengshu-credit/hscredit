@@ -638,9 +638,7 @@ def category_summary(df: pd.DataFrame, features: List[str] = None, max_categorie
 
 
 @analysis_inputs("df", roles=())
-def data_quality_report(
-    df: pd.DataFrame, features: List[str] = None, missing_threshold: float = 0.5, constant_threshold: float = 0.95
-) -> pd.DataFrame:
+def data_quality_report(df: pd.DataFrame, features: List[str] = None, missing_threshold: float = 0.5, constant_threshold: float = 0.95) -> pd.DataFrame:
     """数据质量综合报告.
 
     :param df: 输入数据
@@ -924,9 +922,7 @@ def population_stability_monitor(
         if use_custom_edges and col in rules:
             edges_by_column[col] = rules[col]
         elif expected is not None and pd.api.types.is_numeric_dtype(expected[col]):
-            binning_tasks.append(
-                (expected[col], col, method, max_n_bins, child_n_jobs, parallel_backend, parallel_config)
-            )
+            binning_tasks.append((expected[col], col, method, max_n_bins, child_n_jobs, parallel_backend, parallel_config))
         else:
             edges_by_column[col] = []
 
@@ -994,9 +990,7 @@ def population_stability_monitor(
             if f"{col}_分层" in actual_copy.columns and col in expected_copy.columns:
                 edges = edges_by_column[col]
                 if pd.api.types.is_numeric_dtype(expected_copy[col]) and len(edges) >= 2:
-                    expected_copy[f"{col}_分层"] = pd.cut(
-                        expected_copy[col], bins=edges, labels=segment_labels[col], include_lowest=True
-                    )
+                    expected_copy[f"{col}_分层"] = pd.cut(expected_copy[col], bins=edges, labels=segment_labels[col], include_lowest=True)
                 else:
                     expected_copy[f"{col}_分层"] = expected_copy[col]
 
@@ -1470,9 +1464,7 @@ def feature_group_analysis(
 
     # 特征顺序处理
     if feature_order is not None:
-        result_df["_feat_order"] = result_df["特征名"].apply(
-            lambda x: feature_order.index(x) if x in feature_order else 9999
-        )
+        result_df["_feat_order"] = result_df["特征名"].apply(lambda x: feature_order.index(x) if x in feature_order else 9999)
         result_df = result_df.sort_values(["_feat_order", "统计项"]).drop(columns=["_feat_order"])
 
     # 透视处理

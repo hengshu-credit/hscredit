@@ -243,9 +243,7 @@ def _build_swap_stages(
         raise ValueError("original_pass 的旧策略通过样本不能命中始终拒绝的 rules_base")
 
     out_parent = s1 if original_pass is None else original_pass
-    out_masks = _evaluate_swap_rule_masks(
-        rules_out, data.loc[out_parent], mode, n_jobs, parallel_backend, parallel_config
-    )
+    out_masks = _evaluate_swap_rule_masks(rules_out, data.loc[out_parent], mode, n_jobs, parallel_backend, parallel_config)
     in_out = _expand_swap_masks(out_masks, data.index)
     s2 = s1 & ~in_out
 
@@ -365,9 +363,7 @@ def _resolve_bin_table(
             return {name: _normalize_bin_table(bin_table, label=name)}
         elif isinstance(bin_table, dict):
             if set(bin_table) != set(score_map):
-                raise ValueError(
-                    "多评分场景下 bin_table 与 score 的评分名必须完全一致，" f"score={sorted(score_map)}，bin_table={sorted(bin_table)}"
-                )
+                raise ValueError("多评分场景下 bin_table 与 score 的评分名必须完全一致，" f"score={sorted(score_map)}，bin_table={sorted(bin_table)}")
             invalid = [name for name, table in bin_table.items() if not isinstance(table, pd.DataFrame)]
             if invalid:
                 raise TypeError(f"bin_table 中以下评分对应的值不是 DataFrame: {sorted(invalid)}")
@@ -630,9 +626,7 @@ def _build_swap_pipeline(
             if out_in_amount_col not in data.columns:
                 raise ValueError(f"数据集中缺少 OUT-IN 金额字段 '{out_in_amount_col}'")
             candidate = pd.to_numeric(data[out_in_amount_col], errors="coerce")
-            effective_amount.loc[stages.out_in] = candidate.loc[stages.out_in].combine_first(
-                effective_amount.loc[stages.out_in]
-            )
+            effective_amount.loc[stages.out_in] = candidate.loc[stages.out_in].combine_first(effective_amount.loc[stages.out_in])
         if out_in_amount_fill is not None:
             try:
                 amount_fill = float(out_in_amount_fill)
@@ -754,9 +748,7 @@ def _build_swap_pipeline(
 
     if rules_base or stages.out_out.any():
         other_rejected = stages.out_out & ~_expand_swap_masks(stages.base_masks, data.index)
-        append_rejection_stage(
-            "OUT-OUT拒绝", rules_base, stages.base_masks, all_mask, ~stages.out_out, extra_mask=other_rejected
-        )
+        append_rejection_stage("OUT-OUT拒绝", rules_base, stages.base_masks, all_mask, ~stages.out_out, extra_mask=other_rejected)
         remaining = ~stages.out_out
         append_row("剩余样本", "", remaining, remaining, remaining, "状态")
 
@@ -818,11 +810,7 @@ def _build_swap_pipeline(
     pipeline_df["好样本数"] = pipeline_df["样本总数"] - pipeline_df["坏样本数"]
     pipeline_df["好样本占比"] = 1.0 - pipeline_df["坏样本率"]
     pipeline_df["坏样本占比"] = pipeline_df["坏样本率"]
-    pipeline_df["坏账改善"] = (
-        pipeline_df["坏样本率"]
-        .fillna(0.0)
-        .apply(lambda value: (full_bad_rate - value) / full_bad_rate if full_bad_rate > 0 else 0.0)
-    )
+    pipeline_df["坏账改善"] = pipeline_df["坏样本率"].fillna(0.0).apply(lambda value: (full_bad_rate - value) / full_bad_rate if full_bad_rate > 0 else 0.0)
     pipeline_df["风险拒绝比"] = pipeline_df.apply(
         lambda row: row["坏账改善"] / row["样本占比"] if row["样本占比"] > 0 else np.nan,
         axis=1,
@@ -841,9 +829,7 @@ def _build_swap_pipeline(
     bad_rate_after = float(adjusted_risk.loc[after_mask].mean()) if after_mask.any() else np.nan
     raw_bad_before = float(raw_risk.loc[before_mask].sum())
     raw_bad_after = float(raw_risk.loc[after_mask].sum())
-    effective_uplift_before = (
-        float(adjusted_risk.loc[before_mask].sum()) / raw_bad_before if raw_bad_before > 0 else 1.0
-    )
+    effective_uplift_before = float(adjusted_risk.loc[before_mask].sum()) / raw_bad_before if raw_bad_before > 0 else 1.0
     effective_uplift_after = float(adjusted_risk.loc[after_mask].sum()) / raw_bad_after if raw_bad_after > 0 else 1.0
     swap_result = pd.DataFrame(
         [
@@ -1571,9 +1557,7 @@ def rule_swap_analysis(
             raise ValueError("original_pass 必须为无缺失的布尔值或 0/1")
         original_pass = pd.Series(decision_values.astype(bool), index=data.index)
     # 在原始作用数据上只求值一次；自动参考集复用绑定列，不能重置索引后重算外部标签。
-    effective_operator = (
-        (bin_params or {}).get("overdue_operator", ">") if overdue_operator is None else overdue_operator
-    )
+    effective_operator = (bin_params or {}).get("overdue_operator", ">") if overdue_operator is None else overdue_operator
     effective_grey = (bin_params or {}).get("del_grey", False) if del_grey is None else del_grey
     data, actual_targets = bind_targets(
         data,
@@ -1640,9 +1624,7 @@ def rule_swap_analysis(
     else:
         del_grey = bool(del_grey)
         resolved_bin_params["del_grey"] = del_grey
-    overdue_operator = (
-        resolved_bin_params.get("overdue_operator", ">") if overdue_operator is None else overdue_operator
-    )
+    overdue_operator = resolved_bin_params.get("overdue_operator", ">") if overdue_operator is None else overdue_operator
     validate_overdue_operator(overdue_operator)
     if overdue is not None:
         del_grey = del_grey and overdue_operator in (">", ">=")
@@ -1747,9 +1729,7 @@ def _store_splits_from_labels(tbl: pd.DataFrame) -> None:
         labels = tbl["分箱标签"].tolist()
     elif isinstance(tbl.columns, pd.MultiIndex):
         detail_group = _get_detail_group_name(tbl)
-        bin_label_col = next(
-            (c for c in tbl.columns if isinstance(c, tuple) and c[0] == detail_group and c[1] == "分箱标签"), None
-        )
+        bin_label_col = next((c for c in tbl.columns if isinstance(c, tuple) and c[0] == detail_group and c[1] == "分箱标签"), None)
         labels = tbl[bin_label_col].tolist() if bin_label_col else []
     elif isinstance(tbl.index, pd.MultiIndex):
         # MultiIndex 行（金额口径场景）：分箱标签在 level=1
@@ -1809,11 +1789,7 @@ def _normalize_bin_table(
 
         # 提取各标签下的坏样本率列，构建统一结构
         # 保留 '分箱详情' 公共列 + 各标签的坏样本率
-        available_merge = [
-            c
-            for c in tbl.columns
-            if isinstance(c, tuple) and c[0] == detail_group and c[1] in ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]
-        ]
+        available_merge = [c for c in tbl.columns if isinstance(c, tuple) and c[0] == detail_group and c[1] in ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]]
         non_merge = [c for c in tbl.columns if c not in available_merge]
 
         # 构建新的列结构
@@ -1935,15 +1911,11 @@ def _normalize_score_weights(
         raw_weights = {name: float(score_weights) for name in score_names}
     elif isinstance(score_weights, dict):
         if set(score_weights) != set(score_names):
-            raise ValueError(
-                "score_weights 与 score 的评分名必须完全一致，" f"score={sorted(score_names)}，score_weights={sorted(score_weights)}"
-            )
+            raise ValueError("score_weights 与 score 的评分名必须完全一致，" f"score={sorted(score_names)}，score_weights={sorted(score_weights)}")
         raw_weights = {name: float(score_weights[name]) for name in score_names}
     elif isinstance(score_weights, (list, tuple)):
         if len(score_weights) != len(score_names):
-            raise ValueError(
-                f"score_weights 列表长度 ({len(score_weights)}) " f"与 score_map 中的评分数量 ({len(score_names)}) 不匹配"
-            )
+            raise ValueError(f"score_weights 列表长度 ({len(score_weights)}) " f"与 score_map 中的评分数量 ({len(score_names)}) 不匹配")
         raw_weights = {name: float(w) for name, w in zip(score_names, score_weights)}
     else:
         raise TypeError(f"score_weights 参数类型错误，期望 float / Dict / List，" f"实际为 {type(score_weights).__name__}")
@@ -1974,9 +1946,7 @@ def _extract_bad_rate_cols(df_bin: pd.DataFrame, target_names: List[str]) -> Dic
 
     result = {}
     for target_name in target_names:
-        candidates = [
-            col for col in df_bin.columns if isinstance(col, tuple) and col[0] == target_name and "坏样本率" in str(col[1])
-        ]
+        candidates = [col for col in df_bin.columns if isinstance(col, tuple) and col[0] == target_name and "坏样本率" in str(col[1])]
         if not candidates:
             raise ValueError(f"分箱表缺少目标标签 '{target_name}' 对应的坏样本率列")
         result[target_name] = candidates[0]
@@ -2070,9 +2040,7 @@ def _compute_predicted_bad_prob(
 
     all_labels = _extract_swap_bin_labels(df_bin)
     all_bad_rates = pd.to_numeric(df_bin[single_bad_col], errors="coerce")
-    invalid_rates = all_bad_rates.dropna()[
-        (~np.isfinite(all_bad_rates.dropna())) | (all_bad_rates.dropna() < 0) | (all_bad_rates.dropna() > 1)
-    ]
+    invalid_rates = all_bad_rates.dropna()[(~np.isfinite(all_bad_rates.dropna())) | (all_bad_rates.dropna() < 0) | (all_bad_rates.dropna() > 1)]
     if not invalid_rates.empty:
         raise ValueError("分箱表坏样本率必须为 0 到 1 之间的有限数值")
     keep = all_labels.astype(str) != "合计"

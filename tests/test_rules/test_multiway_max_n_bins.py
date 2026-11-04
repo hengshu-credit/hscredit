@@ -38,9 +38,7 @@ def test_auto_four_ordinary_branches_plus_independent_missing(categorical, missi
 def test_manual_split_and_missing_marker_do_not_consume_normal_bin(categorical):
     frame = data(categorical)
     tree = MultiwayTreeExtractor(max_n_bins=4, missing_separate=True, max_depth=1).fit(frame)
-    rule = (
-        {"category_groups": [["A"], [None], ["B"], ["C"], ["D"]]} if categorical else {"thresholds": [29.5, 59.5, 89.5]}
-    )
+    rule = {"category_groups": [["A"], [None], ["B"], ["C"], ["D"]]} if categorical else {"thresholds": [29.5, 59.5, 89.5]}
     tree.manual_split(feature="特征", **rule)
     assert len(tree.nodes_[0].children) == 5
     if categorical:

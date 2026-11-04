@@ -269,17 +269,13 @@ class CPSATBinning(BaseBinning):
         self.objective = objective
         self.objective_params = objective_params
         self.custom_objective = custom_objective
-        self._objective_name, self._objective_callback = resolve_objective(
-            objective, objective_params, custom_objective, native_names=("iv", "ks", "gini")
-        )
+        self._objective_name, self._objective_callback = resolve_objective(objective, objective_params, custom_objective, native_names=("iv", "ks", "gini"))
         self.n_prebins = n_prebins
         self.max_candidates = max_candidates
         self.time_limit = time_limit
         self.num_workers = num_workers
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "CPSATBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "CPSATBinning":
         """拟合 CP-SAT 运筹规划分箱.
 
         :param kwargs: 其他参数，传递给具体的分箱算法
@@ -617,9 +613,7 @@ class CPSATBinning(BaseBinning):
                 break
 
         # 局部搜索优化
-        selected = self._local_search(
-            selected, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples
-        )
+        selected = self._local_search(selected, candidates, positions, prefix_bad, prefix_good, total_good, total_bad, min_samples)
 
         return [candidates[i] for i in selected]
 
@@ -759,9 +753,7 @@ class CPSATBinning(BaseBinning):
 
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         **参数**

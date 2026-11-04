@@ -29,9 +29,7 @@ from .._workflow import ModelWorkflowMixin, prepare_eval_sets, record_eval_resul
 logger = logging.getLogger(__name__)
 
 
-def _check_input_data(
-    X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, target: str = "target"
-) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
+def _check_input_data(X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, target: str = "target") -> Tuple[pd.DataFrame, Optional[pd.Series]]:
     """检查并处理输入数据.
 
     支持三种模式:
@@ -404,9 +402,7 @@ def _classifier_component_worker(task: Tuple[Any, ...]) -> Tuple[np.ndarray, Rul
     return _rule_component_worker((index, "classifier", rule, X))
 
 
-class RulesClassifier(
-    ModelWorkflowMixin, ArtifactSerializableMixin, ParallelizableMixin, ClassifierMixin, BaseEstimator
-):
+class RulesClassifier(ModelWorkflowMixin, ArtifactSerializableMixin, ParallelizableMixin, ClassifierMixin, BaseEstimator):
     """规则分类器 - 统一入口.
 
     支持传入单规则或规则集（支持嵌套）进行分类预测。
@@ -868,9 +864,7 @@ class RulesClassifier(
             sub_results = detail.details.get("sub_results") if isinstance(rule, RuleSet) else None
             _commit_rule_component(rule, matches, sub_results, X.index)
 
-    def predict(
-        self, X: Union[pd.DataFrame, np.ndarray], return_reason: bool = False
-    ) -> Union[np.ndarray, pd.DataFrame, Tuple]:
+    def predict(self, X: Union[pd.DataFrame, np.ndarray], return_reason: bool = False) -> Union[np.ndarray, pd.DataFrame, Tuple]:
         """预测.
 
         无需fit即可直接预测。
@@ -1109,10 +1103,7 @@ class RulesClassifier(
         return self
 
     def __repr__(self) -> str:
-        return (
-            f"RulesClassifier(n_rules={len(self._rule_list())}, "
-            f"logic='{self.logic.value}', output_mode='{self.output_mode}')"
-        )
+        return f"RulesClassifier(n_rules={len(self._rule_list())}, " f"logic='{self.logic.value}', output_mode='{self.output_mode}')"
 
 
 # =============================================================================
@@ -1148,9 +1139,7 @@ def create_or_ruleset(rules: List[Union[Rule, RuleSet]], name: str = "OR_RuleSet
     return RuleSet(name=name, logic=LogicOperator.OR, rules=rules, description=description)
 
 
-def combine_rules(
-    *rules: Union[Rule, RuleSet], logic: str = "or", name: str = "Combined", description: str = ""
-) -> RuleSet:
+def combine_rules(*rules: Union[Rule, RuleSet], logic: str = "or", name: str = "Combined", description: str = "") -> RuleSet:
     """组合多个规则为规则集.
 
     :param rules: 多个规则或规则集

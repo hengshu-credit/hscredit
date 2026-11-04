@@ -32,15 +32,9 @@ def _is_monotonic(rates: np.ndarray, mode: Optional[Union[bool, str]], correlati
     if mode == "concave":
         return bool(np.all(np.diff(rates, n=2) <= 1e-12))
     if mode in ("peak", "peak_heuristic"):
-        return any(
-            np.all(np.diff(rates[: pivot + 1]) >= -1e-12) and np.all(np.diff(rates[pivot:]) <= 1e-12)
-            for pivot in range(len(rates))
-        )
+        return any(np.all(np.diff(rates[: pivot + 1]) >= -1e-12) and np.all(np.diff(rates[pivot:]) <= 1e-12) for pivot in range(len(rates)))
     if mode in ("valley", "valley_heuristic"):
-        return any(
-            np.all(np.diff(rates[: pivot + 1]) <= 1e-12) and np.all(np.diff(rates[pivot:]) >= -1e-12)
-            for pivot in range(len(rates))
-        )
+        return any(np.all(np.diff(rates[: pivot + 1]) <= 1e-12) and np.all(np.diff(rates[pivot:]) >= -1e-12) for pivot in range(len(rates)))
     return True
 
 

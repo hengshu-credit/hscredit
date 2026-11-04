@@ -213,12 +213,7 @@ def population_drift(
             baselines[feature] = MonitoringBaseline(max_n_bins=max_n_bins).fit(expected[feature])
         except Exception as exc:
             failure(f"特征:{feature}", f"基准拟合失败: {type(exc).__name__}: {exc}")
-    tasks = [
-        (expected, window_data, feature, target, max_n_bins, window, baselines[feature])
-        for feature in valid_features
-        if feature in baselines
-        for window, window_data in windows
-    ]
+    tasks = [(expected, window_data, feature, target, max_n_bins, window, baselines[feature]) for feature in valid_features if feature in baselines for window, window_data in windows]
     task_results = parallel_execute(
         _population_task_status,
         tasks,
@@ -231,8 +226,7 @@ def population_drift(
             task_count=len(tasks),
             rows=len(expected) + sum(len(window_data) for _, window_data in windows),
             columns=len(valid_features),
-            data_bytes=int(expected.memory_usage(deep=True).sum())
-            + sum(int(window_data.memory_usage(deep=True).sum()) for _, window_data in windows),
+            data_bytes=int(expected.memory_usage(deep=True).sum()) + sum(int(window_data.memory_usage(deep=True).sum()) for _, window_data in windows),
             cost_per_item=10.0,
             capability="thread_safe",
             releases_gil=True,
@@ -394,9 +388,7 @@ def _psi_rating(psi: float) -> str:
         return "显著漂移"
 
 
-def _feature_distribution_compare(
-    expected: pd.Series, actual: pd.Series, feat_name: str, max_n_bins: int, baseline=None
-) -> pd.DataFrame:
+def _feature_distribution_compare(expected: pd.Series, actual: pd.Series, feat_name: str, max_n_bins: int, baseline=None) -> pd.DataFrame:
     """对比单特征在两个数据集的分箱分布."""
     baseline = baseline or MonitoringBaseline(max_n_bins=max_n_bins).fit(expected)
     result = baseline.evaluate(actual)

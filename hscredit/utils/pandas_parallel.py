@@ -377,10 +377,7 @@ def _execute_items(
     effective_backend = proxy.parallel_backend or default_backend
     task_func = _wrap_callable_for_process_backend(func, effective_backend)
     with _apply_progress_context(proxy.bar, len(tasks), operation, effective_backend) as reporter:
-        progress_tasks = [
-            (position, task_func, value, task_args, task_kwargs, reporter)
-            for position, _, value, task_args, task_kwargs in tasks
-        ]
+        progress_tasks = [(position, task_func, value, task_args, task_kwargs, reporter) for position, _, value, task_args, task_kwargs in tasks]
         return parallel_execute(
             _call_apply_item,
             progress_tasks,
@@ -421,10 +418,7 @@ def _execute_group_items(
     task_func = _wrap_callable_for_process_backend(func, effective_backend)
     description = "GroupBy 分组计算"
     with _apply_progress_context(proxy.bar, len(tasks), description, effective_backend) as reporter:
-        progress_tasks = [
-            (position, key, group, task_func, task_args, task_kwargs, axis, reporter)
-            for position, key, group, _, task_args, task_kwargs, axis in tasks
-        ]
+        progress_tasks = [(position, key, group, task_func, task_args, task_kwargs, axis, reporter) for position, key, group, _, task_args, task_kwargs, axis in tasks]
         return parallel_execute(
             _call_group_apply_item,
             progress_tasks,
@@ -484,15 +478,7 @@ def _execute_dataframe_apply(
     logical_tasks = len(df.columns) if axis == 0 else len(df.index)
     resolve_n_jobs(proxy.n_jobs, task_count=logical_tasks)
 
-    if (
-        not callable(func)
-        or capability == "vectorized"
-        or proxy.parallel_backend == "sequential"
-        or raw
-        or result_type == "broadcast"
-        or engine not in (None, "python")
-        or not all(df.shape)
-    ):
+    if not callable(func) or capability == "vectorized" or proxy.parallel_backend == "sequential" or raw or result_type == "broadcast" or engine not in (None, "python") or not all(df.shape):
         return _native_apply_with_progress(
             proxy,
             df,
@@ -582,13 +568,7 @@ def _execute_series_apply(
     operation = _series_apply_adapter(series, func, parameters) if callable(func) else None
     whole_series_call = operation is not None and _PANDAS_APPLY_API != "2.0" and operation.by_row is False
 
-    if (
-        not callable(func)
-        or capability == "vectorized"
-        or proxy.parallel_backend == "sequential"
-        or whole_series_call
-        or isinstance(series.dtype, pd.CategoricalDtype)
-    ):
+    if not callable(func) or capability == "vectorized" or proxy.parallel_backend == "sequential" or whole_series_call or isinstance(series.dtype, pd.CategoricalDtype):
         return _native_apply_with_progress(
             proxy,
             series,
@@ -681,10 +661,7 @@ def _execute_groupby_apply(
     udf_args = tuple(parameters.get("args", ()))
     udf_kwargs = dict(parameters.get("kwargs", {}))
     capability = _classify_callable(effective_func)
-    tasks = [
-        (position, key, group, effective_func, udf_args, udf_kwargs, axis)
-        for position, (key, group) in enumerate(zip(keys, groups))
-    ]
+    tasks = [(position, key, group, effective_func, udf_args, udf_kwargs, axis) for position, (key, group) in enumerate(zip(keys, groups))]
     completed = _execute_group_items(
         proxy,
         tasks,

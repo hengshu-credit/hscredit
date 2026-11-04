@@ -51,14 +51,7 @@ class BoundTargets:
         return [label.column for label in self.labels]
 
     def names(self, style="suffix"):
-        return [
-            (
-                overdue_label(label.overdue, label.dpd, self.operator, style=style)
-                if label.overdue is not None
-                else label.name
-            )
-            for label in self.labels
-        ]
+        return [(overdue_label(label.overdue, label.dpd, self.operator, style=style) if label.overdue is not None else label.name) for label in self.labels]
 
     def single(self, position=0):
         return replace(self, labels=(self.labels[position],), explicit_multi=False)
@@ -161,11 +154,7 @@ def bind_targets(
             raise ValueError("overdue 和 dpds 不能为空")
         if paired and len(overdue_columns) != len(thresholds):
             raise ValueError("overdue 和 dpds 长度必须一致")
-        pairs = (
-            zip(overdue_columns, thresholds)
-            if paired
-            else ((column, threshold) for column in overdue_columns for threshold in thresholds)
-        )
+        pairs = zip(overdue_columns, thresholds) if paired else ((column, threshold) for column in overdue_columns for threshold in thresholds)
         seen = set()
         for column, threshold in pairs:
             if not isinstance(column, str) or not column:
@@ -176,14 +165,10 @@ def bind_targets(
             if column not in data:
                 if not allow_missing:
                     raise ValueError(f"数据集缺少逾期字段: {column}")
-                values = apply_missing_target(
-                    pd.Series(0.0, index=data.index), pd.Series(True, index=data.index), handle_missing_target
-                )
+                values = apply_missing_target(pd.Series(0.0, index=data.index), pd.Series(True, index=data.index), handle_missing_target)
             else:
                 days = pd.to_numeric(data[column], errors="raise")
-                values = make_overdue_target(
-                    days, threshold, del_grey, overdue_operator, handle_missing_target=handle_missing_target
-                )
+                values = make_overdue_target(days, threshold, del_grey, overdue_operator, handle_missing_target=handle_missing_target)
             definitions.append((overdue_label(column, threshold, overdue_operator), values, column, threshold))
         source_columns = list(dict.fromkeys(overdue_columns))
         mode = "overdue"

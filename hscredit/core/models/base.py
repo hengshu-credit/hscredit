@@ -131,19 +131,12 @@ def _evaluate_binary_predictions(
 
     metrics = [metrics] if isinstance(metrics, (str, BaseMetric)) else list(metrics)
     try:
-        metrics = [
-            get_metric(metric) if isinstance(metric, str) and metric.lower() not in supported else metric
-            for metric in metrics
-        ]
+        metrics = [get_metric(metric) if isinstance(metric, str) and metric.lower() not in supported else metric for metric in metrics]
     except ValueError as exc:
         raise ValueError(f"不支持的评估指标: {exc}") from exc
 
     normalized = [metric if isinstance(metric, BaseMetric) else str(metric).lower() for metric in metrics]
-    unknown = [
-        metric
-        for metric, name in zip(metrics, normalized)
-        if not isinstance(name, BaseMetric) and name not in supported
-    ]
+    unknown = [metric for metric, name in zip(metrics, normalized) if not isinstance(name, BaseMetric) and name not in supported]
     if unknown:
         raise ValueError(f"不支持的评估指标: {unknown}")
 
@@ -237,9 +230,7 @@ def resolve_custom_objective(objective, sample_weight=None):
     return _sklearn_obj
 
 
-class BaseRiskModel(
-    _ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSerializableMixin, ClassifierMixin, BaseEstimator, ABC
-):
+class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSerializableMixin, ClassifierMixin, BaseEstimator, ABC):
     """风控模型基类.
 
     所有风控模型的抽象基类，定义统一接口。
@@ -396,10 +387,7 @@ class BaseRiskModel(
         params.update(getattr(self, "_constructor_params", {}))
         import inspect
 
-        if "target" in params or any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD
-            for parameter in inspect.signature(self.__init__).parameters.values()
-        ):
+        if "target" in params or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in inspect.signature(self.__init__).parameters.values()):
             params["target"] = self.target
             params["history_policy"] = getattr(self, "history_policy", "summary")
             params["max_history"] = getattr(self, "max_history", 20)
@@ -628,13 +616,7 @@ class BaseRiskModel(
 
         X, y = extract_target(X, y, self.target)
 
-        requested_metrics = (
-            list(self.DEFAULT_METRICS)
-            if metrics is None
-            else [metrics]
-            if isinstance(metrics, (str, BaseMetric))
-            else list(metrics)
-        )
+        requested_metrics = list(self.DEFAULT_METRICS) if metrics is None else [metrics] if isinstance(metrics, (str, BaseMetric)) else list(metrics)
         probabilities = np.asarray(self.predict_proba(X), dtype=float)
         classes = np.asarray(getattr(self, "classes_", []))
         if classes.shape != (2,) or probabilities.ndim != 2 or probabilities.shape[1] != 2:
@@ -690,9 +672,7 @@ class BaseRiskModel(
         """
         from ...report import ModelReport
 
-        return ModelReport(
-            model=self, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test, features=features
-        )
+        return ModelReport(model=self, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test, features=features)
 
     def report(
         self,
@@ -1208,9 +1188,7 @@ class BaseRiskModel(
             self.eval_names_.append(name)
         return result
 
-    def _create_eval_set(
-        self, X: np.ndarray, y: np.ndarray, sample_weight: Optional[np.ndarray] = None
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+    def _create_eval_set(self, X: np.ndarray, y: np.ndarray, sample_weight: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
         """创建验证集.
 
         :param X: 特征矩阵
@@ -1399,9 +1377,7 @@ class BaseRiskModel(
         elif method == "combined":
             if X is None:
                 raise ValueError("组合方法需要提供X参数")
-            return plot_importance_comparison(
-                self, X, top_n=top_n, importance_type=importance_type, figsize=figsize, title=title, show=show
-            )
+            return plot_importance_comparison(self, X, top_n=top_n, importance_type=importance_type, figsize=figsize, title=title, show=show)
         else:
             raise ValueError(f"不支持的method: {method}，可选: 'traditional', 'shap', 'combined'")
 

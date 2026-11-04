@@ -86,9 +86,7 @@ def test_missing_fitted_snapshot_is_not_reconstructed(selector, monkeypatch):
     assert details.empty
 
 
-@pytest.mark.parametrize(
-    "option", ["excel_writer", "writer_params", "return_result", "mode", "max_sheets", "by_selector"]
-)
+@pytest.mark.parametrize("option", ["excel_writer", "writer_params", "return_result", "mode", "max_sheets", "by_selector"])
 def test_removed_export_options_are_rejected(selector, option):
     with pytest.raises(TypeError, match=option):
         selection_report(selector, **{option: None})
@@ -185,9 +183,7 @@ def test_sequential_forms_preserve_each_stage_and_final_counts(data, kind):
         dropped = actual[(actual["阶段路径"] == path) & (actual["筛选结果"] == "剔除")]
         assert dropped["特征"].tolist() == expected
     assert "模型" not in summary["阶段名称"].tolist()
-    assert process["阶段路径"].drop_duplicates().tolist() == [
-        p for p in summary["阶段路径"] if p in set(process["阶段路径"])
-    ]
+    assert process["阶段路径"].drop_duplicates().tolist() == [p for p in summary["阶段路径"] if p in set(process["阶段路径"])]
 
 
 def test_mixed_single_composite_and_pipeline_inputs(data):
@@ -228,9 +224,7 @@ def test_iterative_events_and_multiple_metrics_are_not_cartesian_joined():
     rng = np.random.default_rng(42)
     data = pd.DataFrame(rng.normal(size=(60, 3)), columns=["甲", "乙", "丙"])
     target = (data["甲"] + data["乙"] > 0).astype(int)
-    selector = RFESelector(LogisticRegression(), n_features_to_select=1, report_history="diagnostics", n_jobs=1).fit(
-        data, target
-    )
+    selector = RFESelector(LogisticRegression(), n_features_to_select=1, report_history="diagnostics", n_jobs=1).fit(data, target)
     snapshot = collect_selection_report(selector)
     summary, process = selection_report(selector)
     assert not snapshot.history.empty
@@ -289,16 +283,12 @@ def test_invalid_formats_raise_chinese_validation(tmp_path, selector, formats):
 
 
 def test_numpy_integer_limits_produce_serializable_mapping(tmp_path, selector):
-    saved = collect_selection_report(selector).save(
-        tmp_path / "整数预算", max_rows_per_sheet=np.int64(2), max_sheets=np.int64(20)
-    )
+    saved = collect_selection_report(selector).save(tmp_path / "整数预算", max_rows_per_sheet=np.int64(2), max_sheets=np.int64(20))
     assert all(item["行数"] <= 2 for item in saved["工作表映射"])
     json.dumps(saved, ensure_ascii=False)
 
 
-@pytest.mark.parametrize(
-    "value", [{"类型": "浮点特殊值", "值": "损坏"}, {"类型": "日期", "值": "无效日期"}, {"类型": "映射", "值": [1]}]
-)
+@pytest.mark.parametrize("value", [{"类型": "浮点特殊值", "值": "损坏"}, {"类型": "日期", "值": "无效日期"}, {"类型": "映射", "值": [1]}])
 def test_invalid_type_tags_raise_validation_error(tmp_path, value):
     saved = SelectionReport(metadata={"自定义": 1}).save(tmp_path / "报告", formats="json")
     path = Path(saved["路径"]["json"])

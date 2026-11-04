@@ -226,11 +226,7 @@ class StabilityAwareSelector(BaseFeatureSelector):
         validate_real(self.score_threshold, "score_threshold")
         if self.iv_weight + self.psi_weight <= 0:
             raise ValueError("iv_weight 和 psi_weight 至少一个大于 0")
-        if (
-            isinstance(self.psi_bins, (bool, np.bool_))
-            or not isinstance(self.psi_bins, (int, np.integer))
-            or self.psi_bins < 2
-        ):
+        if isinstance(self.psi_bins, (bool, np.bool_)) or not isinstance(self.psi_bins, (int, np.integer)) or self.psi_bins < 2:
             raise ValueError("psi_bins 必须是大于等于 2 的整数")
         X, y = super()._check_input(X, y)
         return X, validate_binary_target(y, "StabilityAwareSelector")
@@ -245,11 +241,7 @@ class StabilityAwareSelector(BaseFeatureSelector):
             raise ValueError("iv_threshold 和 psi_threshold 不能小于 0")
         if self.iv_weight < 0 or self.psi_weight < 0 or self.iv_weight + self.psi_weight <= 0:
             raise ValueError("iv_weight 和 psi_weight 必须非负且至少一个大于 0")
-        if (
-            isinstance(self.psi_bins, (bool, np.bool_))
-            or not isinstance(self.psi_bins, (int, np.integer))
-            or int(self.psi_bins) < 2
-        ):
+        if isinstance(self.psi_bins, (bool, np.bool_)) or not isinstance(self.psi_bins, (int, np.integer)) or int(self.psi_bins) < 2:
             raise ValueError("psi_bins 必须是大于等于 2 的整数")
         if y is None:
             if self.target not in X.columns:

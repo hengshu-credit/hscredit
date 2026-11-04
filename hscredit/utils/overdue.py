@@ -56,9 +56,7 @@ def overdue_grey_mask(values: pd.Series, dpd, overdue_operator: str = ">") -> pd
     return pd.Series(False, index=values.index)
 
 
-def make_overdue_target(
-    values: pd.Series, dpd, del_grey: bool = False, overdue_operator: str = ">", *, handle_missing_target="drop"
-) -> pd.Series:
+def make_overdue_target(values: pd.Series, dpd, del_grey: bool = False, overdue_operator: str = ">", *, handle_missing_target="drop") -> pd.Series:
     """生成 0/1 标签；缺失默认剔除，灰样本由 del_grey 独立控制。
     :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
     """

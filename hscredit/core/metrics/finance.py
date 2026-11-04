@@ -744,9 +744,7 @@ def badrate_by_group(
     return pd.DataFrame(results).sort_values("坏账率", ascending=False)
 
 
-def badrate_trend(
-    y_true: Union[np.ndarray, pd.Series], date: Union[np.ndarray, pd.Series], freq: str = "M"
-) -> pd.DataFrame:
+def badrate_trend(y_true: Union[np.ndarray, pd.Series], date: Union[np.ndarray, pd.Series], freq: str = "M") -> pd.DataFrame:
     """计算坏账率时间趋势.
 
     按指定时间频率聚合样本，计算各时间段的坏账率及环比变化，
@@ -958,9 +956,7 @@ def badrate_by_score_bin(
     return pd.DataFrame(result_rows)
 
 
-def score_stats(
-    score: Union[np.ndarray, pd.Series], y_true: Optional[Union[np.ndarray, pd.Series]] = None
-) -> Dict[str, Any]:
+def score_stats(score: Union[np.ndarray, pd.Series], y_true: Optional[Union[np.ndarray, pd.Series]] = None) -> Dict[str, Any]:
     """计算评分统计信息.
 
     提供评分的完整描述性统计信息，包括样本量、缺失情况、分布特征，

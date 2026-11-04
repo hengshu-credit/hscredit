@@ -64,9 +64,7 @@ def small(cls=TabM, **kwargs):
 def test_tabm_native_members_predict_and_serialize(objective, embeddings, arch_type, data, torch_runtime, tmp_path):
     X, y, amount = data
     labels = y if objective == "binary" else amount
-    model = small(objective=objective, num_embeddings=embeddings, arch_type=arch_type).fit(
-        X, labels, eval_set={"验证": (X, labels)}
-    )
+    model = small(objective=objective, num_embeddings=embeddings, arch_type=arch_type).fit(X, labels, eval_set={"验证": (X, labels)})
     assert clone(model).get_params(deep=False) == model.get_params(deep=False)
     members = model.get_embeddings(X[:7], aggregate=None)
     assert members.shape == (3, 7, 16)

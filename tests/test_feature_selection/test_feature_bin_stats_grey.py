@@ -53,9 +53,7 @@ print("\n" + "=" * 80)
 print("测试1: 不剔除灰客户 (del_grey=False)")
 print("=" * 80)
 
-table1 = feature_bin_stats(
-    data=df, feature="score", overdue="MOB1", dpds=7, del_grey=False, method="quantile", max_n_bins=5, verbose=1
-)
+table1 = feature_bin_stats(data=df, feature="score", overdue="MOB1", dpds=7, del_grey=False, method="quantile", max_n_bins=5, verbose=1)
 
 print("\n分箱结果:")
 print(table1[["分箱标签", "样本总数", "坏样本数", "坏样本率", "分档WOE值"]].to_string(index=False))
@@ -65,9 +63,7 @@ print("\n" + "=" * 80)
 print("测试2: 剔除灰客户 (del_grey=True)")
 print("=" * 80)
 
-table2 = feature_bin_stats(
-    data=df, feature="score", overdue="MOB1", dpds=7, del_grey=True, method="quantile", max_n_bins=5, verbose=1
-)
+table2 = feature_bin_stats(data=df, feature="score", overdue="MOB1", dpds=7, del_grey=True, method="quantile", max_n_bins=5, verbose=1)
 
 print("\n分箱结果:")
 print(table2[["分箱标签", "样本总数", "坏样本数", "坏样本率", "分档WOE值"]].to_string(index=False))

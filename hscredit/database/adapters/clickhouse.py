@@ -292,11 +292,7 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
 
         if_not_exists = " IF NOT EXISTS" if options.get("if_not_exists", True) else ""
         order_by = "(" + ", ".join(self.quote_identifier(str(key)) for key in keys) + ")" if keys else "tuple()"
-        ddl = (
-            f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  "
-            + ",\n  ".join(definitions)
-            + f"\n) ENGINE = {engine_expression}\nORDER BY {order_by}"
-        )
+        ddl = f"CREATE TABLE{if_not_exists} {self.quote_qualified_name(table_name)} (\n  " + ",\n  ".join(definitions) + f"\n) ENGINE = {engine_expression}\nORDER BY {order_by}"
         partition_value = options.get("partition_by")
         if partition_value is not None:
             partitions = (partition_value,) if isinstance(partition_value, str) else tuple(partition_value)
@@ -365,9 +361,7 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
     def get_sort_key_columns(self, table_name: str) -> Tuple[str, ...]:
         database_name, table = self._database_and_table(table_name)
         records = self.query(
-            "SELECT name FROM system.columns "
-            "WHERE database={database:String} AND table={table:String} "
-            "AND is_in_sorting_key=1 ORDER BY position",
+            "SELECT name FROM system.columns " "WHERE database={database:String} AND table={table:String} " "AND is_in_sorting_key=1 ORDER BY position",
             params={"database": database_name, "table": table},
             result="records",
         )
@@ -458,15 +452,11 @@ class ClickHouseAdapter(BaseDatabaseAdapter):
 
         del first_batch
         options = dict(dialect_options or {})
-        engine = str(
-            options.get("engine") or ("MergeTree" if table_exists is False else self.get_table_engine(table_name))
-        )
+        engine = str(options.get("engine") or ("MergeTree" if table_exists is False else self.get_table_engine(table_name)))
         capabilities = self.capabilities_for_table(table_name, {"engine": engine})
         if mode not in capabilities.write_modes:
             if mode == "r":
-                raise DatabaseCapabilityError(
-                    f"ClickHouse 目标表 {table_name!r} 必须使用 ReplacingMergeTree 才能执行 r 模式"
-                )
+                raise DatabaseCapabilityError(f"ClickHouse 目标表 {table_name!r} 必须使用 ReplacingMergeTree 才能执行 r 模式")
             raise DatabaseCapabilityError(f"ClickHouse ReplacingMergeTree 表 {table_name!r} 无法保证主键冲突时不覆盖")
         if mode == "a" and key_columns:
             raise DatabaseCapabilityError(f"ClickHouse MergeTree 表 {table_name!r} 无法原生保证主键冲突忽略语义")

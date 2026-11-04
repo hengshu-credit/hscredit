@@ -291,9 +291,7 @@ class TuningSampler:
             try:
                 import optunahub
             except ImportError:
-                raise ImportError(
-                    f"使用 '{sampler}' 采样器需要 optunahub，请使用 " f"pip install optunahub 安装（或 pip install hscredit[tune]）"
-                )
+                raise ImportError(f"使用 '{sampler}' 采样器需要 optunahub，请使用 " f"pip install optunahub 安装（或 pip install hscredit[tune]）")
             package, class_name = cls.OPTUNAHUB_SAMPLERS[key]
             module = optunahub.load_module(package)
             sampler_cls = getattr(module, class_name, None)
@@ -705,12 +703,7 @@ class ModelTuner(ArtifactSerializableMixin):
         self.objective_kwargs = objective_kwargs or {}
         self.eval_ratios = [0.01, 0.03, 0.05, 0.10] if eval_ratios is None else list(eval_ratios)
         for ratio in self.eval_ratios:
-            if (
-                isinstance(ratio, (bool, np.bool_))
-                or not isinstance(ratio, (int, float, np.integer, np.floating))
-                or not np.isfinite(float(ratio))
-                or not 0 < float(ratio) <= 1
-            ):
+            if isinstance(ratio, (bool, np.bool_)) or not isinstance(ratio, (int, float, np.integer, np.floating)) or not np.isfinite(float(ratio)) or not 0 < float(ratio) <= 1:
                 raise ValueError("eval_ratios 中每个覆盖率必须是 (0, 1] 内的有限数值")
         initial_points = self._normalize_trial_points(trial_points)
         initial_points.extend(self._normalize_trial_points(points_to_evaluate))
@@ -800,11 +793,7 @@ class ModelTuner(ArtifactSerializableMixin):
         model_module = getattr(self.model_class, "__module__", "")
         model_name = getattr(self.model_class, "__name__", "")
         if not model_module.startswith("hscredit.") or model_name not in {"XGBoost", "LightGBM", "CatBoost", "NGBoost"}:
-            raise ValueError(
-                "该模型训练器不支持自定义 loss；XGBoost、LightGBM、CatBoost、NGBoost 支持此入口，"
-                "ResNet、FTTransformer、TabM、TabNet 支持梯度训练；TabPFN 当前仅支持预训练推理，"
-                "其他模型请用 metric=loss.metric() 选模；Pipeline 请预配置最终模型的损失"
-            )
+            raise ValueError("该模型训练器不支持自定义 loss；XGBoost、LightGBM、CatBoost、NGBoost 支持此入口，" "ResNet、FTTransformer、TabM、TabNet 支持梯度训练；TabPFN 当前仅支持预训练推理，" "其他模型请用 metric=loss.metric() 选模；Pipeline 请预配置最终模型的损失")
         if any(key in self._explicit_fixed_params for key in ("objective", "loss_function")):
             raise ValueError("loss 与 fixed_params 中的 objective/loss_function 不能同时设置")
         self._explicit_fixed_params["objective"] = self.loss
@@ -839,11 +828,7 @@ class ModelTuner(ArtifactSerializableMixin):
             for name in ("amounts_", "lgd", "ead", "rate", "cost"):
                 item = getattr(value, name, None)
                 if item is not None and np.asarray(item).ndim > 0:
-                    raise ValueError(
-                        "交叉验证不能直接使用绑定金额或金融参数数组的 loss/metric；"
-                        "金额加权请使用 fit(sample_weight=金额, evaluation_weight=金额)，"
-                        "复杂逐折损失请使用 trial_objective 自行切分和评估"
-                    )
+                    raise ValueError("交叉验证不能直接使用绑定金额或金融参数数组的 loss/metric；" "金额加权请使用 fit(sample_weight=金额, evaluation_weight=金额)，" "复杂逐折损失请使用 trial_objective 自行切分和评估")
         elif isinstance(value, dict):
             for item in value.values():
                 ModelTuner._validate_loss_sample_arrays(item)
@@ -908,9 +893,7 @@ class ModelTuner(ArtifactSerializableMixin):
                     )
                 if isinstance(value, types.FunctionType):
                     closure = tuple(cell.cell_contents for cell in (value.__closure__ or ()))
-                    globals_used = {
-                        name: value.__globals__[name] for name in value.__code__.co_names if name in value.__globals__
-                    }
+                    globals_used = {name: value.__globals__[name] for name in value.__code__.co_names if name in value.__globals__}
                     return (
                         "函数",
                         normalize(value.__code__),
@@ -1031,9 +1014,7 @@ class ModelTuner(ArtifactSerializableMixin):
         if len(set(self.metric_names)) != len(self.metric_names):
             raise ValueError("评估指标名称不能重复；请通过 metric_names 设置不同名称")
 
-    def _check_input(
-        self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]] = None
-    ) -> Tuple[Union[np.ndarray, pd.DataFrame], Union[np.ndarray, pd.Series]]:
+    def _check_input(self, X: Union[np.ndarray, pd.DataFrame], y: Optional[Union[np.ndarray, pd.Series]] = None) -> Tuple[Union[np.ndarray, pd.DataFrame], Union[np.ndarray, pd.Series]]:
         """检查并处理输入数据.
 
         支持两种风格:
@@ -1172,22 +1153,13 @@ class ModelTuner(ArtifactSerializableMixin):
         old_signature = getattr(self, "_data_signature_", None)
         if old_signature is not None and old_signature != data_signature and self.study_ is not None:
             raise ValueError("续跑数据或权重发生变化，不能混用历史 Trial 得分；请新建 ModelTuner 和 study_name")
-        if (
-            getattr(self, "_configuration_signature_", configuration_signature) != configuration_signature
-            and self.study_ is not None
-        ):
+        if getattr(self, "_configuration_signature_", configuration_signature) != configuration_signature and self.study_ is not None:
             raise ValueError("续跑固定参数、训练参数或指标发生变化；请新建 ModelTuner 和 study_name")
-        cv_signature = stable_hash(
-            self.cv if self.cv is not None else (None, getattr(self, "validation_fraction", 0.2))
-        )
+        cv_signature = stable_hash(self.cv if self.cv is not None else (None, getattr(self, "validation_fraction", 0.2)))
         if getattr(self, "_cv_signature_", cv_signature) != cv_signature and self.study_ is not None:
             raise ValueError("续跑交叉验证配置发生变化；请新建 ModelTuner 和 study_name")
         existing_splits = getattr(self, "_cv_splits", None)
-        cv_splits = (
-            existing_splits
-            if old_signature == data_signature and existing_splits is not None
-            else self._validation_splits(X, y, groups, validation_data)
-        )
+        cv_splits = existing_splits if old_signature == data_signature and existing_splits is not None else self._validation_splits(X, y, groups, validation_data)
         if validation_data is None:
             self._validate_fold_weights(evaluation_weight, cv_splits)
         validation_mode = "交叉验证" if self.cv is not None else "独立验证集" if validation_data is not None else "单次留出"
@@ -1213,9 +1185,7 @@ class ModelTuner(ArtifactSerializableMixin):
         y_array = y.to_numpy() if hasattr(y, "to_numpy") else np.asarray(y)
         positive_count = int(np.sum(y_array == 1))
         negative_count = int(np.sum(y_array == 0))
-        self._class_balance_ratio = (
-            float(negative_count / positive_count) if positive_count > 0 and negative_count > 0 else 1.0
-        )
+        self._class_balance_ratio = float(negative_count / positive_count) if positive_count > 0 and negative_count > 0 else 1.0
         self._X = X
         self._y = y
         self._sample_weight = sample_weight
@@ -1368,11 +1338,7 @@ class ModelTuner(ArtifactSerializableMixin):
                 record = self.trial_results_.get(trial.number)
                 if record is not None and "状态" not in record and trial.state.name in {"COMPLETE", "FAIL", "PRUNED"}:
                     record.update(
-                        状态=(
-                            "中断"
-                            if interrupted and trial.state.name == "FAIL"
-                            else {"COMPLETE": "完成", "FAIL": "失败", "PRUNED": "剪枝"}[trial.state.name]
-                        ),
+                        状态=("中断" if interrupted and trial.state.name == "FAIL" else {"COMPLETE": "完成", "FAIL": "失败", "PRUNED": "剪枝"}[trial.state.name]),
                         得分=trial.values,
                         用户属性=dict(trial.user_attrs),
                     )
@@ -1382,11 +1348,7 @@ class ModelTuner(ArtifactSerializableMixin):
                 self._save_results()
             self._apply_retention()
 
-        completed_trials = [
-            trial
-            for trial in self.study_.trials
-            if trial.state == optuna.trial.TrialState.COMPLETE and trial.values is not None
-        ]
+        completed_trials = [trial for trial in self.study_.trials if trial.state == optuna.trial.TrialState.COMPLETE and trial.values is not None]
         if not completed_trials:
             failed_trials = [trial for trial in self.study_.trials if trial.state == optuna.trial.TrialState.FAIL]
             last_error = failed_trials[-1].user_attrs if failed_trials else {}
@@ -1429,9 +1391,7 @@ class ModelTuner(ArtifactSerializableMixin):
             best_trial = study.best_trial
 
         print(
-            f"[调参] Trial {trial.number} 完成 | 得分: {self._format_scores(trial.values)} | "
-            f"参数: {params} | 当前最佳: {self._format_scores(best_trial.values)} "
-            f"(Trial {best_trial.number})",
+            f"[调参] Trial {trial.number} 完成 | 得分: {self._format_scores(trial.values)} | " f"参数: {params} | 当前最佳: {self._format_scores(best_trial.values)} " f"(Trial {best_trial.number})",
             flush=True,
         )
 
@@ -1454,12 +1414,7 @@ class ModelTuner(ArtifactSerializableMixin):
         for parameter_name in ("n_jobs", "thread_count", "num_workers"):
             if parameter_name not in signature.parameters:
                 continue
-            if (
-                parameter_name == "n_jobs"
-                and inspect.isclass(self.model_class)
-                and issubclass(self.model_class, SklearnLogisticRegression)
-                and needs_logistic_regression_parallel_compat(installed_version("sklearn", "scikit-learn"))
-            ):
+            if parameter_name == "n_jobs" and inspect.isclass(self.model_class) and issubclass(self.model_class, SklearnLogisticRegression) and needs_logistic_regression_parallel_compat(installed_version("sklearn", "scikit-learn")):
                 # 不为无效参数注入预算；显式设置仍交给模型处理并保留其警告。
                 continue
             configured = params.get(parameter_name)
@@ -1545,11 +1500,7 @@ class ModelTuner(ArtifactSerializableMixin):
         if isinstance(terminal, ProbabilityCalibrator) and terminal.calib_ratio is None:
             frozen.append("model")
         if isinstance(terminal, ScoreCard):
-            frozen.extend(
-                name
-                for name in ("lr_model", "pipeline")
-                if getattr(terminal, name, None) is not None and is_model_fitted(getattr(terminal, name))
-            )
+            frozen.extend(name for name in ("lr_model", "pipeline") if getattr(terminal, name, None) is not None and is_model_fitted(getattr(terminal, name)))
 
         if isinstance(terminal, ProbabilityScoreCard) and terminal.model is not None:
             if terminal.prefit is not True:
@@ -1560,10 +1511,7 @@ class ModelTuner(ArtifactSerializableMixin):
         for child in frozen:
             prefix = path + child + "__"
             if any(name.startswith(prefix) for name in nested):
-                raise ValueError(
-                    f"预训练模式（prefit=True、calib_ratio=None 或已拟合评分卡组件）已冻结底层模型，"
-                    f"不能搜索 {prefix} 参数；请启用基础模型重训或直接对基础模型/Pipeline 调参"
-                )
+                raise ValueError(f"预训练模式（prefit=True、calib_ratio=None 或已拟合评分卡组件）已冻结底层模型，" f"不能搜索 {prefix} 参数；请启用基础模型重训或直接对基础模型/Pipeline 调参")
         if type(terminal).__module__.startswith("hscredit.core.models") and hasattr(terminal, "target"):
             terminal.set_params(target=self.target)
         return model
@@ -1573,16 +1521,10 @@ class ModelTuner(ArtifactSerializableMixin):
             from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
             fraction = getattr(self, "validation_fraction", 0.2)
-            if (
-                isinstance(fraction, (bool, np.bool_))
-                or not isinstance(fraction, (int, float, np.integer, np.floating))
-                or not 0 < fraction < 1
-            ):
+            if isinstance(fraction, (bool, np.bool_)) or not isinstance(fraction, (int, float, np.integer, np.floating)) or not 0 < fraction < 1:
                 raise ValueError("单次验证的 validation_fraction 必须在 (0, 1) 内")
             if groups is not None:
-                return GroupShuffleSplit(n_splits=1, test_size=fraction, random_state=self.random_state).split(
-                    X, y, groups
-                )
+                return GroupShuffleSplit(n_splits=1, test_size=fraction, random_state=self.random_state).split(X, y, groups)
             train, valid = train_test_split(
                 np.arange(len(y)),
                 test_size=fraction,
@@ -1639,9 +1581,7 @@ class ModelTuner(ArtifactSerializableMixin):
         if eval_set is not None and any(key in runtime for key in ("eval_set", "X_val")):
             raise ValueError("eval_set 请只通过公开参数提供，不要同时在 fit_params 中重复配置评估集")
         if not any(key in runtime for key in ("eval_set", "X_val")):
-            if (
-                module.startswith("hscredit.core.models") and "eval_set" in inspect.signature(model.fit).parameters
-            ) or module.split(".")[0] in {
+            if (module.startswith("hscredit.core.models") and "eval_set" in inspect.signature(model.fit).parameters) or module.split(".")[0] in {
                 "xgboost",
                 "lightgbm",
                 "catboost",
@@ -1760,9 +1700,7 @@ class ModelTuner(ArtifactSerializableMixin):
         elif module == "catboost":
             from catboost import Pool
 
-            pool_params = {
-                "weight" if key == "sample_weight" else key: value for key, value in validation_params.items()
-            }
+            pool_params = {"weight" if key == "sample_weight" else key: value for key, value in validation_params.items()}
             categorical = runtime.get("cat_features", configured.get("cat_features"))
             if categorical is not None:
                 pool_params["cat_features"] = categorical
@@ -1821,13 +1759,9 @@ class ModelTuner(ArtifactSerializableMixin):
             self._validate_fold_weights(evaluation_weight, splits)
         for fold_index, (train_idx, val_idx) in enumerate(splits):
             X_train_fold, y_train_fold = _safe_index(X, train_idx), _safe_index(y, train_idx)
-            X_val_fold, y_val_fold = (
-                validation_data if validation_data is not None else (_safe_index(X, val_idx), _safe_index(y, val_idx))
-            )
+            X_val_fold, y_val_fold = validation_data if validation_data is not None else (_safe_index(X, val_idx), _safe_index(y, val_idx))
             sample_weight_fold = _safe_index(sample_weight, train_idx)
-            validation_weight = (
-                external_validation_weight if validation_data is not None else _safe_index(evaluation_weight, val_idx)
-            )
+            validation_weight = external_validation_weight if validation_data is not None else _safe_index(evaluation_weight, val_idx)
             train_evaluation_weight = _safe_index(evaluation_weight, train_idx)
             try:
                 fold_model = clone(model)
@@ -1846,9 +1780,7 @@ class ModelTuner(ArtifactSerializableMixin):
             if trial is not None:
                 self.trial_results_[trial.number]["各折"].append(record)
             try:
-                fit_kwargs = self._fold_fit_params(
-                    train_idx, trial, fold_index, n_samples=len(y), fit_params=fit_params
-                )
+                fit_kwargs = self._fold_fit_params(train_idx, trial, fold_index, n_samples=len(y), fit_params=fit_params)
                 self._route_sample_weight(fold_model, fit_kwargs, sample_weight_fold)
                 if self.cv is None:
                     self._fit_holdout(
@@ -1873,9 +1805,7 @@ class ModelTuner(ArtifactSerializableMixin):
                 record.update(真实标签=y_val_arr, 训练真实标签=y_train_arr)
                 record.update({prediction_key: y_val_pred, "训练" + prediction_key: y_train_pred})
                 predicted_labels = None
-                if self._task != "regression" and any(
-                    getattr(metric, "uses_label_predictions", False) for metric in self.metrics
-                ):
+                if self._task != "regression" and any(getattr(metric, "uses_label_predictions", False) for metric in self.metrics):
                     terminal = self._final_estimator(fold_model)
                     method = getattr(terminal, "_predict_evaluation_labels", None)
                     if callable(method):
@@ -1887,11 +1817,7 @@ class ModelTuner(ArtifactSerializableMixin):
                         record["预测类别"] = predicted_labels
                 scores = {}
                 for i, metric in enumerate(self.metrics):
-                    label_options = (
-                        {"predicted_labels": predicted_labels}
-                        if getattr(metric, "uses_label_predictions", False)
-                        else {}
-                    )
+                    label_options = {"predicted_labels": predicted_labels} if getattr(metric, "uses_label_predictions", False) else {}
                     value = metric(
                         y_val_arr,
                         y_val_pred,
@@ -1925,10 +1851,7 @@ class ModelTuner(ArtifactSerializableMixin):
                 record["评估曲线"] = getattr(trained, "evals_result_", {})
                 record["最佳迭代"] = getattr(trained, "best_iteration_", getattr(trained, "best_iteration", None))
                 trained_params = trained.get_params(deep=False) if hasattr(trained, "get_params") else {}
-                record["启用早停"] = bool(
-                    fit_kwargs.get("early_stopping_rounds", trained_params.get("early_stopping_rounds"))
-                    or trained_params.get("n_iter_no_change")
-                )
+                record["启用早停"] = bool(fit_kwargs.get("early_stopping_rounds", trained_params.get("early_stopping_rounds")) or trained_params.get("n_iter_no_change"))
                 if hasattr(trained, "get_best_iteration"):
                     record["最佳迭代"] = trained.get_best_iteration()
                 if self.retention_ in {"full", "best", "disk"}:
@@ -1985,9 +1908,7 @@ class ModelTuner(ArtifactSerializableMixin):
         if getattr(self, "retention_", "full") != "best" or self.study_ is None:
             return
         completed = [trial for trial in self.study_.trials if trial.state == optuna.trial.TrialState.COMPLETE]
-        best = (
-            self._select_best_pareto_trial(self.study_.best_trials) if completed and self._is_multi_objective else None
-        )
+        best = self._select_best_pareto_trial(self.study_.best_trials) if completed and self._is_multi_objective else None
         if completed and not self._is_multi_objective:
             best = self.study_.best_trial
         for number, record in self.trial_results_.items():
@@ -2190,9 +2111,7 @@ class ModelTuner(ArtifactSerializableMixin):
         row_names = SAMPLE_PARAMETER_NAMES | {"eval_set", "X_val", "Y_val"}
         for name in ("fit_params", "_fit_params"):
             params = getattr(self, name, {})
-            setattr(
-                self, name, {key: value for key, value in params.items() if key.rsplit("__", 1)[-1] not in row_names}
-            )
+            setattr(self, name, {key: value for key, value in params.items() if key.rsplit("__", 1)[-1] not in row_names})
         self._training_data_released_ = True
         return self
 
@@ -2263,11 +2182,7 @@ class ModelTuner(ArtifactSerializableMixin):
             self.best_score_ = self.study_.best_value
             self.best_scores_ = [self.best_score_]
 
-        self.best_trial_ = (
-            self._select_best_pareto_trial(self.study_.best_trials)
-            if self._is_multi_objective
-            else self.study_.best_trial
-        )
+        self.best_trial_ = self._select_best_pareto_trial(self.study_.best_trials) if self._is_multi_objective else self.study_.best_trial
         self.best_params_.update(self.fixed_params)
         self.best_params_ = self._apply_model_param_constraints(self.best_params_)
 
@@ -2914,11 +2829,7 @@ class ModelTuner(ArtifactSerializableMixin):
         if self.search_space is None:
             self._pending_public_trials.append((public_point, attrs, bool(skip_if_exists)))
             return self
-        internal_point = (
-            public_point
-            if self.search_space_function is not None
-            else self._space_adapter.to_internal_point(public_point)
-        )
+        internal_point = public_point if self.search_space_function is not None else self._space_adapter.to_internal_point(public_point)
         if self.study_ is not None:
             self.study_.enqueue_trial(internal_point, user_attrs=attrs, skip_if_exists=skip_if_exists)
             if self.verbose:
@@ -3015,11 +2926,7 @@ class ModelTuner(ArtifactSerializableMixin):
     def _enqueue_trial_points(self) -> None:
         """将 self.trial_points 入队到当前 study（fit 内部调用）."""
         for public_point, user_attrs, skip_if_exists in self._pending_public_trials:
-            internal_point = (
-                public_point
-                if self.search_space_function is not None
-                else self._space_adapter.to_internal_point(public_point)
-            )
+            internal_point = public_point if self.search_space_function is not None else self._space_adapter.to_internal_point(public_point)
             self._pending_trials.append((internal_point, user_attrs, skip_if_exists))
         self._pending_public_trials.clear()
         for point, user_attrs, skip_if_exists in self._pending_trials:
@@ -3104,11 +3011,7 @@ class ModelTuner(ArtifactSerializableMixin):
         constrained = dict(params)
         limit = self._leaf_limit(constrained)
         num_leaves = constrained.get("num_leaves")
-        if (
-            limit is not None
-            and isinstance(num_leaves, (int, np.integer))
-            and not isinstance(num_leaves, (bool, np.bool_))
-        ):
+        if limit is not None and isinstance(num_leaves, (int, np.integer)) and not isinstance(num_leaves, (bool, np.bool_)):
             constrained["num_leaves"] = min(int(num_leaves), limit)
         return constrained
 
@@ -3157,12 +3060,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """
         if self.best_params_ is None:
             raise ValueError("请先调用fit()进行调优")
-        if (
-            self.best_model_ is not None
-            and not refit
-            and not fit_params
-            and getattr(self, "_best_model_full_data_", True) == full_data
-        ):
+        if self.best_model_ is not None and not refit and not fit_params and getattr(self, "_best_model_full_data_", True) == full_data:
             return self.best_model_
         if getattr(self, "_training_data_released_", False):
             raise ValueError("训练数据已释放，不能重训最佳模型；请重新 fit")
@@ -3201,16 +3099,10 @@ class ModelTuner(ArtifactSerializableMixin):
                 folds = self.get_trial_result(self.best_trial_.number, load=False).get("各折", [])
             except ValueError:
                 folds = []
-            iterations = [
-                fold["最佳迭代"]
-                for fold in folds
-                if fold.get("启用早停") and fold.get("最佳迭代") is not None and fold["最佳迭代"] >= 0
-            ]
+            iterations = [fold["最佳迭代"] for fold in folds if fold.get("启用早停") and fold.get("最佳迭代") is not None and fold["最佳迭代"] >= 0]
             if iterations:
                 offset = 0 if "lightgbm" in name or "lgbm" in name or "gradientboosting" in name else 1
-                estimator_params["iterations" if "catboost" in name else "n_estimators"] = max(
-                    1, int(np.ceil(np.median(iterations))) + offset
-                )
+                estimator_params["iterations" if "catboost" in name else "n_estimators"] = max(1, int(np.ceil(np.median(iterations))) + offset)
             if "early_stopping_rounds" in estimator_params:
                 estimator_params["early_stopping_rounds"] = None
             if "n_iter_no_change" in estimator_params:
@@ -3242,12 +3134,7 @@ class ModelTuner(ArtifactSerializableMixin):
             runtime.pop("early_stopping_rounds", None)
         self.refit_model_ = model
         self.refit_params_ = dict(params)
-        if (
-            not full_data
-            and self.cv is None
-            and getattr(self, "_validation_data", None) is not None
-            and not any(key in runtime for key in ("eval_set", "X_val"))
-        ):
+        if not full_data and self.cv is None and getattr(self, "_validation_data", None) is not None and not any(key in runtime for key in ("eval_set", "X_val")):
             self._fit_holdout(
                 model,
                 self._X,
@@ -3442,9 +3329,7 @@ class ModelTuner(ArtifactSerializableMixin):
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_optimization_history(
-                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
-            )
+            return optuna.visualization.plot_optimization_history(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
 
         return optuna.visualization.plot_optimization_history(self.study_, **kwargs)
 
@@ -3466,9 +3351,7 @@ class ModelTuner(ArtifactSerializableMixin):
         target = self._resolve_multi_objective_target(target)
         kwargs = self._translate_plot_params(kwargs)
         if self._is_multi_objective:
-            figure = optuna.visualization.plot_param_importances(
-                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
-            )
+            figure = optuna.visualization.plot_param_importances(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
         else:
             figure = optuna.visualization.plot_param_importances(self.study_, **kwargs)
         return self._publicize_plot_figure(figure)
@@ -3491,9 +3374,7 @@ class ModelTuner(ArtifactSerializableMixin):
         target = self._resolve_multi_objective_target(target)
         kwargs = self._translate_plot_params(kwargs)
         if self._is_multi_objective:
-            figure = optuna.visualization.plot_slice(
-                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
-            )
+            figure = optuna.visualization.plot_slice(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
         else:
             figure = optuna.visualization.plot_slice(self.study_, **kwargs)
         return self._publicize_plot_figure(figure)
@@ -3570,9 +3451,7 @@ class ModelTuner(ArtifactSerializableMixin):
         target = self._resolve_multi_objective_target(target)
         kwargs = self._translate_plot_params(kwargs)
         if self._is_multi_objective:
-            figure = optuna.visualization.plot_parallel_coordinate(
-                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
-            )
+            figure = optuna.visualization.plot_parallel_coordinate(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
         else:
             figure = optuna.visualization.plot_parallel_coordinate(self.study_, **kwargs)
         return self._publicize_plot_figure(figure)
@@ -3594,9 +3473,7 @@ class ModelTuner(ArtifactSerializableMixin):
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_edf(
-                self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs
-            )
+            return optuna.visualization.plot_edf(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
 
         return optuna.visualization.plot_edf(self.study_, **kwargs)
 

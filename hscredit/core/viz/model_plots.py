@@ -352,11 +352,7 @@ def plot_model_feature_importance(
         if importance_source == "shap":
             raise ValueError("importance_source='shap' 时必须提供 y")
         return _plot_native_importance(
-            (
-                native_importance.sort_values(ascending=False)
-                if native_importance is not None
-                else _native_feature_importance(model, names)
-            ),
+            (native_importance.sort_values(ascending=False) if native_importance is not None else _native_feature_importance(model, names)),
             left_top_n,
             figsize,
             title,
@@ -372,9 +368,7 @@ def plot_model_feature_importance(
         raise ValueError("y 不能为空")
 
     if shap_values is None:
-        predict_function, method_name = _resolve_prediction_function(
-            model, prediction_method, class_index, names, isinstance(X, pd.DataFrame)
-        )
+        predict_function, method_name = _resolve_prediction_function(model, prediction_method, class_index, names, isinstance(X, pd.DataFrame))
     else:
         method_name = prediction_method if isinstance(prediction_method, str) else "自定义输出"
 
@@ -413,11 +407,7 @@ def plot_model_feature_importance(
     shap_importance = np.mean(np.abs(shap_values), axis=0)
     label_importances = []
     if importance_source == "raw":
-        selected_importance = (
-            native_importance
-            if native_importance is not None
-            else _native_feature_importance(model, names).reindex(names)
-        ).to_numpy(dtype=float)
+        selected_importance = (native_importance if native_importance is not None else _native_feature_importance(model, names).reindex(names)).to_numpy(dtype=float)
         importance_axis_label = "模型原生特征重要性"
         panel_title = "模型原生特征重要性与 SHAP 分布"
     else:
@@ -426,10 +416,7 @@ def plot_model_feature_importance(
             label_codes, label_values = pd.factorize(y_values, sort=True)
             if np.any(label_codes < 0):
                 raise ValueError("按标签展示 SHAP 重要性时 y 不能包含缺失值")
-            label_importances = [
-                (label, np.mean(np.abs(shap_values[label_codes == code]), axis=0))
-                for code, label in enumerate(label_values)
-            ]
+            label_importances = [(label, np.mean(np.abs(shap_values[label_codes == code]), axis=0)) for code, label in enumerate(label_values)]
             importance_axis_label = "各标签平均 |SHAP 值|"
             panel_title = "分标签平均 |SHAP| 重要性与 SHAP 分布"
         else:
@@ -467,9 +454,7 @@ def plot_model_feature_importance(
             fontsize=plt.rcParams["axes.titlesize"],
             fontweight=plt.rcParams["axes.titleweight"],
         )
-        dependence_axes = [
-            fig.add_subplot(right_grid[i // right_columns + 1, i % right_columns]) for i in range(n_right)
-        ]
+        dependence_axes = [fig.add_subplot(right_grid[i // right_columns + 1, i % right_columns]) for i in range(n_right)]
     else:
         main_ax = fig.add_subplot(111)
         right_title_ax = None
@@ -703,9 +688,7 @@ def plot_model_sample_shap(
     ...     show=False,
     ... )
     """
-    background_values = (
-        background_data.to_numpy() if isinstance(background_data, pd.DataFrame) else np.asarray(background_data)
-    )
+    background_values = background_data.to_numpy() if isinstance(background_data, pd.DataFrame) else np.asarray(background_data)
     if background_values.ndim != 2:
         raise ValueError(f"background_data 必须是二维背景数据，当前维度为 {background_values.ndim}")
     if background_values.shape[0] == 0 or background_values.shape[1] == 0:
@@ -730,9 +713,7 @@ def plot_model_sample_shap(
         elif sample_values.ndim != 2:
             raise ValueError(f"sample 必须是单个一维或单行二维样本，当前维度为 {sample_values.ndim}")
         if sample_values.shape[1] != len(names):
-            raise ValueError(
-                f"sample 特征数量 {sample_values.shape[1]} 与 background_data 特征数量 {len(names)} 不一致"
-            )
+            raise ValueError(f"sample 特征数量 {sample_values.shape[1]} 与 background_data 特征数量 {len(names)} 不一致")
         sample_frame = pd.DataFrame(sample_values, columns=names)
 
     if len(sample_frame) != 1:
@@ -814,14 +795,7 @@ def plot_model_sample_shap(
 
     sample_values = sample_frame.iloc[0].to_numpy()
     display_values = np.asarray(
-        [
-            (
-                round(float(value), int(value_precision))
-                if isinstance(value, Real) and not isinstance(value, (bool, np.bool_)) and np.isfinite(value)
-                else value
-            )
-            for value in sample_values
-        ],
+        [(round(float(value), int(value_precision)) if isinstance(value, Real) and not isinstance(value, (bool, np.bool_)) and np.isfinite(value) else value) for value in sample_values],
         dtype=object,
     )
     single_explanation = shap.Explanation(
@@ -840,9 +814,7 @@ def plot_model_sample_shap(
         force_line_length = 3
     for name in names:
         name_text = str(name)
-        wrapped_name = "\n".join(
-            name_text[index : index + force_line_length] for index in range(0, len(name_text), force_line_length)
-        )
+        wrapped_name = "\n".join(name_text[index : index + force_line_length] for index in range(0, len(name_text), force_line_length))
         if len(name_text) > force_line_length:
             wrapped_name += "\n"
         force_feature_names.append(wrapped_name)
@@ -928,23 +900,14 @@ def plot_model_sample_shap(
         displayed_contributions = list(selected_values[0][contribution_order[:individual_count]])
         displayed_contributions.append(float(np.sum(selected_values[0][contribution_order[individual_count:]])))
         displayed_contributions = np.asarray(displayed_contributions)
-    ordered_text_values = [value for value in displayed_contributions if value >= 0] + [
-        value for value in displayed_contributions if value < 0
-    ]
+    ordered_text_values = [value for value in displayed_contributions if value >= 0] + [value for value in displayed_contributions if value < 0]
     for text_artist, contribution in zip(waterfall_ax.texts, ordered_text_values):
         sign = "+" if contribution >= 0 else "−"
         text_artist.set_text(f"{sign}{abs(float(contribution)):.{int(value_precision)}f}")
     waterfall_ax.set_title("SHAP 瀑布图")
     waterfall_ticks = waterfall_ax.get_yticks()
-    waterfall_labels = [
-        re.sub(r"(\d+) other features", r"其他 \1 个特征", tick.get_text()) for tick in waterfall_ax.get_yticklabels()
-    ]
-    formatted_feature_values = {
-        name: (
-            f"{float(value):.{int(value_precision)}f}" if isinstance(value, Real) and np.isfinite(value) else str(value)
-        )
-        for name, value in zip(names, display_values)
-    }
+    waterfall_labels = [re.sub(r"(\d+) other features", r"其他 \1 个特征", tick.get_text()) for tick in waterfall_ax.get_yticklabels()]
+    formatted_feature_values = {name: (f"{float(value):.{int(value_precision)}f}" if isinstance(value, Real) and np.isfinite(value) else str(value)) for name, value in zip(names, display_values)}
     for index, label in enumerate(waterfall_labels):
         feature_name = next((name for name in names if label.strip().endswith(f"= {name}")), None)
         if feature_name is not None:

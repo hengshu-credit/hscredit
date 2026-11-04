@@ -128,9 +128,7 @@ def _psi_cross_feature_worker(task):
     return feature, pd.DataFrame(rows)
 
 
-def psi_analysis(
-    base_df: pd.DataFrame, current_df: pd.DataFrame, feature: str, max_n_bins: int = 10
-) -> Dict[str, Union[str, float, pd.DataFrame]]:
+def psi_analysis(base_df: pd.DataFrame, current_df: pd.DataFrame, feature: str, max_n_bins: int = 10) -> Dict[str, Union[str, float, pd.DataFrame]]:
     """单变量PSI稳定性分析.
 
     复用 hscredit.core.metrics.psi_table
@@ -263,9 +261,7 @@ def batch_psi_analysis(
 
 
 @analysis_inputs("df", roles=("date",))
-def csi_analysis(
-    df: pd.DataFrame, feature: str, target: str, date: str, base_period: str, compare_period: str
-) -> Dict[str, Union[str, float]]:
+def csi_analysis(df: pd.DataFrame, feature: str, target: str, date: str, base_period: str, compare_period: str) -> Dict[str, Union[str, float]]:
     """CSI特征稳定性分析.
 
     复用 hscredit.core.metrics.csi
@@ -611,10 +607,7 @@ def psi_cross_analysis(
     results = dict(
         parallel_execute(
             _psi_cross_feature_worker,
-            (
-                (df.loc[:, [group, feature]], feature, group, tuple(groups), max_n_bins, return_matrix)
-                for feature in valid_features
-            ),
+            ((df.loc[:, [group, feature]], feature, group, tuple(groups), max_n_bins, return_matrix) for feature in valid_features),
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,

@@ -229,9 +229,7 @@ class SmoothBinning(BaseBinning):
         if method not in ["laplace", "bayesian", "beta", "adaptive"]:
             raise ValueError("method必须是'laplace', 'bayesian', 'beta'或'adaptive'")
 
-    def fit(
-        self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs
-    ) -> "SmoothBinning":
+    def fit(self, X: Union[pd.DataFrame, np.ndarray], y: Optional[Union[pd.Series, np.ndarray]] = None, **kwargs) -> "SmoothBinning":
         """拟合平滑分箱。
 
         预分箱后按 ``merge_criterion`` 合并相邻箱，并以 ``method`` 指定的平滑方法对各箱
@@ -403,9 +401,7 @@ class SmoothBinning(BaseBinning):
 
         return np.array(selected_splits)
 
-    def _calculate_iv_for_split(
-        self, y_left: np.ndarray, y_right: np.ndarray, total_bad: int, total_good: int
-    ) -> float:
+    def _calculate_iv_for_split(self, y_left: np.ndarray, y_right: np.ndarray, total_bad: int, total_good: int) -> float:
         """计算切分点的IV值."""
         epsilon = 1e-10
 
@@ -655,9 +651,7 @@ class SmoothBinning(BaseBinning):
             cat_stats["smoothed_rate"] = (cat_stats["bad"] + alpha * prior) / (cat_stats["count"] + alpha)
         elif self.method == "beta":
             effective_alpha = alpha * (1 + 1 / np.sqrt(cat_stats["count"] + 1))
-            cat_stats["smoothed_rate"] = (cat_stats["bad"] + effective_alpha * prior) / (
-                cat_stats["count"] + effective_alpha
-            )
+            cat_stats["smoothed_rate"] = (cat_stats["bad"] + effective_alpha * prior) / (cat_stats["count"] + effective_alpha)
         else:  # adaptive
             weight = cat_stats["count"] / (cat_stats["count"] + alpha * 10)
             empirical_rate = cat_stats["bad"] / cat_stats["count"].clip(lower=1)
@@ -813,9 +807,7 @@ class SmoothBinning(BaseBinning):
                 bins[mask] = 0
             return bins
 
-    def transform(
-        self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def transform(self, X: Union[pd.DataFrame, np.ndarray], metric: str = "indices", **kwargs) -> Union[pd.DataFrame, np.ndarray]:
         """应用分箱转换.
 
         **参数**

@@ -105,9 +105,7 @@ class CounterfactualExplainer:
             if direction != "both" and not pd.api.types.is_numeric_dtype(self.reference_data[feature]):
                 raise ValidationError(f"{feature} 是类别字段，direction 只能是 both")
             for bound in ("min", "max"):
-                if bound in config and (
-                    isinstance(config[bound], bool) or not np.isscalar(config[bound]) or not np.isfinite(config[bound])
-                ):
+                if bound in config and (isinstance(config[bound], bool) or not np.isscalar(config[bound]) or not np.isfinite(config[bound])):
                     raise ValidationError(f"{feature} 的 {bound} 必须是有限数")
             if "min" in config and "max" in config and config["min"] > config["max"]:
                 raise ValidationError(f"{feature} 的 min 不能大于 max")
@@ -132,9 +130,7 @@ class CounterfactualExplainer:
             else:
                 allowed = config.get("allowed")
                 observed = list(dict.fromkeys(series.tolist()))
-                candidates[feature] = [value for value in observed if allowed is None or value in allowed][
-                    : self.max_candidates
-                ]
+                candidates[feature] = [value for value in observed if allowed is None or value in allowed][: self.max_candidates]
         return candidates
 
     def _uses_score_output(self):
@@ -193,9 +189,7 @@ class CounterfactualExplainer:
 
     def _search(self, subject, target, max_changes, top_n, beam_width):
         original_frame = subject.to_frame().T[self.reference_data.columns].copy()
-        numeric_columns = [
-            column for column in original_frame.columns if pd.api.types.is_numeric_dtype(self.reference_data[column])
-        ]
+        numeric_columns = [column for column in original_frame.columns if pd.api.types.is_numeric_dtype(self.reference_data[column])]
         if numeric_columns:
             original_frame[numeric_columns] = original_frame[numeric_columns].astype(float)
         before = self._predict(original_frame)
@@ -305,9 +299,7 @@ class CounterfactualExplainer:
                     old = subject[feature] if feature is not None else np.nan
                     if feature is None:
                         direction = "不变"
-                    elif (
-                        pd.api.types.is_numeric_dtype(self.reference_data[feature]) and pd.notna(old) and pd.notna(new)
-                    ):
+                    elif pd.api.types.is_numeric_dtype(self.reference_data[feature]) and pd.notna(old) and pd.notna(new):
                         direction = "增加" if new > old else "减少" if new < old else "替换"
                     else:
                         direction = "替换"

@@ -28,9 +28,7 @@ class InputResolver:
             if not isinstance(ref, str) or not ref:
                 raise SkillExecutionError(code="SCHEMA_INVALID", message="object_ref 缺少非空 ref", field="ref")
             if spec.get("max_file_bytes") is not None:
-                raise SkillExecutionError(
-                    code="SCHEMA_INVALID", message="对象引用不支持文件字节限制 max_file_bytes", field="max_file_bytes"
-                )
+                raise SkillExecutionError(code="SCHEMA_INVALID", message="对象引用不支持文件字节限制 max_file_bytes", field="max_file_bytes")
             return self._checked_table(self.objects.resolve(ref), spec)
         if kind != "file":
             raise SkillExecutionError(
@@ -49,15 +47,8 @@ class InputResolver:
                 raise SkillExecutionError(code="SCHEMA_INVALID", message=f"{option} 必须为正整数", field=option)
             limits[option] = limit
         columns = spec.get("columns")
-        if columns is not None and (
-            not isinstance(columns, list)
-            or not columns
-            or any(not isinstance(c, str) or not c for c in columns)
-            or len(set(columns)) != len(columns)
-        ):
-            raise SkillExecutionError(
-                code="SCHEMA_INVALID", message="columns 必须是不重复的非空字段名列表", field="columns"
-            )
+        if columns is not None and (not isinstance(columns, list) or not columns or any(not isinstance(c, str) or not c for c in columns) or len(set(columns)) != len(columns)):
+            raise SkillExecutionError(code="SCHEMA_INVALID", message="columns 必须是不重复的非空字段名列表", field="columns")
         return columns, limits
 
     @classmethod
@@ -65,30 +56,19 @@ class InputResolver:
         columns, limits = cls._table_options(spec)
         if not isinstance(value, pd.DataFrame):
             if columns is not None or limits["max_rows"] is not None or limits["max_frame_bytes"] is not None:
-                raise SkillExecutionError(
-                    code="SCHEMA_INVALID", message="非DataFrame对象不支持字段、行数或表格内存限制", field="inputs"
-                )
+                raise SkillExecutionError(code="SCHEMA_INVALID", message="非DataFrame对象不支持字段、行数或表格内存限制", field="inputs")
             return value
         if limits["max_rows"] is not None and len(value) > limits["max_rows"]:
-            raise SkillExecutionError(
-                code="INPUT_LIMIT_EXCEEDED", message="输入行数超过 max_rows 限制，不静默截断", field="max_rows"
-            )
+            raise SkillExecutionError(code="INPUT_LIMIT_EXCEEDED", message="输入行数超过 max_rows 限制，不静默截断", field="max_rows")
         if columns is not None:
             if not value.columns.is_unique:
                 raise SkillExecutionError(code="SCHEMA_INVALID", message="投影输入不能包含重复列名", field="columns")
             missing = [column for column in columns if column not in value.columns]
             if missing:
-                raise SkillExecutionError(
-                    code="COLUMN_MISSING", message=f"输入缺少投影字段: {missing}", field="columns"
-                )
+                raise SkillExecutionError(code="COLUMN_MISSING", message=f"输入缺少投影字段: {missing}", field="columns")
             value = value.loc[:, columns]
-        if (
-            limits["max_frame_bytes"] is not None
-            and int(value.memory_usage(deep=True).sum()) > limits["max_frame_bytes"]
-        ):
-            raise SkillExecutionError(
-                code="INPUT_LIMIT_EXCEEDED", message="投影后数据超过 max_frame_bytes 限制", field="max_frame_bytes"
-            )
+        if limits["max_frame_bytes"] is not None and int(value.memory_usage(deep=True).sum()) > limits["max_frame_bytes"]:
+            raise SkillExecutionError(code="INPUT_LIMIT_EXCEEDED", message="投影后数据超过 max_frame_bytes 限制", field="max_frame_bytes")
         return value
 
     def _resolve_file(self, spec: Mapping[str, Any]) -> Any:
@@ -101,9 +81,7 @@ class InputResolver:
         suffix = path.suffix.lower()
         columns, limits = self._table_options(spec)
         if limits["max_file_bytes"] is not None and path.stat().st_size > limits["max_file_bytes"]:
-            raise SkillExecutionError(
-                code="INPUT_LIMIT_EXCEEDED", message="输入文件超过 max_file_bytes 限制", field="max_file_bytes"
-            )
+            raise SkillExecutionError(code="INPUT_LIMIT_EXCEEDED", message="输入文件超过 max_file_bytes 限制", field="max_file_bytes")
 
         def checked(frame):
             return self._checked_table(frame, spec)
@@ -127,9 +105,7 @@ class InputResolver:
                     from pyarrow.parquet import ParquetFile
 
                     if ParquetFile(path).metadata.num_rows > limits["max_rows"]:
-                        raise SkillExecutionError(
-                            code="INPUT_LIMIT_EXCEEDED", message="Parquet元数据行数超过 max_rows 限制", field="max_rows"
-                        )
+                        raise SkillExecutionError(code="INPUT_LIMIT_EXCEEDED", message="Parquet元数据行数超过 max_rows 限制", field="max_rows")
                 return checked(pd.read_parquet(path, columns=columns))
             if suffix in _ARTIFACT_SUFFIXES:
                 loaded = self._load_artifact(path, spec)

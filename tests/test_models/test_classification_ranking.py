@@ -111,9 +111,7 @@ def test_all_auc_entry_points_share_direction_and_tie_handling(score):
         (GiniMetric()(y, score) + 1) / 2,
     ]
     np.testing.assert_allclose(values, raw)
-    np.testing.assert_allclose(
-        [auc(y, score), StepwiseSelector()._calculate_auc(y, score), _auc(y, score), curve_area(fpr, tpr)], expected
-    )
+    np.testing.assert_allclose([auc(y, score), StepwiseSelector()._calculate_auc(y, score), _auc(y, score), curve_area(fpr, tpr)], expected)
     assert result["Gini"] == pytest.approx(2 * raw - 1)
     assert GiniMetric(score_direction="higher_risk")(y, score) == pytest.approx(2 * raw - 1)
     assert KSMetric()(y, score) == ks(y, score)

@@ -131,13 +131,7 @@ def create_component(context, name, params=None):
     cls = component_class(name)
     kwargs = resolve(context, dict(params or {}))
     if name in {"RulesClassifier", "RuleSet", "RuleFlow"} and "rules" in kwargs:
-        kwargs["rules"] = [
-            rule(item, context) if isinstance(item, (str, dict)) else item
-            for item in (kwargs["rules"] if isinstance(kwargs["rules"], list) else [kwargs["rules"]])
-        ]
+        kwargs["rules"] = [rule(item, context) if isinstance(item, (str, dict)) else item for item in (kwargs["rules"] if isinstance(kwargs["rules"], list) else [kwargs["rules"]])]
     if name == "CompositeFeatureSelector":
-        kwargs["selectors"] = [
-            tuple(item) if isinstance(item, list) and len(item) == 2 and isinstance(item[0], str) else item
-            for item in kwargs.get("selectors", [])
-        ]
+        kwargs["selectors"] = [tuple(item) if isinstance(item, list) and len(item) == 2 and isinstance(item[0], str) else item for item in kwargs.get("selectors", [])]
     return cls(**kwargs)

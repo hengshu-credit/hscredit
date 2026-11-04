@@ -52,12 +52,7 @@ def process_sheet_name(report, index=None):
     full = report.explain_config["enabled"] and report.explain_config["scope"] == "full"
     if index is None:
         index = 8 if full else 7
-    if (
-        isinstance(index, (bool, np.bool_))
-        or not isinstance(index, (int, np.integer))
-        or index < 7
-        or (full and index == 7)
-    ):
+    if isinstance(index, (bool, np.bool_)) or not isinstance(index, (int, np.integer)) or index < 7 or (full and index == 7):
         raise ValueError("training_sheet_index 必须是未占用的正整数：普通报告从 7 起，含模型解释时从 8 起")
     name = f"{index}-训练与调参过程"
     if len(name) > 31:
@@ -94,9 +89,7 @@ def process_tables(report):
                 if table.empty:
                     continue
             for column in table:
-                table[column] = table[column].map(
-                    lambda v: "、".join(map(str, v)) if isinstance(v, (list, tuple)) else v
-                )
+                table[column] = table[column].map(lambda v: "、".join(map(str, v)) if isinstance(v, (list, tuple)) else v)
             result[name] = table
     trials = raw.get("调参记录", pd.DataFrame())
     if not trials.empty:
@@ -151,9 +144,7 @@ def write_process(report, writer, filepath, with_plots, sheet_name=None):
             end_space=(row, max(4, len(table.columns) + 1)),
         )
         shown = table.apply(lambda c: c.map(lambda v: str(v) if isinstance(v, (dict, list, tuple)) else v))
-        end, _ = dataframe2excel(
-            shown, writer, sheet_name=sheet, start_row=row + 2, index=False, speed="fast", decimal=None
-        )
+        end, _ = dataframe2excel(shown, writer, sheet_name=sheet, start_row=row + 2, index=False, speed="fast", decimal=None)
         for column, name in enumerate(table.columns, 2):
             for cells in sheet.iter_rows(min_row=row + 3, max_row=end - 1, min_col=column, max_col=column):
                 cell = cells[0]
@@ -169,11 +160,7 @@ def write_process(report, writer, filepath, with_plots, sheet_name=None):
         if curve.empty:
             continue
         keys = [k for k in ("试验编号", "折编号", "训练修订", "数据集", "指标") if k in curve]
-        summary = (
-            curve.groupby(keys, sort=False, dropna=False)
-            .agg(记录轮数=("迭代", "size"), 首轮数值=("数值", "first"), 末轮数值=("数值", "last"))
-            .reset_index()
-        )
+        summary = curve.groupby(keys, sort=False, dropna=False).agg(记录轮数=("迭代", "size"), 首轮数值=("数值", "first"), 末轮数值=("数值", "last")).reset_index()
         add_table("最终模型学习曲线" if title == "训练曲线" else "选中试验学习曲线", summary)
         if not with_plots:
             continue
@@ -187,9 +174,7 @@ def write_process(report, writer, filepath, with_plots, sheet_name=None):
                 colors = get_series_colors(len(series))
                 for number, (group, points) in enumerate(series):
                     labels = group if isinstance(group, tuple) else (group,)
-                    label = " / ".join(
-                        str(value) if key == "数据集" else f"{key}{value}" for key, value in zip(groups, labels)
-                    )
+                    label = " / ".join(str(value) if key == "数据集" else f"{key}{value}" for key, value in zip(groups, labels))
                     axis.plot(
                         points["迭代"],
                         points["数值"],

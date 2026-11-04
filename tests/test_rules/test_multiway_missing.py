@@ -86,9 +86,7 @@ def test_dedicated_numeric_branch_is_only_missing_and_boundary_exact(nullable):
 
 @pytest.mark.parametrize("feature, values", [("评分", [0.5, 1.5, 2.5]), ("类别", ["A", "B", "C"])])
 def test_auto_separate_keeps_rare_missing_and_obeys_total_branch_limit(feature, values):
-    data = pd.DataFrame(
-        {feature: np.repeat(values, 10).tolist() + [None], "target": [0] * 10 + [1] * 10 + [0] * 10 + [1]}
-    )
+    data = pd.DataFrame({feature: np.repeat(values, 10).tolist() + [None], "target": [0] * 10 + [1] * 10 + [0] * 10 + [1]})
     tree = MultiwayTreeExtractor(
         max_depth=1,
         max_n_bins=4,
@@ -101,9 +99,7 @@ def test_auto_separate_keeps_rare_missing_and_obeys_total_branch_limit(feature, 
     assert root.missing_separate
     assert 2 <= len(root.children) <= 4
     assert tree.nodes_[root.children[root.missing_branch]].counts.sum() == 1
-    assert all(
-        tree.nodes_[child].counts.sum() >= 10 for i, child in enumerate(root.children) if i != root.missing_branch
-    )
+    assert all(tree.nodes_[child].counts.sum() >= 10 for i, child in enumerate(root.children) if i != root.missing_branch)
     assert clone(tree).missing_separate is True
     assert_partition(tree, data)
 
@@ -133,9 +129,7 @@ def test_future_missing_empty_leaf_inherits_parent_probability():
 def test_future_missing_defaults_left_when_node_training_has_no_missing(categorical, method, criterion, tmp_path):
     values = ["A", "B", "C"] if categorical else [0.5, 1.5, 2.5]
     data = pd.DataFrame({"特征": np.repeat(values, [10, 20, 30]), "target": [0] * 10 + [1] * 50})
-    tree = MultiwayTreeExtractor(
-        max_depth=1 if method == "fit" else 0, min_samples_leaf=1, criterion=criterion, n_jobs=1
-    ).fit(data)
+    tree = MultiwayTreeExtractor(max_depth=1 if method == "fit" else 0, min_samples_leaf=1, criterion=criterion, n_jobs=1).fit(data)
     tree.set_params(max_depth=1)
     if method == "manual":
         kwargs = {"category_groups": [[value] for value in values]} if categorical else {"thresholds": [1.0, 2.0]}
@@ -382,9 +376,7 @@ def test_real_data_future_missing_predictions_rules_and_report():
     root = tree.nodes_[0]
     assert root.missing_branch == 0
     left_rows = data.loc[data[feature] <= 0.12]
-    np.testing.assert_array_equal(
-        tree.nodes_[root.children[0]].counts, [(left_rows.FPD == 0).sum(), (left_rows.FPD == 1).sum()]
-    )
+    np.testing.assert_array_equal(tree.nodes_[root.children[0]].counts, [(left_rows.FPD == 0).sum(), (left_rows.FPD == 1).sum()])
     production = data.iloc[:8].copy()
     production[feature] = np.nan
     assert tree.apply(production).tolist() == [root.children[0]] * len(production)

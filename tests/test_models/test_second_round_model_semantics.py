@@ -62,12 +62,8 @@ def test_explicit_encoder_java_matches_raw_scores(tmp_path):
     path = tmp_path / "ScoreCard.java"
     path.write_text(java.rsplit("}", 1)[0] + main + "}", encoding="utf-8")
     subprocess.run(["javac", "-encoding", "UTF-8", str(path)], check=True, capture_output=True, timeout=60)
-    output = subprocess.run(
-        ["java", "-cp", str(tmp_path), "ScoreCard"], check=True, capture_output=True, text=True, timeout=60
-    )
-    np.testing.assert_allclose(
-        np.fromstring(output.stdout, sep="\n"), card.predict(sample, input_type="raw"), atol=1e-7, rtol=0
-    )
+    output = subprocess.run(["java", "-cp", str(tmp_path), "ScoreCard"], check=True, capture_output=True, text=True, timeout=60)
+    np.testing.assert_allclose(np.fromstring(output.stdout, sep="\n"), card.predict(sample, input_type="raw"), atol=1e-7, rtol=0)
 
 
 def _weighted_data():
@@ -78,9 +74,7 @@ def _weighted_data():
 
 def test_frequency_score_anchor_matches_repeated_rows():
     X, y, weights = _weighted_data()
-    params = dict(
-        penalty=None, calculate_stats=False, weight_type="frequency", scorecard_params={"decimal": 8, "clip": False}
-    )
+    params = dict(penalty=None, calculate_stats=False, weight_type="frequency", scorecard_params={"decimal": 8, "clip": False})
     weighted = LogisticRegression(**params).fit(X, y, sample_weight=weights)
     repeated = LogisticRegression(**params).fit(X.iloc[np.repeat(np.arange(len(X)), weights)], np.repeat(y, weights))
     assert weighted.bad_rate_ == repeated.bad_rate_
@@ -119,9 +113,7 @@ def test_tuner_evaluation_weight_is_explicit_and_does_not_change_old_default():
     weighted.fit(X, y, sample_weight=weights, evaluation_weight=weights, n_trials=1, show_progress_bar=False)
     assert plain.best_score_ == pytest.approx(0.75)
     assert weighted.best_score_ == pytest.approx(roc_auc_score(y, X[:, 0], sample_weight=weights))
-    assert weighted.evaluate_trials(X, y, trial_points=[{}], evaluation_weight=weights).AUC.iloc[0] == pytest.approx(
-        weighted.best_score_
-    )
+    assert weighted.evaluate_trials(X, y, trial_points=[{}], evaluation_weight=weights).AUC.iloc[0] == pytest.approx(weighted.best_score_)
 
 
 def test_tuner_rejects_weight_for_metric_that_cannot_consume_it():
@@ -178,9 +170,7 @@ def test_multifeature_encoder_category_unknown_special_and_rule_roundtrip(missin
     X = pd.DataFrame({"x": np.arange(120, dtype=float), "c": ["A", "B", "__UNKNOWN__", "a,b", "SPECIAL"] * 24})
     X.loc[0, "x"], X.loc[1, "x"], X.loc[2, "c"] = np.nan, -999, None
     y = (rng.uniform(size=len(X)) < 0.15 + 0.7 * np.arange(len(X)) / len(X)).astype(int)
-    binner = OptimalBinning(
-        method="quantile", max_n_bins=3, special_codes=[-999, "SPECIAL"], missing_separate=missing_separate, n_jobs=1
-    ).fit(X, y)
+    binner = OptimalBinning(method="quantile", max_n_bins=3, special_codes=[-999, "SPECIAL"], missing_separate=missing_separate, n_jobs=1).fit(X, y)
     encoder = WOEEncoder(features=["x", "c"], regularization=25, training_mode="oof", cv=3, n_jobs=1)
     encoded = encoder.fit_transform(binner.transform(X, metric="bins"), y)
     card = ScoreCard(binner=binner, encoder=encoder, calculate_stats=False, clip=False).fit(encoded, y)
@@ -299,12 +289,8 @@ def test_scorecard_deployment_uses_exact_split_not_rounded_display_label():
     expected = card.predict(raw, input_type="raw")
     namespace = {}
     exec(card.export_deployment_code("python"), namespace)
-    np.testing.assert_allclose(
-        [namespace["calculate_score"](row) for row in raw.to_dict("records")], expected, atol=1e-7, rtol=0
-    )
-    np.testing.assert_allclose(
-        ScoreCard().load_rules(card.export()).predict(raw, input_type="raw"), expected, atol=1e-7, rtol=0
-    )
+    np.testing.assert_allclose([namespace["calculate_score"](row) for row in raw.to_dict("records")], expected, atol=1e-7, rtol=0)
+    np.testing.assert_allclose(ScoreCard().load_rules(card.export()).predict(raw, input_type="raw"), expected, atol=1e-7, rtol=0)
 
 
 def test_encoder_unknown_error_policy_survives_rule_export():
@@ -331,9 +317,7 @@ def test_owned_callable_objectives_do_not_silently_ignore_evaluation_weight():
 
     labels, probability, weights = np.array([0, 1, 0, 1]), np.array([0.1, 0.2, 0.3, 0.9]), np.array([1, 4, 2, 1])
     evaluator = Metric(TuningObjective.ks, direction="maximize")
-    assert evaluator(labels, probability, sample_weight=weights) == Metric("ks")(
-        labels, probability, sample_weight=weights
-    )
+    assert evaluator(labels, probability, sample_weight=weights) == Metric("ks")(labels, probability, sample_weight=weights)
     # 头部指标现在明确支持评估权重，验证结果确实使用了权重。
     from functools import partial
 
@@ -347,9 +331,7 @@ def test_frequency_prior_rejects_zero_weight_class_unless_explicit_prior():
     weights = np.where(y == 1, 0.0, 1.0)
     with pytest.raises(ValueError, match="正权重|base_bad_rate"):
         LogisticRegression(calculate_stats=False, weight_type="frequency").fit(X, y, sample_weight=weights)
-    explicit = LogisticRegression(
-        calculate_stats=False, weight_type="frequency", scorecard_params={"base_bad_rate": 0.2}
-    )
+    explicit = LogisticRegression(calculate_stats=False, weight_type="frequency", scorecard_params={"base_bad_rate": 0.2})
     explicit.fit(X, y, sample_weight=weights)
     assert explicit.bad_rate_ == 0.2
     assert np.isfinite(explicit.predict_score(X)).all()
@@ -380,9 +362,7 @@ def test_legacy_complete_card_rebuilds_wrong_cached_rules_before_export():
     expected = legacy.predict(X, input_type="raw")
     namespace = {}
     exec(legacy.export_deployment_code("python"), namespace)
-    np.testing.assert_allclose(
-        [namespace["calculate_score"](row) for row in X.to_dict("records")], expected, atol=1e-7, rtol=0
-    )
+    np.testing.assert_allclose([namespace["calculate_score"](row) for row in X.to_dict("records")], expected, atol=1e-7, rtol=0)
     assert legacy._rules_semantics_version_ == 2
 
 

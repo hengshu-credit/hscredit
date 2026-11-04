@@ -382,9 +382,4 @@ def test_maxcompute_json_projection_uses_json_extract(adapter):
         json_fields={"payload": {"risk_tags": "$.risk.tags"}},
     )
 
-    assert sql == (
-        "SELECT `hscredit_json_source`.`id`, "
-        "CASE WHEN JSON_TYPE(JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.risk.tags')) = 'null' "
-        "THEN NULL ELSE JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.risk.tags') END AS `risk_tags` "
-        "FROM (select id, payload from events) `hscredit_json_source`"
-    )
+    assert sql == ("SELECT `hscredit_json_source`.`id`, " "CASE WHEN JSON_TYPE(JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.risk.tags')) = 'null' " "THEN NULL ELSE JSON_EXTRACT(`hscredit_json_source`.`payload`, '$.risk.tags') END AS `risk_tags` " "FROM (select id, payload from events) `hscredit_json_source`")

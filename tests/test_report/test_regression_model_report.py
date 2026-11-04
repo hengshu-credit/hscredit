@@ -21,9 +21,7 @@ class EchoRegressor(RegressorMixin, BaseEstimator):
 
 @pytest.fixture
 def data():
-    train = pd.DataFrame(
-        {"特征": [0.0, 2.0, 6.0, 4.0], "目标": [1.0, 2.0, 3.0, 4.0], "权重": [1.0, 2.0, 1.0, 2.0]}, index=[7, 8, 9, 10]
-    )
+    train = pd.DataFrame({"特征": [0.0, 2.0, 6.0, 4.0], "目标": [1.0, 2.0, 3.0, 4.0], "权重": [1.0, 2.0, 1.0, 2.0]}, index=[7, 8, 9, 10])
     test = pd.DataFrame({"特征": [-2.0, 2.0, 8.0], "目标": [-1.5, 1.25, 5.5], "权重": [2.0, 0.0, 1.0]}, index=[17, 18, 19])
     for frame in (train, test):
         frame["日期"] = pd.date_range("2026-01-01", periods=len(frame), freq="20D")
@@ -68,9 +66,7 @@ def test_regression_metrics_match_independent_weighted_rows(data):
 def test_continuous_targets_preserve_decimals_alignment_and_explicit_y(data):
     train, test = data
     model = EchoRegressor().fit(train)
-    report = auto_model_report(
-        model, datasets={"测试": (test, test["目标"].iloc[::-1])}, target="错误字段", verbose=False, n_jobs=1
-    )
+    report = auto_model_report(model, datasets={"测试": (test, test["目标"].iloc[::-1])}, target="错误字段", verbose=False, n_jobs=1)
     assert_allclose(report._datasets["测试"].y, test["目标"])
     report.add_dataset("追加", "追加", train, y=train["目标"] + 0.25)
     assert_allclose(report._datasets["追加"].y, train["目标"] + 0.25)
@@ -142,6 +138,50 @@ def test_regression_strict_excel_has_complete_continuous_sections(data, tmp_path
     workbook.close()
 
 
+@pytest.mark.parametrize("training_sheet_index", [None, 12])
+def test_regression_contents_matches_sheets_and_has_complete_report_layout(data, tmp_path, training_sheet_index):
+    """目录须展示实际章节及回归说明，标题、模型信息和双向导航均完整。"""
+    from datetime import date
+
+    train, test = data
+    report = ModelReport(EchoRegressor().fit(train), datasets={"训练集": train, "独立测试": test}, target="目标", n_jobs=1)
+    path = tmp_path / "回归目录.xlsx"
+    model_name = "连续目标回归模型_很长的模型名称用于核对合并单元格宽度"
+    report.to_excel(path, model_name=model_name, training_sheet_index=training_sheet_index, with_plots=False, mode="strict")
+    workbook = load_workbook(path)
+    try:
+        contents = workbook["目录"]
+        assert contents["B2"].value == "回归模型评估报告"
+        assert "B2:D2" in {str(area) for area in contents.merged_cells.ranges}
+        assert [contents.cell(4, column).value for column in (2, 3, 4)] == ["序号", "内容", "备注"]
+        chapters = workbook.sheetnames[1:]
+        assert [contents.cell(row, 3).value for row in range(5, 5 + len(chapters))] == chapters
+        for row, name in enumerate(chapters, start=5):
+            assert contents.cell(row, 2).value == int(name.split("-")[0])
+            assert contents.cell(row, 3).hyperlink.location == f"#'{name}'!B2"
+            assert contents.cell(row, 3).alignment.horizontal == "left"
+            assert contents.cell(row, 4).alignment.horizontal == "left"
+            assert contents.cell(row, 4).value
+            assert workbook[name]["B2"].value
+            assert workbook[name]["B2"].hyperlink.location == "#'目录'!B2"
+        assert chapters[-1] == f"{training_sheet_index or 7}-训练与调参过程"
+        notes = " ".join(contents.cell(row, 4).value for row in range(5, 5 + len(chapters)))
+        assert "预测误差" in notes and "连续目标" in notes
+        assert not any(word in notes for word in ("坏率", "KS", "AUC", "评分卡"))
+        for label, expected in (
+            ("版本号:", "V1.0"),
+            ("创建日期:", date.today().isoformat()),
+            ("模型名称:", model_name),
+        ):
+            cell = next(cell for cell in contents["B"] if cell.value == label)
+            assert contents.cell(cell.row, 3).value == expected
+        assert contents.column_dimensions["D"].width > contents.column_dimensions["C"].width
+        assert 8 < contents.column_dimensions["C"].width < 25
+        assert not contents.sheet_view.showGridLines
+    finally:
+        workbook.close()
+
+
 @pytest.mark.parametrize("name", ["ResNet", "FTTransformer", "TabM"])
 def test_net_missing_tree_importance_is_capability_not_report_failure(name, tmp_path):
     import hscredit as hc
@@ -154,9 +194,7 @@ def test_net_missing_tree_importance_is_capability_not_report_failure(name, tmp_
         X = pd.DataFrame(rng.normal(size=(32, 2)), columns=["分数", "次数"])
         y = (X["分数"] > 0).astype(int)
         kwargs = {"k": 2} if name == "TabM" else {}
-        model = getattr(hc, name)(
-            d_block=16, n_blocks=1, max_epochs=1, early_stopping_rounds=None, device="cpu", **kwargs
-        ).fit(X, y)
+        model = getattr(hc, name)(d_block=16, n_blocks=1, max_epochs=1, early_stopping_rounds=None, device="cpu", **kwargs).fit(X, y)
         result = model.model_report(
             datasets={"测试": (X, y)},
             excel_path=tmp_path / f"{name}.xlsx",

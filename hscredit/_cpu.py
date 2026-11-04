@@ -112,9 +112,7 @@ def _psutil_physical_cores() -> Optional[int]:
 @lru_cache(maxsize=8)
 def _hardware_cpu_count(platform_name: str, logical_count: Optional[int]) -> Optional[int]:
     """只缓存硬件探测；平台或系统逻辑核数变化时重新查询，不缓存进程配额。"""
-    probe = {"win32": _windows_physical_cores, "linux": _linux_physical_cores, "darwin": _darwin_physical_cores}.get(
-        platform_name
-    )
+    probe = {"win32": _windows_physical_cores, "linux": _linux_physical_cores, "darwin": _darwin_physical_cores}.get(platform_name)
     if probe is not None:
         try:
             count = _positive_count(probe())

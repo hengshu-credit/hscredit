@@ -273,9 +273,7 @@ print("hardware=", get_hardware_cpu_count(), "available=", available)
 """
     environment = dict(os.environ)
     environment.pop("OMP_NUM_THREADS", None)  # 验证自动探测，而非用户显式 OpenMP 覆盖值。
-    result = subprocess.run(
-        [sys.executable, "-X", "utf8", "-c", code], capture_output=True, text=True, timeout=90, env=environment
-    )
+    result = subprocess.run([sys.executable, "-X", "utf8", "-c", code], capture_output=True, text=True, timeout=90, env=environment)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Could not find the number of physical cores" not in result.stderr
     assert "Traceback" not in result.stderr

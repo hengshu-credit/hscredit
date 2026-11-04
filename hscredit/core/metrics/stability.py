@@ -145,11 +145,7 @@ def psi_table(
 
         reference = pd.Series(expected)
         current = pd.Series(actual)
-        return (
-            MonitoringBaseline(max_n_bins=max_n_bins, min_bin_size=min_bin_size, bin_params=kwargs)
-            .fit(reference)
-            .evaluate(current, include_missing=include_missing)["分箱明细"]
-        )
+        return MonitoringBaseline(max_n_bins=max_n_bins, min_bin_size=min_bin_size, bin_params=kwargs).fit(reference).evaluate(current, include_missing=include_missing)["分箱明细"]
     # 先验证公开方法和构造参数；空/全缺失数据只改变统计路径，不能绕过配置校验。
     from ..binning import OptimalBinning
 
@@ -170,11 +166,7 @@ def psi_table(
     if len(expected_clean) == 0 or len(actual_clean) == 0:
         from .monitoring import MonitoringBaseline
 
-        return (
-            MonitoringBaseline(max_n_bins=max_n_bins)
-            .fit(expected)
-            .evaluate(actual, include_missing=include_missing)["分箱明细"]
-        )
+        return MonitoringBaseline(max_n_bins=max_n_bins).fit(expected).evaluate(actual, include_missing=include_missing)["分箱明细"]
 
     # 构建DataFrame
     df_expected = pd.DataFrame({"value": expected_clean, "is_expected": 1})
