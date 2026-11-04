@@ -97,7 +97,16 @@ def test_new_report_plots_use_hscredit_axes_palette_and_export_defaults(tmp_path
     np.testing.assert_array_equal(axis.lines[0].get_xdata(), [1, 2, 3])
     np.testing.assert_allclose(axis.lines[0].get_ydata(), [0.6, 0.5, 0.4])
     assert not axis.get_legend().get_frame_on()
-    assert all(bar.get_hatch() == "/" for axis in saved["shap_importance"].axes for bar in axis.patches)
+    from matplotlib.container import BarContainer
+
+    bars = [
+        bar
+        for axis in saved["shap_importance"].axes
+        for container in axis.containers
+        if isinstance(container, BarContainer)
+        for bar in container
+    ]
+    assert bars and all(bar.get_hatch() == "/" for bar in bars)
     axes = {axis.get_label(): axis for axis in saved["shap_importance"].axes}
     assert {"SHAP分布", "特征重要性", "SHAP依赖"} <= set(axes)
     assert axes["SHAP分布"].spines["left"].get_edgecolor() == to_rgba(PRIMARY_COLORS[0])

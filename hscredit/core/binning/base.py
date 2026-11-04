@@ -354,10 +354,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         @wraps(fit_method)
         def transactional_fit(self, *args, **kwargs):
             if kwargs.get("sample_weight") is not None and not accepts_weight:
-                raise ValueError(
-                    f"{self.__class__.__name__} 当前不支持 sample_weight；"
-                    "不能静默忽略样本权重，请移除该参数或使用明确支持权重的实现"
-                )
+                raise ValueError(f"{self.__class__.__name__} 当前不支持 sample_weight；" "不能静默忽略样本权重，请移除该参数或使用明确支持权重的实现")
             # 子类 fit 可能委托 super().fit，此时由外层事务持有候选和提交边界。
             if getattr(self, "_fit_transaction_active", False):
                 return fit_method(self, *args, **kwargs)
@@ -521,6 +518,10 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self._recorded_bins_ = {}
         self._reserved_bins_finalized_ = set()
         self._is_fitted = False
+
+    def __sklearn_is_fitted__(self):
+        """构造时的空规则不代表已拟合，导入完成的规则仍使用真实拟合标记。"""
+        return bool(getattr(self, "_is_fitted", False))
 
     def __getstate__(self):
         """让具名目标和本地自定义回调均可经现有 joblib artifact 入口保存。"""
@@ -815,8 +816,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             record_constraint_violation(
                 self,
                 feature,
-                f"特征 '{feature}' 的类别分箱无法满足 min_bin_size={self.min_bin_size}；"
-                f"最小箱样本数为 {observed}，要求至少 {min_samples}",
+                f"特征 '{feature}' 的类别分箱无法满足 min_bin_size={self.min_bin_size}；" f"最小箱样本数为 {observed}，要求至少 {min_samples}",
             )
 
         max_samples = BaseBinning._get_max_samples(self, len(y))
@@ -836,8 +836,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             record_constraint_violation(
                 self,
                 feature,
-                f"特征 '{feature}' 的类别分箱无法满足 min_bad_rate={self.min_bad_rate}；"
-                f"最小坏样本率为 {observed:.6f}",
+                f"特征 '{feature}' 的类别分箱无法满足 min_bad_rate={self.min_bad_rate}；" f"最小坏样本率为 {observed:.6f}",
             )
 
         if self.monotonic in {"ascending", "descending"} and len(bad_rates) > 1:
@@ -847,8 +846,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 record_constraint_violation(
                     self,
                     feature,
-                    f"特征 '{feature}' 的类别分箱无法满足 monotonic={self.monotonic}；"
-                    f"最终坏样本率为 {bad_rates.tolist()}",
+                    f"特征 '{feature}' 的类别分箱无法满足 monotonic={self.monotonic}；" f"最终坏样本率为 {bad_rates.tolist()}",
                 )
 
     def _set_input_feature_attributes(self, X: pd.DataFrame) -> None:
@@ -1352,9 +1350,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 fixed_mask = retained_fixed
             self._user_splits_fixed_masks_[feature] = list(fixed_mask)
             if sum(bool(value) for value in fixed_mask) + 1 > self.max_n_bins:
-                record_constraint_violation(
-                    self, feature, f"特征 '{feature}' 的固定切分点数量无法满足 max_n_bins={self.max_n_bins}"
-                )
+                record_constraint_violation(self, feature, f"特征 '{feature}' 的固定切分点数量无法满足 max_n_bins={self.max_n_bins}")
             if missing_bin is not None:
                 self._user_missing_bin_targets_[feature] = int(missing_bin)
             self.splits_[feature] = splits
@@ -1614,9 +1610,10 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             else:
                 block = pd.Series(values, index=X.index, name=expected_feature)
             blocks.append(block)
-        if not blocks:
-            return pd.DataFrame(index=X.index)
-        return pd.concat(blocks, axis=1)
+        from ...utils.arguments import copy_query_source
+
+        result = pd.concat(blocks, axis=1) if blocks else pd.DataFrame(index=X.index)
+        return copy_query_source(X, result)
 
     def _transform_binning_features(
         self,
@@ -1696,7 +1693,9 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
             (
                 np.nan
                 if row["分箱标签"] in ["缺失", "special"]
-                else row["坏样本率"] / total_bad_rate if total_bad_rate > 0 else 1.0
+                else row["坏样本率"] / total_bad_rate
+                if total_bad_rate > 0
+                else 1.0
             )
             for _, row in bin_table.iterrows()
         ]
@@ -2403,9 +2402,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 internal_fixed.setdefault(int(position), cut)
         empty_fixed_bins = len(protected) - len(internal_fixed)
         if empty_fixed_bins and minimum > 0:
-            raise BinningConstraintViolation(
-                f"特征 '{feature}' 的固定切点产生空箱，无法满足 min_bin_size={self.min_bin_size}"
-            )
+            raise BinningConstraintViolation(f"特征 '{feature}' 的固定切点产生空箱，无法满足 min_bin_size={self.min_bin_size}")
 
         def feasible(proposed):
             bins = np.searchsorted(proposed, xv, side="right")
@@ -2491,9 +2488,7 @@ class BaseBinning(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 self._woe_maps_[feature] = {int(key): float(value) for key, value in imported_woe.items()}
             else:
                 self._woe_maps_[feature] = {
-                    int(row["分箱"]): float(row["分档WOE值"])
-                    for _, row in table.iterrows()
-                    if "分档WOE值" in table.columns
+                    int(row["分箱"]): float(row["分档WOE值"]) for _, row in table.iterrows() if "分档WOE值" in table.columns
                 }
             if self.handle_unknown == UNKNOWN_BIN:
                 self._woe_maps_[feature].setdefault(UNKNOWN_BIN, 0.0)

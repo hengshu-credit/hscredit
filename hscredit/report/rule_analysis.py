@@ -144,9 +144,29 @@ class _SwapStages:
 _SWAP_ATOMIC_GROUPS = ("out_out", "in_out", "in_in", "out_in")
 
 
-def _resolve_target_series(data, target, overdue, dpds, del_grey=False, overdue_operator: str = ">"):
-    """解析分析样本上的一个或多个实际表现标签。"""
-    frame, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, allow_missing=True)
+def _resolve_target_series(
+    data,
+    target,
+    overdue,
+    dpds,
+    del_grey=False,
+    overdue_operator: str = ">",
+    *,
+    handle_missing_target="drop",
+):
+    """解析分析样本上的一个或多个实际表现标签。
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+    """
+    frame, targets = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        allow_missing=True,
+        handle_missing_target=handle_missing_target,
+    )
     return targets.y_map(frame)
 
 
@@ -277,9 +297,7 @@ def _merge_swap_target_pipelines(
         "金额占比",
     ]
     if target_specific_totals:
-        shared_columns = [
-            column for column in shared_columns if column not in {"样本总数", "样本占比", "样本总额", "金额占比"}
-        ]
+        shared_columns = [column for column in shared_columns if column not in {"样本总数", "样本占比", "样本总额", "金额占比"}]
     first = next(iter(pipelines.values())).reset_index(drop=True)
     shared = [column for column in shared_columns if column in first.columns]
     pieces = [first[shared].copy()]
@@ -348,8 +366,7 @@ def _resolve_bin_table(
         elif isinstance(bin_table, dict):
             if set(bin_table) != set(score_map):
                 raise ValueError(
-                    "多评分场景下 bin_table 与 score 的评分名必须完全一致，"
-                    f"score={sorted(score_map)}，bin_table={sorted(bin_table)}"
+                    "多评分场景下 bin_table 与 score 的评分名必须完全一致，" f"score={sorted(score_map)}，bin_table={sorted(bin_table)}"
                 )
             invalid = [name for name, table in bin_table.items() if not isinstance(table, pd.DataFrame)]
             if invalid:
@@ -459,8 +476,12 @@ def _build_swap_pipeline(
     del_grey=False,
     overdue_operator: str = ">",
     original_pass=None,
+    *,
+    handle_missing_target="drop",
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """按显式阶段集合构建置入置出流水线。"""
+    """按显式阶段集合构建置入置出流水线。
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+    """
     validate_overdue_operator(overdue_operator)
     if isinstance(y, dict):
         target_series = y
@@ -469,7 +490,13 @@ def _build_swap_pipeline(
         target_series = {target_name: pd.Series(y, index=data.index, dtype=float)}
     else:
         target_series = _resolve_target_series(
-            data, target, overdue, dpds, del_grey=del_grey, overdue_operator=overdue_operator
+            data,
+            target,
+            overdue,
+            dpds,
+            del_grey=del_grey,
+            overdue_operator=overdue_operator,
+            handle_missing_target=handle_missing_target,
         )
 
     if len(target_series) > 1:
@@ -502,6 +529,7 @@ def _build_swap_pipeline(
                 del_grey=del_grey,
                 overdue_operator=overdue_operator,
                 original_pass=original_pass,
+                handle_missing_target=handle_missing_target,
             )
             pipelines[target_name] = pipeline
             result = result.copy()
@@ -786,9 +814,7 @@ def _build_swap_pipeline(
     for rate_column in ("坏样本率", "原始坏样本率", "调整后坏样本率"):
         if rate_column in pipeline_df:
             pipeline_df.loc[empty_population, rate_column] = np.nan
-    pipeline_df["LIFT值"] = pipeline_df["坏样本率"].apply(
-        lambda value: value / full_bad_rate if full_bad_rate > 0 else 0.0
-    )
+    pipeline_df["LIFT值"] = pipeline_df["坏样本率"].apply(lambda value: value / full_bad_rate if full_bad_rate > 0 else 0.0)
     pipeline_df["好样本数"] = pipeline_df["样本总数"] - pipeline_df["坏样本数"]
     pipeline_df["好样本占比"] = 1.0 - pipeline_df["坏样本率"]
     pipeline_df["坏样本占比"] = pipeline_df["坏样本率"]
@@ -995,6 +1021,7 @@ def ruleset_analysis(
     del_grey: bool = False,
     *,
     overdue_operator: str = ">",
+    handle_missing_target="drop",
     **kwargs,
 ) -> pd.DataFrame:
     """用于D类调优时的规则集效果分析.
@@ -1040,7 +1067,7 @@ def ruleset_analysis(
     :type filter_cols: Optional[List[str]]
     :param amount: 默认值为 ``None`` 。金额字段名称，用于金额口径分析
     :type amount: Optional[str]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -1063,11 +1090,20 @@ def ruleset_analysis(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
     datasets, target = bind_targets(
-        datasets, target, overdue, dpds, del_grey, overdue_operator, default_target="target"
+        datasets,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        default_target="target",
+        handle_missing_target=handle_missing_target,
     )
     overdue, dpds = None, None
     datasets = datasets.copy()
@@ -1095,6 +1131,7 @@ def ruleset_analysis(
         del_grey=del_grey,
         overdue_operator=overdue_operator,
         **kwargs,
+        handle_missing_target=handle_missing_target,
     )
     table_total = _configured_rule_report(
         all_rules,
@@ -1337,6 +1374,7 @@ def rule_swap_analysis(
     *,
     overdue_operator: Optional[str] = None,
     original_pass: Optional[Union[str, pd.Series, np.ndarray, List[bool]]] = None,
+    handle_missing_target="drop",
 ) -> Dict[str, pd.DataFrame]:
     """规则置入置出（Swap）分析。
 
@@ -1446,7 +1484,7 @@ def rule_swap_analysis(
     :type missing_separate: bool
     :param bin_params: 默认值为 ``None`` 。额外分箱参数 dict，会透传给 ``feature_bin_stats``
     :type bin_params: Optional[dict]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 None 表示沿用 ``bin_params`` 配置，未配置时为 False；显式值优先。
@@ -1508,6 +1546,8 @@ def rule_swap_analysis(
         默认 None 时沿用 ``bin_params`` 的比较符；显式参数优先。
 
     :type overdue_operator: Optional[str]
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     # ── 第一步：校验轻量输入 ─────────────────────────────────────────────
     validate_target_mode(target, overdue, dpds)
@@ -1536,7 +1576,14 @@ def rule_swap_analysis(
     )
     effective_grey = (bin_params or {}).get("del_grey", False) if del_grey is None else del_grey
     data, actual_targets = bind_targets(
-        data, target, overdue, dpds, effective_grey, effective_operator, allow_missing=True
+        data,
+        target,
+        overdue,
+        dpds,
+        effective_grey,
+        effective_operator,
+        allow_missing=True,
+        handle_missing_target=handle_missing_target,
     )
     if not data.index.is_unique:
         data = data.reset_index(drop=True)
@@ -1630,6 +1677,7 @@ def rule_swap_analysis(
         None,
         del_grey=del_grey,
         overdue_operator=overdue_operator,
+        handle_missing_target=handle_missing_target,
     )
     for table in bin_table_result.values():
         _validate_swap_bin_labels(table)
@@ -1665,6 +1713,7 @@ def rule_swap_analysis(
         del_grey=del_grey,
         overdue_operator=overdue_operator,
         original_pass=original_pass,
+        handle_missing_target=handle_missing_target,
     )
 
     # ── 返回结果 ────────────────────────────────────────────────────────────
@@ -1763,9 +1812,7 @@ def _normalize_bin_table(
         available_merge = [
             c
             for c in tbl.columns
-            if isinstance(c, tuple)
-            and c[0] == detail_group
-            and c[1] in ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]
+            if isinstance(c, tuple) and c[0] == detail_group and c[1] in ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]
         ]
         non_merge = [c for c in tbl.columns if c not in available_merge]
 
@@ -1852,9 +1899,7 @@ def _validate_rules(
         # 校验 data 包含全部所需列
         missing = required_cols - set(data.columns)
         if missing:
-            raise FeatureNotFoundError(
-                f"data 中缺少规则所需的列：{sorted(missing)}，" f"请检查规则表达式是否引用了不存在的字段"
-            )
+            raise FeatureNotFoundError(f"data 中缺少规则所需的列：{sorted(missing)}，" f"请检查规则表达式是否引用了不存在的字段")
 
     return rules_in, rules_out, rules_base
 
@@ -1891,21 +1936,17 @@ def _normalize_score_weights(
     elif isinstance(score_weights, dict):
         if set(score_weights) != set(score_names):
             raise ValueError(
-                "score_weights 与 score 的评分名必须完全一致，"
-                f"score={sorted(score_names)}，score_weights={sorted(score_weights)}"
+                "score_weights 与 score 的评分名必须完全一致，" f"score={sorted(score_names)}，score_weights={sorted(score_weights)}"
             )
         raw_weights = {name: float(score_weights[name]) for name in score_names}
     elif isinstance(score_weights, (list, tuple)):
         if len(score_weights) != len(score_names):
             raise ValueError(
-                f"score_weights 列表长度 ({len(score_weights)}) "
-                f"与 score_map 中的评分数量 ({len(score_names)}) 不匹配"
+                f"score_weights 列表长度 ({len(score_weights)}) " f"与 score_map 中的评分数量 ({len(score_names)}) 不匹配"
             )
         raw_weights = {name: float(w) for name, w in zip(score_names, score_weights)}
     else:
-        raise TypeError(
-            f"score_weights 参数类型错误，期望 float / Dict / List，" f"实际为 {type(score_weights).__name__}"
-        )
+        raise TypeError(f"score_weights 参数类型错误，期望 float / Dict / List，" f"实际为 {type(score_weights).__name__}")
 
     # 归一化：w_normalized = w / sum(all_weights)，使 sum = 1
     invalid = [name for name, value in raw_weights.items() if not np.isfinite(value) or value < 0]
@@ -1934,9 +1975,7 @@ def _extract_bad_rate_cols(df_bin: pd.DataFrame, target_names: List[str]) -> Dic
     result = {}
     for target_name in target_names:
         candidates = [
-            col
-            for col in df_bin.columns
-            if isinstance(col, tuple) and col[0] == target_name and "坏样本率" in str(col[1])
+            col for col in df_bin.columns if isinstance(col, tuple) and col[0] == target_name and "坏样本率" in str(col[1])
         ]
         if not candidates:
             raise ValueError(f"分箱表缺少目标标签 '{target_name}' 对应的坏样本率列")

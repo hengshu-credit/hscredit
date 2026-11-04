@@ -13,30 +13,62 @@
 - ScoreDriftCalibrator: 评分漂移校准
 """
 
-from .scorecard import ScoreCard, RoundScoreCard
+import os as _os
 
-from .score_transformer import (
-    BaseScoreTransformer,
-    StandardScoreTransformer,
-    LinearScoreTransformer,
-    QuantileScoreTransformer,
-    BoxCoxScoreTransformer,
-    ScoreTransformer,
-    transform_probability_to_score,
-)
-from .model_scorecard import ProbabilityScoreCard
-from .score_drift import ScoreDriftCalibrator
+if _os.environ.get("HSCREDIT_LIGHT_IMPORT") == "1":
+    from importlib import import_module as _import_module
+    from hscredit._public_api import EXPORTS
 
-__all__ = [
-    "ScoreCard",
-    "RoundScoreCard",
-    "ProbabilityScoreCard",
-    "BaseScoreTransformer",
-    "StandardScoreTransformer",
-    "LinearScoreTransformer",
-    "QuantileScoreTransformer",
-    "BoxCoxScoreTransformer",
-    "ScoreTransformer",
-    "transform_probability_to_score",
-    "ScoreDriftCalibrator",
-]
+    _exports = EXPORTS[__name__]
+    __all__ = [
+        "ScoreCard",
+        "RoundScoreCard",
+        "ProbabilityScoreCard",
+        "BaseScoreTransformer",
+        "StandardScoreTransformer",
+        "LinearScoreTransformer",
+        "QuantileScoreTransformer",
+        "BoxCoxScoreTransformer",
+        "ScoreTransformer",
+        "transform_probability_to_score",
+        "ScoreDriftCalibrator",
+    ]
+
+    def __getattr__(name):
+        if name not in _exports:
+            raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
+        value = getattr(_import_module(_exports[name]), name)
+        globals()[name] = value
+        return value
+
+    def __dir__():
+        return sorted(set(globals()) | set(__all__))
+
+else:
+    from .scorecard import ScoreCard, RoundScoreCard
+
+    from .score_transformer import (
+        BaseScoreTransformer,
+        StandardScoreTransformer,
+        LinearScoreTransformer,
+        QuantileScoreTransformer,
+        BoxCoxScoreTransformer,
+        ScoreTransformer,
+        transform_probability_to_score,
+    )
+    from .model_scorecard import ProbabilityScoreCard
+    from .score_drift import ScoreDriftCalibrator
+
+    __all__ = [
+        "ScoreCard",
+        "RoundScoreCard",
+        "ProbabilityScoreCard",
+        "BaseScoreTransformer",
+        "StandardScoreTransformer",
+        "LinearScoreTransformer",
+        "QuantileScoreTransformer",
+        "BoxCoxScoreTransformer",
+        "ScoreTransformer",
+        "transform_probability_to_score",
+        "ScoreDriftCalibrator",
+    ]

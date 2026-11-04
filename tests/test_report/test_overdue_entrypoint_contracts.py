@@ -191,7 +191,7 @@ def test_model_workflow_forwards_target_controls(swap_frame, entry, kind):
         valid = ~((days > 0) & (days <= 3)) if kind == ">" else pd.Series(True, index=days.index)
         if kind == ">=":
             valid = ~((days > 0) & (days < 3))
-        expected = values[valid].astype(float)
+        expected = values[valid & days.notna()].astype(float)
     else:
         options = {
             "target": {

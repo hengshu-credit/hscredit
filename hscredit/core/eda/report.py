@@ -23,17 +23,35 @@ from ...excel import ExcelWriter, dataframe2excel
 logger = logging.getLogger(__name__)
 
 
-def _execute_eda_report(df, target, features, date, config, n_jobs, parallel_backend, parallel_config, mode, full):
+def _execute_eda_report(
+    df,
+    target,
+    features,
+    date,
+    config,
+    n_jobs,
+    parallel_backend,
+    parallel_config,
+    mode,
+    full,
+    handle_missing_target="drop",
+):
     # 延迟导入，避免 core.eda 初始化时反向触发 report 包聚合。
     from ...report.result import ReportResult
 
     validate_dataframe(df)
+    from ...utils.targets import bind_targets
+
+    supervised = df
+    if target is not None:
+        bound_frame, targets = bind_targets(df, target=target, handle_missing_target=handle_missing_target)
+        labels = bound_frame[targets.columns[0]]
+        supervised = df.loc[labels.notna()].copy()
+        supervised[target] = labels.loc[labels.notna()]
     if features is None:
         features = [c for c in df.columns if c != target and (not full or c != date)]
     parallel = dict(n_jobs=n_jobs, parallel_backend=parallel_backend, parallel_config=parallel_config)
-    result = ReportResult(
-        mode=mode, metadata={"目标": target, "日期字段": date, "特征": list(features), "输入行数": len(df)}
-    )
+    result = ReportResult(mode=mode, metadata={"目标": target, "日期字段": date, "特征": list(features), "输入行数": len(df)})
     names = ["数据基础信息", "缺失值分析", "特征描述统计", "数据质量问题", "目标变量分布", "整体逾期率", "逾期率趋势"]
     if full:
         names += ["IV分析", "高相关性特征对"]
@@ -42,7 +60,7 @@ def _execute_eda_report(df, target, features, date, config, n_jobs, parallel_bac
         result.plan(key, input_rows=len(df))
 
     def iv_table():
-        table = batch_iv_analysis(df, features, target, **parallel)
+        table = batch_iv_analysis(supervised, features, target, **parallel)
         return table[table["IV值"] >= config.get("iv_threshold", 0.02)]
 
     operations = {
@@ -50,9 +68,9 @@ def _execute_eda_report(df, target, features, date, config, n_jobs, parallel_bac
         "缺失值分析": lambda: missing_analysis(df, threshold=0.0),
         "特征描述统计": lambda: feature_summary(df, features, **parallel),
         "数据质量问题": lambda: data_quality_report(df),
-        "目标变量分布": lambda: target_distribution(df, target),
-        "整体逾期率": lambda: pd.DataFrame([bad_rate_overall(df, target)]),
-        "逾期率趋势": lambda: bad_rate_trend(df, date=date, target=target),
+        "目标变量分布": lambda: target_distribution(supervised, target),
+        "整体逾期率": lambda: pd.DataFrame([bad_rate_overall(supervised, target)]),
+        "逾期率趋势": lambda: bad_rate_trend(supervised, date=date, target=target),
         "IV分析": iv_table,
         "高相关性特征对": lambda: high_correlation_pairs(df, features, threshold=config.get("corr_threshold", 0.8)),
     }
@@ -78,6 +96,7 @@ def eda_summary(
     *,
     mode: str = "best_effort",
     return_result: bool = False,
+    handle_missing_target="drop",
 ) -> Dict[str, pd.DataFrame]:
     """EDA分析摘要.
 
@@ -117,8 +136,12 @@ def eda_summary(
     :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
         正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
         不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
+
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
     """
-    result = _execute_eda_report(df, target, features, date, {}, n_jobs, parallel_backend, parallel_config, mode, False)
+    result = _execute_eda_report(
+        df, target, features, date, {}, n_jobs, parallel_backend, parallel_config, mode, False, handle_missing_target
+    )
     return result if return_result else dict(result)
 
 
@@ -135,6 +158,7 @@ def generate_report(
     *,
     mode: str = "best_effort",
     return_result: bool = False,
+    handle_missing_target="drop",
 ) -> Dict[str, pd.DataFrame]:
     """生成完整EDA报告.
 
@@ -172,9 +196,21 @@ def generate_report(
     >>> report = generate_report(df, target='fpd15', date='apply_date',
     ...                          config={'iv_threshold': 0.02})
     >>> export_report_to_excel(report, 'eda_report.xlsx')
+
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
     """
     result = _execute_eda_report(
-        df, target, features, date, config or {}, n_jobs, parallel_backend, parallel_config, mode, True
+        df,
+        target,
+        features,
+        date,
+        config or {},
+        n_jobs,
+        parallel_backend,
+        parallel_config,
+        mode,
+        True,
+        handle_missing_target,
     )
     return result if return_result else dict(result)
 
@@ -232,15 +268,6 @@ def export_report_to_excel(
 
     sheet_mapping = {}
     with ExcelWriter(theme_color=theme_color) as writer:
-        if structured:
-            status_sheet = writer.get_sheet_by_name(clean_sheet_name("报告执行状态"))
-            writer.insert_value2sheet(
-                status_sheet,
-                "B2",
-                "报告完整" if report.complete else "报告不完整：请检查失败或未执行章节",
-                style="header",
-            )
-            writer.insert_df2sheet(status_sheet, report.status_table(), "B4", index=False, auto_width=auto_width)
         for section_name, df in report.items():
             if df is None or df.empty:
                 continue
@@ -289,7 +316,8 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
     html_parts = []
 
     # HTML头部
-    html_parts.append(f"""
+    html_parts.append(
+        f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -308,7 +336,8 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
     </head>
     <body>
         <h1>{title}</h1>
-    """)
+    """
+    )
 
     # 各章节
     for section_name, df in report.items():
@@ -319,11 +348,13 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
             html_parts.append("<p>无数据</p>")
 
     # HTML尾部
-    html_parts.append(f"""
+    html_parts.append(
+        f"""
         <p class="timestamp">生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
     </body>
     </html>
-    """)
+    """
+    )
 
     # 写入文件
     with open(filepath, "w", encoding="utf-8") as f:

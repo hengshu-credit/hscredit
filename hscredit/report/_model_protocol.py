@@ -61,19 +61,19 @@ def label_definition_table(report):
                     grey = f"0 < {column} < {threshold}"
                 else:
                     grey = "无灰样本区间"
-                rule = (
-                    f"按本标签独立剔除满足 {grey} 的样本"
-                    if report.del_grey and grey != "无灰样本区间"
-                    else "不剔除灰样本"
-                )
-                missing = "逾期值缺失时比较为假，标签为0"
+                rule = f"按本标签独立剔除满足 {grey} 的样本" if report.del_grey and grey != "无灰样本区间" else "不剔除灰样本"
+                missing = ""
             elif explicit:
-                bad, grey = "外部 y=1", "不应用 target/overdue 的灰样本规则"
-                rule, missing = "外部 y 优先，按原值使用", "缺失标签不参与指标计算"
+                bad, grey = "外部 y=1", "标签不是0或1（不含缺失）"
+                rule = "剔除灰样本" if report.del_grey else "灰样本按0处理"
+                missing = ""
             else:
-                bad, grey = "传入标签=1", "标签不是0或1（含缺失）"
-                rule = "按本标签独立剔除非0/1及缺失标签" if report.del_grey else "不剔除；非1值（含缺失）按0处理"
-                missing = "缺失标签剔除" if report.del_grey else "缺失标签按0处理"
+                bad, grey = "传入标签=1", "标签不是0或1（不含缺失）"
+                rule = "按本标签独立剔除灰样本" if report.del_grey else "灰样本按0处理"
+                missing = ""
+            missing = {"drop": "缺失标签剔除", "positive": "缺失标签按1处理", "negative": "缺失标签按0处理", "raise": "缺失标签报错"}[
+                report.handle_missing_target
+            ]
             rows.append(
                 {
                     "数据集": dataset.label,
@@ -97,7 +97,7 @@ def label_configuration_table(report):
     """将标签口径合并为数据样本描述中的四项配置，同一口径不重复列数据集。"""
     definitions = label_definition_table(report)
     rows = []
-    for field in ("标签来源", "操作符", "灰样本定义", "剔灰配置"):
+    for field in ("标签来源", "操作符", "灰样本定义", "剔灰配置", "缺失值处理"):
         groups = {}
         for dataset, block in definitions.groupby("数据集", sort=False):
             values = list(dict.fromkeys(block[field].astype(str)))
@@ -113,4 +113,22 @@ def label_configuration_table(report):
             else "；".join(f"{'、'.join(datasets)}：{value}" for value, datasets in groups.items())
         )
         rows.append({"配置项": field, "配置值": content})
+    method = report.prediction_method
+    rows.extend(
+        [
+            {
+                "配置项": "预测函数",
+                "配置值": ("predict_proba" if method == "predict_prob" else method)
+                if isinstance(method, str)
+                else getattr(method, "__name__", "自定义函数"),
+            },
+            {"配置项": "分箱基准", "配置值": "训练样本" if report.binning_reference == "train" else "各数据集独立"},
+            {"配置项": "统计口径", "配置值": "实际订单及实际金额"},
+            {"配置项": "加权性能对照", "配置值": "是" if report.show_weighted_metrics else "否"},
+        ]
+    )
+    if report.show_weighted_metrics:
+        weights = report.sample_weight
+        description = weights if isinstance(weights, str) else "按数据集提供的逐行权重" if isinstance(weights, dict) else "逐行权重数组"
+        rows.append({"配置项": "加权性能权重", "配置值": description})
     return pd.DataFrame(rows)

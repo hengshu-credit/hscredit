@@ -62,49 +62,92 @@
 >>> binner.fit(X, y)
 """
 
-from .base import BaseBinning
-from .uniform_binning import UniformBinning
-from .quantile_binning import QuantileBinning
-from .tree_binning import TreeBinning
-from .cart_binning import CartBinning
-from .chi_merge_binning import ChiMergeBinning
-from .best_ks_binning import BestKSBinning
-from .best_iv_binning import BestIVBinning
-from .optimal_binning import OptimalBinning
-from .mdlp_binning import MDLPBinning
-from .or_binning import ORBinning, CustomObjectives
-from .cp_sat_binning import CPSATBinning
-from .kmeans_binning import KMeansBinning
-from .monotonic_binning import MonotonicBinning
-from .genetic_binning import GeneticBinning
-from .smooth_binning import SmoothBinning
-from .kernel_density_binning import KernelDensityBinning
-from .best_lift_binning import BestLiftBinning
-from .target_bad_rate_binning import TargetBadRateBinning
-from .optimal_binning_2d import OptimalBinning2D
-from .spec import BinSpec
+import os as _os
 
-__all__ = [
-    "BaseBinning",
-    "UniformBinning",
-    "QuantileBinning",
-    "TreeBinning",
-    "CartBinning",
-    "ChiMergeBinning",
-    "BestKSBinning",
-    "BestIVBinning",
-    "OptimalBinning",
-    "MDLPBinning",
-    "ORBinning",
-    "CustomObjectives",
-    "CPSATBinning",
-    "KMeansBinning",
-    "MonotonicBinning",
-    "GeneticBinning",
-    "SmoothBinning",
-    "KernelDensityBinning",
-    "BestLiftBinning",
-    "TargetBadRateBinning",
-    "OptimalBinning2D",
-    "BinSpec",
-]
+if _os.environ.get("HSCREDIT_LIGHT_IMPORT") == "1":
+    from importlib import import_module as _import_module
+    from hscredit._public_api import EXPORTS
+
+    _exports = EXPORTS[__name__]
+    __all__ = [
+        "BaseBinning",
+        "UniformBinning",
+        "QuantileBinning",
+        "TreeBinning",
+        "CartBinning",
+        "ChiMergeBinning",
+        "BestKSBinning",
+        "BestIVBinning",
+        "OptimalBinning",
+        "MDLPBinning",
+        "ORBinning",
+        "CustomObjectives",
+        "CPSATBinning",
+        "KMeansBinning",
+        "MonotonicBinning",
+        "GeneticBinning",
+        "SmoothBinning",
+        "KernelDensityBinning",
+        "BestLiftBinning",
+        "TargetBadRateBinning",
+        "OptimalBinning2D",
+        "BinSpec",
+    ]
+
+    def __getattr__(name):
+        if name not in _exports:
+            raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
+        value = getattr(_import_module(_exports[name]), name)
+        globals()[name] = value
+        return value
+
+    def __dir__():
+        return sorted(set(globals()) | set(__all__))
+
+else:
+    from .base import BaseBinning
+    from .uniform_binning import UniformBinning
+    from .quantile_binning import QuantileBinning
+    from .tree_binning import TreeBinning
+    from .cart_binning import CartBinning
+    from .chi_merge_binning import ChiMergeBinning
+    from .best_ks_binning import BestKSBinning
+    from .best_iv_binning import BestIVBinning
+    from .optimal_binning import OptimalBinning
+    from .mdlp_binning import MDLPBinning
+    from .or_binning import ORBinning, CustomObjectives
+    from .cp_sat_binning import CPSATBinning
+    from .kmeans_binning import KMeansBinning
+    from .monotonic_binning import MonotonicBinning
+    from .genetic_binning import GeneticBinning
+    from .smooth_binning import SmoothBinning
+    from .kernel_density_binning import KernelDensityBinning
+    from .best_lift_binning import BestLiftBinning
+    from .target_bad_rate_binning import TargetBadRateBinning
+    from .optimal_binning_2d import OptimalBinning2D
+    from .spec import BinSpec
+
+    __all__ = [
+        "BaseBinning",
+        "UniformBinning",
+        "QuantileBinning",
+        "TreeBinning",
+        "CartBinning",
+        "ChiMergeBinning",
+        "BestKSBinning",
+        "BestIVBinning",
+        "OptimalBinning",
+        "MDLPBinning",
+        "ORBinning",
+        "CustomObjectives",
+        "CPSATBinning",
+        "KMeansBinning",
+        "MonotonicBinning",
+        "GeneticBinning",
+        "SmoothBinning",
+        "KernelDensityBinning",
+        "BestLiftBinning",
+        "TargetBadRateBinning",
+        "OptimalBinning2D",
+        "BinSpec",
+    ]

@@ -13,6 +13,22 @@ import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
 
 
+def _validate_groups(groups, length):
+    """切分器共用的实体标签校验，禁止分组配置静默失效。"""
+    if groups is None:
+        return None
+    values = np.asarray(groups)
+    if values.ndim != 1 or len(values) != length or pd.isna(values).any():
+        raise ValueError("groups 必须是一维、无缺失且与样本等长的分组标签")
+    return values
+
+
+def _check_group_separation(groups, train, valid):
+    """校验自定义和内置切分都遵守实体隔离。"""
+    if groups is not None and pd.Index(groups[train]).isin(groups[valid]).any():
+        raise ValueError("训练集和验证集包含相同 groups，请使用分组切分器")
+
+
 def _validate_frame(data: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(data, pd.DataFrame):
         raise TypeError(f"data 必须是 DataFrame，实际类型为 {type(data).__name__}")

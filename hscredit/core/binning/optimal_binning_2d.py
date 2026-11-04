@@ -50,7 +50,6 @@ import warnings
 from typing import Union, List, Dict, Optional, Any, Tuple, Literal
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from ._contracts import UNKNOWN_BIN, parse_numerical_user_splits
@@ -65,6 +64,7 @@ from ...utils.serialization import ArtifactSerializableMixin
 # 延迟加载 seaborn：仅在首次实际绘图（访问 sns 属性）时才导入，
 # 避免 import hscredit 时即触发 seaborn（及其 ipywidgets/IPython 依赖）的加载。
 sns = LazyModule("seaborn")
+plt = LazyModule("matplotlib.pyplot")
 
 
 class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator, TransformerMixin):
@@ -565,7 +565,9 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if metric == "woe":
             result.attrs["hscredit_encoding"] = "woe"
             result.attrs["hscredit_source"] = "OptimalBinning2D"
-        return result
+        from ...utils.arguments import copy_query_source
+
+        return copy_query_source(X, result)
 
     def get_feature_names_out(self, input_features=None) -> np.ndarray:
         """返回二维交叉分箱转换后的特征名."""
@@ -575,8 +577,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             input_features = np.asarray(input_features, dtype=object)
             if not np.array_equal(input_features, self.feature_names_in_):
                 raise ValueError(
-                    f"input_features 必须与拟合时特征一致，期望 "
-                    f"{self.feature_names_in_.tolist()}，实际 {input_features.tolist()}"
+                    f"input_features 必须与拟合时特征一致，期望 " f"{self.feature_names_in_.tolist()}，实际 {input_features.tolist()}"
                 )
         return np.asarray([self.feature_name_], dtype=object)
 
@@ -747,8 +748,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 }
             if feature not in (self.feature_x_, self.feature_y_):
                 raise HSCreditError(
-                    f"特征 '{feature}' 未找到，可用: "
-                    f"['{self.feature_x_}', '{self.feature_y_}', '{self.feature_name_}']"
+                    f"特征 '{feature}' 未找到，可用: " f"['{self.feature_x_}', '{self.feature_y_}', '{self.feature_name_}']"
                 )
             binner_inst = self.binner_x_ if feature == self.feature_x_ else self.binner_y_
             return _stats_for(binner_inst, feature)
@@ -1266,9 +1266,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
         if features is None:
             feature_columns = [column for column in X_df.columns if column != self.target]
             if len(feature_columns) != 2:
-                raise ValueError(
-                    f"未指定 features 时，X 必须恰好包含 2 个特征，当前为 {len(feature_columns)} 个: {feature_columns}"
-                )
+                raise ValueError(f"未指定 features 时，X 必须恰好包含 2 个特征，当前为 {len(feature_columns)} 个: {feature_columns}")
         else:
             feature_columns = list(features)
             if len(feature_columns) != 2:
@@ -1551,16 +1549,14 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             record_constraint_violation(
                 self,
                 "二维分箱",
-                f"max_n_bins_2d={max_bins} 小于缺失值语义组数量 {len(represented_groups)}，"
-                "在保持缺失值独立语义时无法满足约束",
+                f"max_n_bins_2d={max_bins} 小于缺失值语义组数量 {len(represented_groups)}，" "在保持缺失值独立语义时无法满足约束",
             )
             max_bins = len(represented_groups)
         if total > 0 and min_count > total:
             record_constraint_violation(
                 self,
                 "二维分箱",
-                f"min_bin_size 要求每个普通二维分箱至少 {min_count} 个样本，"
-                f"但普通样本总数仅为 {int(total)}，无法满足约束",
+                f"min_bin_size 要求每个普通二维分箱至少 {min_count} 个样本，" f"但普通样本总数仅为 {int(total)}，无法满足约束",
             )
             min_count = int(total)
 
@@ -1576,9 +1572,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
             candidates = adjacent_pairs(solution)
             if not candidates:
                 reason = "最大分箱数" if must_reduce else "最小样本量"
-                record_constraint_violation(
-                    self, "二维分箱", f"二维分箱在保持网格连通和缺失值语义时无法满足{reason}约束"
-                )
+                record_constraint_violation(self, "二维分箱", f"二维分箱在保持网格连通和缺失值语义时无法满足{reason}约束")
                 break
 
             ranked = []
@@ -1609,9 +1603,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 counts = region_counts(solution)
                 remaining_small = {k for k in normal_ids(solution) if total > 0 and sum(counts[k]) < min_count}
                 if len(active_ids(solution)) > max_bins or remaining_small:
-                    record_constraint_violation(
-                        self, "二维分箱", "二维分箱在保持缺失值独立语义时无法同时满足最大分箱数和最小样本量约束"
-                    )
+                    record_constraint_violation(self, "二维分箱", "二维分箱在保持缺失值独立语义时无法同时满足最大分箱数和最小样本量约束")
                     break
 
         # ---------------- 阶段二：单调性硬约束（合并违例相邻分箱至零违例） ----------------
@@ -1647,21 +1639,14 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 solution[solution == remove] = keep
 
             if self.verbose and len(active_ids(solution)) <= 1:
-                warnings.warn(
-                    "单调性硬约束将二维分箱合并为单一分箱，"
-                    "请考虑放宽单调性约束（monotonic_x/monotonic_y）或调整预分箱粒度"
-                )
+                warnings.warn("单调性硬约束将二维分箱合并为单一分箱，" "请考虑放宽单调性约束（monotonic_x/monotonic_y）或调整预分箱粒度")
 
         final_counts = region_counts(solution)
         if len(final_counts) > max_bins:
-            record_constraint_violation(
-                self, "二维分箱", f"二维分箱结果为 {len(final_counts)} 箱，超过 max_n_bins_2d={max_bins}"
-            )
+            record_constraint_violation(self, "二维分箱", f"二维分箱结果为 {len(final_counts)} 箱，超过 max_n_bins_2d={max_bins}")
         remaining_small = {k for k in normal_ids(solution) if total > 0 and sum(final_counts[k]) < min_count}
         if remaining_small:
-            record_constraint_violation(
-                self, "二维分箱", f"二维分箱无法满足 min_bin_size，仍有 {len(remaining_small)} 个普通分箱样本量不足"
-            )
+            record_constraint_violation(self, "二维分箱", f"二维分箱无法满足 min_bin_size，仍有 {len(remaining_small)} 个普通分箱样本量不足")
 
         def order_key(bin_id: int) -> Tuple[int, int, int]:
             cells = np.argwhere(solution == bin_id)
@@ -1830,11 +1815,7 @@ class OptimalBinning2D(ParallelizableMixin, ArtifactSerializableMixin, BaseEstim
                 "分箱标签",
                 "样本总数",
                 "样本占比",
-                *[
-                    column
-                    for column in table.columns
-                    if column not in {"指标名称", "指标含义", "分箱", "分箱标签", "样本总数", "样本占比"}
-                ],
+                *[column for column in table.columns if column not in {"指标名称", "指标含义", "分箱", "分箱标签", "样本总数", "样本占比"}],
             ]
         ]
         joint_iv = float(table["分档IV值"].sum())

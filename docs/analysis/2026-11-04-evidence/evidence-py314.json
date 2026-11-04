@@ -1,0 +1,217 @@
+{
+  "python": "3.14.4 (tags/v3.14.4:23116f9, Apr  7 2026, 14:10:54) [MSC v.1944 64 bit (AMD64)]",
+  "versions": {
+    "numpy": "2.4.4",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.8.0",
+    "scipy": "1.17.1",
+    "joblib": "1.5.3"
+  },
+  "imported_versions": {
+    "numpy": "2.4.4",
+    "pandas": "2.3.3",
+    "sklearn": "1.8.0",
+    "scipy": "1.17.1",
+    "joblib": "1.5.3"
+  },
+  "calibration_parameters": {
+    "max_probability_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "invalid_weight_accepted": true,
+    "unknown_parameter_accepted": true
+  },
+  "report_json": {
+    "exception": "TypeError",
+    "message": "keys must be str, int, float, bool or None, not tuple"
+  },
+  "report_weights_and_bins": {
+    "summary_bad_rate": 0.9097080787508486,
+    "bin_total_bad_rate": 0.335,
+    "bin_labels": {
+      "train": [
+        "[-inf, 0.3333)",
+        "[0.3333, 0.3366)",
+        "[0.3366, +inf)",
+        "合计"
+      ],
+      "test": [
+        "[-inf, 0.3216)",
+        "[0.3216, 0.3248)",
+        "[0.3248, +inf)",
+        "合计"
+      ]
+    }
+  },
+  "target_encoding": {
+    "in_sample": 1.0,
+    "oof": 0.444
+  },
+  "group_cv": {
+    "groups_shared_between_train_validation": [
+      19,
+      19,
+      19
+    ]
+  },
+  "label_input_modes": {
+    "explicit_y": {
+      "KS": 0.5,
+      "AUC": 0.75,
+      "样本数": 4.0,
+      "坏样本率": 0.5
+    },
+    "target_column": {
+      "KS": 0.5,
+      "AUC": 0.6666666666666667,
+      "样本数": 5.0,
+      "坏样本率": 0.4
+    },
+    "target_column_del_grey": {
+      "KS": 0.5,
+      "AUC": 0.75,
+      "样本数": 4.0,
+      "坏样本率": 0.5
+    }
+  },
+  "eda_status": {
+    "default_type": "dict",
+    "default_keys": [
+      "数据基础信息",
+      "缺失值分析",
+      "特征描述统计",
+      "数据质量问题"
+    ],
+    "structured_complete": false,
+    "statuses": [
+      {
+        "章节": "数据基础信息",
+        "状态": "成功"
+      },
+      {
+        "章节": "缺失值分析",
+        "状态": "成功"
+      },
+      {
+        "章节": "特征描述统计",
+        "状态": "成功"
+      },
+      {
+        "章节": "数据质量问题",
+        "状态": "成功"
+      },
+      {
+        "章节": "目标变量分布",
+        "状态": "失败"
+      },
+      {
+        "章节": "整体逾期率",
+        "状态": "失败"
+      },
+      {
+        "章节": "逾期率趋势",
+        "状态": "不适用"
+      }
+    ]
+  },
+  "report_options": {
+    "metrics": [
+      "KS",
+      "AUC",
+      "样本数",
+      "坏样本率",
+      "概率均方误差"
+    ],
+    "summary_metrics": [
+      "KS",
+      "AUC",
+      "样本数",
+      "坏样本率"
+    ],
+    "missing_amount_accepted": true,
+    "bin_columns": [
+      "分箱标签",
+      "样本总数",
+      "好样本数",
+      "坏样本数",
+      "样本占比",
+      "好样本占比",
+      "坏样本占比",
+      "坏样本率",
+      "LIFT值",
+      "累积LIFT值",
+      "坏账改善",
+      "累积坏账改善",
+      "分档KS值"
+    ]
+  },
+  "invalid_probability": {
+    "out_of_range_probability_accepted": true,
+    "metrics": [
+      {
+        "统计项": "KS",
+        "训练集": 0.046666666666666745
+      },
+      {
+        "统计项": "AUC",
+        "训练集": 0.5166666666666667
+      },
+      {
+        "统计项": "样本数",
+        "训练集": 80.0
+      },
+      {
+        "统计项": "坏样本率",
+        "训练集": 0.375
+      }
+    ]
+  },
+  "real_workflow": {
+    "rows": 970,
+    "columns": 18,
+    "train_rows": 679,
+    "test_rows": 291,
+    "artifact_max_probability_difference": 0.0,
+    "metrics": [
+      {
+        "统计项": "KS",
+        "训练集": 0.19488103821196823,
+        "测试集": 0.24341463414634149
+      },
+      {
+        "统计项": "AUC",
+        "训练集": 0.6361391492429704,
+        "测试集": 0.6212682926829268
+      },
+      {
+        "统计项": "样本数",
+        "训练集": 679,
+        "测试集": 291.0
+      },
+      {
+        "统计项": "坏样本率",
+        "训练集": 0.13991163475699558,
+        "测试集": 0.140893470790378
+      },
+      {
+        "统计项": "PSI",
+        "训练集": "\\",
+        "测试集": 0.020506325060705082
+      }
+    ],
+    "report_complete": true,
+    "report_sheets": [
+      "目录",
+      "1-基本信息",
+      "2-模型性能",
+      "3-入模变量分析",
+      "4-稳定性分析",
+      "5-模型参数",
+      "6-模型部署需求",
+      "7-训练与调参过程"
+    ]
+  }
+}

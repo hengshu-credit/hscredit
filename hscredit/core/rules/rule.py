@@ -513,6 +513,7 @@ class Rule(ParallelizableMixin):
         margins: bool = False,
         *,
         overdue_operator: str = ">",
+        handle_missing_target="drop",
         **kwargs,
     ) -> pd.DataFrame:
         """规则效果报告表格输出。
@@ -536,7 +537,7 @@ class Rule(ParallelizableMixin):
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -582,11 +583,20 @@ class Rule(ParallelizableMixin):
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
         :type overdue_operator: str
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         validate_overdue_operator(overdue_operator)
         reject_legacy_target_keywords(kwargs)
         datasets, targets = bind_targets(
-            datasets, target, overdue, dpds, del_grey, overdue_operator, default_target="target"
+            datasets,
+            target,
+            overdue,
+            dpds,
+            del_grey,
+            overdue_operator,
+            default_target="target",
+            handle_missing_target=handle_missing_target,
         )
         del_grey = targets.needs_filtering(datasets) or (
             del_grey and (targets.mode == "target" or targets.operator in (">", ">="))
@@ -818,9 +828,7 @@ class Rule(ParallelizableMixin):
                     table = table[cols_to_keep]
             else:
                 # 单层级列结构
-                cols_to_keep = [
-                    c for c in table.columns if c in filter_cols or c in ["规则分类", "指标名称", "指标含义", "分箱"]
-                ]
+                cols_to_keep = [c for c in table.columns if c in filter_cols or c in ["规则分类", "指标名称", "指标含义", "分箱"]]
                 if cols_to_keep:
                     table = table[cols_to_keep]
 

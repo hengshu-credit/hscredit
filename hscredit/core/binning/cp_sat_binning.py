@@ -21,14 +21,11 @@ import numpy as np
 import pandas as pd
 import warnings
 
-try:
-    from ortools.sat.python import cp_model
-    from ortools.sat.python.cp_model import IntVar
+from importlib.util import find_spec
+from ..._lazy import LazyModule
 
-    ORTOOLS_AVAILABLE = True
-except ImportError:
-    ORTOOLS_AVAILABLE = False
-    warnings.warn("OR-Tools 未安装，CPSATBinning 将不可用。" "请使用 pip install ortools 安装。", ImportWarning)
+cp_model = LazyModule("ortools.sat.python.cp_model")
+ORTOOLS_AVAILABLE = find_spec("ortools") is not None
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning
@@ -478,7 +475,7 @@ class CPSATBinning(BaseBinning):
     def _add_iv_objective_cp_sat(
         self,
         model: cp_model.CpModel,
-        x: List[IntVar],
+        x: List[cp_model.IntVar],
         candidates: np.ndarray,
         positions: np.ndarray,
         prefix_bad: np.ndarray,

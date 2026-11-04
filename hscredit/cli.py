@@ -16,6 +16,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     init_parser = subparsers.add_parser("init", help="初始化 hscredit 运行环境")
     init_parser.add_argument("--force", action="store_true", help="强制覆盖已安装的内置字体")
+    check_parser = subparsers.add_parser("check-environment", help="检查安装依赖和实际导入版本")
+    check_parser.add_argument("--strict", action="store_true", help="环境异常时返回非零退出码")
     return parser
 
 
@@ -38,6 +40,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"字体“{FONT_NAME}”{action}：{destination}")
         print("如果 Excel 已经打开，请重启 Excel 后使用该字体。")
         return 0
+
+    if args.command == "check-environment":
+        import json
+        from .utils.environment import check_environment
+
+        result = check_environment()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return int(args.strict and not result["正常"])
 
     parser.error(f"未知命令：{args.command}")
     return 2

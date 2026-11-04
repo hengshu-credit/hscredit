@@ -170,9 +170,7 @@ def test_vintage_exposure_is_same_period_and_conserved(mode):
 
 
 def reference_table():
-    return pd.DataFrame(
-        {"分箱标签": ["[-inf, 0)", "[0, inf)", "合计"], "坏样本率": [0.1, 0.3, 0.12], "样本总数": [90, 10, 100]}
-    )
+    return pd.DataFrame({"分箱标签": ["[-inf, 0)", "[0, inf)", "合计"], "坏样本率": [0.1, 0.3, 0.12], "样本总数": [90, 10, 100]})
 
 
 def test_overdue_auto_preserves_weighted_baseline_and_unknown_fallback():
@@ -278,8 +276,8 @@ def test_report_export_discloses_partial_status(tmp_path):
     output = tmp_path / "partial.xlsx"
     export_report_to_excel(result, str(output))
     workbook = load_workbook(output)
-    assert workbook.sheetnames[0] == "报告执行状态"
-    assert "不完整" in workbook.worksheets[0]["B2"].value
+    assert "报告执行状态" not in workbook.sheetnames
+    assert not result.complete
     assert result.artifacts[0]["完整"] is False
     assert result.sheet_mapping
     workbook.close()

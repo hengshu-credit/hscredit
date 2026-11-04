@@ -9,6 +9,7 @@ from sklearn.base import BaseEstimator
 
 from ....utils.serialization import ArtifactSerializableMixin
 from .._workflow import TrainingProcessMixin
+from .._contracts import validate_sample_weight
 
 if TYPE_CHECKING:
     import matplotlib
@@ -88,7 +89,7 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
         return probabilities, labels
 
     @abstractmethod
-    def fit(self, y_prob, y_true):
+    def fit(self, y_prob, y_true, sample_weight=None):
         """使用原始正类概率和 0/1 标签拟合校准映射。
 
         **参数补充**
@@ -101,6 +102,8 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
         >>> from hscredit import PlattCalibrator
         >>> calibrator = PlattCalibrator().fit(p_train, y_train)
         >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+
+        :param sample_weight: 校准拟合样本权重，非负有限且与标签等长；默认 None 为等权。
         """
 
     def evaluate(self, y_prob, y_true, *, metrics=None, sample_weight=None):
@@ -142,24 +145,32 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
         positive = np.clip(self.calibrate(y_prob), 0.0, 1.0)
         return np.column_stack([1.0 - positive, positive])
 
-    def compute_brier_score(self, y_true, y_prob) -> float:
+    def compute_brier_score(self, y_true, y_prob, sample_weight=None) -> float:
         """计算越小越好的 Brier 分数。"""
         probabilities, labels = self._validate_fit_data(y_prob, y_true)
-        return float(np.mean((labels - probabilities) ** 2))
+        weights = validate_sample_weight(sample_weight, len(labels))
+        return float(np.average((labels - probabilities) ** 2, weights=weights))
 
-    def compute_calibration_metrics(self, y_true, y_prob) -> Dict[str, float]:
+    def compute_calibration_metrics(self, y_true, y_prob, sample_weight=None) -> Dict[str, float]:
         """计算 Brier、ECE、MCE 和样本数。"""
         self._validate_configuration()
         probabilities, labels = self._validate_fit_data(y_prob, y_true)
+        sample_weight = validate_sample_weight(sample_weight, len(labels))
+        mass = np.ones(len(labels)) if sample_weight is None else sample_weight
         errors = []
         weights = []
         for in_bin in self._iter_bin_masks(probabilities):
-            proportion = float(in_bin.mean())
+            proportion = float(mass[in_bin].sum() / mass.sum())
             if proportion > 0:
-                errors.append(abs(float(probabilities[in_bin].mean()) - float(labels[in_bin].mean())))
+                errors.append(
+                    abs(
+                        float(np.average(probabilities[in_bin], weights=mass[in_bin]))
+                        - float(np.average(labels[in_bin], weights=mass[in_bin]))
+                    )
+                )
                 weights.append(proportion)
         return {
-            "brier_score": self.compute_brier_score(labels, probabilities),
+            "brier_score": self.compute_brier_score(labels, probabilities, sample_weight=sample_weight),
             "expected_calibration_error": float(np.dot(errors, weights)) if errors else 0.0,
             "max_calibration_error": max(errors, default=0.0),
             "n_samples": len(labels),

@@ -447,9 +447,7 @@ class LogisticRegression(
             if apply_positive_woe_coef:
                 self.ensure_positive_woe_coefficients()
             self._fit_probability_scorecard(X, y, sample_weight=sample_weight)
-            self.transformation_summary_.update(
-                {"WOE系数符号调整": bool(apply_positive_woe_coef), "预测空间": "坏样本概率"}
-            )
+            self.transformation_summary_.update({"WOE系数符号调整": bool(apply_positive_woe_coef), "预测空间": "坏样本概率"})
             record_eval_results(self, eval_set, metrics=eval_metric, eval_sample_weight=eval_sample_weight)
             return fitted_model
 
@@ -468,9 +466,7 @@ class LogisticRegression(
 
         self._compute_fitted_statistics(X, sample_weight=sample_weight, level=level)
         self._fit_probability_scorecard(X, y, sample_weight=sample_weight)
-        self.transformation_summary_.update(
-            {"WOE系数符号调整": bool(apply_positive_woe_coef), "预测空间": "坏样本概率"}
-        )
+        self.transformation_summary_.update({"WOE系数符号调整": bool(apply_positive_woe_coef), "预测空间": "坏样本概率"})
         record_eval_results(self, eval_set, metrics=eval_metric, eval_sample_weight=eval_sample_weight)
 
         return self
@@ -484,9 +480,7 @@ class LogisticRegression(
             or (sample_weight is not None and self.weight_type == "cost")
             or self.class_weight is not None
         ):
-            self.statistics_status_.update(
-                状态="不适用", 原因="当前仅支持二分类、无 class_weight 的频数权重统计；成本权重推断未实现"
-            )
+            self.statistics_status_.update(状态="不适用", 原因="当前仅支持二分类、无 class_weight 的频数权重统计；成本权重推断未实现")
             return
         n, p = X.shape
         width = p + int(self.fit_intercept)
@@ -507,11 +501,7 @@ class LogisticRegression(
             penalized = self.penalty not in (None, "none")
             self.statistics_status_.update(
                 状态="近似" if penalized else "完成",
-                原因=(
-                    "正则化估计下的未惩罚信息矩阵近似，不作严格显著性推断"
-                    if penalized
-                    else "非正则二分类频数权重信息矩阵"
-                ),
+                原因=("正则化估计下的未惩罚信息矩阵近似，不作严格显著性推断" if penalized else "非正则二分类频数权重信息矩阵"),
             )
         except (ValueError, TypeError, ArithmeticError, MemoryError, np.linalg.LinAlgError) as exc:
             for name in (
@@ -1113,6 +1103,7 @@ class LogisticRegression(
         metrics=None,
         sample_weight=None,
         score_direction=None,
+        handle_missing_target="drop",
         **kwargs,
     ):
         """生成风控建模报告（与  :meth:`BaseRiskModel.report`  接口一致）。
@@ -1138,7 +1129,7 @@ class LogisticRegression(
             callable 接收当前完整 DataFrame；Series 按索引对齐，数组和列表按行位置对应。
             None 且未指定逾期模式时沿用模型的目标配置。
         :type target: Optional[TargetInput]
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -1159,6 +1150,8 @@ class LogisticRegression(
         >>> report = model.model_report(datasets={'独立测试': (X_test, y_test)},
         ...                           metrics=['auc', 'ks'], verbose=False)
         >>> effects = report.get_metrics()
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         if overdue_operator is not None:
             validate_overdue_operator(overdue_operator)
@@ -1183,6 +1176,7 @@ class LogisticRegression(
             sample_weight=sample_weight,
             score_direction=score_direction,
             **kwargs,
+            handle_missing_target=handle_missing_target,
         )
 
     def tune(

@@ -787,9 +787,7 @@ def bin_plot(
         # barh 第一行在底部、最后一行在顶部，反转使视觉从上到下为升序
         feature_table = feature_table.iloc[::-1].reset_index(drop=True)
 
-    overall_bad_rate = float(
-        feature_table["坏样本率"].mul(feature_table["样本总数"]).sum() / feature_table["样本总数"].sum()
-    )
+    overall_bad_rate = float(feature_table["坏样本率"].mul(feature_table["样本总数"]).sum() / feature_table["样本总数"].sum())
     axis_theme = colors[0]
     line_color = BAD_RATE_COLOR
     reference_color = REFERENCE_COLOR
@@ -862,9 +860,7 @@ def bin_plot(
                 label="整体坏样本率",
             )
 
-        x_right = max(
-            ax2.get_xlim()[1], float(feature_table["坏样本率"].max()) * 1.15 if len(feature_table) > 0 else 0.1
-        )
+        x_right = max(ax2.get_xlim()[1], float(feature_table["坏样本率"].max()) * 1.15 if len(feature_table) > 0 else 0.1)
         ax2.set_xlim(right=x_right)
         x_offset = max((ax2.get_xlim()[1] - ax2.get_xlim()[0]) * 0.012, 0.003)
         for i, rate in enumerate(feature_table["坏样本率"]):
@@ -1687,9 +1683,7 @@ def psi_plot(
             )
             df_psi = exp_renamed.merge(act_renamed, on="分箱", how="outer").replace(np.nan, 0)
         df_psi[f"{labels[1]}% - {labels[0]}%"] = df_psi[f"{labels[1]}样本占比"] - df_psi[f"{labels[0]}样本占比"]
-        df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(
-            df_psi[f"{labels[1]}样本占比"] / df_psi[f"{labels[0]}样本占比"]
-        )
+        df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(df_psi[f"{labels[1]}样本占比"] / df_psi[f"{labels[0]}样本占比"])
         df_psi["分档PSI值"] = df_psi[f"{labels[1]}% - {labels[0]}%"] * df_psi[f"ln({labels[1]}% / {labels[0]}%)"]
         df_psi = df_psi.fillna(0).replace([np.inf, -np.inf], 0)
         df_psi["总体PSI值"] = df_psi["分档PSI值"].sum()
@@ -1727,9 +1721,7 @@ def psi_plot(
             y_combined = pd.Series(np.asarray(y).reshape(-1), name="y").reset_index(drop=True)
             expected_length = len(exp_values) + len(act_values)
             if len(y_combined) != expected_length:
-                raise ValueError(
-                    f"y 长度应等于 expected 与 actual 长度之和: " f"{len(y_combined)} != {expected_length}"
-                )
+                raise ValueError(f"y 长度应等于 expected 与 actual 长度之和: " f"{len(y_combined)} != {expected_length}")
             exp_y = y_combined.iloc[: len(exp_values)].to_numpy()
             act_y = y_combined.iloc[len(exp_values) :].to_numpy()
             _bad_exp_map = pd.DataFrame({"bin": exp_bins, "y": exp_y}).groupby("bin")["y"].mean().to_dict()
@@ -1773,9 +1765,7 @@ def psi_plot(
                 df_psi[f"{lbl}坏样本率"] = 0.0
         # 补充 result=True 需要的差值列
         df_psi[f"{labels[1]}% - {labels[0]}%"] = df_psi[f"{labels[1]}样本占比"] - df_psi[f"{labels[0]}样本占比"]
-        df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(
-            df_psi[f"{labels[1]}样本占比"] / df_psi[f"{labels[0]}样本占比"]
-        )
+        df_psi[f"ln({labels[1]}% / {labels[0]}%)"] = np.log(df_psi[f"{labels[1]}样本占比"] / df_psi[f"{labels[0]}样本占比"])
         df_psi["总体PSI值"] = df_psi["分档PSI值"].sum()
         df_psi["指标名称"] = desc
         df_psi = df_psi.drop(columns=["_bin_idx"])
@@ -1813,12 +1803,8 @@ def psi_plot(
         ax2 = None
         if show_bad_rate:
             ax2 = ax1.twinx()
-            ax2.plot(
-                x, df_psi[f"{labels[0]}坏样本率"], color=colors[0], label=f"{labels[0]}坏样本率", linestyle=(5, (10, 3))
-            )
-            ax2.plot(
-                x, df_psi[f"{labels[1]}坏样本率"], color=colors[1], label=f"{labels[1]}坏样本率", linestyle=(5, (10, 3))
-            )
+            ax2.plot(x, df_psi[f"{labels[0]}坏样本率"], color=colors[0], label=f"{labels[0]}坏样本率", linestyle=(5, (10, 3)))
+            ax2.plot(x, df_psi[f"{labels[1]}坏样本率"], color=colors[1], label=f"{labels[1]}坏样本率", linestyle=(5, (10, 3)))
             ax2.scatter(x, df_psi[f"{labels[0]}坏样本率"], marker=".")
             ax2.scatter(x, df_psi[f"{labels[1]}坏样本率"], marker=".")
             ax2.set_ylabel("坏样本率")
@@ -1829,8 +1815,7 @@ def psi_plot(
             title_artist = fig.suptitle(title)
         else:
             title_artist = fig.suptitle(
-                f"{desc + ' ' if desc else ''}{labels[0]} vs {labels[1]} "
-                f"群体稳定性指数(PSI): {df_psi['分档PSI值'].sum():.4f}"
+                f"{desc + ' ' if desc else ''}{labels[0]} vs {labels[1]} " f"群体稳定性指数(PSI): {df_psi['分档PSI值'].sum():.4f}"
             )
 
         handles1, labels1 = ax1.get_legend_handles_labels()
@@ -1973,6 +1958,7 @@ def distribution_plot(
     *,
     overdue_operator: str = ">=",
     dpi: int = 240,
+    handle_missing_target="drop",
 ):
     """样本时间分布图.
 
@@ -2017,7 +2003,7 @@ def distribution_plot(
     ...     overdue=['dpd7', 'dpd15', 'dpd30'], dpds=[1, 1, 1]
     ... )
 
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -2027,13 +2013,23 @@ def distribution_plot(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     if colors is None:
         colors = DEFAULT_COLORS
 
     df, targets = bind_targets(
-        data, target, overdue, dpds, del_grey, overdue_operator, default_target="target", paired=True
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        default_target="target",
+        paired=True,
+        handle_missing_target=handle_missing_target,
     )
     target = targets.columns[0]
 
@@ -3368,6 +3364,7 @@ def bin_overdues_plot(
     overdue_operator: str = ">=",
     dpi: int = 240,
     bin_params=None,
+    handle_missing_target="drop",
     **kwargs,
 ) -> plt.Figure:
     """绘制多个逾期天数的分箱图（横向展示）.
@@ -3466,7 +3463,7 @@ def bin_overdues_plot(
     ... )
     >>> fig = bin_overdues_plot(bin_table=bin_table)
 
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -3476,6 +3473,8 @@ def bin_overdues_plot(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     reject_legacy_target_keywords(kwargs)
     validate_overdue_operator(overdue_operator)
@@ -3569,7 +3568,16 @@ def bin_overdues_plot(
     # 原始数据模式
     if feature is None:
         raise ValueError("原始数据模式需要提供 feature 参数")
-    data, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, paired=True)
+    data, targets = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        paired=True,
+        handle_missing_target=handle_missing_target,
+    )
     n_plots = len(targets)
 
     # 计算行列数
@@ -4415,9 +4423,7 @@ def bin_2d_plot(
     if title is None:
         title = f"{feat_x} × {feat_y} 二维交叉分箱分析"
     fig.suptitle(title, fontsize=fontsize + 6, fontweight="bold", y=0.965)
-    ax_improve.set_xlabel(
-        f"特征2：{feat_y}", fontsize=fontsize + 3, color=axis_color, fontweight="semibold", labelpad=12
-    )
+    ax_improve.set_xlabel(f"特征2：{feat_y}", fontsize=fontsize + 3, color=axis_color, fontweight="semibold", labelpad=12)
     # 使用轴标签的自动布局能力，将特征名称放到刻度标签外侧，避免固定位置造成重叠
     ax_prop.set_ylabel(f"特征1：{feat_x}", fontsize=fontsize + 3, color=axis_color, fontweight="semibold", labelpad=12)
 

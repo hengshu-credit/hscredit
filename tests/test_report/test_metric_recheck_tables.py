@@ -40,7 +40,11 @@ def test_rule_report_rejects_invalid_amounts(invalid):
 
 def test_rule_amount_validation_uses_each_targets_effective_population():
     data = pd.DataFrame({"x": [0, 0, 1, 1], "标签": [0, -1, 1, 0], "金额": [1.0, np.nan, 3.0, 4.0]})
-    table = Rule("x == 1").report(data, target="标签", amount="金额", del_grey=True, margins=True)
+    with pytest.raises(ValueError, match="金额"):
+        Rule("x == 1").report(data, target="标签", amount="金额", del_grey=True, margins=True)
+    table = Rule("x == 1").report(
+        data.assign(金额=data["金额"].fillna(0)), target="标签", amount="金额", del_grey=True, margins=True
+    )
     assert table.loc[table["分箱"] == "合计", "样本总数"].iloc[0] == 8
     assert pd.isna(data.loc[1, "金额"])
 

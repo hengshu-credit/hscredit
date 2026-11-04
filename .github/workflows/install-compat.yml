@@ -1,0 +1,79 @@
+name: 基础安装与可选依赖隔离验证
+
+on:
+  push:
+    paths: ["hscredit/**", "pyproject.toml", ".github/workflows/install-compat.yml"]
+  pull_request:
+    paths: ["hscredit/**", "pyproject.toml", ".github/workflows/install-compat.yml"]
+  workflow_dispatch:
+
+jobs:
+  installed-wheel:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.14"]
+        extra: ["", "boost", "tune"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 构建并安装 wheel
+        env:
+          EXTRA: ${{ matrix.extra }}
+        run: |
+          python -m pip install build pytest
+          python -m build --wheel
+          python - <<'PY'
+          import os, pathlib, subprocess, sys
+          wheel = str(next(pathlib.Path('dist').glob('*.whl')).resolve())
+          extra = os.environ['EXTRA']
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install', wheel + ('[' + extra + ']' if extra else '')])
+          PY
+      - name: 仓库外验证轻量入口及部署往返
+        env:
+          HSCREDIT_LIGHT_IMPORT: "1"
+          EXTRA: ${{ matrix.extra }}
+        run: |
+          cd /tmp
+          python - <<'PY'
+          import sys, os, tempfile, numpy as np, pandas as pd
+          import hscredit as h
+          assert h.auc([0, 1], [.1, .9]) == 1
+          assert 'matplotlib.pyplot' not in sys.modules and 'ortools' not in sys.modules
+          X = pd.DataFrame({'x': np.arange(40)})
+          model = h.LogisticRegression(calculate_stats=False).fit(X, np.arange(40) % 2)
+          path = model.save_deployment(tempfile.mkdtemp(), validation_data=X)
+          np.testing.assert_allclose(model.predict_proba(X), type(model).load_deployment(path).predict_proba(X))
+          if os.environ.get('EXTRA') == 'boost':
+              fitted = h.LightGBM(n_estimators=2, n_jobs=1).fit(X, np.arange(40) % 2)
+              assert fitted.predict_proba(X).shape == (40, 2)
+          elif os.environ.get('EXTRA') == 'tune':
+              tuner = h.ModelTuner(h.RandomForest(n_estimators=2, n_jobs=1), search_space={'max_depth': [2, 3]}, n_jobs=1)
+              tuner.fit(X, np.arange(40) % 2, n_trials=1, show_progress_bar=False)
+              assert tuner.get_best_model().predict_proba(X).shape == (40, 2)
+          PY
+
+  legacy-lightgbm:
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.9"
+      - name: 安装声明支持的旧版组合
+        run: python -m pip install -e ".[boost,tune,dev]" "numpy<2" "lightgbm==3.3.5" "scikit-learn==1.6.1"
+      - name: 验证旧版目标函数与报告链路
+        run: >-
+          python -m pytest
+          tests/test_dependency_compat.py::test_lightgbm_custom_objective_respects_quiet_and_verbose
+          tests/test_models/test_loss_framework_protocols.py::test_native_lightgbm_loss_matches_offline
+          tests/test_models/test_loss_metric_integration.py::test_lightgbm_accepts_mixed_metrics_and_selects_object_by_name
+          'tests/test_models/test_shared_model_semantics.py::test_custom_loss_weighted_training_matches_native_weighted_objective[LightGBM]'
+          'tests/test_models/test_all_model_workflow.py::test_dataframe_search_to_strict_excel_report[LightGBM]'
+          -q --tb=short

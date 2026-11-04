@@ -458,9 +458,22 @@ def _auto_feature_target_maps(
     dpds: Optional[List[Union[int, float]]] = None,
     del_grey: bool = False,
     overdue_operator: str = ">",
+    *,
+    handle_missing_target="drop",
 ) -> Tuple[str, List[str], Dict[str, str], Dict[str, np.ndarray]]:
-    """生成自动特征分析使用的目标列、展示标签和标签数组."""
-    frame, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
+    """生成自动特征分析使用的目标列、展示标签和标签数组.
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+    """
+    frame, targets = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        default_target="target",
+        handle_missing_target=handle_missing_target,
+    )
     names = targets.names("plain")
     return (
         targets.names("space")[0],
@@ -728,6 +741,7 @@ def feature_binning_summary(
     *,
     overdue_operator: str = ">",
     features=None,
+    handle_missing_target="drop",
     **kwargs,
 ) -> Tuple[Dict[str, Dict[str, pd.DataFrame]], pd.DataFrame]:
     """对一个或多个字段执行多种分箱，并生成跨方法摘要。
@@ -807,7 +821,7 @@ def feature_binning_summary(
         这会导致评分卡中对应分箱的分数异常。
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
 
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -883,10 +897,20 @@ def feature_binning_summary(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
-    data, target = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator)
+    data, target = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     overdue, dpds = None, None
     features = [feature] if isinstance(feature, str) else list(feature)
     if not features:
@@ -1105,6 +1129,7 @@ def feature_group_binning_summary(
     *,
     overdue_operator: str = ">",
     features=None,
+    handle_missing_target="drop",
     **kwargs,
 ) -> Tuple[Dict[str, Dict[str, Dict[str, pd.DataFrame]]], pd.DataFrame]:
     """统计日期周期或类别分组下的特征分箱效果。
@@ -1156,7 +1181,7 @@ def feature_group_binning_summary(
         这会导致评分卡中对应分箱的分数异常。
         设置此参数可将WOE限制在[-woe_clip, woe_clip]范围内。
 
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -1260,10 +1285,20 @@ def feature_group_binning_summary(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
-    data, target = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator)
+    data, target = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     overdue, dpds = None, None
     if not isinstance(data, pd.DataFrame) or data.empty:
         raise ValueError("data 必须是非空的 DataFrame")
@@ -1391,8 +1426,19 @@ def feature_group_binning_summary(
     return binning_tables, binning_summary
 
 
-def _finalize_bin_table(table, *, amount, round_digits, return_cols, targets, del_grey):
-    """合计完成后再选择字段与展示精度，并保留标签/指标口径。"""
+def _finalize_bin_table(
+    table,
+    *,
+    amount,
+    round_digits,
+    return_cols,
+    targets,
+    del_grey,
+    handle_missing_target="drop",
+):
+    """合计完成后再选择字段与展示精度，并保留标签/指标口径。
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+    """
     from ..core.metrics._semantics import format_bin_stats, metric_metadata
 
     target_type = "amount_weighted" if amount is not None else "binary"
@@ -1401,12 +1447,11 @@ def _finalize_bin_table(table, *, amount, round_digits, return_cols, targets, de
         "模式": targets.mode,
         "标签": targets.names(),
         "逾期比较符": targets.operator if targets.mode == "overdue" else None,
-        "剔灰": bool(del_grey),
-        "缺失处理": (
-            "逾期缺失不满足比较条件，负数按比较符判定"
-            if targets.mode == "overdue"
-            else "非0/1及缺失值按当前剔灰配置删除或记为0"
-        ),
+        "剔灰": targets.del_grey,
+        "缺失处理": {"drop": "剔除缺失标签", "positive": "缺失标签归为正样本1", "negative": "缺失标签归为负样本0", "raise": "缺失标签报错"}[
+            targets.handle_missing_target
+        ]
+        + ("；负数按比较符判定" if targets.mode == "overdue" else "；灰样本按 del_grey 独立处理"),
     }
     table = format_bin_stats(table, target_type=target_type, round_digits=round_digits)
     if return_cols is not None:
@@ -1642,6 +1687,7 @@ def feature_bin_stats(
     round_digits: bool = True,
     features=None,
     bin_params=None,
+    handle_missing_target="drop",
     **kwargs,
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
     """特征分箱统计表，汇总统计特征每个分箱的各项指标信息.
@@ -1745,7 +1791,7 @@ def feature_bin_stats(
         与return_rules同时启用时返回 (统计表, 规则字典, 分箱器字典)
 
     :type return_binner: bool
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -1825,10 +1871,20 @@ def feature_bin_stats(
     :type overdue_operator: str
     :param round_digits: 默认 True，合计完成后才按展示精度舍入；False 返回原始计算精度。
     :type round_digits: bool
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
-    data, target = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator)
+    data, target = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     overdue, dpds = None, None
     del_grey = target.needs_filtering(data) or (
         del_grey and (target.mode == "target" or target.operator in (">", ">="))
@@ -1914,6 +1970,7 @@ def feature_bin_stats(
             return_cols=return_cols,
             targets=target,
             del_grey=del_grey,
+            handle_missing_target=handle_missing_target,
         )
         if return_rules and return_binner:
             return final_table, rules_by_feature, binners_by_feature
@@ -2166,6 +2223,7 @@ def feature_bin_stats(
         return_cols=return_cols,
         targets=target,
         del_grey=del_grey,
+        handle_missing_target=handle_missing_target,
     )
     if return_rules and return_binner:
         return final_table, all_feature_rules, all_feature_binners
@@ -2204,6 +2262,7 @@ def feature_bin_stats_2d(
     x1=None,
     x2=None,
     bin_params=None,
+    handle_missing_target="drop",
     **kwargs,
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, OptimalBinning2D]]:
     """生成两个特征的联合二维分箱统计表.
@@ -2258,7 +2317,7 @@ def feature_bin_stats_2d(
     :type max_n_bins: int
     :param min_bin_size: 默认值为 ``0.02`` 。二维普通分箱最小样本数或占比
     :type min_bin_size: Union[float, int]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -2293,10 +2352,20 @@ def feature_bin_stats_2d(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
-    data, target = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator)
+    data, target = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     overdue, dpds = None, None
     del_grey = target.needs_filtering(data) or (
         del_grey and (target.mode == "target" or target.operator in (">", ">="))
@@ -2388,6 +2457,7 @@ def feature_bin_stats_2d(
             return_cols=return_cols,
             targets=target,
             del_grey=del_grey,
+            handle_missing_target=handle_missing_target,
         )
         return final_table, fitted_binner
     return _finalize_bin_table(
@@ -2397,6 +2467,7 @@ def feature_bin_stats_2d(
         return_cols=return_cols,
         targets=target,
         del_grey=del_grey,
+        handle_missing_target=handle_missing_target,
     )
 
 
@@ -2432,6 +2503,7 @@ def benchmark_binning_methods(
     target: Optional[TargetInput] = None,
     overdue_operator: str = ">",
     bin_params: Optional[Dict[str, Any]] = None,
+    handle_missing_target="drop",
     **kwargs,
 ) -> pd.DataFrame:
     """逐方法对比 hscredit 内部分箱效果。
@@ -2513,7 +2585,7 @@ def benchmark_binning_methods(
     :param kwargs: 透传给 ``OptimalBinning`` 的方法专属参数
     :return: 使用中文指标列名的分箱方法对比表
 
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -2523,11 +2595,21 @@ def benchmark_binning_methods(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     reject_legacy_target_keywords(kwargs)
     if target is None and overdue is None and dpds is None:
         overdue, dpds = "MOB1", [3, 0]
-    data, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator)
+    data, targets = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     validate_overdue_operator(overdue_operator)
     column_names = {
         "method": "分箱方法",
@@ -2546,7 +2628,6 @@ def benchmark_binning_methods(
         "splits": "切分点",
         "lift_seq": "LIFT序列",
         "bad_rate_seq": "坏样本率序列",
-        "error": "错误信息",
     }
     internal_columns = list(column_names)
 
@@ -2660,7 +2741,7 @@ def benchmark_binning_methods(
         ),
     )
 
-    result = pd.DataFrame(rows)
+    result = pd.DataFrame([row for row in rows if not row.get("error")])
     if result.empty:
         long_table = pd.DataFrame(columns=list(column_names.values()))
         if long_format:
@@ -2672,10 +2753,9 @@ def benchmark_binning_methods(
     for column in internal_columns:
         if column not in result.columns:
             result[column] = np.nan
-    result["_success"] = result["error"].isna()
     result = result.sort_values(
-        ["overdue", "dpd", "_success", "monotonic", "edge_gap", "head_lift"],
-        ascending=[True, True, False, False, False, False],
+        ["overdue", "dpd", "monotonic", "edge_gap", "head_lift"],
+        ascending=[True, True, False, False, False],
         na_position="last",
     )
     long_table = (
@@ -2786,12 +2866,23 @@ def _prepare_efficiency_dataset(
     dpds=None,
     del_grey: bool = False,
     overdue_operator: str = ">",
+    *,
+    handle_missing_target="drop",
 ) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
-    """为效率分析准备目标变量和可绘图数据。"""
+    """为效率分析准备目标变量和可绘图数据。
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+    """
     if feature not in data:
         raise ValueError(f"数据中不存在特征列 '{feature}'")
     working_data, targets = bind_targets(
-        data, target, overdue, dpds, del_grey, overdue_operator, default_target="target"
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        default_target="target",
+        handle_missing_target=handle_missing_target,
     )
     if len(targets) != 1:
         raise ValueError("单个效率图需要一个标签")
@@ -2844,6 +2935,7 @@ def feature_efficiency_analysis(
     parallel_config: Optional[Dict[str, Any]] = None,
     *,
     overdue_operator: str = ">",
+    handle_missing_target="drop",
 ) -> Dict[str, Any]:
     """特征效率分析：对比手工分箱与自动分箱效果，并输出趋势图。
 
@@ -2912,7 +3004,7 @@ def feature_efficiency_analysis(
     :type prebinning: Optional[Union[str, BaseBinning, Dict]]
     :param prebinning_params: 预分箱参数，默认 None
     :type prebinning_params: Optional[Dict[str, Any]]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -2971,10 +3063,21 @@ def feature_efficiency_analysis(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     call_parameters = dict(locals())
-    data, target = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
+    data, target = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        default_target="target",
+        handle_missing_target=handle_missing_target,
+    )
     overdue, dpds = None, None
     if len(target) > 1:
         per_target = {}
@@ -3040,6 +3143,7 @@ def feature_efficiency_analysis(
         dpds=dpds,
         del_grey=del_grey,
         overdue_operator=overdue_operator,
+        handle_missing_target=handle_missing_target,
     )
 
     common_bin_params = dict(
@@ -3053,6 +3157,7 @@ def feature_efficiency_analysis(
         margins=margins,
         amount=amount,
         desc=feature_desc,
+        handle_missing_target=handle_missing_target,
     )
     target_params = {"target": target} if overdue is None else {"target": target, "overdue": overdue, "dpds": dpds}
 
@@ -3264,6 +3369,7 @@ def auto_feature_analysis(
     overdue_operator: Optional[str] = None,
     mode: Optional[str] = None,
     return_result: bool = False,
+    handle_missing_target="drop",
 ):
     """自动特征分析.
 
@@ -3325,7 +3431,7 @@ def auto_feature_analysis(
     :param amount: 默认值为 ``None`` 。放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
     :param image_table_gap_rows: 默认值为 ``None`` 。图片区与分箱表之间的额外空行数
     :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"`` ；支持颜色字符串、色阶列表或按列配置的字典
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 None 表示沿用 ``bin_params`` 配置，未配置时为 False；显式值优先。
@@ -3358,6 +3464,8 @@ def auto_feature_analysis(
     ...     excel_writer="特征分析.xlsx", pictures=["bin"], n_jobs=1,
     ...     mode="strict", return_result=True,
     ... )
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     parameters = dict(locals())
     parameters.pop("mode")
@@ -3420,6 +3528,7 @@ def _auto_feature_analysis_impl(
     *,
     overdue_operator: Optional[str] = None,
     _report_result=None,
+    handle_missing_target="drop",
 ):
     """自动特征分析.
 
@@ -3468,6 +3577,8 @@ def _auto_feature_analysis_impl(
         ``del_grey=True`` 时， ``>`` 剔除 ``(0, dpd]`` ， ``>=`` 剔除 ``(0, dpd)`` ；
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
         默认 None 时沿用 ``bin_params`` 的比较符；显式参数优先。
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
 
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
@@ -3503,7 +3614,14 @@ def _auto_feature_analysis_impl(
     init_setting()
 
     data, targets = bind_targets(
-        data, target, overdue, dpds, del_grey_enabled, overdue_operator, default_target="target"
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey_enabled,
+        overdue_operator,
+        default_target="target",
+        handle_missing_target=handle_missing_target,
     )
     target = targets.columns[0]
     overdue, dpds = None, None
@@ -3817,6 +3935,7 @@ def _auto_feature_analysis_impl(
             freq=freq,
             target=targets.single(),
             save=os.path.join(output_dir, f"sample_time_distribution{suffix}.png"),
+            handle_missing_target=handle_missing_target,
         )
         _safe_close_plot_result(distribution_figure)
         time_title_columns_len = (
@@ -3929,7 +4048,11 @@ def _auto_feature_analysis_impl(
         actual_target = feature_result["actual_target"]
         if temp is not None and overdue:
             temp[actual_target] = make_overdue_target(
-                temp[overdue[0]], dpds[0], bin_params.get("del_grey", False), overdue_operator
+                temp[overdue[0]],
+                dpds[0],
+                bin_params.get("del_grey", False),
+                overdue_operator,
+                handle_missing_target=handle_missing_target,
             )
 
         if sample_table is not None:
@@ -4240,25 +4363,11 @@ def _auto_feature_analysis_impl(
     if _report_result is not None:
         _report_result.success("报告渲染")
         _report_result.ensure_publishable()
-        status_name = "报告执行状态"
-        suffix_number = 2
-        while status_name in writer.workbook.sheetnames:
-            status_name = f"报告执行状态_{suffix_number}"
-            suffix_number += 1
-        status_sheet = writer.get_sheet_by_name(status_name)
-        writer.move_sheet(status_sheet, index=0)
-        writer.insert_value2sheet(
-            status_sheet, "B2", "报告完整" if _report_result.complete else "报告不完整：请检查失败章节", style="header"
-        )
-        statuses = _report_result.status_table()
-        writer.insert_df2sheet(status_sheet, statuses, "B4", index=False, auto_width=True)
     if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet, Worksheet):
         if _report_result is not None:
             _report_result.current_section = "工作簿发布"
         writer.save(excel_writer)
         if _report_result is not None:
-            _report_result.artifacts.append(
-                {"类型": "Excel", "路径": str(excel_writer), "完整": _report_result.complete}
-            )
+            _report_result.artifacts.append({"类型": "Excel", "路径": str(excel_writer), "完整": _report_result.complete})
 
     return end_row, end_col

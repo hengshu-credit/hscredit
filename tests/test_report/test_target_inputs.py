@@ -71,7 +71,7 @@ def test_all_single_input_forms_share_grey_semantics(frame, kind, grey):
     table = feature_bin_stats(
         frame, "score", target=inputs[kind], del_grey=grey, rules=[3.5, 7.5], margins=True, n_jobs=1
     )
-    valid = frame.target.isin([0, 1]) if grey else pd.Series(True, index=frame.index)
+    valid = frame.target.isin([0, 1]) if grey else frame.target.notna()
     assert table.iloc[-1]["样本总数"] == valid.sum()
     assert table.iloc[-1]["坏样本数"] == (valid & frame.target.eq(1)).sum()
     assert_frame_equal(frame, original)
@@ -148,7 +148,7 @@ def test_multi_labels_keep_names_counts_amounts_and_shared_bins(frame, amount, g
             frame, "score", target=raw, del_grey=grey, amount=amount, rules=[3.5, 7.5], margins=True, n_jobs=1
         )
         total = wide.iloc[-1]
-        count_group = name if grey else "分箱详情"
+        count_group = name  # 当前多标签数据含缺失，分母必须按各标签独立统计。
         assert total[(count_group, "样本总数")] == single.iloc[-1]["样本总数"]
         assert total[(name, "坏样本数")] == single.iloc[-1]["坏样本数"]
     _, summary = feature_binning_summary(frame, "score", target=targets, del_grey=grey, methods="quantile", n_jobs=1)
@@ -432,7 +432,7 @@ def test_benchmark_efficiency_and_strategy_preserve_target_definitions(frame, tm
     targets = definitions(frame)
     benchmark = benchmark_binning_methods(frame, "score", target=targets, del_grey=True, methods=["quantile"], n_jobs=1)
     assert set(benchmark.columns.get_level_values(0)) == {"分箱详情", *targets}
-    assert all(pd.isna(benchmark.iloc[0][(name, "错误信息")]) for name in targets)
+    assert "错误信息" not in benchmark.columns.get_level_values(-1)
     results = feature_efficiency_analysis(
         frame,
         "score",

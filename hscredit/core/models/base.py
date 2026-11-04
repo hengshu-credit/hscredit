@@ -631,7 +631,9 @@ class BaseRiskModel(
         requested_metrics = (
             list(self.DEFAULT_METRICS)
             if metrics is None
-            else [metrics] if isinstance(metrics, (str, BaseMetric)) else list(metrics)
+            else [metrics]
+            if isinstance(metrics, (str, BaseMetric))
+            else list(metrics)
         )
         probabilities = np.asarray(self.predict_proba(X), dtype=float)
         classes = np.asarray(getattr(self, "classes_", []))
@@ -715,6 +717,7 @@ class BaseRiskModel(
         metrics=None,
         sample_weight=None,
         score_direction=None,
+        handle_missing_target="drop",
         **kwargs,
     ) -> "ModelReport":
         """生成风控建模报告（支持多数据集/overdue/dpds）.
@@ -768,7 +771,7 @@ class BaseRiskModel(
         :param group: 默认值为 ``None`` 。分组字段
         :type group: Optional[str]
         :param kwargs: 传递给 auto_model_report 的其他参数
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -788,6 +791,8 @@ class BaseRiskModel(
         >>> report = model.model_report(datasets={'独立测试': (X_test, y_test)},
         ...                           metrics=['auc', 'ks'], verbose=False)
         >>> effects = report.get_metrics()
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         if overdue_operator is not None:
             validate_overdue_operator(overdue_operator)
@@ -817,6 +822,7 @@ class BaseRiskModel(
             sample_weight=sample_weight,
             score_direction=score_direction,
             **kwargs,
+            handle_missing_target=handle_missing_target,
         )
 
     # ==================== 模型导出/导入 ====================

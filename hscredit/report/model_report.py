@@ -19,11 +19,12 @@ from hscredit.utils.arguments import analysis_inputs, report_inputs, normalize_f
 from ..utils.targets import TargetInput, bind_targets, validate_target_mode, reject_legacy_target_keywords
 
 import logging
+import copy
 import inspect
 import re
 import warnings
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date as calendar_date
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -38,8 +39,9 @@ from ..utils.input_utils import normalize_dpd_values
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
 from ._model_context import ModelContextMixin, report_model_current, has_bound_sample_params, _model_stamp
 from .result import ReportResult
+from ._resources import ReportResourceMixin
 from .model_explanation import build_model_explanation, explanation_to_dict, normalize_explain_config
-from ..exceptions import SerializationError, ValidationError
+from ..exceptions import SerializationError, ValidationError, ParallelExecutionError
 from ..utils.parallel import (
     _ACTIVE_BUDGET,
     ParallelBudget,
@@ -141,6 +143,9 @@ def _normalize_feature_names(features) -> Optional[List[str]]:
 
 
 def _ensure_dataframe(X, features: Optional[List[str]] = None) -> pd.DataFrame:
+    from ..utils.arguments import validate_source_completion
+
+    validate_source_completion(X)
     if isinstance(X, pd.DataFrame):
         out = X.copy()
         # numpy 字符串标量（np.str_）列名统一为 Python str，保证下游比较/索引一致
@@ -230,7 +235,18 @@ def _prepare_report_dataset(task):
 
 def _normalize_prediction(model, result, expected_length: int, probability: bool) -> np.ndarray:
     """把唯一方法结果规整为与数据集等长的一维有限数组。"""
-    values = np.asarray(result, dtype=float)
+    try:
+        raw_values = np.asarray(result)
+        values = np.asarray(raw_values, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("预测结果必须是数值数组") from exc
+    if probability:
+        if np.any((values < 0) | (values > 1)):
+            raise ValidationError("概率预测必须位于 [0, 1]，原始分数请使用独立预测方法")
+        if values.ndim == 2 and values.shape[1] > 1:
+            precision = np.finfo(raw_values.dtype).eps if np.issubdtype(raw_values.dtype, np.floating) else 0.0
+            if values.shape[1] != 2 or not np.allclose(values.sum(axis=1), 1.0, rtol=max(1e-6, precision), atol=1e-8):
+                raise ValidationError("二分类概率必须为两列且每行概率和为 1")
     if probability and values.ndim == 2 and values.shape[1] >= 2:
         classes = getattr(model, "classes_", None)
         positive_index = 1
@@ -247,7 +263,8 @@ def _normalize_prediction(model, result, expected_length: int, probability: bool
         raise ValidationError(f"method 返回值长度 {len(values)} 与数据集长度 {expected_length} 不一致")
     if not np.isfinite(values).all():
         raise ValidationError("method 返回值必须全部为有限数值")
-    return values
+    # 固定本数据集的预测快照，并释放两列概率或复用缓冲区的底层引用。
+    return values.copy()
 
 
 def _invoke_named_prediction(model, X, method: str, prediction_kwargs=None) -> np.ndarray:
@@ -266,6 +283,16 @@ def _build_report_dataset(task):
     key, label, X, y, y_dict, X_for_pred = prepared
     prediction = _invoke_named_prediction(base_task[0], X_for_pred, method, prediction_kwargs)
     return ReportDataset(name=key, label=label, X=X, y=y, prediction=prediction, y_dict=y_dict)
+
+
+def _execute_report_predictions(tasks, **options):
+    """保留数据集上下文，同时使概率/字段校验在串并行入口保持同一异常契约。"""
+    try:
+        return parallel_execute(_build_report_dataset, tasks, **options)
+    except ParallelExecutionError as exc:
+        if isinstance(exc.__cause__, ValidationError):
+            raise ValidationError(str(exc)) from exc.__cause__
+        raise
 
 
 def _binary_metric_worker(task) -> Tuple[float, float, int, float]:
@@ -481,7 +508,7 @@ class ReportDataset:
 # ---------------------------------------------------------------------------
 
 
-class ModelReport(ModelContextMixin):
+class ModelReport(ModelContextMixin, ReportResourceMixin):
     """面向报表输出的快速模型报告封装.
 
     参考风控建模标准报告模板，对已训练模型一站式生成多 Sheet 结构的
@@ -525,7 +552,7 @@ class ModelReport(ModelContextMixin):
     :param metrics: 默认值为 ``None`` 。get_metric/ loss.metric() 等统一指标对象或名称，附加到性能表与Excel
         这些指标需要 prediction_method='predict_proba' 的概率输入。
 
-    :param sample_weight: 默认值为 ``None`` 。指标权重，可传列名、{数据集名称: 权重} 或单数据集的一维权重
+    :param sample_weight: 默认值为 ``None`` 。加权性能对照的显式权重，主表仍按实际订单统计；可传列名、{数据集名称: 权重} 或单数据集的一维权重
 
     :param model: 已训练好的模型，需实现 ``predict`` / ``predict_proba``
     :param datasets: 默认值为 ``None`` 。数据集字典或列表（推荐），如 ``{'train': df, 'test': df}``
@@ -546,7 +573,7 @@ class ModelReport(ModelContextMixin):
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
     :param overdue_operator: 比较符（>、>=、<、<=）；独立逾期参数，缺省时使用 >。
     :type overdue_operator: Optional[str]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -610,6 +637,11 @@ class ModelReport(ModelContextMixin):
         score_direction: Optional[str] = None,
         metrics=None,
         sample_weight=None,
+        show_weighted_metrics=False,
+        binning_reference="train",
+        rules=None,
+        cache_policy="full",
+        handle_missing_target="drop",
         **kwargs,
     ):
         """初始化模型报告.
@@ -674,7 +706,7 @@ class ModelReport(ModelContextMixin):
         :param overdue_operator: 比较符（>、>=、<、<=）；None 时默认 >。
             target 模式不解释 overdue_operator。
 
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -685,11 +717,18 @@ class ModelReport(ModelContextMixin):
         :param metrics: get_metric/ loss.metric() 等统一指标对象或名称，附加到性能表与Excel。
             这些指标需要 prediction_method='predict_proba' 的概率输入。
 
-        :param sample_weight: 指标权重，可传列名、{数据集名称: 权重} 或单数据集的一维权重。
+        :param sample_weight: 加权性能对照的显式权重，主表仍按实际订单统计；可传列名、{数据集名称: 权重} 或单数据集的一维权重。
         :param n_jobs: 并行工作数；-1 自动保留 CPU，None 使用兼容串行模式
         :param parallel_backend: joblib 后端，如 ``threading`` 或 ``loky``
         :param parallel_config: joblib 其他并行配置，保留调用者字典引用
         :param kwargs: 透传给 callable 的额外同名参数
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
+
+        :param show_weighted_metrics: 是否在实际订单指标右侧并列显示显式 sample_weight 的加权性能，默认 False。
+        :param binning_reference: 分箱基准：train（默认）复用训练规则，independent 为各数据集独立拟合。
+        :param cache_policy: 派生缓存保留策略：full（默认）保留，none 在一次公开操作结束后释放。
+        :param rules: 指定分箱规则；列表用于评分，字典按特征名指定，score 或 __score__ 指定评分规则。默认 None。
         """
         if overdue_operator is not None:
             validate_overdue_operator(overdue_operator)
@@ -703,6 +742,7 @@ class ModelReport(ModelContextMixin):
             ("feature_names", "features"),
             ("method", "prediction_method"),
             ("method_kwargs", "prediction_kwargs"),
+            ("user_splits", "rules"),
         ):
             if old in kwargs:
                 raise TypeError(f"{old} 参数已移除，请使用 {new}")
@@ -739,6 +779,21 @@ class ModelReport(ModelContextMixin):
         self.prediction_method = prediction_method
         self.prediction_kwargs = dict(prediction_kwargs or {})
         self._init_model_context(score_direction, metrics, sample_weight)
+        if not isinstance(show_weighted_metrics, (bool, np.bool_)):
+            raise ValidationError("show_weighted_metrics 必须为布尔值")
+        if show_weighted_metrics and sample_weight is None:
+            raise ValidationError("加权性能对照需要显式提供 sample_weight")
+        if binning_reference not in ("train", "independent"):
+            raise ValidationError("binning_reference 必须为 'train' 或 'independent'")
+        self.show_weighted_metrics = bool(show_weighted_metrics)
+        if cache_policy not in ("full", "none"):
+            raise ValidationError("cache_policy 必须为 'full' 或 'none'")
+        self.cache_policy = cache_policy
+        self._init_resource_state()
+        self.binning_reference = binning_reference
+        self.rules = copy.deepcopy(rules)
+        self._reference_binners = {}
+        self._reference_locks = {}
         self.kwargs = dict(kwargs)
         self.method_source_ = None
         if callable(prediction_method):
@@ -753,6 +808,11 @@ class ModelReport(ModelContextMixin):
             overdue_operator = ">"
         self.overdue_operator = validate_overdue_operator(overdue_operator)
         self.del_grey = bool(del_grey)
+        from ..utils.overdue import validate_missing_target
+
+        self.handle_missing_target = validate_missing_target(handle_missing_target)
+        if self.task_type_ == "regression" and self.handle_missing_target not in ("drop", "raise"):
+            raise ValidationError("回归目标的 handle_missing_target 仅支持 drop 或 raise")
         self.init_params_ = {
             "model": model,
             "datasets": datasets,
@@ -767,6 +827,7 @@ class ModelReport(ModelContextMixin):
             "overdue": overdue,
             "dpds": dpds,
             "del_grey": del_grey,
+            "handle_missing_target": handle_missing_target,
             "overdue_operator": overdue_operator,
             "prediction_method": prediction_method,
             "prediction_kwargs": prediction_kwargs,
@@ -777,6 +838,10 @@ class ModelReport(ModelContextMixin):
             "score_direction": score_direction,
             "metrics": metrics,
             "sample_weight": sample_weight,
+            "show_weighted_metrics": show_weighted_metrics,
+            "binning_reference": binning_reference,
+            "rules": self.rules,
+            "cache_policy": cache_policy,
         }
 
         # 在任何预测任务启动前完成公共配置校验；保留调用者传入字典的对象身份。
@@ -826,9 +891,7 @@ class ModelReport(ModelContextMixin):
             y_oot=y_oot,
         )
         if len(normalized) > 1 and has_bound_sample_params(self.metrics):
-            raise ValueError(
-                "多个报告数据集不能共用绑定逐行金融参数的指标；金额加权请使用 sample_weight 列名，或分别创建报告"
-            )
+            raise ValueError("多个报告数据集不能共用绑定逐行金融参数的指标；金额加权请使用 sample_weight 列名，或分别创建报告")
         self._init_from_normalized(normalized)
 
         # 解析最终使用的特征名列表
@@ -853,7 +916,7 @@ class ModelReport(ModelContextMixin):
         else:
             self.feature_names = []
         for key in self._datasets:
-            self._metric_weight(key)
+            self._metric_weight(key, weighted=True)
         self._capture_model_context()
 
     def _invalidate_caches(self) -> None:
@@ -874,10 +937,11 @@ class ModelReport(ModelContextMixin):
         self._monthly_psi_cache.clear()
         self._features_summary_cache = None
         self._model_explanation_cache = None
+        self._reference_binners = {}
+        self._reference_locks = {}
 
     def _report_warning(self, message, *args) -> None:
         """保留现有日志，同时把导出中的降级明确记录为失败章节。"""
-        logger.warning(message, *args)
         rendered = message % args if args else str(message)
         title = "降级：" + str(message).split("[")[0].strip()
         warning = {"章节": title, "说明": rendered}
@@ -915,6 +979,7 @@ class ModelReport(ModelContextMixin):
             "_monthly_psi_cache",
             "_features_summary_cache",
             "_model_explanation_cache",
+            "_reference_binners",
         )
         original = {name: getattr(self, name) for name in cache_names}
         for name, value in original.items():
@@ -931,6 +996,9 @@ class ModelReport(ModelContextMixin):
         """把 callable method 转为 cloudpickle 载荷，避免执行源码字符串。"""
         self._assert_model_current()
         state = dict(self.__dict__)
+        state.pop("_reference_locks", None)
+        state.pop("_operation_lock", None)
+        state["_active_operations"] = 0
         state["_metrics_payload"] = cloudpickle.dumps(self.metrics)
         state["metrics"] = []
         state["init_params_"] = {**state.get("init_params_", {}), "metrics": None}
@@ -960,6 +1028,14 @@ class ModelReport(ModelContextMixin):
         target_payload = state.pop("_target_payload", None)
         metrics_payload = state.pop("_metrics_payload", None)
         self.__dict__.update(state)
+        self.handle_missing_target = state.get("handle_missing_target", "drop")
+        self.binning_reference = state.get("binning_reference", "train")
+        self.rules = state.get("rules")
+        self.show_weighted_metrics = state.get("show_weighted_metrics", False)
+        self.cache_policy = state.get("cache_policy", "full")
+        self._init_resource_state()
+        self._reference_binners = state.get("_reference_binners", {})
+        self._reference_locks = {}
         self._label_aliases = state.get("_label_aliases", {})
         self._dataset_target_sources = state.get("_dataset_target_sources", {})
         self.explain_config = normalize_explain_config(state.get("explain_config"))
@@ -1070,8 +1146,7 @@ class ModelReport(ModelContextMixin):
         data_bytes = sum(int(spec[3].memory_usage(deep=True).sum()) for spec in specs)
         worker_method = None if callable(self.prediction_method) else self.prediction_method
         tasks = [(*spec, worker_method, self.prediction_kwargs) for spec in specs]
-        prepared = parallel_execute(
-            _build_report_dataset,
+        prepared = _execute_report_predictions(
             tasks,
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
@@ -1132,11 +1207,18 @@ class ModelReport(ModelContextMixin):
         if self.task_type_ == "regression":
             from ._regression_model import target_values
 
-            return target_values(X, target_cfg, self._target_name), None
+            return target_values(X, target_cfg, self._target_name, self.handle_missing_target), None
         if target_cfg is None and self.overdue is None:
             target_cfg = next((name for name in ("target", "label", "y", "flag", "overdue") if name in X), None)
         frame, targets = bind_targets(
-            X, target_cfg, self.overdue, self.dpds, self.del_grey, self.overdue_operator, dataset_name=dataset_name
+            X,
+            target_cfg,
+            self.overdue,
+            self.dpds,
+            self.del_grey,
+            self.overdue_operator,
+            dataset_name=dataset_name,
+            handle_missing_target=self.handle_missing_target,
         )
         from ._model_protocol import display_label
 
@@ -1237,9 +1319,16 @@ class ModelReport(ModelContextMixin):
                 if self.task_type_ == "regression":
                     from ._regression_model import target_values
 
-                    y_s = target_values(X_df, y_raw, self._target_name)
+                    y_s = target_values(X_df, y_raw, self._target_name, self.handle_missing_target)
                 else:
-                    y_s = _ensure_series(y_raw, name=self._target_name)
+                    frame, targets = bind_targets(
+                        X_df,
+                        target=np.asarray(y_raw),
+                        del_grey=self.del_grey,
+                        handle_missing_target=self.handle_missing_target,
+                        dataset_name=name,
+                    )
+                    y_s = frame[targets.columns[0]].rename(self._target_name)
                 y_dict = None
             if y_dict and not candidate_labels:
                 candidate_labels = list(y_dict)
@@ -1260,8 +1349,7 @@ class ModelReport(ModelContextMixin):
     ):
         spec = (self.model, key, label, X, y, y_dict, self._feature_names)
         worker_method = None if callable(self.prediction_method) else self.prediction_method
-        prepared = parallel_execute(
-            _build_report_dataset,
+        prepared = _execute_report_predictions(
             [(*spec, worker_method, self.prediction_kwargs)],
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
@@ -1317,7 +1405,16 @@ class ModelReport(ModelContextMixin):
             if self.task_type_ == "regression":
                 from ._regression_model import target_values
 
-                y = target_values(X, y, self._target_name)
+                y = target_values(X, y, self._target_name, self.handle_missing_target)
+            else:
+                frame, targets = bind_targets(
+                    X,
+                    target=np.asarray(y),
+                    del_grey=self.del_grey,
+                    handle_missing_target=self.handle_missing_target,
+                    dataset_name=key,
+                )
+                y = frame[targets.columns[0]]
         y = _ensure_series(y, name=self._target_name)
         self._add_dataset(key, label, X, y, y_dict)
         self._dataset_target_sources[key] = source
@@ -1450,13 +1547,14 @@ class ModelReport(ModelContextMixin):
         """
         if label in self._metrics_cache:
             return self._metrics_cache[label].copy()
+        self._require_report_data()
 
         if self.task_type_ == "regression":
             from ._regression_model import metric_table
 
             if label is not None:
                 raise ValidationError("回归报告只支持单个连续目标")
-            result = metric_table(self)
+            result = self._append_weighted_metrics(metric_table(self))
             self._metrics_cache[label] = result.copy()
             return result
 
@@ -1529,7 +1627,7 @@ class ModelReport(ModelContextMixin):
 
         by_name = {row["统计项"]: row for row in rows}
         by_name.update({row["统计项"]: row for row in self._extra_metric_rows(label)})
-        result = pd.DataFrame(by_name.values())
+        result = self._append_weighted_metrics(pd.DataFrame(by_name.values()), label)
         self._metrics_cache[label] = result.copy()
         return result
 
@@ -1614,7 +1712,13 @@ class ModelReport(ModelContextMixin):
         dataset = self._resolve_dataset_key(dataset)
         ds = self._datasets[dataset]
         score_col = "__score__"
-        df = ds.X.copy()
+        from ._binning_reference import reference_binner
+
+        df = ds.X[[amount]].copy() if amount is not None else pd.DataFrame(index=ds.X.index)
+        amount_column = amount
+        if amount == score_col:
+            amount_column = "__report_amount__"
+            df = df.rename(columns={amount: amount_column})
         df[score_col] = ds.score
 
         score_return_cols = [
@@ -1637,6 +1741,7 @@ class ModelReport(ModelContextMixin):
             {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
         )
         df, targets = bind_targets(df, target=explicit, del_grey=True)
+        targets = replace(targets, del_grey=self.del_grey, handle_missing_target=self.handle_missing_target)
 
         kw = dict(
             feature=score_col,
@@ -1647,12 +1752,13 @@ class ModelReport(ModelContextMixin):
             missing_separate=True,
             margins=margins,
             return_cols=score_return_cols,
+            binner=reference_binner(self, score_col, method, max_n_bins, label, labels, is_score=True),
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
         )
-        if amount and amount in df.columns:
-            kw["amount"] = amount
+        if amount is not None:
+            kw["amount"] = amount_column
 
         table = self._bin_table_with_available_target(df, kw, ds.y_dict)
         if isinstance(table, tuple):
@@ -1734,9 +1840,7 @@ class ModelReport(ModelContextMixin):
 
         if resolved is None:
             resolved = pd.Series(index=self.feature_names, dtype=float, name="特征重要性")
-            self._report_not_applicable(
-                "原生特征重要性", "当前模型没有可用的原生逐字段重要性；保留变量统计，不编造重要性数值"
-            )
+            self._report_not_applicable("原生特征重要性", "当前模型没有可用的原生逐字段重要性；保留变量统计，不编造重要性数值")
         else:
             resolved.name = "特征重要性"
         self._raw_importance_cache = resolved.copy()
@@ -2334,6 +2438,7 @@ class ModelReport(ModelContextMixin):
 
     # ---------- 4. 特征描述 ----------
 
+    @report_model_current
     def get_features_describe(self) -> pd.DataFrame:
         """入模变量重要性及描述性统计."""
         if self._features_describe_cache is not None:
@@ -2390,6 +2495,7 @@ class ModelReport(ModelContextMixin):
 
     # ---------- 5. 特征相关性 ----------
 
+    @report_model_current
     def get_features_corr(self) -> pd.DataFrame:
         if self._corr_cache is not None:
             return self._corr_cache.copy()
@@ -2407,6 +2513,7 @@ class ModelReport(ModelContextMixin):
     # ---------- 6. 特征分箱分析 ----------
 
     @report_inputs
+    @report_model_current
     def get_feature_bin_table(
         self,
         feature: str,
@@ -2470,14 +2577,18 @@ class ModelReport(ModelContextMixin):
 
         dataset = self._resolve_dataset_key(dataset)
         ds = self._datasets[dataset]
-        df = ds.X.copy()
+        df = ds.X[list(dict.fromkeys([feature] + ([amount] if amount is not None else [])))].copy()
         binner = getattr(self.model, "binner", None)
+        from ._binning_reference import reference_binner
+
+        binner = reference_binner(self, feature, method, max_n_bins, label, labels, supplied=binner)
 
         chosen = labels if labels is not None else [label]
         explicit = (
             {name: self._get_y(dataset, name) for name in chosen} if labels is not None else self._get_y(dataset, label)
         )
         df, targets = bind_targets(df, target=explicit, del_grey=True)
+        targets = replace(targets, del_grey=self.del_grey, handle_missing_target=self.handle_missing_target)
 
         kw = dict(
             feature=feature,
@@ -2493,7 +2604,7 @@ class ModelReport(ModelContextMixin):
         if binner is not None:
             kw["binner"] = binner
 
-        if amount and amount in df.columns:
+        if amount is not None:
             kw["amount"] = amount
 
         table = self._bin_table_with_available_target(df, kw, ds.y_dict)
@@ -3406,10 +3517,21 @@ class ModelReport(ModelContextMixin):
             for ds_label in ds_labels:
                 for metric_name in self._SUMMARY_METRICS:
                     row[(metric_name, ds_label)] = metrics.at[metric_name, ds_label]
+                    if self.show_weighted_metrics and metric_name not in ("样本数", "坏样本率"):
+                        row[(metric_name, f"{ds_label}（加权）")] = metrics.at[metric_name, f"{ds_label}（加权）"]
             rows.append(row)
 
         columns = pd.MultiIndex.from_tuples(
-            [(metric, ds_label) for metric in self._SUMMARY_METRICS for ds_label in ds_labels],
+            [
+                (metric, column)
+                for metric in self._SUMMARY_METRICS
+                for ds_label in ds_labels
+                for column in (
+                    [ds_label, f"{ds_label}（加权）"]
+                    if self.show_weighted_metrics and metric not in ("样本数", "坏样本率")
+                    else [ds_label]
+                )
+            ],
             names=["统计指标", "数据集"],
         )
         index = pd.Index(index_labels, name="目标变量" if self.task_type_ == "regression" else "逾期指标")
@@ -3529,9 +3651,7 @@ class ModelReport(ModelContextMixin):
                             labels=labels_arg,
                         )
                     except Exception as exc:
-                        raise RuntimeError(
-                            f"生成金额口径特征分箱失败 [特征={feature}, 数据集={ds.label}, 金额字段={amount}]"
-                        ) from exc
+                        raise RuntimeError(f"生成金额口径特征分箱失败 [特征={feature}, 数据集={ds.label}, 金额字段={amount}]") from exc
 
     @report_model_current
     def get_model_explanation(self) -> Dict[str, Any]:
@@ -3611,7 +3731,7 @@ class ModelReport(ModelContextMixin):
     ) -> Union[str, ReportResult]:
         """事务性生成 Excel；失败时恢复派生缓存。
 
-        默认按best_effort记录全部章节状态并写入状态页，仍返回原路径；strict拒绝缺失必需章节。
+        默认按best_effort静默保留成功章节，仍返回原路径；strict拒绝缺失必需章节。
         return_result=True 返回 ReportResult，并在失败时保留结构化诊断。
         transactional=True 使用不可变版本目录＋完成清单统一发布Excel和图片，
         默认按strict检查；返回实际版本文件路径，不覆盖原filepath或旧版本。
@@ -3741,7 +3861,7 @@ class ModelReport(ModelContextMixin):
 
     def _to_excel_transactional(self, filepath, options):
         """复用Skills层已验证的整批发布协议，不逐个覆盖正式图片。"""
-        from ..skills_runtime.artifacts import ArtifactTransaction
+        from ..utils.artifacts import ArtifactTransaction
         from .result import ReportGenerationError, ReportResult
 
         destination = Path(filepath).resolve()
@@ -3927,9 +4047,7 @@ class ModelReport(ModelContextMixin):
                 writer.insert_hyperlink2sheet(worksheet, cell, hyperlink=hyperlink)
             except Exception as exc:
                 coordinate = writer.get_cell_space(cell)
-                raise RuntimeError(
-                    f"生成{purpose}失败 [工作表={worksheet.title}, 单元格={coordinate}, 目标={hyperlink}]"
-                ) from exc
+                raise RuntimeError(f"生成{purpose}失败 [工作表={worksheet.title}, 单元格={coordinate}, 目标={hyperlink}]") from exc
 
         # ============================================================
         # 目录 Sheet
@@ -3968,9 +4086,7 @@ class ModelReport(ModelContextMixin):
                 purpose="目录链接",
             )
 
-        _, _ = writer.insert_value2sheet(
-            ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2)
-        )
+        _, _ = writer.insert_value2sheet(ws, (end_row + 1, 2), value="版本号:", style="middle", end_space=(end_row + 1, 2))
         end_row, _ = writer.insert_value2sheet(
             ws, (end_row + 1, 3), value="V1.0", style="middle", end_space=(end_row + 1, 4)
         )
@@ -4050,9 +4166,7 @@ class ModelReport(ModelContextMixin):
                     valid_y = all_y[np.isfinite(all_y)]
                     bad_rate = round(float(valid_y.mean()) * 100, 2) if len(valid_y) else 0.0
                     if target_specific_totals:
-                        label_parts.append(
-                            f"{display_labels.get(lbl, lbl)}: 样本数 {len(valid_y)}, 坏样本率 {bad_rate}%"
-                        )
+                        label_parts.append(f"{display_labels.get(lbl, lbl)}: 样本数 {len(valid_y)}, 坏样本率 {bad_rate}%")
                     else:
                         label_parts.append(f"{display_labels.get(lbl, lbl)}: {bad_rate}%")
                 overall_desc = ", ".join(label_parts)
@@ -4073,10 +4187,6 @@ class ModelReport(ModelContextMixin):
             {"统计项": "模型名称", "统计内容": model_name or "N/A"},
             {"统计项": "取样逻辑", "统计内容": project_desc or "N/A"},
             {"统计项": "数据源", "统计内容": data_source_str},
-            {
-                "统计项": "推理方法",
-                "统计内容": self.prediction_method if isinstance(self.prediction_method, str) else "自定义函数",
-            },
         ]
         # ---- Step 4: 各数据集描述行（与整体样本同一张表，多标签逐标签展示坏样本率） ----
         ds_rows: List[Dict[str, Any]] = []
@@ -4092,9 +4202,7 @@ class ModelReport(ModelContextMixin):
                     valid_y = y_values[np.isfinite(y_values)]
                     bad_rate = round(float(valid_y.mean()) * 100, 2) if len(valid_y) else 0.0
                     if target_specific_totals:
-                        label_parts.append(
-                            f"{display_labels.get(lbl, lbl)}: 样本数 {len(valid_y)}, 坏样本率 {bad_rate}%"
-                        )
+                        label_parts.append(f"{display_labels.get(lbl, lbl)}: 样本数 {len(valid_y)}, 坏样本率 {bad_rate}%")
                     else:
                         label_parts.append(f"{display_labels.get(lbl, lbl)}: {bad_rate}%")
                 content = ", ".join(label_parts)
@@ -4873,13 +4981,9 @@ class ModelReport(ModelContextMixin):
                 psi_percent_cols = [
                     column
                     for column in psi_df.columns
-                    if "占比" in str(column)
-                    or "样本率" in str(column)
-                    or str(column) in {"实际% - 预期%", "分档PSI值", "总体PSI值"}
+                    if "占比" in str(column) or "样本率" in str(column) or str(column) in {"实际% - 预期%", "分档PSI值", "总体PSI值"}
                 ]
-                psi_condition_cols = [
-                    column for column in psi_df.columns if str(column) in {"实际% - 预期%", "分档PSI值"}
-                ]
+                psi_condition_cols = [column for column in psi_df.columns if str(column) in {"实际% - 预期%", "分档PSI值"}]
                 end_row, _ = dataframe2excel(
                     psi_df,
                     writer,
@@ -5293,9 +5397,7 @@ class ModelReport(ModelContextMixin):
                 )
                 param_section += 1
             else:
-                self._report_not_applicable(
-                    "逐变量评分卡分值", "当前概率评分卡不提供逐变量加分表；保留概率转换公式及刻度"
-                )
+                self._report_not_applicable("逐变量评分卡分值", "当前概率评分卡不提供逐变量加分表；保留概率转换公式及刻度")
 
             end_row, _ = writer.insert_value2sheet(
                 ws,
@@ -5380,9 +5482,7 @@ class ModelReport(ModelContextMixin):
             end_row, _ = dataframe2excel(pd.DataFrame(fi_rows), writer, sheet_name=ws, start_row=end_row + 1)
 
         # 6.2 生产订单测试用例；关闭时不创建、读取或写入逐行样例表。
-        sample_title = (
-            "2、生产订单测试用例" if include_sample_records else "2、生产订单测试用例（不适用：已关闭明细输出）"
-        )
+        sample_title = "2、生产订单测试用例" if include_sample_records else "2、生产订单测试用例（不适用：已关闭明细输出）"
         end_row, _ = writer.insert_value2sheet(
             ws, (end_row + 2, 2), value=sample_title, style="header_middle", align={"horizontal": "left"}
         )
@@ -5430,13 +5530,6 @@ class ModelReport(ModelContextMixin):
             if "失败原因" in explanation:
                 if execution_result is not None:
                     execution_result.failure("模型解释", str(explanation["失败原因"]))
-                end_row, _ = dataframe2excel(
-                    pd.DataFrame([{"失败原因": explanation["失败原因"]}]),
-                    writer,
-                    sheet_name=ws,
-                    start_row=end_row + 2,
-                    title="1、解释计算状态",
-                )
             else:
                 metadata_table = pd.DataFrame(
                     [{"项目": key, "值": str(value)} for key, value in explanation["元信息"].items()]
@@ -5556,8 +5649,12 @@ class ModelReport(ModelContextMixin):
         for ds_key in self._datasets:
             result[f"bin_table_{ds_key}"] = self.get_bin_table(ds_key, labels=labels_arg).to_dict(orient="records")
         if self.explain_config["enabled"]:
-            result["模型解释"] = explanation_to_dict(self.get_model_explanation())
-        return result
+            explanation = self.get_model_explanation()
+            if "失败原因" not in explanation:
+                result["模型解释"] = explanation_to_dict(explanation)
+        from ..utils.json import json_safe
+
+        return json_safe(result)
 
 
 # ---------------------------------------------------------------------------
@@ -5612,6 +5709,11 @@ def auto_model_report(
     metrics=None,
     sample_weight=None,
     score_direction=None,
+    show_weighted_metrics=False,
+    binning_reference="train",
+    rules=None,
+    cache_policy="full",
+    handle_missing_target="drop",
     **kwargs,
 ) -> Union[ModelReport, ReportResult]:
     """一键生成模型报告.
@@ -5688,7 +5790,7 @@ def auto_model_report(
     :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
         必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -5777,6 +5879,13 @@ def auto_model_report(
     >>> report = auto_model_report(model, datasets={'独立测试': (X_test, y_test)},
     ...                           metrics=['auc', 'ks'], verbose=False)
     >>> effects = report.get_metrics()
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
+
+    :param show_weighted_metrics: 是否在实际订单指标右侧并列显示显式 sample_weight 的加权性能，默认 False。
+    :param binning_reference: 分箱基准：train（默认）复用训练规则，independent 为各数据集独立拟合。
+    :param cache_policy: 派生缓存保留策略：full（默认）保留，none 在一次公开操作结束后释放。
+    :param rules: 指定分箱规则；列表用于评分，字典按特征名指定，score 或 __score__ 指定评分规则。默认 None。
     """
     if mode is not None and mode not in {"strict", "best_effort"}:
         raise ValueError("报告 mode 必须为 'strict' 或 'best_effort'")
@@ -5802,10 +5911,15 @@ def auto_model_report(
         metrics=metrics,
         sample_weight=sample_weight,
         score_direction=score_direction,
+        show_weighted_metrics=show_weighted_metrics,
+        binning_reference=binning_reference,
+        rules=rules,
+        cache_policy=cache_policy,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
         **kwargs,
+        handle_missing_target=handle_missing_target,
     )
 
     if verbose:

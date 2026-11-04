@@ -20,6 +20,7 @@ from .._contracts import (
     split_sample_params,
     take_rows,
     validate_labels,
+    validate_sample_weight,
 )
 from .._lifecycle import record_training
 from .._workflow import ModelWorkflowMixin, prepare_eval_sets, record_eval_results
@@ -192,6 +193,7 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         eval_set=None,
         eval_metric=None,
         eval_sample_weight=None,
+        sample_weight=None,
         **fit_params,
     ) -> "ProbabilityCalibrator":
         """拟合校准器.
@@ -227,8 +229,12 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
         >>> calibrator = ProbabilityCalibrator(model=model, calib_ratio=None).fit(X_valid, y_valid,
         ...     eval_set={'独立测试': (X_test, y_test)}, eval_metric=['auc', 'brier'])
         >>> values = calibrator.get_eval_results()
+
+        :param sample_weight: 校准拟合样本权重，非负有限且与标签等长；默认 None 为等权。
         """
         self._validate_parameters()
+        if self.calib_ratio is None and fit_params:
+            raise TypeError(f"基础模型不重训时不接受训练参数: {sorted(fit_params)}")
 
         # 兼容旧调用 ``fit(model, X, y)``。在该调用中，参数会映射为
         # X=模型、y=特征、model=标签。
@@ -249,6 +255,8 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
 
         # 处理两种传参风格
         X, y = self._prepare_data(X, y, target)
+        sample_weight = validate_sample_weight(sample_weight, len(y))
+        calibration_weight = sample_weight
         record_feature_schema(self, X)
 
         self.classes_ = np.asarray(getattr(model, "classes_", np.unique(y)))
@@ -274,6 +282,9 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
                 fitted_model = copy.deepcopy(model)
 
             model_fit_params = split_sample_params(fit_params, train_indices, len(indices))
+            if sample_weight is not None:
+                model_fit_params["sample_weight"] = take_rows(sample_weight, train_indices)
+                calibration_weight = take_rows(sample_weight, calib_indices)
             fitted_model.fit(X_train, y_train, **model_fit_params)
             self.model_ = fitted_model
         else:
@@ -286,13 +297,17 @@ class ProbabilityCalibrator(ModelWorkflowMixin, ArtifactSerializableMixin, Class
 
         # 每次 fit 都按当前参数重建底层校准器，避免 set_params 后复用旧算法或拟合状态。
         self.calibrator_ = self._make_calibrator()
-        self.calibrator_.fit(y_prob, y_binary)
+        self.calibrator_.fit(y_prob, y_binary, sample_weight=calibration_weight)
 
         # 计算校准前后的指标
         self.calib_metrics_ = {}
-        self.calib_metrics_["original"] = self.calibrator_.compute_calibration_metrics(y_binary, y_prob)
+        self.calib_metrics_["original"] = self.calibrator_.compute_calibration_metrics(
+            y_binary, y_prob, sample_weight=calibration_weight
+        )
         y_prob_calib = self.calibrator_.calibrate(y_prob)
-        self.calib_metrics_["calibrated"] = self.calibrator_.compute_calibration_metrics(y_binary, y_prob_calib)
+        self.calib_metrics_["calibrated"] = self.calibrator_.compute_calibration_metrics(
+            y_binary, y_prob_calib, sample_weight=calibration_weight
+        )
 
         self.is_fitted_ = True
         self._is_fitted = True

@@ -135,6 +135,7 @@ database-all = [
 dev = [
     "pytest>=6.0.0",
     "pytest-cov>=2.0.0",
+    "psutil>=5.9",
     "nbclient>=0.5",
     "nbformat>=5",
     "ipykernel>=6.0",

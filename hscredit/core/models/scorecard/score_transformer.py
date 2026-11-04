@@ -1623,13 +1623,12 @@ def transform_probability_to_score(
     return scores
 
 
-# 尝试导入matplotlib进行绘图
-try:
-    import matplotlib.pyplot as plt
+# 数值评分不加载绘图框架，首次实际绘图时才导入。
+from importlib.util import find_spec
+from ...._lazy import LazyModule
 
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
+plt = LazyModule("matplotlib.pyplot")
+MATPLOTLIB_AVAILABLE = find_spec("matplotlib") is not None
 
 
 def plot_score_transformation_curve(

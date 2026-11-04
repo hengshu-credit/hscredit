@@ -29,15 +29,7 @@ def write_importance(report, writer, sheet, row, filepath, with_plots, title="1�
         result = getattr(report, "_execution_result", None)
         if result is not None:
             result.failure("SHAP 特征重要性", explanation["失败原因"])
-        writer.insert_value2sheet(sheet, (row, 2), title, style="header", end_space=(row, 3))
-        end, _ = dataframe2excel(
-            pd.DataFrame([{"失败原因": explanation["失败原因"]}]),
-            writer,
-            sheet_name=sheet,
-            start_row=row + 2,
-            index=False,
-        )
-        return end + 3
+        return row
     table = importance_table(report)
     meta = explanation["元信息"]
     writer.insert_value2sheet(sheet, (row, 2), title, style="header", end_space=(row, len(table.columns) + 1))

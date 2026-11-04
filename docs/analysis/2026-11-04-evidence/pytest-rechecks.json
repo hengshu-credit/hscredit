@@ -1,0 +1,49 @@
+{
+  "python314": {
+    "command": "C:/Python314/python.exe -X utf8 -m pytest <29 failed node IDs> -q --tb=short -o addopts= --durations=5",
+    "summary": "21 passed, 8 skipped in 20.70s",
+    "dependencies": {
+      "lightgbm": "4.6.0",
+      "pyarrow": "25.0.1",
+      "matplotlib": "3.10.8",
+      "shap": "0.51.0",
+      "torch": null,
+      "rtdl_revisiting_models": null,
+      "tabm": null
+    },
+    "scope": "Only the failed nodes, not the entire suite"
+  },
+  "python39_isolated": {
+    "summary": "3 failed in 12.42s",
+    "dependencies": {
+      "lightgbm": "3.3.5",
+      "pyarrow": null,
+      "torch": "2.8.0+cpu",
+      "rtdl_revisiting_models": null,
+      "tabm": null
+    },
+    "failures": [
+      {
+        "node": "tests/test_models/test_loss_metric_integration.py::test_lightgbm_accepts_mixed_metrics_and_selects_object_by_name",
+        "error": "AttributeError: can't set attribute",
+        "source": "hscredit/core/models/boosting/lightgbm_model.py:97"
+      },
+      {
+        "node": "tests/test_models/test_all_model_workflow.py::test_dataframe_search_to_strict_excel_report[LightGBM]",
+        "error": "AttributeError: 'NoneType' object has no attribute 'values'",
+        "source": "hscredit/core/models/_lifecycle.py:302"
+      },
+      {
+        "node": "tests/test_report/test_report_plot_standards.py::test_new_report_plots_use_hscredit_axes_palette_and_export_defaults",
+        "error": "AssertionError: not all SHAP bars have hatch /",
+        "source": "tests/test_report/test_report_plot_standards.py:100"
+      }
+    ]
+  },
+  "full_suite_failure_groups": {
+    "lightgbm_workflows": 14,
+    "missing_net_dependencies": 8,
+    "missing_pyarrow": 6,
+    "plot_hatch": 1
+  }
+}

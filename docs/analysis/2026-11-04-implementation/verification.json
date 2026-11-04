@@ -1,0 +1,34 @@
+{
+  "date": "2026-11-04",
+  "package_version": "0.1.3",
+  "workspace_head": "357f6f5ae7f5f39326b38e7233a99c2f8ce6b709",
+  "full_suite": {
+    "command": "PYTHONUTF8=1 MPLBACKEND=Agg validation-py39/python -m pytest tests/ -m \"not slow and not integration\" -q -ra --tb=short -o addopts=",
+    "result": "6 failed, 8064 passed, 9 skipped, 27 deselected, 680 warnings in 2054.20s (0:34:14)",
+    "remaining_six": "All six were the query metadata / WOE source-tag collision; corrected and included in the affected-scope rerun below."
+  },
+  "affected_scope_after_repairs": {
+    "result": "1503 passed, 1 deselected, 81 warnings in 182.03s (0:03:02)",
+    "scope": [
+      "test_binning",
+      "test_encoding",
+      "test_all_model_workflow",
+      "resource_deployment_workflow",
+      "light_import_environment"
+    ]
+  },
+  "new_public_contracts": "38 passed, 3 warnings in 12.02s",
+  "resource_ownership": "33 passed, 3 warnings in 6.33s",
+  "python314": {
+    "broad": "452 passed, 125 warnings in 52.35s",
+    "governance": "141 passed, 127 warnings in 37.20s"
+  },
+  "database_skips": "Nine real database integrations have no configured services. No connection was fabricated.",
+  "notebook": "examples/33_report_resources_deployment.ipynb executed on final source",
+  "wheel": "Built wheel installed in isolated wheel-validation environment, imported outside repository; lightweight inference and strict deployment roundtrip passed.",
+  "lint": "flake8 fatal checks passed",
+  "typing": "Required 3-file mypy check passed",
+  "docs": "Sphinx HTML build passed; installed Sphinx extensions emit deprecation warnings.",
+  "benchmark": "workflow-benchmark.json; independent processes; 2000 rows, 2 repeats per mode; identical result digests in all five cases; no machine-wide load isolation.",
+  "git_actions": "No branch, staging, commit, or push performed by this task."
+}

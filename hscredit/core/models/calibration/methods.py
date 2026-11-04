@@ -11,6 +11,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from .base import BaseCalibrator
 from .._lifecycle import record_training
+from .._contracts import validate_sample_weight
 
 
 class PlattCalibrator(BaseCalibrator):
@@ -37,7 +38,7 @@ class PlattCalibrator(BaseCalibrator):
             raise ValueError("C必须是有限正数")
 
     @record_training
-    def fit(self, y_prob: Union[np.ndarray, pd.Series], y_true: Union[np.ndarray, pd.Series]):
+    def fit(self, y_prob: Union[np.ndarray, pd.Series], y_true: Union[np.ndarray, pd.Series], sample_weight=None):
         """拟合 Platt Scaling 并返回自身。
 
         **参数补充**
@@ -52,12 +53,18 @@ class PlattCalibrator(BaseCalibrator):
         >>> from hscredit import PlattCalibrator
         >>> calibrator = PlattCalibrator().fit(p_train, y_train)
         >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+
+        :param sample_weight: 校准拟合样本权重，非负有限且与标签等长；默认 None 为等权。
         """
         self._validate_configuration()
         probabilities, labels = self._validate_fit_data(y_prob, y_true, require_both_classes=True)
         probabilities = np.clip(probabilities, 1e-15, 1 - 1e-15)
         self.lr_ = LogisticRegression(C=self.C, max_iter=1000)
-        self.lr_.fit(logit(probabilities).reshape(-1, 1), labels)
+        self.lr_.fit(
+            logit(probabilities).reshape(-1, 1),
+            labels,
+            sample_weight=validate_sample_weight(sample_weight, len(labels)),
+        )
         return self
 
     def calibrate(self, y_prob):
@@ -91,7 +98,7 @@ class IsotonicCalibrator(BaseCalibrator):
             raise ValueError("out_of_bounds必须是'clip'、'nan'或'raise'")
 
     @record_training
-    def fit(self, y_prob, y_true):
+    def fit(self, y_prob, y_true, sample_weight=None):
         """拟合保序回归并返回自身。
 
         **参数补充**
@@ -104,11 +111,13 @@ class IsotonicCalibrator(BaseCalibrator):
         >>> from hscredit import IsotonicCalibrator
         >>> calibrator = IsotonicCalibrator().fit(p_train, y_train)
         >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+
+        :param sample_weight: 校准拟合样本权重，非负有限且与标签等长；默认 None 为等权。
         """
         self._validate_configuration()
         probabilities, labels = self._validate_fit_data(y_prob, y_true, require_both_classes=True)
         self.iso_ = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds=self.out_of_bounds)
-        self.iso_.fit(probabilities, labels)
+        self.iso_.fit(probabilities, labels, sample_weight=validate_sample_weight(sample_weight, len(labels)))
         return self
 
     def calibrate(self, y_prob):
@@ -125,7 +134,7 @@ class BetaCalibrator(BaseCalibrator):
     """
 
     @record_training
-    def fit(self, y_prob, y_true):
+    def fit(self, y_prob, y_true, sample_weight=None):
         """拟合 Beta 校准逻辑回归并返回自身。
 
         **参数补充**
@@ -138,13 +147,15 @@ class BetaCalibrator(BaseCalibrator):
         >>> from hscredit import BetaCalibrator
         >>> calibrator = BetaCalibrator().fit(p_train, y_train)
         >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+
+        :param sample_weight: 校准拟合样本权重，非负有限且与标签等长；默认 None 为等权。
         """
         self._validate_configuration()
         probabilities, labels = self._validate_fit_data(y_prob, y_true, require_both_classes=True)
         probabilities = np.clip(probabilities, 1e-15, 1 - 1e-15)
         features = np.column_stack([np.log(probabilities), -np.log1p(-probabilities)])
         self.lr_ = LogisticRegression(C=1e6, max_iter=1000)
-        self.lr_.fit(features, labels)
+        self.lr_.fit(features, labels, sample_weight=validate_sample_weight(sample_weight, len(labels)))
         return self
 
     def calibrate(self, y_prob):
@@ -170,7 +181,7 @@ class HistogramCalibrator(BaseCalibrator):
         super().__init__(n_bins=n_bins, strategy=strategy)
 
     @record_training
-    def fit(self, y_prob, y_true):
+    def fit(self, y_prob, y_true, sample_weight=None):
         """拟合直方图边界和箱内频率并返回自身。
 
         **参数补充**
@@ -183,9 +194,13 @@ class HistogramCalibrator(BaseCalibrator):
         >>> from hscredit import HistogramCalibrator
         >>> calibrator = HistogramCalibrator().fit(p_train, y_train)
         >>> values = calibrator.evaluate(p_valid, y_valid, metrics=['auc', 'brier'])
+
+        :param sample_weight: 校准拟合样本权重，非负有限且与标签等长；默认 None 为等权。
         """
         self._validate_configuration()
         probabilities, labels = self._validate_fit_data(y_prob, y_true)
+        weights = validate_sample_weight(sample_weight, len(labels))
+        mass = np.ones(len(labels)) if weights is None else weights
         if self.strategy == "quantile":
             self.bin_edges_ = np.percentile(probabilities, np.linspace(0, 100, self.n_bins + 1))
             self.bin_edges_[0] = 0.0
@@ -199,7 +214,9 @@ class HistogramCalibrator(BaseCalibrator):
             else:
                 mask = (probabilities >= self.bin_edges_[index]) & (probabilities < self.bin_edges_[index + 1])
             self.bin_freqs_[index] = (
-                labels[mask].mean() if mask.any() else (self.bin_edges_[index] + self.bin_edges_[index + 1]) / 2
+                np.average(labels[mask], weights=mass[mask])
+                if mass[mask].sum() > 0
+                else (self.bin_edges_[index] + self.bin_edges_[index + 1]) / 2
             )
         return self
 

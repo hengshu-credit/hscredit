@@ -108,19 +108,13 @@ def process_tables(report):
                 row[metric_names[index] if index < len(metric_names) else f"目标{index+1}"] = value
             actual = item.get("实际搜索参数") or {}
             row.update({f"参数：{key}": actual.get(key, value) for key, value in (item.get("采样参数") or {}).items()})
-            if item.get("错误信息"):
-                row["错误信息"] = item["错误信息"]
             rows.append(row)
         result["参数搜索对比"] = pd.DataFrame(rows)
     if "各折指标" in raw:
         result["验证结果"] = raw["各折指标"]
     for name, table in raw.items():
         if name.endswith("训练记录") and not table.empty:
-            columns = [
-                c
-                for c in ("训练修订", "训练阶段", "开始时间", "样本数", "耗时秒", "最佳迭代", "最佳得分", "状态")
-                if c in table
-            ]
+            columns = [c for c in ("训练修订", "训练阶段", "开始时间", "样本数", "耗时秒", "最佳迭代", "最佳得分", "状态") if c in table]
             result["最终模型训练" if name == "训练记录" else name] = table[columns].copy()
     if "最终评估" in raw and not raw["最终评估"].empty:
         result["最终模型评估"] = raw["最终评估"]
@@ -164,9 +158,7 @@ def write_process(report, writer, filepath, with_plots, sheet_name=None):
             for cells in sheet.iter_rows(min_row=row + 3, max_row=end - 1, min_col=column, max_col=column):
                 cell = cells[0]
                 if isinstance(cell.value, (float, np.floating)):
-                    cell.number_format = (
-                        "General" if title == "筛选明细" or str(name).startswith("参数：") else "0.0000"
-                    )
+                    cell.number_format = "General" if title == "筛选明细" or str(name).startswith("参数：") else "0.0000"
         row = end + 3
 
     for title, table in process_tables(report).items():

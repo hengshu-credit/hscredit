@@ -21,13 +21,11 @@ import numpy as np
 import pandas as pd
 import warnings
 
-try:
-    from ortools.sat.python import cp_model
+from importlib.util import find_spec
+from ..._lazy import LazyModule
 
-    ORTOOLS_AVAILABLE = True
-except ImportError:
-    ORTOOLS_AVAILABLE = False
-    warnings.warn("OR-Tools 未安装，ORBinning 将不可用。" "请使用 pip install ortools 安装。", ImportWarning)
+cp_model = LazyModule("ortools.sat.python.cp_model")
+ORTOOLS_AVAILABLE = find_spec("ortools") is not None
 
 from ...exceptions import NotFittedError
 from .base import BaseBinning

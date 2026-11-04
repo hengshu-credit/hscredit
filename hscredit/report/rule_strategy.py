@@ -144,9 +144,7 @@ _DETAIL_COLUMNS = ("规则分类", "指标名称", "指标含义", "分箱")
 _BIN_ORDER = ("命中", "未命中", "合计")
 _DEFAULT_METRICS = ("样本总数", "样本占比", "坏样本率", "LIFT值")
 _DEFAULT_TARGET_METRICS = ("样本总数", "样本占比", "坏样本率", "LIFT值", "坏账改善", "风险拒绝比")
-_DEFAULT_GROUP_METRICS = OrderedDict(
-    (("坏样本率", "坏样本率"), ("样本占比", "样本占比"), ("LIFT指标", "LIFT值"), ("样本总数", "样本总数"))
-)
+_DEFAULT_GROUP_METRICS = OrderedDict((("坏样本率", "坏样本率"), ("样本占比", "样本占比"), ("LIFT指标", "LIFT值"), ("样本总数", "样本总数")))
 
 
 def _ordered_unique(values: Sequence[str]) -> list:
@@ -692,6 +690,7 @@ def rule_group_compare(
     parallel_config: Optional[Dict[str, Any]] = None,
     *,
     overdue_operator: str = ">",
+    handle_missing_target="drop",
     **kwargs: Any,
 ) -> pd.DataFrame:
     """直接从原始数据生成分组下的规则命中效果对比表.
@@ -751,7 +750,7 @@ def rule_group_compare(
     :type prior_rules: Optional[Rule]
     :param amount: 默认值为 ``None`` 。金额字段名（可选），传入时以金额口径而非样本数口径统计
     :type amount: Optional[str]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -794,10 +793,21 @@ def rule_group_compare(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
-    data, target = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
+    data, target = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        default_target="target",
+        handle_missing_target=handle_missing_target,
+    )
     overdue, dpds = None, None
     if not isinstance(data, pd.DataFrame) or data.empty:
         raise ValueError("data 必须是非空的 DataFrame")
@@ -819,6 +829,7 @@ def rule_group_compare(
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
         **kwargs,
+        handle_missing_target=handle_missing_target,
     )
     tasks = []
     for group_values in ordered_groups:
@@ -1051,12 +1062,24 @@ def _resolve_swap_targets(
     dpds: Optional[Union[int, float, List[Union[int, float]]]],
     del_grey: bool,
     overdue_operator: str = ">",
+    *,
+    handle_missing_target="drop",
 ) -> "OrderedDict[str, Tuple[pd.DataFrame, pd.Series]]":
     """解析单标签或 ``overdue + dpds`` 多标签，返回标签到 ``(子样本, 0/1标签)`` 的映射.
 
     标签命名与  :func:`~hscredit.report.feature_bin_stats`  保持一致（ ``MOB1_7+`` ）。
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
-    frame, targets = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator)
+    frame, targets = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     return OrderedDict(
         (name, (frame.loc[values.notna()], values.loc[values.notna()])) for name, values in targets.y_map(frame).items()
     )
@@ -1449,6 +1472,7 @@ def swap_out_report(
     parallel_config: Optional[Dict[str, Any]] = None,
     *,
     overdue_operator: str = ">",
+    handle_missing_target="drop",
     **kwargs: Any,
 ):
     """生成拒绝规则置换（策略迭代）分析报告，输出 hscredit 美化后的 Excel 文件.
@@ -1535,7 +1559,7 @@ def swap_out_report(
     :type current_pass_rate: float
     :param prior_rules: 默认值为 ``None`` 。先验规则（可选），评估前先排除命中先验规则的样本
     :type prior_rules: Optional['Rule']
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -1568,10 +1592,21 @@ def swap_out_report(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
-    data, target = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, default_target="target")
+    data, target = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        default_target="target",
+        handle_missing_target=handle_missing_target,
+    )
     overdue, dpds = None, None
     from ..excel import ExcelWriter
 
@@ -1589,7 +1624,15 @@ def swap_out_report(
         features = _ordered_unique([col for rule in rule_objs for col in rule.feature_names_in_])
     features = [feat for feat in features if feat in data.columns]
 
-    targets = _resolve_swap_targets(data, target, overdue, dpds, del_grey, overdue_operator=overdue_operator)
+    targets = _resolve_swap_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator=overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     report_kwargs = dict(
         target=target,
         overdue=overdue,
@@ -1601,6 +1644,7 @@ def swap_out_report(
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
         **kwargs,
+        handle_missing_target=handle_missing_target,
     )
 
     # 整体 + 子规则（单规则时仅整体）
@@ -1632,6 +1676,7 @@ def swap_out_report(
             n_jobs=n_jobs,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            handle_missing_target=handle_missing_target,
         )
         # 统一分箱详情的逾期标签形式（MOB1@7 → MOB1 7+）并套用 target_names 映射
         binning_summary = _rename_target_level(binning_summary, target_names, level=1)
@@ -1728,6 +1773,7 @@ def swap_out_report(
             n_jobs=-1,
             parallel_backend=parallel_backend,
             parallel_config=parallel_config,
+            handle_missing_target=handle_missing_target,
         )
         stability_tasks = [
             (label, data, rule, {**stability_kwargs, "rule_name": rule.name}) for label, rule in section_rules

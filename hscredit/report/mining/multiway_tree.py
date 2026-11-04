@@ -1152,6 +1152,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         bin_params=None,
         group=None,
         apply_rule_filter=True,
+        handle_missing_target="drop",
         **kwargs,
     ):
         """用 ``Rule.report`` 逐节点计算命中效果，支持金额、多标签和多数据集。
@@ -1214,6 +1215,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         ...     df_test, overdue=['MOB1'], dpds=[7, 3, 0], amount='放款金额', leaf_only=True
         ... )
         >>> reports = tree.report({'训练集': df_train, '测试集': df_test}, leaf_only=True)
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         from ._tree_report import reject_legacy_tree_keywords
 
@@ -1248,6 +1251,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 group=group,
                 apply_rule_filter=apply_rule_filter,
                 **kwargs,
+                handle_missing_target=handle_missing_target,
             )
         validate_overdue_operator(overdue_operator)
         kwargs["overdue_operator"] = overdue_operator
@@ -1309,6 +1313,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
             **kwargs,
+            handle_missing_target=handle_missing_target,
         )
         if feature_map is not None:
             multi = isinstance(result.columns, pd.MultiIndex)
@@ -1341,6 +1346,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         amount=None,
         feature_map=None,
         apply_rule_filter=True,
+        handle_missing_target="drop",
         **kwargs,
     ):
         """按手工二叉树接口返回全树规则效果，默认使用训练数据。
@@ -1360,6 +1366,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         :param overdue_operator: 默认 '>'；逾期比较符。
         :param kwargs: 传给 report 的参数，如 amount、round_digits、save、sheet_name 和 excel_writer。
         :return: 与 report 相同的中文效果表或表格容器，指标来自 Rule.report。
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         from ._tree_report import reject_legacy_tree_keywords
 
@@ -1378,6 +1386,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
             feature_map=feature_map,
             apply_rule_filter=apply_rule_filter,
             **kwargs,
+            handle_missing_target=handle_missing_target,
         )
 
     def get_node_table(self):

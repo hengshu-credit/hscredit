@@ -56,9 +56,13 @@ def test_native_lightgbm_loss_matches_offline(loans, loss):
     weight = np.linspace(0.5, 2.0, len(yv))
     metric = loss.metric()
     history = {}
+    from packaging.version import Version
+
+    objective = loss.to_lightgbm(api="native")
+    legacy = Version(lgb.__version__) < Version("4.0")
     model = lgb.train(
         {
-            "objective": loss.to_lightgbm(api="native"),
+            "objective": "none" if legacy else objective,
             "metric": "None",
             "num_threads": 1,
             "verbosity": -1,
@@ -70,6 +74,7 @@ def test_native_lightgbm_loss_matches_offline(loans, loss):
         valid_names=["验证"],
         feval=metric.to_lightgbm(api="native", raw_score=True),
         callbacks=[lgb.record_evaluation(history)],
+        **({"fobj": objective} if legacy else {}),
     )
     p = expit(model.predict(xv, raw_score=True))
     assert history["验证"][metric.name][-1] == pytest.approx(metric(yv, p, sample_weight=weight))

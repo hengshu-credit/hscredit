@@ -79,301 +79,430 @@
 ...     print(f"{name}: AUC={metrics['AUC']:.4f}")
 """
 
-import importlib
+import os as _os
 
-# 导入损失函数
-from .losses import (
-    # 基类
-    BaseLoss,
-    BaseMetric,
-    LossMetric,
-    CallableMetric,
-    make_metric,
-    get_loss,
-    get_metric,
-    list_losses,
-    list_metrics,
-    AUCMetric,
-    TopKCaptureMetric,
-    TopKLiftMetric,
-    BadDebtMetric,
-    ApprovalRateMetric,
-    ProfitMetric,
-    ClassificationCostMetric,
-    # 不平衡数据处理
-    FocalLoss,
-    AsymmetricFocalLoss,
-    BalancedFocalLoss,
-    WeightedBCELoss,
-    # 成本敏感
-    CostSensitiveLoss,
-    # 风控业务损失
-    BadDebtLoss,
-    ApprovalRateLoss,
-    ProfitMaxLoss,
-    ExpectedProfitLoss,
-    OrdinalRankLoss,
-    LiftFocusedLoss,
-    RankingAUCProxyLoss,
-    KSFocusedLoss,
-    TopKBadCaptureLoss,
-    AmountWeightedLoss,
-    ExpectedValueLoss,
-    # 自定义评估指标
-    KSMetric,
-    GiniMetric,
-    PSIMetric,
-    # 框架适配器
-    XGBoostLossAdapter,
-    LightGBMLossAdapter,
-    CatBoostLossAdapter,
-    TabNetLossAdapter,
-    TorchLossAdapter,
-    NGBoostLossAdapter,
-)
+if _os.environ.get("HSCREDIT_LIGHT_IMPORT") == "1":
+    from importlib import import_module as _import_module
+    from hscredit._public_api import EXPORTS
 
-# 导入模型基类
-from .base import BaseRiskModel
+    _exports = EXPORTS[__name__]
+    __all__ = [
+        "BaseLoss",
+        "BaseMetric",
+        "LossMetric",
+        "CallableMetric",
+        "make_metric",
+        "get_loss",
+        "get_metric",
+        "list_losses",
+        "list_metrics",
+        "AUCMetric",
+        "TopKCaptureMetric",
+        "TopKLiftMetric",
+        "BadDebtMetric",
+        "ApprovalRateMetric",
+        "ProfitMetric",
+        "ClassificationCostMetric",
+        "FocalLoss",
+        "AsymmetricFocalLoss",
+        "BalancedFocalLoss",
+        "WeightedBCELoss",
+        "CostSensitiveLoss",
+        "BadDebtLoss",
+        "ApprovalRateLoss",
+        "ProfitMaxLoss",
+        "ExpectedProfitLoss",
+        "OrdinalRankLoss",
+        "LiftFocusedLoss",
+        "RankingAUCProxyLoss",
+        "KSFocusedLoss",
+        "TopKBadCaptureLoss",
+        "AmountWeightedLoss",
+        "ExpectedValueLoss",
+        "KSMetric",
+        "GiniMetric",
+        "PSIMetric",
+        "XGBoostLossAdapter",
+        "LightGBMLossAdapter",
+        "CatBoostLossAdapter",
+        "TabNetLossAdapter",
+        "TorchLossAdapter",
+        "NGBoostLossAdapter",
+        "BaseRiskModel",
+        "RandomForest",
+        "ExtraTrees",
+        "GradientBoosting",
+        "SVM",
+        "DecisionTreeClassifier",
+        "LogisticRegression",
+        "ScoreCard",
+        "RoundScoreCard",
+        "ProbabilityScoreCard",
+        "BaseScoreTransformer",
+        "StandardScoreTransformer",
+        "LinearScoreTransformer",
+        "QuantileScoreTransformer",
+        "BoxCoxScoreTransformer",
+        "ScoreTransformer",
+        "transform_probability_to_score",
+        "ScoreDriftCalibrator",
+        "RuleSet",
+        "RulesClassifier",
+        "LogicOperator",
+        "RuleResult",
+        "create_and_ruleset",
+        "create_or_ruleset",
+        "combine_rules",
+        "ModelReport",
+        "BaseCalibrator",
+        "PlattCalibrator",
+        "IsotonicCalibrator",
+        "BetaCalibrator",
+        "HistogramCalibrator",
+        "ProbabilityCalibrator",
+        "CalibratedModel",
+        "calibrate_model",
+        "plot_calibration_comparison",
+        "model_explain_report",
+        "ExplanationResult",
+        "CounterfactualExplainer",
+        "build_reason_codes",
+        "plot_feature_importance",
+        "plot_shap_importance",
+        "plot_importance_comparison",
+        "ModelExplainer",
+        "Dimension",
+        "Real",
+        "Integer",
+        "Categorical",
+        "IntDistribution",
+        "FloatDistribution",
+        "CategoricalDistribution",
+        "suggest_int",
+        "suggest_float",
+        "suggest_categorical",
+        "suggest_uniform",
+        "suggest_discrete_uniform",
+        "suggest_loguniform",
+        "uniform",
+        "loguniform",
+        "quniform",
+        "qloguniform",
+        "choice",
+        "randint",
+        "normal",
+        "qnormal",
+        "lognormal",
+        "qlognormal",
+    ]
+    _LAZY_BOOSTING_MODELS = ("XGBoost", "LightGBM", "CatBoost", "NGBoost")
+    _LAZY_NET_MODELS = ("ResNet", "FTTransformer", "TabM", "TabPFN", "TabNet")
+    _LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler", "Metric")
 
-# 导入提升树模型 (boosting/, 可选重依赖 xgboost/lightgbm/catboost/ngboost，懒加载)
-_LAZY_BOOSTING_MODELS = ("XGBoost", "LightGBM", "CatBoost", "NGBoost")
-_LAZY_NET_MODELS = ("ResNet", "FTTransformer", "TabM", "TabPFN", "TabNet")
+    def __getattr__(name):
+        if name not in _exports:
+            raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
+        value = getattr(_import_module(_exports[name]), name)
+        globals()[name] = value
+        return value
 
-# 导入经典模型 (classical/)
-from .classical import (
-    RandomForest,
-    ExtraTrees,
-    GradientBoosting,
-    SVM,
-    DecisionTreeClassifier,
-    LogisticRegression,
-)
+    def __dir__():
+        return sorted(set(globals()) | set(__all__))
 
-# 导入评分卡 (scorecard/)
-from .scorecard import (
-    ScoreCard,
-    RoundScoreCard,
-    ProbabilityScoreCard,
-    BaseScoreTransformer,
-    StandardScoreTransformer,
-    LinearScoreTransformer,
-    QuantileScoreTransformer,
-    BoxCoxScoreTransformer,
-    ScoreTransformer,
-    transform_probability_to_score,
-    ScoreDriftCalibrator,
-)
+else:
+    import importlib
 
-# 导入规则集分类模型 (rules/)
-from .rules import (
-    RuleSet,
-    RulesClassifier,
-    LogicOperator,
-    RuleResult,
-    create_and_ruleset,
-    create_or_ruleset,
-    combine_rules,
-)
+    # 导入损失函数
+    from .losses import (
+        # 基类
+        BaseLoss,
+        BaseMetric,
+        LossMetric,
+        CallableMetric,
+        make_metric,
+        get_loss,
+        get_metric,
+        list_losses,
+        list_metrics,
+        AUCMetric,
+        TopKCaptureMetric,
+        TopKLiftMetric,
+        BadDebtMetric,
+        ApprovalRateMetric,
+        ProfitMetric,
+        ClassificationCostMetric,
+        # 不平衡数据处理
+        FocalLoss,
+        AsymmetricFocalLoss,
+        BalancedFocalLoss,
+        WeightedBCELoss,
+        # 成本敏感
+        CostSensitiveLoss,
+        # 风控业务损失
+        BadDebtLoss,
+        ApprovalRateLoss,
+        ProfitMaxLoss,
+        ExpectedProfitLoss,
+        OrdinalRankLoss,
+        LiftFocusedLoss,
+        RankingAUCProxyLoss,
+        KSFocusedLoss,
+        TopKBadCaptureLoss,
+        AmountWeightedLoss,
+        ExpectedValueLoss,
+        # 自定义评估指标
+        KSMetric,
+        GiniMetric,
+        PSIMetric,
+        # 框架适配器
+        XGBoostLossAdapter,
+        LightGBMLossAdapter,
+        CatBoostLossAdapter,
+        TabNetLossAdapter,
+        TorchLossAdapter,
+        NGBoostLossAdapter,
+    )
 
-# 概率校准与模型解释使用独立子包；ModelReport 仅由 hscredit.report 提供。
-from .calibration import (
-    BaseCalibrator,
-    BetaCalibrator,
-    CalibratedModel,
-    HistogramCalibrator,
-    IsotonicCalibrator,
-    PlattCalibrator,
-    ProbabilityCalibrator,
-    calibrate_model,
-    plot_calibration_comparison,
-)
-from .explainability import (
-    CounterfactualExplainer,
-    ExplanationResult,
-    ModelExplainer,
-    build_reason_codes,
-    model_explain_report,
-    plot_feature_importance,
-    plot_importance_comparison,
-    plot_shap_importance,
-)
+    # 导入模型基类
+    from .base import BaseRiskModel
 
-# 导入超参数调优 (tuning/, 可选重依赖 optuna，懒加载)
-_LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler", "Metric")
+    # 导入提升树模型 (boosting/, 可选重依赖 xgboost/lightgbm/catboost/ngboost，懒加载)
+    _LAZY_BOOSTING_MODELS = ("XGBoost", "LightGBM", "CatBoost", "NGBoost")
+    _LAZY_NET_MODELS = ("ResNet", "FTTransformer", "TabM", "TabPFN", "TabNet")
 
-# 搜索空间兼容符号本身不依赖 Optuna，可安全地作为模型模块常规公开 API 导出。
-from .tuning.search_space import (  # noqa: E402
-    Categorical,
-    CategoricalDistribution,
-    Dimension,
-    FloatDistribution,
-    IntDistribution,
-    Integer,
-    Real,
-    choice,
-    lognormal,
-    loguniform,
-    normal,
-    qlognormal,
-    qloguniform,
-    qnormal,
-    quniform,
-    randint,
-    suggest_categorical,
-    suggest_discrete_uniform,
-    suggest_float,
-    suggest_int,
-    suggest_loguniform,
-    suggest_uniform,
-    uniform,
-)
+    # 导入经典模型 (classical/)
+    from .classical import (
+        RandomForest,
+        ExtraTrees,
+        GradientBoosting,
+        SVM,
+        DecisionTreeClassifier,
+        LogisticRegression,
+    )
 
+    # 导入评分卡 (scorecard/)
+    from .scorecard import (
+        ScoreCard,
+        RoundScoreCard,
+        ProbabilityScoreCard,
+        BaseScoreTransformer,
+        StandardScoreTransformer,
+        LinearScoreTransformer,
+        QuantileScoreTransformer,
+        BoxCoxScoreTransformer,
+        ScoreTransformer,
+        transform_probability_to_score,
+        ScoreDriftCalibrator,
+    )
 
-def __getattr__(name):
-    """懒加载 boosting/tuning 子包及 ModelReport 兼容别名，避免 import hscredit 时即时加载重依赖."""
-    if name in _LAZY_BOOSTING_MODELS:
-        value = getattr(importlib.import_module(".boosting", __name__), name)
-    elif name in _LAZY_NET_MODELS:
-        value = getattr(importlib.import_module(".net", __name__), name)
-    elif name in _LAZY_TUNING_MODELS:
-        value = getattr(importlib.import_module(".tuning", __name__), name)
-    elif name == "ModelReport":
-        value = getattr(importlib.import_module("hscredit.report.model_report"), "ModelReport")
-    else:
-        raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
-    globals()[name] = value
-    return value
+    # 导入规则集分类模型 (rules/)
+    from .rules import (
+        RuleSet,
+        RulesClassifier,
+        LogicOperator,
+        RuleResult,
+        create_and_ruleset,
+        create_or_ruleset,
+        combine_rules,
+    )
 
+    # 概率校准与模型解释使用独立子包；ModelReport 仅由 hscredit.report 提供。
+    from .calibration import (
+        BaseCalibrator,
+        BetaCalibrator,
+        CalibratedModel,
+        HistogramCalibrator,
+        IsotonicCalibrator,
+        PlattCalibrator,
+        ProbabilityCalibrator,
+        calibrate_model,
+        plot_calibration_comparison,
+    )
+    from .explainability import (
+        CounterfactualExplainer,
+        ExplanationResult,
+        ModelExplainer,
+        build_reason_codes,
+        model_explain_report,
+        plot_feature_importance,
+        plot_importance_comparison,
+        plot_shap_importance,
+    )
 
-__all__ = [
-    # 损失函数基类
-    "BaseLoss",
-    "BaseMetric",
-    "LossMetric",
-    "CallableMetric",
-    "make_metric",
-    "get_loss",
-    "get_metric",
-    "list_losses",
-    "list_metrics",
-    "AUCMetric",
-    "TopKCaptureMetric",
-    "TopKLiftMetric",
-    "BadDebtMetric",
-    "ApprovalRateMetric",
-    "ProfitMetric",
-    "ClassificationCostMetric",
-    # 不平衡数据处理
-    "FocalLoss",
-    "AsymmetricFocalLoss",
-    "BalancedFocalLoss",
-    "WeightedBCELoss",
-    # 成本敏感
-    "CostSensitiveLoss",
-    # 风控业务损失
-    "BadDebtLoss",
-    "ApprovalRateLoss",
-    "ProfitMaxLoss",
-    "ExpectedProfitLoss",
-    # 排序与 AUC 优化
-    "OrdinalRankLoss",
-    "LiftFocusedLoss",
-    "RankingAUCProxyLoss",
-    # KS 分布分离
-    "KSFocusedLoss",
-    # 头部捕获优化
-    "TopKBadCaptureLoss",
-    # 金额/敞口加权
-    "AmountWeightedLoss",
-    "ExpectedValueLoss",
-    # 自定义评估指标
-    "KSMetric",
-    "GiniMetric",
-    "PSIMetric",
-    # 框架适配器
-    "XGBoostLossAdapter",
-    "LightGBMLossAdapter",
-    "CatBoostLossAdapter",
-    "TabNetLossAdapter",
-    "TorchLossAdapter",
-    "NGBoostLossAdapter",
-    # 模型基类
-    "BaseRiskModel",
-    # 各模型类（boosting 系列为懒加载，不放入 __all__ 以避免 `import *` 触发重依赖加载，
-    # 可通过 from hscredit.core.models import XGBoost 等方式显式访问）
-    "RandomForest",
-    "ExtraTrees",
-    "GradientBoosting",
-    "SVM",
-    "DecisionTreeClassifier",
-    # 逻辑回归
-    "LogisticRegression",
-    # 评分卡
-    "ScoreCard",
-    "RoundScoreCard",
-    "ProbabilityScoreCard",
-    # 概率转评分
-    "BaseScoreTransformer",
-    "StandardScoreTransformer",
-    "LinearScoreTransformer",
-    "QuantileScoreTransformer",
-    "BoxCoxScoreTransformer",
-    "ScoreTransformer",
-    "transform_probability_to_score",
-    # 评分漂移校准
-    "ScoreDriftCalibrator",
-    # 规则集分类
-    "RuleSet",
-    "RulesClassifier",
-    "LogicOperator",
-    "RuleResult",
-    "create_and_ruleset",
-    "create_or_ruleset",
-    "combine_rules",
-    # 评估报告
-    "ModelReport",
-    # 概率校准
-    "BaseCalibrator",
-    "PlattCalibrator",
-    "IsotonicCalibrator",
-    "BetaCalibrator",
-    "HistogramCalibrator",
-    "ProbabilityCalibrator",
-    "CalibratedModel",
-    "calibrate_model",
-    "plot_calibration_comparison",
-    # 模型可解释性
-    "model_explain_report",
-    "ExplanationResult",
-    "CounterfactualExplainer",
-    "build_reason_codes",
-    "plot_feature_importance",
-    "plot_shap_importance",
-    "plot_importance_comparison",
-    "ModelExplainer",
-    # 统一超参数搜索空间声明
-    "Dimension",
-    "Real",
-    "Integer",
-    "Categorical",
-    "IntDistribution",
-    "FloatDistribution",
-    "CategoricalDistribution",
-    "suggest_int",
-    "suggest_float",
-    "suggest_categorical",
-    "suggest_uniform",
-    "suggest_discrete_uniform",
-    "suggest_loguniform",
-    "uniform",
-    "loguniform",
-    "quniform",
-    "qloguniform",
-    "choice",
-    "randint",
-    "normal",
-    "qnormal",
-    "lognormal",
-    "qlognormal",
-    # 超参数调优为懒加载，不放入 __all__（可通过 from hscredit.core.models import AutoTuner 等方式显式访问）
-]
+    # 导入超参数调优 (tuning/, 可选重依赖 optuna，懒加载)
+    _LAZY_TUNING_MODELS = ("ModelTuner", "AutoTuner", "TuningObjective", "TuningSampler", "Metric")
+
+    # 搜索空间兼容符号本身不依赖 Optuna，可安全地作为模型模块常规公开 API 导出。
+    from .tuning.search_space import (  # noqa: E402
+        Categorical,
+        CategoricalDistribution,
+        Dimension,
+        FloatDistribution,
+        IntDistribution,
+        Integer,
+        Real,
+        choice,
+        lognormal,
+        loguniform,
+        normal,
+        qlognormal,
+        qloguniform,
+        qnormal,
+        quniform,
+        randint,
+        suggest_categorical,
+        suggest_discrete_uniform,
+        suggest_float,
+        suggest_int,
+        suggest_loguniform,
+        suggest_uniform,
+        uniform,
+    )
+
+    def __getattr__(name):
+        """懒加载 boosting/tuning 子包及 ModelReport 兼容别名，避免 import hscredit 时即时加载重依赖."""
+        if name in _LAZY_BOOSTING_MODELS:
+            value = getattr(importlib.import_module(".boosting", __name__), name)
+        elif name in _LAZY_NET_MODELS:
+            value = getattr(importlib.import_module(".net", __name__), name)
+        elif name in _LAZY_TUNING_MODELS:
+            value = getattr(importlib.import_module(".tuning", __name__), name)
+        elif name == "ModelReport":
+            value = getattr(importlib.import_module("hscredit.report.model_report"), "ModelReport")
+        else:
+            raise AttributeError(f"模块 {__name__!r} 不存在属性 {name!r}")
+        globals()[name] = value
+        return value
+
+    __all__ = [
+        # 损失函数基类
+        "BaseLoss",
+        "BaseMetric",
+        "LossMetric",
+        "CallableMetric",
+        "make_metric",
+        "get_loss",
+        "get_metric",
+        "list_losses",
+        "list_metrics",
+        "AUCMetric",
+        "TopKCaptureMetric",
+        "TopKLiftMetric",
+        "BadDebtMetric",
+        "ApprovalRateMetric",
+        "ProfitMetric",
+        "ClassificationCostMetric",
+        # 不平衡数据处理
+        "FocalLoss",
+        "AsymmetricFocalLoss",
+        "BalancedFocalLoss",
+        "WeightedBCELoss",
+        # 成本敏感
+        "CostSensitiveLoss",
+        # 风控业务损失
+        "BadDebtLoss",
+        "ApprovalRateLoss",
+        "ProfitMaxLoss",
+        "ExpectedProfitLoss",
+        # 排序与 AUC 优化
+        "OrdinalRankLoss",
+        "LiftFocusedLoss",
+        "RankingAUCProxyLoss",
+        # KS 分布分离
+        "KSFocusedLoss",
+        # 头部捕获优化
+        "TopKBadCaptureLoss",
+        # 金额/敞口加权
+        "AmountWeightedLoss",
+        "ExpectedValueLoss",
+        # 自定义评估指标
+        "KSMetric",
+        "GiniMetric",
+        "PSIMetric",
+        # 框架适配器
+        "XGBoostLossAdapter",
+        "LightGBMLossAdapter",
+        "CatBoostLossAdapter",
+        "TabNetLossAdapter",
+        "TorchLossAdapter",
+        "NGBoostLossAdapter",
+        # 模型基类
+        "BaseRiskModel",
+        # 各模型类（boosting 系列为懒加载，不放入 __all__ 以避免 `import *` 触发重依赖加载，
+        # 可通过 from hscredit.core.models import XGBoost 等方式显式访问）
+        "RandomForest",
+        "ExtraTrees",
+        "GradientBoosting",
+        "SVM",
+        "DecisionTreeClassifier",
+        # 逻辑回归
+        "LogisticRegression",
+        # 评分卡
+        "ScoreCard",
+        "RoundScoreCard",
+        "ProbabilityScoreCard",
+        # 概率转评分
+        "BaseScoreTransformer",
+        "StandardScoreTransformer",
+        "LinearScoreTransformer",
+        "QuantileScoreTransformer",
+        "BoxCoxScoreTransformer",
+        "ScoreTransformer",
+        "transform_probability_to_score",
+        # 评分漂移校准
+        "ScoreDriftCalibrator",
+        # 规则集分类
+        "RuleSet",
+        "RulesClassifier",
+        "LogicOperator",
+        "RuleResult",
+        "create_and_ruleset",
+        "create_or_ruleset",
+        "combine_rules",
+        # 评估报告
+        "ModelReport",
+        # 概率校准
+        "BaseCalibrator",
+        "PlattCalibrator",
+        "IsotonicCalibrator",
+        "BetaCalibrator",
+        "HistogramCalibrator",
+        "ProbabilityCalibrator",
+        "CalibratedModel",
+        "calibrate_model",
+        "plot_calibration_comparison",
+        # 模型可解释性
+        "model_explain_report",
+        "ExplanationResult",
+        "CounterfactualExplainer",
+        "build_reason_codes",
+        "plot_feature_importance",
+        "plot_shap_importance",
+        "plot_importance_comparison",
+        "ModelExplainer",
+        # 统一超参数搜索空间声明
+        "Dimension",
+        "Real",
+        "Integer",
+        "Categorical",
+        "IntDistribution",
+        "FloatDistribution",
+        "CategoricalDistribution",
+        "suggest_int",
+        "suggest_float",
+        "suggest_categorical",
+        "suggest_uniform",
+        "suggest_discrete_uniform",
+        "suggest_loguniform",
+        "uniform",
+        "loguniform",
+        "quniform",
+        "qloguniform",
+        "choice",
+        "randint",
+        "normal",
+        "qnormal",
+        "lognormal",
+        "qlognormal",
+        # 超参数调优为懒加载，不放入 __all__（可通过 from hscredit.core.models import AutoTuner 等方式显式访问）
+    ]

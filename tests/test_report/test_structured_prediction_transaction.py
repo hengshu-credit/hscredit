@@ -10,7 +10,7 @@ import pytest
 from hscredit.core.binning.spec import BinSpec
 from hscredit.report import OverduePredictor, feature_bin_stats
 from hscredit.report.result import ReportGenerationError
-from hscredit.skills_runtime.artifacts import ArtifactTransaction
+from hscredit.utils.artifacts import ArtifactTransaction
 from tests.test_report.test_audit_report_contracts import small_model_report
 
 
@@ -38,9 +38,7 @@ def test_structured_table_predictions_do_not_parse_display_labels():
 
 
 def test_category_specs_preserve_comma_and_quote_values():
-    table = pd.DataFrame(
-        {"分箱": [0, 1], "分箱标签": ["展示箱甲", "展示箱乙"], "坏样本率": [0.1, 0.9], "样本总数": [10, 10]}
-    )
+    table = pd.DataFrame({"分箱": [0, 1], "分箱标签": ["展示箱甲", "展示箱乙"], "坏样本率": [0.1, 0.9], "样本总数": [10, 10]})
     specs = {
         0: BinSpec("x", 0, kind="categories", values=("a,b",)),
         1: BinSpec("x", 1, kind="categories", values=("a'b",)),

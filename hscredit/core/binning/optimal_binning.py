@@ -373,9 +373,7 @@ class OptimalBinning(BaseBinning):
         :raises ValueError: method 不是字符串或不在 ``VALID_METHODS`` 中时抛出
         """
         if not isinstance(method, str):
-            raise ValueError(
-                f"method 必须是字符串，当前类型为 {type(method).__name__}: {method!r}，" f"可选: {cls.VALID_METHODS}"
-            )
+            raise ValueError(f"method 必须是字符串，当前类型为 {type(method).__name__}: {method!r}，" f"可选: {cls.VALID_METHODS}")
         normalized = method.strip().lower()
         if normalized not in cls.VALID_METHODS:
             raise ValueError(f"不支持的method: {method}，可选: {cls.VALID_METHODS}")
@@ -490,9 +488,7 @@ class OptimalBinning(BaseBinning):
         if self.objective is None and self.objective_params is None and self.kwargs.get("custom_objective") is None:
             return
         if method not in OBJECTIVE_METHODS:
-            raise ValueError(
-                f"方法 '{method}' 使用固定算法目标，不支持 objective；可选方法为 {list(OBJECTIVE_METHODS)}"
-            )
+            raise ValueError(f"方法 '{method}' 使用固定算法目标，不支持 objective；可选方法为 {list(OBJECTIVE_METHODS)}")
         resolve_objective(
             "iv" if self.objective is None else self.objective,
             self.objective_params,
@@ -2127,7 +2123,9 @@ class OptimalBinning(BaseBinning):
             if metric == "woe":
                 result.attrs["hscredit_encoding"] = "woe"
                 result.attrs["hscredit_source"] = "OptimalBinning"
-            return result
+            from ...utils.arguments import copy_query_source
+
+            return copy_query_source(X, result)
 
         # Optimal 会在底层方法拟合后继续做约束收口、候选点限制和保留箱处理。
         # splits_/bin_tables_/_woe_maps_ 以 wrapper 的最终状态为准；底层估计器可能仍
@@ -2138,7 +2136,9 @@ class OptimalBinning(BaseBinning):
             result.attrs["hscredit_encoding"] = "woe"
             result.attrs["hscredit_source"] = "OptimalBinning"
 
-        return result
+        from ...utils.arguments import copy_query_source
+
+        return copy_query_source(X, result)
 
     def _transform_with_wrapper_state(self, X: pd.DataFrame, metric: str, **kwargs) -> pd.DataFrame:
         """使用 Optimal 已合并的规则状态转换 imported 或 wrapper 特征。"""

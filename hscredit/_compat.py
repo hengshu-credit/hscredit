@@ -6,6 +6,7 @@
 
 from functools import wraps
 from importlib import metadata, util
+import sys
 from typing import Optional
 
 from packaging.version import Version
@@ -15,7 +16,8 @@ def installed_version(import_name: str, distribution_name: Optional[str] = None)
     """返回已安装模块对应发行版的版本，模块不存在时返回 None。"""
     if util.find_spec(import_name) is None:
         return None
-    return Version(metadata.version(distribution_name or import_name))
+    actual = getattr(sys.modules.get(import_name), "__version__", None)
+    return Version(str(actual) if actual is not None else metadata.version(distribution_name or import_name))
 
 
 def needs_joblib_cpu_compat(joblib_version: Optional[Version]) -> bool:

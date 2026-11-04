@@ -203,11 +203,7 @@ def _report_from_payload(payload: Any) -> SelectionReport:
     values = {}
     for attribute in _TABLES:
         table = payload["表"][attribute]
-        if (
-            not isinstance(table, dict)
-            or table.get("列") != schemas[attribute]
-            or not isinstance(table.get("行"), list)
-        ):
+        if not isinstance(table, dict) or table.get("列") != schemas[attribute] or not isinstance(table.get("行"), list):
             raise ValidationError(f"筛选报告 {attribute} 的列结构与协议不一致")
         if any(not isinstance(row, list) or len(row) != len(table["列"]) for row in table["行"]):
             raise ValidationError(f"筛选报告 {attribute} 的行长度与列结构不一致")
@@ -285,7 +281,7 @@ def _plan_excel(
         ],
         columns=["阶段路径", "参数", "拟合标识"],
     )
-    frames = [("执行状态", status)] + frames + [("参数说明", parameters)]
+    frames = frames + [("参数说明", parameters)]
     if by_selector:
         for path, part in report._details.groupby("阶段路径", sort=False):
             frames.append((str(path), part))
@@ -293,9 +289,7 @@ def _plan_excel(
         (len(frame) + max(1, math.ceil(len(frame) / max_rows_per_sheet))) * len(frame.columns) for _, frame in frames
     )
     if total_cells > max_excel_cells:
-        raise ValidationError(
-            f"Excel 预计 {total_cells} 个单元格，超出 max_excel_cells={max_excel_cells}；请仅保存完整 JSON 或提高预算"
-        )
+        raise ValidationError(f"Excel 预计 {total_cells} 个单元格，超出 max_excel_cells={max_excel_cells}；请仅保存完整 JSON 或提高预算")
     plans, used = [], set()
     for label, frame in frames:
         chunks = max(1, math.ceil(len(frame) / max_rows_per_sheet))

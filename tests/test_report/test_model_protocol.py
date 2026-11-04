@@ -53,10 +53,13 @@ def test_overdue_labels_and_basic_definitions_match_independent_rows(operator, d
         days = data.MOB1.to_numpy()
         compare = {">": np.greater, ">=": np.greater_equal, "<": np.less, "<=": np.less_equal}[operator]
         expected = compare(days, threshold).astype(float)
+        expected[pd.isna(days)] = np.nan
         grey = (
             ((days > 0) & (days <= threshold))
             if operator == ">"
-            else ((days > 0) & (days < threshold)) if operator == ">=" else np.zeros(len(days), dtype=bool)
+            else ((days > 0) & (days < threshold))
+            if operator == ">="
+            else np.zeros(len(days), dtype=bool)
         )
         if del_grey:
             expected[grey] = np.nan
@@ -69,17 +72,12 @@ def test_overdue_labels_and_basic_definitions_match_independent_rows(operator, d
     report.to_excel(path, with_plots=False, include_sample_records=False, mode="strict")
     book = load_workbook(path)
     basic = [c.value for row in book["1-基本信息"] for c in row]
-    assert {"配置项", "配置值", "标签来源", "操作符", "灰样本定义", "剔灰配置", "MOB1@3"} <= set(
-        v for v in basic if isinstance(v, str)
-    )
+    assert {"配置项", "配置值", "标签来源", "操作符", "灰样本定义", "剔灰配置", "MOB1@3"} <= set(v for v in basic if isinstance(v, str))
     assert "标签定义与剔灰规则" not in basic and "实际剔除规则" not in basic
     performance = [c.value for row in book["2-模型性能"] for c in row]
     assert "MOB1@3" in performance
     assert not any(
-        c.value in {"MOB1>3", "MOB1>=3", "MOB1<3", "MOB1<=3", "MOB1大于3"}
-        for sheet in book
-        for row in sheet
-        for c in row
+        c.value in {"MOB1>3", "MOB1>=3", "MOB1<3", "MOB1<=3", "MOB1大于3"} for sheet in book for row in sheet for c in row
     )
     book.close()
 
@@ -95,7 +93,7 @@ def test_explicit_target_names_and_external_y_are_described_honestly(data):
     assert report._label_names == ["MOB1@3"]
     definitions = label_definition_table(report).set_index("数据集")
     assert definitions.loc["外部", "标签来源"] == "显式y"
-    assert definitions.loc["外部", "实际剔除规则"] == "外部 y 优先，按原值使用"
+    assert definitions.loc["外部", "实际剔除规则"] == "剔除灰样本"
     assert definitions.loc["派生", "操作符"] == "不适用（直接标签）"
     assert_allclose(report._get_y("派生", "MOB1大于3"), data.MOB1.gt(3))
     with pytest.raises(ValueError, match="标签展示名重复"):
@@ -199,10 +197,10 @@ def test_single_overdue_basic_description_uses_effective_rows(data, tmp_path):
     book = load_workbook(path)
     basic = book["1-基本信息"]
     contents = {basic.cell(row, 2).value: basic.cell(row, 3).value for row in range(1, basic.max_row + 1)}
-    assert "样本数: 8" in contents["整体样本"] and "50.0%" in contents["整体样本"]
+    assert "样本数: 7" in contents["整体样本"] and "57.14%" in contents["整体样本"]
     assert report._target_name == "MOB1@3"
     definition = label_definition_table(report).iloc[0]
-    assert definition["有效样本数"] == 8 and definition["剔除样本数"] == 4
+    assert definition["有效样本数"] == 7 and definition["剔除样本数"] == 5
     book.close()
 
 

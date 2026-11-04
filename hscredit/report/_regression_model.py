@@ -24,8 +24,10 @@ def is_regression(model):
     return is_regressor(model) if callable(getattr(model, "__sklearn_tags__", None)) else False
 
 
-def target_values(frame, value, name):
-    """保留连续数值；Series 按索引对齐，数组按位置，缺失标签不进入监督指标。"""
+def target_values(frame, value, name, handle_missing_target="drop"):
+    """保留连续数值；Series 按索引对齐，数组按位置，缺失标签不进入监督指标。
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+    """
     if isinstance(value, str):
         if value not in frame:
             raise ValueError(f"回归报告缺少目标字段: {value}")
@@ -52,6 +54,8 @@ def target_values(frame, value, name):
         raise ValueError("回归报告目标必须是一维、非空且与数据等长")
     if np.isinf(values).any():
         raise ValueError("回归报告目标不允许正负无穷")
+    if handle_missing_target == "raise" and np.isnan(values).any():
+        raise ValueError("回归目标包含缺失值")
     return pd.Series(values, index=frame.index, name=name)
 
 
@@ -123,7 +127,8 @@ def bin_table(report, dataset, method, max_n_bins, margins, feature=None, amount
     if isinstance(max_n_bins, bool) or not isinstance(max_n_bins, (int, np.integer)) or max_n_bins < 1:
         raise ValueError("max_n_bins 必须为正整数")
     key = report._resolve_dataset_key(dataset)
-    train, current = report._datasets[report._train_key], report._datasets[key]
+    reference_key = key if report.binning_reference == "independent" else report._train_key
+    train, current = report._datasets[reference_key], report._datasets[key]
     name = "预测值" if feature is None else feature
     train_values = train.prediction if feature is None else train.X[feature]
     values = current.prediction if feature is None else current.X[feature]
@@ -132,10 +137,33 @@ def bin_table(report, dataset, method, max_n_bins, margins, feature=None, amount
         frame = pd.concat([frame, frame], ignore_index=True)
     # 等频切点不使用标签。交替标签仅满足公共分箱器统计接口的二分类校验，
     # 关闭单调及比例约束，舍弃该辅助统计，再以真实连续目标独立计算全部报告统计。
-    binner = QuantileBinning(min_n_bins=1, max_n_bins=int(max_n_bins), min_bin_size=None, monotonic=False, n_jobs=1)
-    if not pd.api.types.is_numeric_dtype(frame[name]):
+    rules = report.rules
+    if isinstance(rules, dict):
+        rules = (
+            rules.get(feature)
+            if feature is not None
+            else rules.get("__score__", rules.get("score") if "score" not in report.feature_names else None)
+        )
+    elif feature is not None:
+        rules = None
+    from joblib import hash as stable_hash
+
+    cache_key = ("regression", reference_key, name, max_n_bins, stable_hash(rules))
+    binner = report._reference_binners.get(cache_key)
+    if binner is None:
+        binner = QuantileBinning(
+            min_n_bins=1,
+            max_n_bins=int(max_n_bins),
+            min_bin_size=None,
+            monotonic=False,
+            n_jobs=1,
+            user_splits={name: rules} if rules is not None else None,
+        )
+    if cache_key not in report._reference_binners and not pd.api.types.is_numeric_dtype(frame[name]):
         binner.set_params(category_order={name: list(pd.unique(frame[name].dropna()))})
-    binner.fit(frame, np.arange(len(frame)) % 2)
+    if cache_key not in report._reference_binners:
+        binner.fit(frame, np.arange(len(frame)) % 2)
+        report._reference_binners[cache_key] = binner
     target_frame = pd.DataFrame({name: np.asarray(values)})
     bins = binner.transform(target_frame, metric="indices")[name].to_numpy()
     captions = binner.transform(target_frame, metric="bins")[name].to_numpy()
@@ -189,9 +217,7 @@ def grouped_metrics(report, column, freq=None):
             p = dataset.prediction[positions]
             weight = None if weights is None else weights[positions]
             metrics = error_values(y, p, weight) if weight is None or weight.sum() > 0 else error_values([], [])
-            rows.append(
-                {"数据集": dataset.label, "时间" if freq is not None else column: group, "样本数": len(y), **metrics}
-            )
+            rows.append({"数据集": dataset.label, "时间" if freq is not None else column: group, "样本数": len(y), **metrics})
     return pd.DataFrame(rows)
 
 
@@ -295,15 +321,19 @@ def export_excel(report, filepath, options):
         "评估口径",
         pd.DataFrame(
             {
-                "配置项": ["任务", "目标", "残差", "基准预测", "分箱统计", "项目说明", "数据来源"],
+                "配置项": ["任务", "目标", "残差", "基准预测", "分箱统计", "项目说明", "数据来源", "预测函数", "加权性能对照"],
                 "配置值": [
                     "回归",
                     report._target_name,
                     "预测值减实际值",
-                    "固定为首个训练数据集的加权目标均值",
-                    "训练集确定切点，按件数统计；不继承评估权重",
+                    "固定为首个训练数据集的实际目标均值",
+                    "训练集确定切点，按件数统计" if report.binning_reference == "train" else "各数据集独立分箱，按件数统计",
                     options["project_desc"],
                     options["data_source"],
+                    report.prediction_method
+                    if isinstance(report.prediction_method, str)
+                    else getattr(report.prediction_method, "__name__", "自定义函数"),
+                    "是" if report.show_weighted_metrics else "否",
                 ],
             }
         ),

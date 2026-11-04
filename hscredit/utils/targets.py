@@ -9,7 +9,13 @@ import numpy as np
 import pandas as pd
 
 from .input_utils import normalize_dpd_values
-from .overdue import make_overdue_target, overdue_label, validate_overdue_operator
+from .overdue import (
+    apply_missing_target,
+    make_overdue_target,
+    overdue_label,
+    validate_missing_target,
+    validate_overdue_operator,
+)
 
 TargetValues = Union[pd.Series, np.ndarray, list]
 TargetInput = Union[str, TargetValues, Callable, Mapping]
@@ -34,6 +40,8 @@ class BoundTargets:
     operator: str = ">"
     source_columns: tuple = ()
     explicit_multi: bool = False
+    handle_missing_target: str = "drop"
+    del_grey: bool = False
 
     def __len__(self):
         return len(self.labels)
@@ -70,7 +78,7 @@ def validate_target_mode(target=None, overdue=None, dpds=None):
         raise ValueError("overdue 和 dpds 必须同时传入")
 
 
-def _explicit_values(data, value, name, del_grey, dataset_name, allow_missing=False):
+def _explicit_values(data, value, name, del_grey, dataset_name, allow_missing=False, handle_missing_target="drop"):
     context = f"数据集“{dataset_name}”的" if dataset_name is not None else ""
     context += f"标签“{name}”"
     if callable(value):
@@ -102,12 +110,12 @@ def _explicit_values(data, value, name, del_grey, dataset_name, allow_missing=Fa
     if values.ndim != 1 or len(values) != len(data):
         raise ValueError(f"{context}必须是一维且与作用数据等长（数据行数: {len(data)}）")
     series = pd.Series(values, index=data.index)
-    # 非 0/1（包含缺失）为灰客户；不剔灰时统一按负样本 0 计。
+    # 灰样本与原始缺失分别处理，缺失归正/归负不被 del_grey 覆盖。
     binary = series.isin([0, 1])
     result = series.eq(1).fillna(False).astype(float)
     if del_grey:
-        return result.where(binary)
-    return result.where(series.notna()) if allow_missing else result
+        result = result.where(binary | series.isna())
+    return apply_missing_target(result, series.isna(), handle_missing_target)
 
 
 def bind_targets(
@@ -122,12 +130,19 @@ def bind_targets(
     paired=False,
     dataset_name=None,
     allow_missing=False,
+    handle_missing_target="drop",
 ):
-    """在标签原作用数据上求值一次，绑定私有列供所有后续子任务使用。"""
+    """在标签原作用数据上求值一次，绑定私有列供所有后续子任务使用。
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+    """
     validate_target_mode(target, overdue, dpds)
+    validate_missing_target(handle_missing_target)
     validate_overdue_operator(overdue_operator)
     if not isinstance(data, pd.DataFrame):
         raise TypeError("标签作用数据必须是 DataFrame")
+    from .arguments import validate_source_completion
+
+    validate_source_completion(data)
     if not data.columns.is_unique:
         raise ValueError("标签作用数据的列名不能重复")
     if isinstance(target, BoundTargets):
@@ -161,12 +176,14 @@ def bind_targets(
             if column not in data:
                 if not allow_missing:
                     raise ValueError(f"数据集缺少逾期字段: {column}")
-                values = pd.Series(np.nan, index=data.index)
+                values = apply_missing_target(
+                    pd.Series(0.0, index=data.index), pd.Series(True, index=data.index), handle_missing_target
+                )
             else:
                 days = pd.to_numeric(data[column], errors="raise")
-                values = make_overdue_target(days, threshold, del_grey, overdue_operator)
-                if allow_missing:
-                    values = values.where(days.notna())
+                values = make_overdue_target(
+                    days, threshold, del_grey, overdue_operator, handle_missing_target=handle_missing_target
+                )
             definitions.append((overdue_label(column, threshold, overdue_operator), values, column, threshold))
         source_columns = list(dict.fromkeys(overdue_columns))
         mode = "overdue"
@@ -191,7 +208,7 @@ def bind_targets(
         for name, value in inputs.items():
             if not isinstance(name, str) or not name.strip() or name == "分箱详情":
                 raise ValueError("标签名必须为非空字符串，且不能使用保留名称“分箱详情”")
-            values = _explicit_values(data, value, name, del_grey, dataset_name, allow_missing)
+            values = _explicit_values(data, value, name, del_grey, dataset_name, allow_missing, handle_missing_target)
             definitions.append((name, values, None, None))
 
     frame = data.copy(deep=False)
@@ -202,7 +219,15 @@ def bind_targets(
             bound_column = "_" + bound_column
         frame[bound_column] = np.asarray(values, dtype=float)
         labels.append(BoundLabel(name, bound_column, column, threshold))
-    return frame, BoundTargets(tuple(labels), mode, overdue_operator, tuple(source_columns), explicit_multi)
+    return frame, BoundTargets(
+        tuple(labels),
+        mode,
+        overdue_operator,
+        tuple(source_columns),
+        explicit_multi,
+        handle_missing_target,
+        bool(del_grey),
+    )
 
 
 def target_count(target=None, overdue=None, dpds=None):

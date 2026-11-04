@@ -5,6 +5,7 @@ import inspect
 from datetime import datetime, timezone
 from functools import lru_cache, wraps
 from importlib.metadata import PackageNotFoundError, version
+from ...utils.environment import runtime_version
 from time import perf_counter
 import numpy as np
 import pandas as pd
@@ -67,7 +68,7 @@ def dependency_versions():
         "rtdl-num-embeddings",
     ):
         try:
-            result[package] = version(package)
+            result[package] = runtime_version(package)
         except PackageNotFoundError:
             continue
     return result
@@ -269,11 +270,13 @@ def learning_curve_table(curves, *, context=None, names=None):
     if names:
         aliases["val"] = names[-1]
         aliases["validation"] = names[0]
-    for dataset, metrics in curves.items():
+    for dataset, metrics in (curves or {}).items():
+        if metrics is None:
+            continue
         for metric, values in metrics.items():
             if isinstance(values, dict):
                 raise ValueError("旧训练记录仅保留曲线摘要，无法还原逐轮数据；请重新训练或使用原始制品")
-            if np.isscalar(values):
+            if values is None or np.isscalar(values):
                 continue  # 普通分类器的最终评估值不是逐轮训练曲线。
             for iteration, value in enumerate(values, 1):
                 rows.append(
@@ -297,9 +300,12 @@ def model_learning_curve(model, revision=None):
     revision = current if revision is None else revision
     for offset, record in enumerate(history, current - len(history) + 1):
         if record.get("训练修订", offset) == revision:
-            curves = record.get("评估曲线", {})
+            curves = record.get("评估曲线") or {}
             if revision == current and any(
-                isinstance(values, dict) for dataset in curves.values() for values in dataset.values()
+                isinstance(values, dict)
+                for dataset in curves.values()
+                if isinstance(dataset, dict)
+                for values in dataset.values()
             ):
                 curves = getattr(model, "_evals_result", curves)
             return learning_curve_table(curves, context={"训练修订": revision}, names=record.get("评估集名称"))

@@ -26,6 +26,8 @@ def test_input_apis_are_equivalent_and_position_aligned(cls, index):
     y = np.array([0, 0, 1, 1])
     df = X.assign(target=y)
     kwargs = {"n_jobs": 1, "target": "target"}
+    if cls is TargetEncoder:
+        kwargs["cv"] = 2  # 四行样本仍使用折外编码验证双 API 等价。
     if cls is CatBoostEncoder:
         kwargs["random_state"] = 42
     separate = cls(**kwargs).fit_transform(X, y)

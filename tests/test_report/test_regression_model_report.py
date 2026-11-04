@@ -24,9 +24,7 @@ def data():
     train = pd.DataFrame(
         {"特征": [0.0, 2.0, 6.0, 4.0], "目标": [1.0, 2.0, 3.0, 4.0], "权重": [1.0, 2.0, 1.0, 2.0]}, index=[7, 8, 9, 10]
     )
-    test = pd.DataFrame(
-        {"特征": [-2.0, 2.0, 8.0], "目标": [-1.5, 1.25, 5.5], "权重": [2.0, 0.0, 1.0]}, index=[17, 18, 19]
-    )
+    test = pd.DataFrame({"特征": [-2.0, 2.0, 8.0], "目标": [-1.5, 1.25, 5.5], "权重": [2.0, 0.0, 1.0]}, index=[17, 18, 19])
     for frame in (train, test):
         frame["日期"] = pd.date_range("2026-01-01", periods=len(frame), freq="20D")
         frame["类别"] = np.where(np.arange(len(frame)) % 2, "甲", "乙")
@@ -38,20 +36,26 @@ def test_regression_metrics_match_independent_weighted_rows(data):
     train, test = data
     model = EchoRegressor().fit(train)
     report = ModelReport(
-        model, datasets={"训练集": train, "独立测试": test}, target="目标", sample_weight="权重", n_jobs=1
+        model,
+        datasets={"训练集": train, "独立测试": test},
+        target="目标",
+        sample_weight="权重",
+        show_weighted_metrics=True,
+        n_jobs=1,
     )
     table = report.get_metrics().set_index("统计项")
-    baseline = np.average(train["目标"], weights=train["权重"])
+    baseline = train["目标"].mean()
     for name, frame in [("训练集", train), ("独立测试", test)]:
         y, p, w = (frame[column].to_numpy() for column in ("目标", "特征", "权重"))
         error = p - y
         squared = np.sum(w * error**2) / w.sum()
         variance = np.sum(w * (y - np.average(y, weights=w)) ** 2)
         assert_allclose(
-            table.loc[["均方误差", "均方根误差", "平均绝对误差", "决定系数"], name],
+            table.loc[["均方误差", "均方根误差", "平均绝对误差", "决定系数"], f"{name}（加权）"],
             [squared, np.sqrt(squared), np.sum(w * np.abs(error)) / w.sum(), 1 - np.sum(w * error**2) / variance],
         )
-        assert_allclose(table.loc["基准均方根误差", name], np.sqrt(np.sum(w * (y - baseline) ** 2) / w.sum()))
+        assert_allclose(table.loc["基准均方根误差", name], np.sqrt(np.mean((y - baseline) ** 2)))
+        assert_allclose(table.loc["均方误差", name], np.mean(error**2))
     assert not {"AUC", "KS", "坏样本率"}.intersection(table.index)
     assert report.prediction_method == "predict"
     assert "TOP名单规则" not in report.model_context_
@@ -85,9 +89,7 @@ def test_continuous_targets_preserve_decimals_alignment_and_explicit_y(data):
 
 def test_regression_binning_totals_use_original_rows_and_training_cutpoints(data):
     train, test = data
-    report = ModelReport(
-        EchoRegressor().fit(train), datasets={"训练集": train, "测试集": test}, target="目标", n_jobs=1
-    )
+    report = ModelReport(EchoRegressor().fit(train), datasets={"训练集": train, "测试集": test}, target="目标", n_jobs=1)
     table = report.get_bin_table("测试集", max_n_bins=2, amount="金额")
     total = table.iloc[-1]
     assert total["分箱标签"] == "合计"

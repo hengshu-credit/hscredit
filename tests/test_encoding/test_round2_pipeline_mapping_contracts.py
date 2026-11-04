@@ -36,6 +36,8 @@ ENCODERS = [
 def test_declared_target_never_appears_in_default_output(cls):
     X = pd.DataFrame({"x": ["a", "b", "a", "b"], "target": [0, 1, 1, 0]})
     encoder = cls(target="target", n_jobs=1)
+    if cls is TargetEncoder:
+        encoder.set_params(cv=2)
     transformed = encoder.fit_transform(X, X.target)
     assert "target" not in transformed.columns
     pd.testing.assert_frame_equal(encoder.transform(X), encoder.transform(X.drop(columns="target")))
@@ -60,6 +62,8 @@ def test_native_sklearn_pipeline_predicts_without_label(training_mode):
 def test_label_passthrough_is_explicit_legacy_mode(cls):
     X = pd.DataFrame({"x": ["a", "b", "a", "b"], "target": [0, 1, 1, 0]})
     encoder = clone(cls(target="target", passthrough_target=True, n_jobs=1))
+    if cls is TargetEncoder:
+        encoder.set_params(cv=2)
     output = encoder.fit_transform(X)
     assert output.target.tolist() == X.target.tolist()
     assert "target" not in encoder.cols_

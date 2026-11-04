@@ -306,7 +306,7 @@ def test_overdue_missing_values_follow_library_binary_target_semantics():
         show_sample_count=False,
     )
 
-    np.testing.assert_allclose(fig.axes[0].lines[0].get_ydata(), [0.5])
+    np.testing.assert_allclose(fig.axes[0].lines[0].get_ydata(), [1.0])
     plt.close(fig)
 
 

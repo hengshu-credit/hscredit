@@ -191,9 +191,7 @@ def population_drift(
             windows.append(("缺失日期", actual.loc[parsed_dates.isna()].copy()))
         if missing_rows and missing_date == "drop":
             included_actual = actual.loc[parsed_dates.notna()]
-            warnings.warn(
-                f"按 missing_date='drop' 排除 {missing_rows} 行缺失日期，详见样本口径", UserWarning, stacklevel=2
-            )
+            warnings.warn(f"按 missing_date='drop' 排除 {missing_rows} 行缺失日期，详见样本口径", UserWarning, stacklevel=2)
 
     sample_table = pd.DataFrame(
         [
@@ -315,7 +313,6 @@ def population_drift(
         dataframe2excel(score_detail, writer, sheet_name="评分分布对比")
 
     dataframe2excel(sample_table, writer, sheet_name="样本口径")
-    dataframe2excel(result.status_table(), writer, sheet_name="执行状态")
     writer.save(output)
     result.artifacts.append({"路径": str(output), "完整": result.complete})
     return result if return_result else output

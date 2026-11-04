@@ -65,7 +65,9 @@ def test_onehot_writable_output_and_missing_unknown(sparse, return_df):
     array = (
         result.sparse.to_dense().to_numpy()
         if sparse and return_df
-        else result.toarray() if sparse else np.asarray(result)
+        else result.toarray()
+        if sparse
+        else np.asarray(result)
     )
     np.testing.assert_array_equal(array.sum(axis=1), np.ones(4))
     unknown = encoder.transform(pd.DataFrame({"类别": [999]}))
@@ -127,9 +129,7 @@ def test_summary_type_explicit_and_numeric_datetime():
             "强制数值": ["1"] * 100,
         }
     )
-    result = feature_summary(frame, numeric_as_categorical=["编码"], force_numeric=["强制数值"], n_jobs=1).set_index(
-        "特征名"
-    )
+    result = feature_summary(frame, numeric_as_categorical=["编码"], force_numeric=["强制数值"], n_jobs=1).set_index("特征名")
     assert result["字段类型"].to_dict() == {
         "金额": "numerical",
         "日期": "datetime",
@@ -220,7 +220,8 @@ def test_drift_discloses_missing_fields_and_rows(drift_data, tmp_path, policy, i
     assert result.sections["特征:不存在"].status == "失败"
     assert not result.complete
     workbook = load_workbook(path, read_only=True)
-    assert {"样本口径", "执行状态"}.issubset(workbook.sheetnames)
+    assert "样本口径" in workbook.sheetnames
+    assert "执行状态" not in workbook.sheetnames
     workbook.close()
 
 

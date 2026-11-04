@@ -60,13 +60,15 @@ def test_report_financial_metric_and_weight_match_model_evaluation():
     metric = get_loss("cost_sensitive", fn_cost=7).metric(kind="business")
     weights = np.arange(1, 81)
     expected = model.evaluate(X, y, metrics=[metric, "auc", "ks", "lift@10%"], sample_weight=weights)
-    report = ModelReport(model, X_train=X, y_train=y, metrics=[metric], sample_weight=weights, n_jobs=1)
-    actual = report.get_metrics().set_index("统计项")["训练集"]
+    report = ModelReport(
+        model, X_train=X, y_train=y, metrics=[metric], sample_weight=weights, show_weighted_metrics=True, n_jobs=1
+    )
+    actual = report.get_metrics().set_index("统计项")["训练集（加权）"]
     for key in [metric.name, "AUC", "KS"]:
         assert actual[key] == pytest.approx(expected[key])
-    assert report._get_top_n_lift_table(percentiles=(0.1,)).set_index("统计项").loc[
-        "LIFT值", "TOP 10%"
-    ] == pytest.approx(expected["LIFT@10%"])
+    assert report._get_top_n_lift_table(percentiles=(0.1,)).set_index("统计项").loc["LIFT值", "TOP 10%"] == pytest.approx(
+        model.evaluate(X, y, metrics=["lift@10%"])["LIFT@10%"]
+    )
 
 
 def test_report_refuses_model_revision_mix_and_snapshots_configuration(tmp_path):

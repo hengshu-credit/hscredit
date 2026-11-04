@@ -1591,6 +1591,7 @@ def bad_rate_trend_plot(
     *,
     overdue_operator: str = ">",
     dpi: int = 240,
+    handle_missing_target="drop",
     **kwargs,
 ) -> plt.Figure:
     """绘制坏样本率趋势图（支持分维度和多逾期标签展示）.
@@ -1612,7 +1613,7 @@ def bad_rate_trend_plot(
     :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
         必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, List[int]]]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -1647,9 +1648,19 @@ def bad_rate_trend_plot(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     reject_legacy_target_keywords(kwargs)
-    df, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
+    df, targets = bind_targets(
+        df,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     using_overdue = targets.mode == "overdue"
     target_groups = {}
     for name, definition in zip(targets.names(), targets.labels):

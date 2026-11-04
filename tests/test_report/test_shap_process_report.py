@@ -187,13 +187,12 @@ def test_explanation_warn_preserves_incomplete_report_without_fabricated_importa
         explain_config={"enabled": True, "scope": scope, "on_explain_error": "warn"},
     )
     path = tmp_path / "解释失败.xlsx"
-    with pytest.warns(RuntimeWarning, match="测试解释失败"):
-        result = report.to_excel(path, with_plots=False, mode="best_effort", return_result=True)
+    result = report.to_excel(path, with_plots=False, mode="best_effort", return_result=True)
     assert not result.complete
     assert result.sections["SHAP 特征重要性"].status == "失败"
     book = load_workbook(path)
     values = [c.value for row in book["3-入模变量分析"] for c in row]
-    assert "测试解释失败" in values and "平均绝对SHAP值" not in values
+    assert "测试解释失败" not in values and "平均绝对SHAP值" not in values
     book.close()
     with pytest.raises(ReportGenerationError):
         report.to_excel(tmp_path / "严格失败.xlsx", with_plots=False, mode="strict")

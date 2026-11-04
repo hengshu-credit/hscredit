@@ -18,7 +18,7 @@
 
 hscredit（衡枢真信）将数据探索、分箱编码、特征筛选、评分卡与机器学习、规则分析和 Excel 报告串成一套工作流。分箱、编码和筛选组件兼容 sklearn Pipeline，分析结果以中文指标、表格和图表返回。
 
-[为什么选择 hscredit](#为什么选择-hscredit) · [功能模块](#核心功能模块) · [安装](#安装) · [功能演示](#核心功能演示) · [在线文档](https://hscredit.hengshucredit.com/)
+[为什么选择 hscredit](#为什么选择-hscredit) · [交流与关注](#交流与关注) · [功能模块](#核心功能模块) · [安装](#安装) · [功能演示](#核心功能演示) · [在线文档](https://hscredit.hengshucredit.com/)
 
 
 ## 为什么选择 hscredit
@@ -28,6 +28,18 @@ hscredit（衡枢真信）将数据探索、分箱编码、特征筛选、评分
 - **兼容现有建模流程。** 分箱、编码、筛选等组件遵循 sklearn 接口；既支持 `fit(X, y)`，也可用 `target` 指定 DataFrame 中的标签列。
 - **保留过程，便于复盘。** 可查看筛选决策、模型统计、试验指标、Pareto 候选、SHAP 解释和规则效果，并保存模型与训练记录。
 - **分析结果直接交付。** 方法返回的 DataFrame、原生图表和多 Sheet Excel 可继续用于评审、监控和归档，支持百分比、条件格式、冻结窗格、超链接与透视表。
+
+## 交流与关注
+
+<div align="center">
+
+| 微信 · itlubber | 微信公众号 · 衡枢风控 |
+|:---:|:---:|
+| <img src="https://itlubber.art/upload/itlubber.png" alt="微信 itlubber 二维码" width="200"><br>扫一扫，添加微信交流 | <img src="https://itlubber.art/upload/hengshucredit-com.png" alt="微信公众号 衡枢风控 二维码" width="200"><br>扫一扫关注，回复「入群」 |
+
+邮箱：[hscredit@hengshucredit.com](mailto:hscredit@hengshucredit.com)
+
+</div>
 
 ## 核心功能模块
 
@@ -262,8 +274,6 @@ pytest tests/ -m "not slow and not integration"
 
 问题与建议请提交到 [GitHub Issues](https://github.com/hengshu-credit/hscredit/issues)。
 
-## 联系与许可
-
-邮箱：`hscredit@hengshucredit.com` · 微信：`itlubber` · 公众号：**衡枢风控**（回复 `入群` 加入技术交流群）。
+## 许可
 
 [MIT License](LICENSE)

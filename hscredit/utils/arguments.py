@@ -11,6 +11,37 @@ import pandas as pd
 from .dates import normalize_freq
 
 
+def _query_source(data):
+    """读取查询完成标记，不与编码器的 hscredit_source 字符串标记混用。"""
+    if not isinstance(data, pd.DataFrame):
+        return None
+    source = data.attrs.get("hscredit_query_source")
+    if not isinstance(source, Mapping):
+        source = data.attrs.get("hscredit_source")
+    if not isinstance(source, Mapping) and {"completed", "state", "rows_read"}.issubset(data.attrs):
+        source = data.attrs
+    return source if isinstance(source, Mapping) else None
+
+
+def copy_query_source(source, result):
+    """在 DataFrame 编码/分箱后保留查询完整性，不覆盖变换本身的标记。"""
+    metadata = _query_source(source)
+    if metadata is not None and isinstance(result, pd.DataFrame):
+        result.attrs["hscredit_query_source"] = {
+            key: metadata[key] for key in ("completed", "state", "rows_read", "total_rows") if key in metadata
+        }
+    return result
+
+
+def validate_source_completion(data):
+    """拒绝将明确标记为未完成的查询结果用于完整报告。"""
+    source = _query_source(data)
+    if source is not None and source.get("completed") is False:
+        from ..exceptions import StateError
+
+        raise StateError("数据来源读取未完成，不能作为完整报告输入；请完成查询或显式确认部分数据口径")
+
+
 def normalize_features(features=None, *, feature=None, x1=None, x2=None, size=None, required=False):
     """将单字段或一维字段集合规范化；二维字段允许使用成对的 x1/x2。"""
     if feature is not None:
@@ -88,6 +119,26 @@ def bind_column(data, value, role):
     return result, column
 
 
+def validate_amount_column(data, amount):
+    """金额是实际订单字段，明确请求后必须存在且逐行有效。"""
+    if amount is None:
+        return
+    if amount not in data.columns:
+        raise ValueError(f"amount 指定的金额字段不存在: {amount!r}")
+    series = data[amount]
+    if not pd.api.types.is_numeric_dtype(series.dtype):
+        if (
+            isinstance(series.dtype, pd.CategoricalDtype)
+            or pd.api.types.is_datetime64_any_dtype(series.dtype)
+            or pd.api.types.is_timedelta64_dtype(series.dtype)
+            or any(isinstance(value, (str, bytes)) for value in series.array)
+        ):
+            raise ValueError("amount 金额必须为数值，文本、日期或分类字段请先显式转换")
+    from ..core.metrics._semantics import validate_amounts
+
+    validate_amounts(data[amount], len(data))
+
+
 def bind_groups(data, value):
     """多维分组支持字段集合、单组逐行数据或按组名定义的数据字典。"""
     if value is None:
@@ -146,6 +197,7 @@ def analysis_inputs(
                     bound.arguments["x1"] = bound.arguments["x2"] = None
             frame = bound.arguments.get(data_parameter)
             if isinstance(frame, pd.DataFrame):
+                validate_source_completion(frame)
                 for role in roles:
                     value = bound.arguments.get(role)
                     if role == "group" and multi_group:
@@ -153,11 +205,19 @@ def analysis_inputs(
                         bound.arguments[role] = columns
                         continue
                     if isinstance(value, str):
+                        if role == "amount":
+                            validate_amount_column(frame, value)
+                            for other_name in shared_frames:
+                                other = bound.arguments.get(other_name)
+                                if isinstance(other, pd.DataFrame):
+                                    validate_amount_column(other, value)
                         continue
                     source = value.get(data_parameter) if isinstance(value, Mapping) else value
                     if isinstance(value, Mapping) and data_parameter not in value:
                         raise ValueError(f"{role} 缺少 {data_parameter!r} 的数据")
                     frame, column = bind_column(frame, source, role)
+                    if role == "amount":
+                        validate_amount_column(frame, column)
                     for other_name in shared_frames:
                         other = bound.arguments.get(other_name)
                         if value is None or not isinstance(other, pd.DataFrame):
@@ -169,6 +229,8 @@ def analysis_inputs(
                         else:
                             other_value = value
                         other, other_column = bind_column(other, other_value, role)
+                        if role == "amount":
+                            validate_amount_column(other, other_column)
                         if other_column != column:
                             if column in other.columns:
                                 raise ValueError(f"{role} 在不同数据集中的字段名冲突，请使用相同列名或无名数组")
@@ -192,6 +254,16 @@ def report_inputs(function):
     def wrapped(*args, **kwargs):
         bound = signature.bind(*args, **kwargs)
         bound.apply_defaults()
+        original = bound.arguments["self"]
+        amount = bound.arguments.get("amount")
+        if isinstance(amount, str):
+            keys = (
+                [original._resolve_dataset_key(bound.arguments["dataset"])]
+                if "dataset" in bound.arguments
+                else original._datasets
+            )
+            for key in keys:
+                validate_amount_column(original._datasets[key].X, amount)
         roles = {
             role: bound.arguments[role]
             for role in ("date", "group", "amount")
@@ -203,6 +275,8 @@ def report_inputs(function):
             return function(*bound.args, **bound.kwargs)
         original = bound.arguments["self"]
         working = copy.copy(original)
+        if hasattr(working, "_init_resource_state"):
+            working._init_resource_state()
         working._datasets = dict(original._datasets)
         keys = list(working._datasets)
         if "dataset" in bound.arguments:
@@ -224,6 +298,8 @@ def report_inputs(function):
                     else:
                         raise ValueError(f"{role} 缺少数据集 {key!r} 的数据")
                 frame, temporary = bind_column(dataset.X, source, role)
+                if role == "amount":
+                    validate_amount_column(frame, temporary)
                 frame = frame.copy(deep=False)
                 frame[column] = frame[temporary]
                 working._datasets[key] = replace(dataset, X=frame)

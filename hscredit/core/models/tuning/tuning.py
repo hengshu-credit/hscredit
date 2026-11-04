@@ -292,8 +292,7 @@ class TuningSampler:
                 import optunahub
             except ImportError:
                 raise ImportError(
-                    f"使用 '{sampler}' 采样器需要 optunahub，请使用 "
-                    f"pip install optunahub 安装（或 pip install hscredit[tune]）"
+                    f"使用 '{sampler}' 采样器需要 optunahub，请使用 " f"pip install optunahub 安装（或 pip install hscredit[tune]）"
                 )
             package, class_name = cls.OPTUNAHUB_SAMPLERS[key]
             module = optunahub.load_module(package)
@@ -944,9 +943,7 @@ class ModelTuner(ArtifactSerializableMixin):
             return
         keys = {"scale_pos_weight", "is_unbalance", "unbalance"}
         if keys.intersection(self.search_space or {}):
-            raise ValueError(
-                "自定义 loss 不使用原生 scale_pos_weight/is_unbalance，不能搜索这些参数；请通过损失参数或 sample_weight 设置类别权重"
-            )
+            raise ValueError("自定义 loss 不使用原生 scale_pos_weight/is_unbalance，不能搜索这些参数；请通过损失参数或 sample_weight 设置类别权重")
         params = {**self.model_params, **self._explicit_fixed_params}
         validate_custom_loss_weights(params)
 
@@ -1193,9 +1190,7 @@ class ModelTuner(ArtifactSerializableMixin):
         )
         if validation_data is None:
             self._validate_fold_weights(evaluation_weight, cv_splits)
-        validation_mode = (
-            "交叉验证" if self.cv is not None else "独立验证集" if validation_data is not None else "单次留出"
-        )
+        validation_mode = "交叉验证" if self.cv is not None else "独立验证集" if validation_data is not None else "单次留出"
         contract = {
             "指标协议": 2,
             "数据": data_signature,
@@ -1596,8 +1591,13 @@ class ModelTuner(ArtifactSerializableMixin):
             )
             return iter([(train, valid)])
         if isinstance(self.cv, (int, np.integer)):
-            splitter_class = KFold if self._task == "regression" else StratifiedKFold
-            splitter = splitter_class(n_splits=int(self.cv), shuffle=True, random_state=self.random_state)
+            if groups is not None:
+                from sklearn.model_selection import GroupKFold
+
+                splitter = GroupKFold(n_splits=int(self.cv))
+            else:
+                splitter_class = KFold if self._task == "regression" else StratifiedKFold
+                splitter = splitter_class(n_splits=int(self.cv), shuffle=True, random_state=self.random_state)
         else:
             splitter = self.cv
         if hasattr(splitter, "split"):
@@ -1660,6 +1660,9 @@ class ModelTuner(ArtifactSerializableMixin):
 
     def _validated_splits(self, X, y, groups=None):
         """所有调参与重评估入口共用位置索引校验。"""
+        from ...model_selection import _validate_groups, _check_group_separation
+
+        groups = _validate_groups(groups, len(y))
         if isinstance(self.cv, (bool, np.bool_)):
             raise ValueError("cv 必须是大于等于2的折数、交叉验证分割器或索引对序列")
         if isinstance(self.cv, (int, np.integer)) and self.cv < 2:
@@ -1681,6 +1684,7 @@ class ModelTuner(ArtifactSerializableMixin):
                 pair.append(indices)
             if np.intersect1d(*pair).size:
                 raise ValueError("交叉验证的训练集和验证集不能包含相同样本")
+            _check_group_separation(groups, *pair)
             normalized.append(tuple(pair))
         return normalized
 
@@ -1934,9 +1938,7 @@ class ModelTuner(ArtifactSerializableMixin):
                 if trial is not None and self.artifact_dir:
                     self._persist_trial(trial.number)
             if trial is not None:
-                trial.set_user_attr(
-                    "各折指标", [item.get("指标", {}) for item in self.trial_results_[trial.number]["各折"]]
-                )
+                trial.set_user_attr("各折指标", [item.get("指标", {}) for item in self.trial_results_[trial.number]["各折"]])
                 if not self._is_multi_objective:
                     trial.report(float(np.mean(fold_results[0])), step=fold_index)
                     if trial.should_prune():
@@ -1974,9 +1976,7 @@ class ModelTuner(ArtifactSerializableMixin):
     def _finish_trial(self, study, trial):
         record = self.trial_results_.setdefault(trial.number, {"试验编号": trial.number, "各折": []})
         states = {"COMPLETE": "完成", "FAIL": "失败", "PRUNED": "剪枝", "RUNNING": "运行中", "WAITING": "等待"}
-        record.update(
-            状态=states.get(trial.state.name, trial.state.name), 得分=trial.values, 用户属性=dict(trial.user_attrs)
-        )
+        record.update(状态=states.get(trial.state.name, trial.state.name), 得分=trial.values, 用户属性=dict(trial.user_attrs))
         self._apply_retention()
         self._persist_trial(trial.number)
 

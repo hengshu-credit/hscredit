@@ -280,14 +280,10 @@ def _resolve_fit_data(
     else:
         # scorecardpipeline 风格：X=含目标列的 DataFrame
         if not isinstance(X, pd.DataFrame):
-            raise InputValidationError(
-                "未传入 y 时按 scorecardpipeline 风格解析：X 需为包含目标列的 DataFrame；"
-                "若按 sklearn 风格请同时传入 y"
-            )
+            raise InputValidationError("未传入 y 时按 scorecardpipeline 风格解析：X 需为包含目标列的 DataFrame；" "若按 sklearn 风格请同时传入 y")
         if target not in X.columns:
             raise InputValidationError(
-                f"目标列 '{target}' 未在数据中找到；请传入 y（sklearn 风格）"
-                f"或在 DataFrame 中包含 '{target}' 列（scorecardpipeline 风格）"
+                f"目标列 '{target}' 未在数据中找到；请传入 y（sklearn 风格）" f"或在 DataFrame 中包含 '{target}' 列（scorecardpipeline 风格）"
             )
         data = X
         if selected is not None:
@@ -758,6 +754,8 @@ def _node_hit_report(
     parallel_backend=None,
     parallel_config=None,
     adjusted_nodes=None,
+    *,
+    handle_missing_target="drop",
     **kwargs: Any,
 ) -> pd.DataFrame:
     """对单个数据集，汇总每个节点规则  :meth:`Rule.report`  中"命中"分箱的结果行。
@@ -773,8 +771,18 @@ def _node_hit_report(
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
     :param leaf_only: 是否仅评估叶子节点
     :return: 各节点效果评估 DataFrame
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
-    data, target = bind_targets(data, target, overdue, dpds, del_grey, kwargs.get("overdue_operator", ">"))
+    data, target = bind_targets(
+        data,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        kwargs.get("overdue_operator", ">"),
+        handle_missing_target=handle_missing_target,
+    )
     overdue, dpds = None, None
     # 二叉树内部路径表通常不含根节点，公开的全节点报告仍应保留总体基准。
     if 0 not in df_rules["node"].values:
@@ -1372,6 +1380,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         bin_params=None,
         group=None,
         apply_rule_filter=True,
+        handle_missing_target="drop",
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估决策树各节点规则的效果。
@@ -1411,7 +1420,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -1439,6 +1448,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
         :type overdue_operator: str
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         from ._tree_report import reject_legacy_tree_keywords
 
@@ -1475,6 +1486,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
                 group=group,
                 apply_rule_filter=apply_rule_filter,
                 **kwargs,
+                handle_missing_target=handle_missing_target,
             )
         if datasets is None:
             raise InputValidationError("report 需要数据集，请传入 datasets 或先 fit 训练数据")
@@ -1541,8 +1553,11 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         leaf_only,
         feature_map,
         report_kwargs,
+        handle_missing_target="drop",
     ):
-        """计算单个数据集的节点报告，供模块级 worker 调用。"""
+        """计算单个数据集的节点报告，供模块级 worker 调用。
+        :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+        """
         return _node_hit_report(
             self._df_rules,
             self._format_rule,
@@ -1558,6 +1573,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
             **report_kwargs,
+            handle_missing_target=handle_missing_target,
         )
 
     def get_leaf_node_ids(self) -> List[int]:
@@ -1610,6 +1626,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         amount=None,
         feature_map=None,
         apply_rule_filter=True,
+        handle_missing_target="drop",
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """获取决策树所有节点（分裂节点+叶子节点）的规则效果表。
@@ -1638,7 +1655,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -1661,6 +1678,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
         :type overdue_operator: str
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         from ._tree_report import reject_legacy_tree_keywords
 
@@ -1670,9 +1689,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         self._check_fitted()
         data = datasets if datasets is not None else self._data
         if data is None:
-            raise InputValidationError(
-                "get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，" "或先通过 fit() 提供训练数据"
-            )
+            raise InputValidationError("get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，" "或先通过 fit() 提供训练数据")
         return self.report(
             data,
             target=target,
@@ -1685,6 +1702,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             feature_map=feature_map,
             apply_rule_filter=apply_rule_filter,
             **kwargs,
+            handle_missing_target=handle_missing_target,
         )
 
     @staticmethod
@@ -2618,6 +2636,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         amount=None,
         feature_map=None,
         apply_rule_filter=True,
+        handle_missing_target="drop",
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """获取当前树各节点规则在数据集上的效果表。
@@ -2646,7 +2665,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -2675,6 +2694,8 @@ class ManualTreeExtractor(ParallelizableMixin):
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
         :type overdue_operator: str
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         from ._tree_report import reject_legacy_tree_keywords
 
@@ -2684,9 +2705,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         self._check_fitted()
         data = datasets if datasets is not None else self._data
         if data is None:
-            raise InputValidationError(
-                "get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，" "或先通过 fit() 提供训练数据"
-            )
+            raise InputValidationError("get_rule_table 需要数据集计算规则效果：请传入 datasets 参数，" "或先通过 fit() 提供训练数据")
         return self.report(
             data,
             target=target,
@@ -2699,6 +2718,7 @@ class ManualTreeExtractor(ParallelizableMixin):
             feature_map=feature_map,
             apply_rule_filter=apply_rule_filter,
             **kwargs,
+            handle_missing_target=handle_missing_target,
         )
 
     def plot(
@@ -2796,6 +2816,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         bin_params=None,
         group=None,
         apply_rule_filter=True,
+        handle_missing_target="drop",
         **kwargs,
     ) -> Union[pd.DataFrame, List[pd.DataFrame], Dict[Any, pd.DataFrame]]:
         """在新数据集上评估当前树各节点规则的效果。
@@ -2835,7 +2856,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -2863,6 +2884,8 @@ class ManualTreeExtractor(ParallelizableMixin):
             ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
         :type overdue_operator: str
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         from ._tree_report import reject_legacy_tree_keywords
 
@@ -2899,6 +2922,7 @@ class ManualTreeExtractor(ParallelizableMixin):
                 group=group,
                 apply_rule_filter=apply_rule_filter,
                 **kwargs,
+                handle_missing_target=handle_missing_target,
             )
         if datasets is None:
             raise InputValidationError("report 需要数据集，请传入 datasets 或先 fit 训练数据")
@@ -2965,8 +2989,11 @@ class ManualTreeExtractor(ParallelizableMixin):
         leaf_only,
         feature_map,
         report_kwargs,
+        handle_missing_target="drop",
     ):
-        """计算单个数据集的节点报告，供模块级 worker 调用。"""
+        """计算单个数据集的节点报告，供模块级 worker 调用。
+        :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+        """
         return _node_hit_report(
             self._df_rules,
             self._format_rule,
@@ -2982,6 +3009,7 @@ class ManualTreeExtractor(ParallelizableMixin):
             parallel_backend=self.parallel_backend,
             parallel_config=self.parallel_config,
             **report_kwargs,
+            handle_missing_target=handle_missing_target,
         )
 
     def get_rules(self, leaf_only: bool = True) -> List[Rule]:

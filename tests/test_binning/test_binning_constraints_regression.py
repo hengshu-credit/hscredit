@@ -248,7 +248,7 @@ class TestBinningMethodBenchmark(unittest.TestCase):
             set(zip(result["逾期字段"], result["逾期阈值"])),
             {("MOB1", 3), ("MOB1", 0), ("MOB3", 3), ("MOB3", 0)},
         )
-        self.assertTrue(result["错误信息"].isna().all(), msg=result.to_dict("records"))
+        self.assertNotIn("错误信息", result.columns)
 
     def test_benchmark_binning_methods_defaults_to_all_registered_methods(self):
         """默认方法列表再次被手工裁剪时，本测试必须失败。"""
@@ -296,7 +296,7 @@ class TestBinningMethodBenchmark(unittest.TestCase):
         )
 
         self.assertEqual(result.loc[0, "切分点"], [19.8, 79.2])
-        self.assertTrue(result["错误信息"].isna().all(), msg=result.to_dict("records"))
+        self.assertNotIn("错误信息", result.columns)
 
     def test_benchmark_binning_methods_uses_feature_bin_stats_overdue_parameter_name(self):
         """公开签名应与 feature_bin_stats 一致使用 overdue。"""
@@ -330,7 +330,7 @@ class TestBinningMethodBenchmark(unittest.TestCase):
         for label in ["MOB1_3+", "MOB1_0+", "MOB3_3+", "MOB3_0+"]:
             self.assertIn((label, "综合评分"), result.columns)
             self.assertIn((label, "LIFT序列"), result.columns)
-            self.assertIn((label, "错误信息"), result.columns)
+            self.assertNotIn((label, "错误信息"), result.columns)
 
     def test_benchmark_binning_methods_returns_quality_metrics_and_accepts_long_format(self):
         """质量指标缺失或 long_format 被误传给分箱器时，本测试必须失败。"""
@@ -356,7 +356,7 @@ class TestBinningMethodBenchmark(unittest.TestCase):
             n_jobs=1,
         )
 
-        self.assertTrue(result["错误信息"].isna().all(), msg=result.to_dict("records"))
+        self.assertNotIn("错误信息", result.columns)
         self.assertNotIsInstance(result.columns, pd.MultiIndex)
         self.assertTrue({"LIFT二次项系数", "综合评分", "LIFT序列", "坏样本率序列"}.issubset(result.columns))
         self.assertAlmostEqual(result.loc[0, "LIFT二次项系数"], 0.0, places=6)

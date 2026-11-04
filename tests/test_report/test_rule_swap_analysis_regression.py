@@ -127,6 +127,9 @@ def test_risk_uplifts_can_adjust_other_atomic_groups():
 def test_amount_keeps_order_counts_and_adds_mixed_risk_amounts():
     """金额分析保留订单计数，并将金额指标作为独立列输出。"""
     data, _, kwargs = _swap_case()
+    with pytest.raises(ValueError, match="金额"):
+        rule_swap_analysis(amount="amount", **kwargs)
+    data.loc[2, "amount"] = 300.0  # 调用者提供完整的真实金额。
 
     pipeline = rule_swap_analysis(amount="amount", **kwargs)["swap_pipeline"]
     full = pipeline.iloc[0]
@@ -138,7 +141,10 @@ def test_amount_keeps_order_counts_and_adds_mixed_risk_amounts():
 
 def test_out_in_amount_column_then_fill_has_precedence():
     """OUT-IN 金额优先取指定字段，再取原金额，最后使用填充值。"""
-    _, _, kwargs = _swap_case()
+    data, _, kwargs = _swap_case()
+    with pytest.raises(ValueError, match="金额"):
+        rule_swap_analysis(amount="amount", out_in_amount_fill=1000.0, **kwargs)
+    data.loc[2, "amount"] = 300.0
 
     pipeline = rule_swap_analysis(
         amount="amount",

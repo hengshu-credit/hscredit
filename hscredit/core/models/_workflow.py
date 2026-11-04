@@ -260,6 +260,7 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         del_grey=False,
         metrics=None,
         sample_weight=None,
+        handle_missing_target="drop",
         **kwargs,
     ):
         """生成当前模型的完整报告，衔接搜索模型、效果评估及 Excel 输出。
@@ -276,7 +277,7 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :param overdue_operator: 逾期比较符，支持 ``>``、``>=``、``<``、``<=``；None 使用 ``>``。
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -301,6 +302,8 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         >>> status = report.to_excel('output/模型报告.xlsx', mode='strict', return_result=True,
         ...                          with_plots=False, include_sample_records=False)
         >>> assert status.complete
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         from ...report import auto_model_report
 
@@ -317,10 +320,20 @@ class ModelWorkflowMixin(TrainingProcessMixin):
             metrics=metrics,
             sample_weight=sample_weight,
             **kwargs,
+            handle_missing_target=handle_missing_target,
         )
 
     def report(
-        self, datasets=None, *, target=None, overdue=None, dpds=None, overdue_operator=None, del_grey=False, **kwargs
+        self,
+        datasets=None,
+        *,
+        target=None,
+        overdue=None,
+        dpds=None,
+        overdue_operator=None,
+        del_grey=False,
+        handle_missing_target="drop",
+        **kwargs,
     ):
         """兼容的完整模型报告入口。
 
@@ -334,7 +347,7 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :param overdue_operator: 逾期比较符，支持 ``>``、``>=``、``<``、``<=``；None 使用 ``>``。
-        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+        :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -347,6 +360,8 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         **参考样例**
 
         >>> report = model.model_report(datasets={'测试': (X_test, y_test)}, verbose=False)
+
+        :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
         return self.model_report(
             datasets=datasets,
@@ -356,6 +371,7 @@ class ModelWorkflowMixin(TrainingProcessMixin):
             overdue_operator=overdue_operator,
             del_grey=del_grey,
             **kwargs,
+            handle_missing_target=handle_missing_target,
         )
 
     def tune(

@@ -304,7 +304,61 @@ class QueryStream:
                 "interrupt_reason": self.interrupt_reason,
             }
         )
+        frame.attrs["hscredit_query_source"] = {
+            key: frame.attrs[key] for key in ("completed", "state", "rows_read", "total_rows")
+        }
         return frame
+
+    def resource_usage(self):
+        """返回读取和保留规模，不展开或重新消费查询流。"""
+        return {
+            "状态": self.state.value,
+            "读取行数": self.rows_read,
+            "保留分块数": len(self._chunks),
+            "保留行数": sum(len(frame) for frame in self._chunks),
+            "保留字节": sum(int(frame.memory_usage(index=True, deep=True).sum()) for frame in self._chunks),
+            "完整": self.state is StreamState.COMPLETED,
+        }
+
+    def release_results(self):
+        """释放已读取分块并切换为不保留模式，不影响后续逐块消费。"""
+        self._chunks.clear()
+        self.retain = False
+
+    def aggregate(self, accumulator, transform=None, *, require_complete=True):
+        """逐块累计并关闭资源；默认拒绝把中断的部分数据当作完整结果。
+
+        :param accumulator: 实现 update 和 finalize 的累计器，例如 BinStatsAccumulator。
+        :param transform: 将分块转换为 update 参数；tuple 展开位置参数，dict 展开关键字参数。
+        :param require_complete: 默认 True，读取未完整结束时抛出 StateError。
+        :return: finalize 的结果；DataFrame.attrs 保留数据源完整性。
+        """
+        if not isinstance(require_complete, bool):
+            raise ValueError("require_complete 必须为布尔值")
+        if not callable(getattr(accumulator, "update", None)) or not callable(getattr(accumulator, "finalize", None)):
+            raise TypeError("累计器必须实现 update 和 finalize")
+        try:
+            for batch in self:
+                payload = batch if transform is None else transform(batch)
+                if isinstance(payload, tuple):
+                    accumulator.update(*payload)
+                elif isinstance(payload, dict):
+                    accumulator.update(**payload)
+                else:
+                    accumulator.update(payload)
+            if require_complete and self.state is not StreamState.COMPLETED:
+                raise StateError(f"查询流未完整结束，不能生成完整汇总: {self.state.value}")
+            result = accumulator.finalize()
+            if isinstance(result, pd.DataFrame):
+                result.attrs["数据源"] = self.resource_usage()
+                result.attrs["hscredit_query_source"] = {
+                    "completed": self.state is StreamState.COMPLETED,
+                    "state": self.state.value,
+                    "rows_read": self.rows_read,
+                }
+            return result
+        finally:
+            self.close()
 
     def to_records(self) -> List[Mapping[str, Any]]:
         """把已保留分块合并为记录字典列表。

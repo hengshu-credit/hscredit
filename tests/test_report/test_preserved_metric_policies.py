@@ -37,7 +37,7 @@ def test_overdue_grey_and_missing_policy_is_preserved_and_disclosed():
         round_digits=False,
         n_jobs=1,
     )
-    assert table.iloc[-1]["样本总数"] == 6
+    assert table.iloc[-1]["样本总数"] == 5
     assert table.iloc[-1]["坏样本数"] == 2
     assert table.attrs["标签口径"]["逾期比较符"] == ">"
     assert table.attrs["标签口径"]["剔灰"]

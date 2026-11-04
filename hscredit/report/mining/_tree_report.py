@@ -244,6 +244,7 @@ def tree_report_excel(
     bin_params=None,
     group=None,
     apply_rule_filter=True,
+    handle_missing_target="drop",
     **kwargs,
 ):
     """标签只求值一次，在单页生成基本信息、挖掘摘要与订单/金额口径的树图及规则表。
@@ -273,6 +274,8 @@ def tree_report_excel(
     :param long_format: 默认 True；规则表按标签纵向输出，False 保留规则宽表。样本统计与分布固定使用宽表。
     :param kwargs: 传给树 report 的评估参数，如 amount、round_digits。
     :return: 与输入数据集结构对应的中文效果表、列表或字典。
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     from ...excel import ExcelWriter
     from ...utils.parallel import parallel_execute
@@ -308,7 +311,15 @@ def tree_report_excel(
                 if set(classes).issubset({0, 1})
                 else {f"类别_{value}": frame[tree.target].eq(value).astype(int) for value in classes}
             )
-        prepared, bound = bind_targets(frame, actual_target, overdue, dpds, del_grey, overdue_operator)
+        prepared, bound = bind_targets(
+            frame,
+            actual_target,
+            overdue,
+            dpds,
+            del_grey,
+            overdue_operator,
+            handle_missing_target=handle_missing_target,
+        )
         contexts[name] = (prepared, bound)
         y_maps.append(bound.y_map(prepared, style="at"))
         plot_labels[name] = bound.names(style="space")[0]
@@ -489,7 +500,17 @@ def tree_report_excel(
                     plot_labels[name],
                 )
         feature_sheet = _write_feature_binning(
-            tree, writer, sheet, contexts, methods, bin_params, amount, del_grey, overdue_operator, node_order
+            tree,
+            writer,
+            sheet,
+            contexts,
+            methods,
+            bin_params,
+            amount,
+            del_grey,
+            overdue_operator,
+            node_order,
+            handle_missing_target=handle_missing_target,
         )
         _fit_report_layout(writer, names + [feature_sheet])
         if save is not None:
@@ -634,9 +655,7 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount, s
                 "中间节点数": len(nodes) - leaves,
                 "树深度（根为0）": max(node["depth"] for node in nodes),
                 "人工调整节点数": int(
-                    training[("分箱详情", "是否调整") if isinstance(training.columns, pd.MultiIndex) else "是否调整"]
-                    .eq("是")
-                    .sum()
+                    training[("分箱详情", "是否调整") if isinstance(training.columns, pd.MultiIndex) else "是否调整"].eq("是").sum()
                 ),
             }
         ]
@@ -647,9 +666,7 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount, s
     parameters["features"] = getattr(tree, "features_", None) or getattr(tree, "_feature_list", None)
     parameters["rule_filter"] = getattr(tree, "rule_filter", None)
     params = pd.DataFrame([{"参数": name, "配置": str(value)} for name, value in parameters.items()])
-    row, _ = dataframe2excel(
-        params, writer, sheet_name=sheet, title="树的参数配置", start_row=row + 2, left_cols=["配置"]
-    )
+    row, _ = dataframe2excel(params, writer, sheet_name=sheet, title="树的参数配置", start_row=row + 2, left_cols=["配置"])
     history = getattr(tree, "edit_history_", [])
     if history:
         row, _ = dataframe2excel(
@@ -684,9 +701,7 @@ def _write_mining_summary(tree, writer, sheet, row, training, training_amount, s
                         "中间节点数": int(selected[leaf_col].eq("否").sum()),
                     }
                 )
-    row, _ = dataframe2excel(
-        pd.DataFrame(rows), writer, sheet_name=sheet, title="训练集 LIFT 区间规则分布", start_row=row + 2
-    )
+    row, _ = dataframe2excel(pd.DataFrame(rows), writer, sheet_name=sheet, title="训练集 LIFT 区间规则分布", start_row=row + 2)
     return row
 
 
@@ -714,9 +729,7 @@ def _sample_tables(
                     else:
                         key = source
                     values.append(table[key].iloc[0])
-                key = (
-                    (("统计详情", source) if ("统计详情", source) in amounts else (source, label)) if multi else source
-                )
+                key = (("统计详情", source) if ("统计详情", source) in amounts else (source, label)) if multi else source
                 amounts[key] = values
     performance = _prediction_metrics(tree, frames, y_maps, amount, predictions=predictions)
     for table, basis in [(orders, "订单"), (amounts, "金额")]:
@@ -936,14 +949,28 @@ def _write_tree_pair(
         strategy = _strategy_table(full, False).set_index(node_col, drop=False).loc[node_order].reset_index(drop=True)
         tables.append(format_rule_tables(strategy, long_format))
     description = (
-        f"{len(node_order)} 条节点规则，保持训练集规则顺序；树图标签：{plot_label or label}。"
-        "命中率按各标签有效样本计算，LIFT=命中坏率/整体坏率；金额表按金额加权。"
+        f"{len(node_order)} 条节点规则，保持训练集规则顺序；树图标签：{plot_label or label}。" "命中率按各标签有效样本计算，LIFT=命中坏率/整体坏率；金额表按金额加权。"
     )
     return _write_pair(writer, sheet, row, title, tables[0], tables[1], description, paths)
 
 
-def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, amount, del_grey, operator, node_order):
-    """复用 swap_out_report 使用的 feature_binning_summary，计算规则涉及的字段。"""
+def _write_feature_binning(
+    tree,
+    writer,
+    sheet,
+    contexts,
+    methods,
+    bin_params,
+    amount,
+    del_grey,
+    operator,
+    node_order,
+    *,
+    handle_missing_target="drop",
+):
+    """复用 swap_out_report 使用的 feature_binning_summary，计算规则涉及的字段。
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
+    """
     from ..feature_analyzer import feature_binning_summary
 
     dataframe2excel = _write_report_table
@@ -964,9 +991,7 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
     ws = writer.get_sheet_by_name(name)
     ws.freeze_panes = None
     if not features:
-        writer.insert_value2sheet(
-            ws, "B2", value="当前报告规则未使用分裂特征", style="header_middle", align={"horizontal": "left"}
-        )
+        writer.insert_value2sheet(ws, "B2", value="当前报告规则未使用分裂特征", style="header_middle", align={"horizontal": "left"})
         return name
     summaries, details = [], {}
     # 分箱器返回完整分箱表，子计算需使用 list；保留外层配置的 worker 与在途任务预算。
@@ -991,6 +1016,7 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
                 parallel_backend=tree.parallel_backend,
                 parallel_config=binning_parallel_config,
                 verbose=0,
+                handle_missing_target=handle_missing_target,
             )
             # 保留 feature_binning_summary 的指标 × 标签宽表；KS/AUC 使用原始特征的统一指标入口。
             summary = summary.drop(columns=[c for c in summary if c[0] == "分档KS值"])
@@ -1000,10 +1026,7 @@ def _write_feature_binning(tree, writer, sheet, contexts, methods, bin_params, a
                     summary[(metric, label)] = summary[("分箱详情", "指标名称")].map(values)
             metadata = [c for c in summary if c[0] == "分箱详情"]
             ordered = metadata + [
-                c
-                for metric in ["KS", "AUC", "LIFT值", "指标IV值", "坏样本数", "坏样本率"]
-                for c in summary
-                if c[0] == metric
+                c for metric in ["KS", "AUC", "LIFT值", "指标IV值", "坏样本数", "坏样本率"] for c in summary if c[0] == metric
             ]
             summary = summary[ordered]
             summary.insert(0, ("分箱详情", "数据集"), dataset)

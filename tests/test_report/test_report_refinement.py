@@ -43,9 +43,7 @@ def data():
 def test_monthly_metrics_use_first_label_and_its_valid_rows(data, mode, weighted):
     first = data.MOB1.gt(7).astype(float).mask(data.MOB1.gt(0) & data.MOB1.le(7))
     options = (
-        {"overdue": "MOB1", "dpds": [7, 0]}
-        if mode == "overdue"
-        else {"target": {"首标签": first, "次标签": data.MOB1.gt(0)}}
+        {"overdue": "MOB1", "dpds": [7, 0]} if mode == "overdue" else {"target": {"首标签": first, "次标签": data.MOB1.gt(0)}}
     )
     report = ModelReport(
         ProbabilityModel(),
@@ -59,7 +57,7 @@ def test_monthly_metrics_use_first_label_and_its_valid_rows(data, mode, weighted
     for month in ["2026-01", "2026-02"]:
         mask = (data.日期.dt.strftime("%Y-%m") == month).to_numpy() & first.notna().to_numpy()
         y, p = first.to_numpy()[mask], data.概率.to_numpy()[mask]
-        w = data.权重.to_numpy()[mask] if weighted else np.ones(len(y))
+        w = np.ones(len(y))  # 分月统计只按实际订单，训练权重不能改变报告分母。
         bad, good = y == 1, y == 0
         difference = p[bad, None] - p[good][None, :]
         pairs = w[bad, None] * w[good][None, :]
@@ -85,7 +83,7 @@ def test_description_four_configs_and_monthly_psi_percentage(data, tmp_path):
         ProbabilityModel(), datasets={"样本": data}, overdue="MOB1", dpds=[7, 0], del_grey=True, n_jobs=1
     )
     config = label_configuration_table(report)
-    assert config["配置项"].tolist() == ["标签来源", "操作符", "灰样本定义", "剔灰配置"]
+    assert config["配置项"].tolist() == ["标签来源", "操作符", "灰样本定义", "剔灰配置", "缺失值处理", "预测函数", "分箱基准", "统计口径", "加权性能对照"]
     values = config.set_index("配置项")["配置值"]
     assert values["标签来源"] == "overdue+dpds" and values["操作符"] == ">" and values["剔灰配置"] == "是"
     assert "MOB1@7：0 < MOB1 <= 7" in values["灰样本定义"]
@@ -99,9 +97,7 @@ def test_description_four_configs_and_monthly_psi_percentage(data, tmp_path):
     assert "标签定义与剔灰规则" not in basic_values
     for field in config["配置项"]:
         assert basic_values.count(field) == 1
-    assert not {"坏样本定义", "实际剔除规则", "缺失值处理", "原始样本数", "有效样本数", "剔除样本数"} & set(
-        basic_values
-    )
+    assert not {"坏样本定义", "实际剔除规则", "原始样本数", "有效样本数", "剔除样本数"} & set(basic_values)
     for row in basic:
         if row[1].value in values:
             assert row[2].value == values[row[1].value]
@@ -133,7 +129,7 @@ def test_label_configuration_preserves_mixed_external_y_source(data):
     values = label_configuration_table(report).set_index("配置项")["配置值"]
     assert values["标签来源"] == "派生：overdue+dpds；外部：显式y"
     assert "外部：不适用（直接标签）" in values["操作符"]
-    assert "不应用 target/overdue 的灰样本规则" in values["灰样本定义"]
+    assert "标签不是0或1（不含缺失）" in values["灰样本定义"]
 
 
 def test_selection_details_keep_leaf_decisions_and_preserve_full_process():

@@ -94,11 +94,15 @@ class _SelectedMetricEarlyStopping:
         results = env.evaluation_result_list
         if not any(item[1] == self.metric for item in results):
             raise ValueError(f"验证结果中不存在早停指标 {self.metric!r}")
-        env.evaluation_result_list = sorted(results, key=lambda item: item[1] != self.metric)
-        try:
-            return self.callback(env)
-        finally:
-            env.evaluation_result_list = results
+        ordered = sorted(results, key=lambda item: item[1] != self.metric)
+        if hasattr(env, "_replace"):
+            selected_env = env._replace(evaluation_result_list=ordered)
+        else:
+            from copy import copy
+
+            selected_env = copy(env)
+            selected_env.evaluation_result_list = ordered
+        return self.callback(selected_env)
 
 
 class LightGBM(BaseRiskModel):
@@ -369,9 +373,7 @@ class LightGBM(BaseRiskModel):
         original_objective = objective
         auto_loss_metric = eval_metric is None and isinstance(objective, BaseLoss)
         if auto_loss_metric and eval_set is not None and bound_sample_params(objective):
-            raise ValueError(
-                "绑定逐行金融参数的损失使用外部 eval_set 时，请显式提供该数据集的 eval_metric；不能复用训练金额"
-            )
+            raise ValueError("绑定逐行金融参数的损失使用外部 eval_set 时，请显式提供该数据集的 eval_metric；不能复用训练金额")
         if eval_metric is None and isinstance(objective, BaseLoss):
             eval_metric = objective.metric()
         early_stopping_rounds = fit_kwargs.pop(
@@ -482,6 +484,33 @@ class LightGBM(BaseRiskModel):
         params["objective"] = resolve_custom_objective(
             objective if objective is not original_objective else params.get("objective")
         )
+        if LIGHTGBM_VERSION < Version("4.0") and callable(params["objective"]):
+            import inspect
+
+            custom_objective = params["objective"]
+            if "sample_weight" in inspect.signature(custom_objective).parameters:
+                # 3.x 将第三个参数解释为 group，并在回调后再乘权重；
+                # 统一为当前 sample_weight 契约，并抵消原生的第二次加权。
+                objective_weights = None if sample_weight is None else np.asarray(sample_weight, dtype=float)
+
+                def legacy_objective(labels, margin):
+                    gradient, hessian = custom_objective(labels, margin, sample_weight=objective_weights)
+                    if objective_weights is not None:
+                        gradient = np.divide(
+                            gradient,
+                            objective_weights,
+                            out=np.zeros_like(gradient, dtype=float),
+                            where=objective_weights != 0,
+                        )
+                        hessian = np.divide(
+                            hessian,
+                            objective_weights,
+                            out=np.zeros_like(hessian, dtype=float),
+                            where=objective_weights != 0,
+                        )
+                    return gradient, hessian
+
+                params["objective"] = legacy_objective
 
         # 创建模型
         self.native_params_ = dict(params)
@@ -543,7 +572,7 @@ class LightGBM(BaseRiskModel):
         # 保存结果
         self._best_iteration = getattr(self._model, "best_iteration_", None)
         self._best_score = getattr(self._model, "best_score_", None)
-        self._evals_result = getattr(self._model, "evals_result_", {})
+        self._evals_result = getattr(self._model, "evals_result_", None) or {}
         self._is_fitted = True
         self._fit_probability_scorecard(X, y, sample_weight=scorecard_sample_weight)
         from .._workflow import record_boosting_evaluation
@@ -596,7 +625,9 @@ class LightGBM(BaseRiskModel):
             proba = self._model.booster_.predict(X, **predict_params)
         else:
             native_predict_params = dict(predict_params)
-            if callable(getattr(self._model, "_objective", None)) and not native_output_requested:
+            if (
+                callable(getattr(self._model, "_objective", None)) or callable(getattr(self._model, "objective", None))
+            ) and not native_output_requested:
                 native_predict_params["raw_score"] = True
             proba = self._model.predict_proba(X, **native_predict_params)
         proba = np.asarray(proba)

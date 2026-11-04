@@ -25,7 +25,7 @@ class TargetEncoder(BaseEncoder):
 
     **参数**
 
-    :param random_state: 随机种子，用于噪声生成，默认为None
+    :param random_state: 折外切分及噪声的随机种子，默认42
     :type random_state: Optional[int]
     :param target: 默认值为 ``None`` 。scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
     :type target: Optional[str]
@@ -66,7 +66,7 @@ class TargetEncoder(BaseEncoder):
     :type drop_invariant: bool
     :param return_df: 是否返回DataFrame，默认为True
     :type return_df: bool
-    :param training_mode: 默认 in_sample；oof 时 fit_transform 返回折外编码，
+    :param training_mode: 默认 oof；fit_transform 返回折外编码，in_sample 显式使用全量训练映射，
         transform 仍使用全训练集最终映射，时间起始窗口未覆盖行保留 NaN
 
     :type training_mode: str
@@ -126,12 +126,12 @@ class TargetEncoder(BaseEncoder):
         handle_missing: str = "value",
         drop_invariant: bool = False,
         return_df: bool = True,
-        random_state: Optional[int] = None,
+        random_state: Optional[int] = 42,
         target: Optional[str] = None,
         n_jobs: Optional[Union[int, float]] = -1,
         parallel_backend: Optional[str] = None,
         parallel_config: Optional[Dict[str, Any]] = None,
-        training_mode: str = "in_sample",
+        training_mode: str = "oof",
         cv: Any = 5,
         passthrough_target: bool = False,
     ):
@@ -145,7 +145,7 @@ class TargetEncoder(BaseEncoder):
         :param handle_missing: 处理缺失值的方式，默认为'value'
         :param drop_invariant: 是否删除方差为0的列，默认为False
         :param return_df: 是否返回DataFrame，默认为True
-        :param random_state: 随机种子，用于噪声生成，默认为None
+        :param random_state: 折外切分及噪声的随机种子，默认42
         :param target: scorecardpipeline风格的目标列名。如果提供，fit时从X中提取该列作为y
         """
         super().__init__(

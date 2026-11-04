@@ -246,7 +246,7 @@ def test_benchmark_binning_methods_skill_exposes_quality_metrics_in_long_format(
 
     preview = result["summary"]["preview"][0]
     assert result["status"] == "success"
-    assert pd.isna(preview["错误信息"])
+    assert "错误信息" not in preview
     assert {"LIFT二次项系数", "综合评分", "LIFT序列", "坏样本率序列"}.issubset(preview)
 
 

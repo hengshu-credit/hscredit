@@ -636,9 +636,7 @@ class SwapAnalyzer(BaseEstimator):
 
         # 如果有out-out数据
         if stats[SwapType.OUT_OUT]["total_count"] > 0:
-            combined["original_reject"] = self._merge_stats(
-                [stats[SwapType.OUT_IN], stats[SwapType.OUT_OUT]], "原策略拒绝"
-            )
+            combined["original_reject"] = self._merge_stats([stats[SwapType.OUT_IN], stats[SwapType.OUT_OUT]], "原策略拒绝")
             combined["new_reject"] = self._merge_stats([stats[SwapType.IN_OUT], stats[SwapType.OUT_OUT]], "现策略拒绝")
             combined["all"] = self._merge_stats(list(stats.values()), "全部样本")
 
@@ -880,9 +878,7 @@ class SwapAnalysisResult:
                     )
                     row["坏账率变化(绝对)"] = _format_stat_number(bad_rate - overall_bad_rate)
                     if overall_bad_rate > 0:
-                        row["坏账率变化(相对)"] = _format_stat_number(
-                            (bad_rate - overall_bad_rate) / overall_bad_rate, ".2%"
-                        )
+                        row["坏账率变化(相对)"] = _format_stat_number((bad_rate - overall_bad_rate) / overall_bad_rate, ".2%")
                     else:
                         row["坏账率变化(相对)"] = None
                 else:
@@ -1393,6 +1389,7 @@ def swap_analysis(
     max_n_bins: int = 10,
     rules=None,
     bin_params=None,
+    handle_missing_target="drop",
     **kwargs,
 ) -> SwapAnalysisResult:
     """统一的Swap分析入口函数.
@@ -1488,7 +1485,7 @@ def swap_analysis(
     >>> result.pass_rate_report
     >>> result.risk_rejection_report
 
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -1501,6 +1498,8 @@ def swap_analysis(
 
     :param method: 参考样本评分的分箱方法，用于构造风险估计分箱表。 默认 ``'quantile'``。
     :param max_n_bins: 参考样本评分的最大分箱数。 默认 ``10``。
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     swap_df = _apply_swap_type_rule_sets(
@@ -1523,7 +1522,15 @@ def swap_analysis(
     reject_legacy_target_keywords(kwargs)
     if kwargs:
         raise TypeError(f"不支持的参数: {list(kwargs)}；分箱请使用 method/max_n_bins/rules")
-    reference_df, targets = bind_targets(reference_df, target, overdue, dpds, del_grey, overdue_operator)
+    reference_df, targets = bind_targets(
+        reference_df,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     # ReferenceDataProvider 接收实际列；仅在内部副本上物化展示名。
     target_cols = targets.names()
     for name, values in targets.y_map(reference_df).items():

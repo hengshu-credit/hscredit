@@ -1373,9 +1373,7 @@ class TestModelReportRegression:
         assert any(isinstance(value, float) and not np.isnan(value) for value in performance)
 
         basic_info_sheet = workbook["1-基本信息"]
-        sample_total_header = next(
-            cell for row in basic_info_sheet.iter_rows() for cell in row if cell.value == "样本总数"
-        )
+        sample_total_header = next(cell for row in basic_info_sheet.iter_rows() for cell in row if cell.value == "样本总数")
         stats_group_row = sample_total_header.row - 1
         assert basic_info_sheet.cell(stats_group_row, sample_total_header.column - 1).value == "统计详情"
         assert any(
@@ -1914,10 +1912,7 @@ class TestModelReportRealDataContract:
                 if cell.value == feature and cell.hyperlink is not None
             )
             title_cell = next(
-                cell
-                for row in feature_sheet.iter_rows()
-                for cell in row
-                if cell.value == f"3.{index}、{feature} 有效性分析"
+                cell for row in feature_sheet.iter_rows() for cell in row if cell.value == f"3.{index}、{feature} 有效性分析"
             )
             assert summary_cell.hyperlink.location == f"#'3-入模变量分析'!{title_cell.coordinate}"
             assert title_cell.hyperlink.location == f"#'3-入模变量分析'!{summary_cell.coordinate}"
@@ -1958,8 +1953,9 @@ class TestModelReportRealDataContract:
 
         report.to_excel(str(tmp_path / "plot-warning.xlsx"), with_plots=True)
 
-        assert str(missing_plot) in caplog.text
-        assert "2-模型性能" in caplog.text
+        assert caplog.text == ""
+        diagnostics = "\n".join(item["说明"] for item in report.report_warnings_)
+        assert str(missing_plot) in diagnostics and "2-模型性能" in diagnostics
 
     def test_optional_plot_generation_failure_is_logged_with_context(self, tmp_path, monkeypatch, caplog):
         X = pd.DataFrame({"f0": range(20), "target": [0, 1] * 10})
@@ -1971,10 +1967,11 @@ class TestModelReportRealDataContract:
         monkeypatch.setattr("hscredit.core.viz.bin_plot", fail_bin_plot)
         report._export_plots(tmp_path)
 
-        assert "模型评分分箱图" in caplog.text
-        assert "train" in caplog.text
-        assert str(tmp_path / "bin_train.png") in caplog.text
-        assert "injected model bin plot failure" in caplog.text
+        assert caplog.text == ""
+        diagnostics = "\n".join(item["说明"] for item in report.report_warnings_)
+        assert "模型评分分箱图" in diagnostics and "train" in diagnostics
+        assert str(tmp_path / "bin_train.png") in diagnostics
+        assert "injected model bin plot failure" in diagnostics
 
     def test_required_feature_effectiveness_table_failure_surfaces(self, tmp_path, monkeypatch):
         X = pd.DataFrame({"f0": range(20), "target": [0, 1] * 10})

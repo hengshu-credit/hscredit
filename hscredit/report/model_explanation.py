@@ -42,7 +42,7 @@ def normalize_explain_config(config=None):
         if unknown:
             raise ValueError(f"explain_config 包含未知配置: {sorted(unknown)}")
         merged.update(config)
-    if merged["on_explain_error"] not in {"raise", "warn"}:
+    if merged["on_explain_error"] not in {"raise", "warn", "ignore"}:
         raise ValueError("on_explain_error 必须是 raise 或 warn")
     if merged["scope"] not in {"full", "importance"}:
         raise ValueError("scope 必须是 full 或 importance")
@@ -100,8 +100,7 @@ def build_model_explanation(model, config: Dict[str, Any]) -> Dict[str, Any]:
             "解释器": explainer,
         }
     except Exception as exc:
-        if config["on_explain_error"] == "warn":
-            warnings.warn(f"生成模型解释失败: {exc}", RuntimeWarning, stacklevel=2)
+        if config["on_explain_error"] in ("warn", "ignore"):
             return {"失败原因": str(exc)}
         raise RuntimeError(f"生成模型解释失败: {exc}") from exc
 

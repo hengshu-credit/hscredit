@@ -83,7 +83,7 @@ def _inputs(data, kind, grey, *, paired=False):
         "dict_callable": {"验证_7+": lambda df: df[TARGET], "第二@7": lambda df: df.MOB1.gt(0)},
     }
     sources = [raw, second] if kind.startswith("dict") else [raw]
-    expected = [s.eq(1).astype(float).where(s.isin([0, 1])) if grey else s.eq(1).astype(float) for s in sources]
+    expected = [s.eq(1).astype(float).where(s.isin([0, 1]) if grey else s.notna()) for s in sources]
     return dict(target=values[kind], del_grey=grey), expected
 
 
@@ -330,12 +330,7 @@ def test_real_data_composite_modules(loans, tmp_path, entry, kind, grey):
             **options,
         )
         merged = pd.concat(list(tables[FEATURES[0]]["quantile"].values()), ignore_index=True)
-        totals = (
-            merged.loc[merged["分箱标签"].eq("合计")]
-            .groupby("逾期标签", sort=False)[["样本总数", "坏样本数"]]
-            .sum()
-            .reset_index()
-        )
+        totals = merged.loc[merged["分箱标签"].eq("合计")].groupby("逾期标签", sort=False)[["样本总数", "坏样本数"]].sum().reset_index()
         _check_table(totals, expected, loans[AMOUNT])
         assert not summary.empty
     elif entry == "ruleset":
@@ -370,7 +365,7 @@ def test_real_data_composite_modules(loans, tmp_path, entry, kind, grey):
     elif entry == "benchmark":
         result = benchmark_binning_methods(loans, FEATURES[0], methods=["quantile"], n_jobs=1, **options)
         errors = [column for column in result if isinstance(column, tuple) and column[-1] == "错误信息"]
-        assert errors and result[errors].isna().all().all()
+        assert not errors and not result.empty
     elif entry == "swap":
         working = loans
         if not grey and not kind.startswith("overdue"):

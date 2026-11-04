@@ -104,6 +104,7 @@ hscredit 文档
    手工树 <articles/manual_tree_rule_mining>
    多叉树 <multiway_tree>
    模型解释 <articles/model-interpretability>
+   报告资源与部署 <articles/report-resources-deployment>
 
 .. toctree::
    :maxdepth: 2

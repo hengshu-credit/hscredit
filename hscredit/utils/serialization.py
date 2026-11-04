@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, Type, TypeVar, Union
 
 from ..exceptions import SerializationError
 from .io import load_pickle, save_pickle
+from .environment import runtime_version
 
 T = TypeVar("T", bound="ArtifactSerializableMixin")
 
@@ -68,9 +69,7 @@ def unpack_artifact(payload, *, expected_type=None, metadata_policy="warn"):
     envelope = isinstance(payload, dict) and payload.get("format") == ARTIFACT_FORMAT
     if envelope:
         if payload.get("version") != ARTIFACT_VERSION or isinstance(payload.get("version"), bool):
-            raise SerializationError(
-                f"不支持的制品协议版本 {payload.get('version')}，当前支持版本为 {ARTIFACT_VERSION}"
-            )
+            raise SerializationError(f"不支持的制品协议版本 {payload.get('version')}，当前支持版本为 {ARTIFACT_VERSION}")
         if "object" not in payload:
             raise SerializationError("制品内容不完整，缺少 object 字段")
         obj = payload["object"]
@@ -109,7 +108,7 @@ def unpack_artifact(payload, *, expected_type=None, metadata_policy="warn"):
         else:
             for package, declared_version in dependencies.items():
                 try:
-                    installed = version(str(package))
+                    installed = runtime_version(str(package))
                 except PackageNotFoundError:
                     installed = "未安装"
                 if str(declared_version) != installed:
@@ -131,12 +130,48 @@ class ArtifactSerializableMixin:
 
     artifact_kind = "通用制品"
 
+    def save_deployment(
+        self, directory, *, name="model", validation_data=None, prediction_method=None, overwrite=False
+    ):
+        """原子发布部署制品及清单。
+
+        :param directory: 部署目录，字符串或 Path。
+        :param name: 完成清单名称，默认 model，不允许包含目录。
+        :param validation_data: 可选推理验证数据；比较保存前后的预测，不把样本明细写入清单。
+        :param prediction_method: predict、predict_proba、predict_score 或 transform；None 按组件能力选择。
+        :param overwrite: 是否更新已有完成清单，默认 False；旧版本目录保留。
+        :return: 原子完成清单的路径。
+        """
+        from .deployment import save_deployment
+
+        return save_deployment(
+            self,
+            directory,
+            name=name,
+            validation_data=validation_data,
+            prediction_method=prediction_method,
+            overwrite=overwrite,
+        )
+
+    @classmethod
+    def load_deployment(cls, path, *, trusted=True, metadata_policy="warn"):
+        """校验完成清单、摘要、字段与依赖版本后加载部署制品。
+
+        :param path: save_deployment 返回的完成清单路径。
+        :param trusted: 仅加载可信对象制品；False 在读取前拒绝，默认 True 保持通用制品接口习惯。
+        :param metadata_policy: warn（默认）、strict 或 ignore，控制依赖元数据差异的处理。
+        :return: 与当前类一致的组件对象。
+        """
+        from .deployment import load_deployment
+
+        return load_deployment(path, expected_type=cls, trusted=trusted, metadata_policy=metadata_policy)
+
     def get_artifact_metadata(self) -> Dict[str, Any]:
         """返回不包含对象本体的制品元数据."""
         dependencies = {}
         for package in ("hscredit", "numpy", "pandas", "scikit-learn"):
             try:
-                dependencies[package] = version(package)
+                dependencies[package] = runtime_version(package)
             except PackageNotFoundError:
                 continue
         return {

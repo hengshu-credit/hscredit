@@ -54,7 +54,7 @@ GREY = {">": [30, 40, 50], ">=": [30, 40], "<": [], "<=": []}
 
 
 def expected_target(data, op, del_grey):
-    y = pd.Series(LABELS[op], index=data.index)
+    y = pd.Series(LABELS[op], index=data.index).where(data["MOB 1"].notna()).dropna()
     return y.drop(index=GREY[op]) if del_grey else y
 
 
@@ -78,7 +78,7 @@ def test_boundary_labels_match_across_eda_rules_and_binning(data, op, del_grey):
         report = Rule("评分 >= 0", n_jobs=1).report(data, margins=True, amount=amount, **params)
         label = "MOB 1 3+" if op == ">" else f"MOB 1{op}3"
         total = report.loc[report[("分箱详情", "分箱")] == "合计"].iloc[0]
-        count_group = label if del_grey and op in (">", ">=") else "分箱详情"
+        count_group = label  # 缺失标签独立剔除，按本标签保留有效分母。
         assert total[(count_group, "样本总数")] == weights.sum()
         assert total[(label, "坏样本数")] == weights.loc[expected.eq(1)].sum()
     assert_frame_equal(data, original)
@@ -134,7 +134,7 @@ def test_model_report_multilabel_counts_labels_and_config_roundtrip(data, op):
     assert summary.loc[display, ("坏样本率", "样本")] == pytest.approx(expected.mean())
     table = report.get_bin_table("样本", max_n_bins=2, margins=True, labels=report._label_names)
     total = table.iloc[-1]
-    group = label if op in (">", ">=") else "分箱详情"
+    group = label
     assert total[(group, "样本总数")] == len(expected)
     assert total[(label, "坏样本数")] == expected.sum()
     restored = ModelReport(**report.init_params_)
@@ -155,7 +155,7 @@ def test_summary_group_and_2d_use_the_same_operator(data, op):
     label = f"MOB 1{op}3"
     expected = expected_target(data, op, True)
     table = feature_bin_stats_2d(data, ["评分", "特征"], max_n_bins=2, **params)
-    group = label if op == ">=" else "分箱详情"
+    group = label
     assert table.iloc[-1][(group, "样本总数")] == len(expected)
     assert table.iloc[-1][(label, "坏样本数")] == expected.sum()
     tables, summary = feature_binning_summary(data, "评分", methods="quantile", max_n_bins=2, **params)
@@ -203,7 +203,7 @@ def test_predictor_label_names_and_explicit_override(data, op):
     assert label in predictor.target_names_
     total = predictor.bin_table_.iloc[-1]
     assert total[(label, "坏样本数")] == expected.sum()
-    group = label if op == ">=" else "分箱详情"
+    group = label
     assert total[(group, "样本总数")] == len(expected)
 
 
@@ -347,9 +347,7 @@ def test_tree_report_and_rule_table_forward_operator(data, op):
     from hscredit.report.mining import DecisionTreeAnalyzer, ManualTreeExtractor
 
     fit_data = data.assign(target=LABELS[">"])
-    tree = DecisionTreeAnalyzer(target="target", features=["评分"], tree_params={"max_depth": 1}, n_jobs=1).fit(
-        fit_data
-    )
+    tree = DecisionTreeAnalyzer(target="target", features=["评分"], tree_params={"max_depth": 1}, n_jobs=1).fit(fit_data)
     manual = ManualTreeExtractor(target="target", max_depth=1, min_samples_leaf=1, n_jobs=1).fit(
         fit_data, features=["评分"]
     )
@@ -383,7 +381,7 @@ def test_benchmark_fits_only_target_valid_rows(data, op):
         n_jobs=1,
     )
     assert f"MOB 1{op}3" in report.columns.get_level_values(0)
-    assert report[(f"MOB 1{op}3", "错误信息")].isna().all()
+    assert "错误信息" not in report.columns.get_level_values(-1)
 
 
 @pytest.mark.parametrize("backend", ["threading", "loky"])
@@ -594,7 +592,7 @@ def test_efficiency_auto_kwargs_cannot_override_label_definition(data, op):
     )
     for key in ["manual_table", "auto_table"]:
         assert result[key].iloc[-1]["坏样本数"] == sum(LABELS[op])
-        assert result[key].iloc[-1]["样本总数"] == len(data)
+        assert result[key].iloc[-1]["样本总数"] == data["MOB 1"].notna().sum()
     assert auto_kwargs == {"overdue_operator": ">", "del_grey": True}
     plt.close("all")
 
@@ -615,7 +613,10 @@ def test_normalized_thresholds_use_the_same_values_for_labels_and_comparisons(da
     expected = bad_rate_overall(data, dpds=[3, 0], **params)
     actual = bad_rate_overall(data, dpds=pd.Index(["3.0", "0", 3]), **params)
     assert_frame_equal(actual, expected)
-    assert make_overdue_target(data["MOB 1"], "3.0", overdue_operator=op).tolist() == LABELS[op]
+    expected_labels = pd.Series(LABELS[op], index=data.index).where(data["MOB 1"].notna())
+    np.testing.assert_allclose(
+        make_overdue_target(data["MOB 1"], "3.0", overdue_operator=op), expected_labels, equal_nan=True
+    )
 
 
 @pytest.mark.parametrize("container", [np.array, pd.Index, pd.Series])

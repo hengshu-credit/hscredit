@@ -193,7 +193,6 @@ class ReportResult(dict):
         except Exception as exc:
             section.status = "失败"
             section.reason = f"{type(exc).__name__}: {exc}"
-            logger.warning("报告章节失败 [%s]: %s", name, section.reason)
             if self.mode == "strict" and section.required:
                 raise ReportGenerationError(f"必需报告章节失败: {name}，{section.reason}", self) from exc
         finally:

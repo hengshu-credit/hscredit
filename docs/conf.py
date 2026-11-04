@@ -33,19 +33,19 @@ release = version
 
 # -- 通用配置 ---------------------------------------------------------------
 extensions = [
-    "sphinx.ext.autodoc",       # 从 docstring 自动生成 API 文档
-    "sphinx.ext.autosummary",   # 生成 API 汇总表
-    "sphinx.ext.napoleon",      # 支持 Google / NumPy 风格 docstring
-    "sphinx.ext.viewcode",      # 在文档中链接到源码
-    "sphinx.ext.intersphinx",   # 跨项目引用（numpy/pandas/sklearn）
-    "sphinx.ext.mathjax",       # 数学公式
+    "sphinx.ext.autodoc",  # 从 docstring 自动生成 API 文档
+    "sphinx.ext.autosummary",  # 生成 API 汇总表
+    "sphinx.ext.napoleon",  # 支持 Google / NumPy 风格 docstring
+    "sphinx.ext.viewcode",  # 在文档中链接到源码
+    "sphinx.ext.intersphinx",  # 跨项目引用（numpy/pandas/sklearn）
+    "sphinx.ext.mathjax",  # 数学公式
     "sphinx.ext.todo",
-    "myst_parser",              # 支持 Markdown（.md）文档
+    "myst_parser",  # 支持 Markdown（.md）文档
 ]
 
 autosummary_generate = True
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "PACKAGING.md", "audits/**", "superpowers/**"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "PACKAGING.md", "audits/**", "analysis/**", "superpowers/**"]
 
 # 中文界面
 language = "zh_CN"
@@ -139,6 +139,7 @@ def _sync_brand_font(app, exception):
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(_BRAND_FONT_SOURCE, target)
 
+
 # -- todo -------------------------------------------------------------------
 todo_include_todos = False
 
@@ -167,7 +168,7 @@ def _md_table_cells(line, ncols=None):
     """
     cells = [c.strip() for c in line.strip().strip("|").split("|")]
     if ncols is not None and len(cells) > ncols:
-        cells = cells[: ncols - 1] + ["|".join(cells[ncols - 1:]).strip()]
+        cells = cells[: ncols - 1] + ["|".join(cells[ncols - 1 :]).strip()]
     if ncols is not None and len(cells) < ncols:
         cells = cells + [""] * (ncols - len(cells))
     # list-table 单元格内残留的 ``|`` 仍会被当作替换引用，转义为字面竖线。
@@ -216,10 +217,7 @@ def _wrap_trailing_underscore(lines):
             # ``tuner.study_.best_trial.number``，不能再次包装其中的 study_。
             parts = re.split(r"(``[^`]*``|:[\w:]+:`[^`]*`|`[^`]*`_?)", line)
             out.append(
-                "".join(
-                    part if i % 2 else _TRAILING_UNDERSCORE.sub(r"``\1``", part)
-                    for i, part in enumerate(parts)
-                )
+                "".join(part if i % 2 else _TRAILING_UNDERSCORE.sub(r"``\1``", part) for i, part in enumerate(parts))
             )
     return out
 

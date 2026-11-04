@@ -131,13 +131,32 @@ def _model_stamp(model, _seen=None):
     return None  # 任意自定义预测对象不假设其调用计数等属性代表训练状态。
 
 
+from contextvars import ContextVar
+from time import perf_counter
+
+_REPORT_OPERATIONS = ContextVar("hscredit_report_operations", default=frozenset())
+
+
 def report_model_current(method):
     """在读取缓存或写文件前拒绝混用不同训练版本。"""
 
     @wraps(method)
     def checked(self, *args, **kwargs):
+        active = _REPORT_OPERATIONS.get()
+        if id(self) in active:
+            return method(self, *args, **kwargs)
         self._assert_model_current()
-        return method(self, *args, **kwargs)
+        if method.__name__ not in ("get_metrics", "summary"):
+            self._require_report_data()
+        token = _REPORT_OPERATIONS.set(active | {id(self)})
+        self._start_report_operation()
+        start = perf_counter()
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            _REPORT_OPERATIONS.reset(token)
+            self._finish_report_operation()
+            self.last_execution_ = {"操作": method.__name__, "耗时秒": perf_counter() - start, "缓存策略": self.cache_policy}
 
     return checked
 
@@ -195,9 +214,7 @@ class ModelContextMixin:
             "TOP名单规则": "人数向上取整，同分边界等比例计入；权重只用于名单内统计",
         }
         self.model_context_["最终估计器"] = type(model).__name__
-        self.model_context_["指标配置"].extend(
-            {"指标": name, "输入": "模型决策类别"} for name in getattr(self, "label_metrics_", [])
-        )
+        self.model_context_["指标配置"].extend({"指标": name, "输入": "模型决策类别"} for name in getattr(self, "label_metrics_", []))
         self.model_context_["最终模型参数"] = _model_parameter_snapshot(model)
         self.model_context_["任务类型"] = "回归" if getattr(self, "task_type_", "binary") == "regression" else "二分类"
         if getattr(self, "task_type_", "binary") == "regression":
@@ -208,15 +225,16 @@ class ModelContextMixin:
 
     def _assert_model_current(self):
         if hasattr(self, "_model_stamp_") and _model_stamp(self.model) != self._model_stamp_:
-            raise ValueError(
-                "报告绑定的模型状态已变化（重新训练、失效或原生配置改变）；请重新创建 ModelReport，不能混用旧预测与新状态"
-            )
+            raise ValueError("报告绑定的模型状态已变化（重新训练、失效或原生配置改变）；请重新创建 ModelReport，不能混用旧预测与新状态")
 
     def _risk_values(self, values):
         values = np.asarray(values, dtype=float)
         return -values if self.score_direction == "higher_safe" else values
 
-    def _metric_weight(self, key, label=None):
+    def _metric_weight(self, key, label=None, *, weighted=False):
+        # 报告主表始终使用真实订单；权重只用于显式并列的性能对照。
+        if not weighted:
+            return None
         spec = self.sample_weight
         if spec is None:
             return None
@@ -240,7 +258,7 @@ class ModelContextMixin:
                 weights = validate_sample_weight(weights, len(weights))
         return weights
 
-    def _extra_metric_rows(self, label):
+    def _extra_metric_rows(self, label, *, weighted=False):
         rows = []
         for metric in self.metrics:
             row = {"统计项": metric.name}
@@ -250,7 +268,9 @@ class ModelContextMixin:
                     metric, np.flatnonzero(self._get_target_valid_mask(key, label)), len(dataset.y)
                 )
                 row[dataset.label] = (
-                    np.nan if not len(y) else selected.evaluate(y, p, sample_weight=self._metric_weight(key, label))
+                    np.nan
+                    if not len(y)
+                    else selected.evaluate(y, p, sample_weight=self._metric_weight(key, label, weighted=weighted))
                 )
             rows.append(row)
         if getattr(self, "label_metrics_", []):
@@ -278,7 +298,11 @@ class ModelContextMixin:
                 predicted = self._label_prediction_cache[key][valid]
                 if len(y):
                     values = _evaluate_binary_predictions(
-                        y, p, predicted, metrics=self.label_metrics_, sample_weight=self._metric_weight(key, label)
+                        y,
+                        p,
+                        predicted,
+                        metrics=self.label_metrics_,
+                        sample_weight=self._metric_weight(key, label, weighted=weighted),
                     )
                 else:
                     names = {"accuracy": "Accuracy", "precision": "Precision", "recall": "Recall", "f1": "F1"}
@@ -287,6 +311,40 @@ class ModelContextMixin:
                     label_rows.setdefault(name, {"统计项": name})[dataset.label] = value
             rows.extend(label_rows.values())
         return rows
+
+    def _append_weighted_metrics(self, table, label=None):
+        """仅整体性能追加加权对照列，订单数量、坏率与分布保持实际口径。"""
+        if not self.show_weighted_metrics:
+            return table
+        from .model_report import _safe_binary_metric
+        from ..core.metrics import auc, ks
+
+        result = table.copy()
+        extras = (
+            {row["统计项"]: row for row in self._extra_metric_rows(label, weighted=True)}
+            if self.task_type_ != "regression"
+            else {}
+        )
+        for key, dataset in self._datasets.items():
+            y, prediction = self._get_valid_target_arrays(key, label)
+            weights = self._metric_weight(key, label, weighted=True)
+            if self.task_type_ == "regression":
+                from ._regression_model import error_values
+
+                values = error_values(y, prediction, weights)
+            else:
+                values = {
+                    "KS": _safe_binary_metric(ks, y, prediction, sample_weight=weights),
+                    "AUC": _safe_binary_metric(
+                        auc, y, prediction, score_direction=self.score_direction, sample_weight=weights
+                    ),
+                }
+                values.update({name: row[dataset.label] for name, row in extras.items()})
+            name = f"{dataset.label}（加权）"
+            if name in result.columns:
+                raise ValueError(f"数据集名称与加权对照列冲突: {name}")
+            result.insert(result.columns.get_loc(dataset.label) + 1, name, result["统计项"].map(values))
+        return result
 
     @report_model_current
     def get_training_process(self):
@@ -304,11 +362,7 @@ class ModelContextMixin:
 
     def _collect_training_process(self):
         model = self.model.steps[-1][1] if hasattr(self.model, "steps") else self.model
-        result = {
-            "模型口径": pd.DataFrame(
-                [{"配置项": key, "配置值": str(value)} for key, value in self.model_context_.items()]
-            )
-        }
+        result = {"模型口径": pd.DataFrame([{"配置项": key, "配置值": str(value)} for key, value in self.model_context_.items()])}
         preprocessing, selections, stages, preprocessing_params = [], [], [], []
 
         def collect_steps(pipeline, prefix=""):
@@ -373,9 +427,7 @@ class ModelContextMixin:
                     }
                 )
             else:
-                availability.append(
-                    {"内容": label, "状态": "原生对象未提供统一过程接口", "说明": "不根据最终模型伪造历史过程"}
-                )
+                availability.append({"内容": label, "状态": "原生对象未提供统一过程接口", "说明": "不根据最终模型伪造历史过程"})
         result["过程可用性"] = pd.DataFrame(availability)
         seen = {id(model)}
         for attr, prefix in (
@@ -405,9 +457,7 @@ class ModelContextMixin:
             fold_rows = []
             selected_curves = []
             selected_number = getattr(getattr(tuner, "best_trial_", None), "number", None)
-            result["搜索指标"] = pd.DataFrame(
-                [{"指标": metric.name, "方向": metric.direction} for metric in tuner.metrics]
-            )
+            result["搜索指标"] = pd.DataFrame([{"指标": metric.name, "方向": metric.direction} for metric in tuner.metrics])
             validation = getattr(tuner, "validation_summary_", {})
             result["搜索设置"] = pd.DataFrame(
                 [
@@ -425,9 +475,7 @@ class ModelContextMixin:
                 ]
             )
             relation = (
-                "本报告模型是调参后重训模型"
-                if getattr(tuner, "best_model_", None) is self.model
-                else "搜索过程属于关联调参器，当前报告模型未替换为其重训模型"
+                "本报告模型是调参后重训模型" if getattr(tuner, "best_model_", None) is self.model else "搜索过程属于关联调参器，当前报告模型未替换为其重训模型"
             )
             result["模型口径"] = pd.concat(
                 [result["模型口径"], pd.DataFrame([{"配置项": "与调参关系", "配置值": relation}])], ignore_index=True
@@ -455,15 +503,12 @@ class ModelContextMixin:
                             }
                         ),
                         "耗时秒": None if trial.duration is None else trial.duration.total_seconds(),
-                        "错误信息": trial.user_attrs.get("错误信息", ""),
                     }
                 )
                 try:
                     details = tuner.get_trial_result(trial.number, load=False)
                 except ValueError as exc:
-                    fold_rows.append(
-                        {"试验编号": trial.number, "折编号": None, "状态": "未保留逐折制品", "说明": str(exc)}
-                    )
+                    fold_rows.append({"试验编号": trial.number, "折编号": None, "状态": "未保留逐折制品", "说明": str(exc)})
                     details = {"各折": []}
                 for item in details.get("各折", []):
                     fold_rows.append(

@@ -192,6 +192,10 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
         self._dropped_cols: List[str] = []
         self._is_fitted: bool = False
 
+    def __sklearn_is_fitted__(self):
+        """初始空映射不代表已拟合，使用实际训练状态供 sklearn 和部署验证。"""
+        return bool(getattr(self, "_is_fitted", False))
+
     def _set_input_feature_attributes(self, X: pd.DataFrame) -> None:
         """记录 sklearn 兼容的输入特征元数据。"""
         feature_names = list(X.columns)
@@ -525,6 +529,9 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                         raise ValueError("稀疏输出的兼容目标透传要求目标为数值") from exc
                     X_transformed = sparse.hstack([X_transformed, sparse.csr_matrix(labels)], format="csr")
         if isinstance(X_transformed, pd.DataFrame):
+            from ...utils.arguments import copy_query_source
+
+            copy_query_source(original, X_transformed)
             X_transformed.attrs.update(self._OUTPUT_ATTRS)
         if not self.return_df:
             # 处理稀疏矩阵的情况
@@ -579,13 +586,19 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
 
     def _fit_transform_oof(self, original, features, target, groups=None):
         """折外训练编码；最终映射在全训练集拟合，未被验证折覆盖的行保留 NaN。"""
-        from sklearn.model_selection import KFold
+        from sklearn.model_selection import KFold, GroupKFold
+        from ..model_selection import _validate_groups, _check_group_separation
 
         if target is None:
             raise ValueError("折外编码必须提供目标变量")
         cv = getattr(self, "cv", 5)
+        groups = _validate_groups(groups, len(features))
         if isinstance(cv, (int, np.integer)) and not isinstance(cv, (bool, np.bool_)):
-            cv = KFold(n_splits=int(cv), shuffle=True, random_state=getattr(self, "random_state", 42))
+            cv = (
+                GroupKFold(n_splits=int(cv))
+                if groups is not None
+                else KFold(n_splits=int(cv), shuffle=True, random_state=getattr(self, "random_state", 42))
+            )
         if not hasattr(cv, "split"):
             raise ValueError("cv 必须是至少两折的整数或具有 split 方法的切分器")
         # 全训练集只决定最终推理状态与无监督列schema；每行训练编码仍只来自其训练折。
@@ -609,6 +622,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                     raise ValueError("折外编码切分位置越界或重复")
             if np.intersect1d(train, valid).size or covered[valid].any():
                 raise ValueError("折外编码训练/验证位置重叠或验证位置重复")
+            _check_group_separation(groups, train, valid)
             fold = clone(self).set_params(
                 training_mode="in_sample",
                 return_df=True,
@@ -891,9 +905,7 @@ class BaseEncoder(ParallelizableMixin, ArtifactSerializableMixin, BaseEstimator,
                 candidate.n_features_in_ = len(candidate.feature_names_in_)
             candidate._is_fitted = True
             if mapping.get("omitted_refit_parameters"):
-                warnings.warn(
-                    "此推理映射未保存自定义cv切分器；重拟合前请显式配置cv，完整训练对象请使用save_artifact", UserWarning
-                )
+                warnings.warn("此推理映射未保存自定义cv切分器；重拟合前请显式配置cv，完整训练对象请使用save_artifact", UserWarning)
             self.__dict__.clear()
             self.__dict__.update(candidate.__dict__)
             return self

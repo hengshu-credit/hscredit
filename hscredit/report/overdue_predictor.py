@@ -135,7 +135,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         显式参数优先；> 的灰样本为 (0, dpd]，>= 为 (0, dpd)，< 和 <= 不剔灰。
 
     :type overdue_operator: Optional[str]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 None 表示沿用 ``bin_params`` 配置，未配置时为 False；显式值优先。
@@ -220,6 +220,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         binner=None,
         bin_specs=None,
         table_mode: str = "legacy",
+        handle_missing_target="drop",
     ):
         validate_target_mode(target, overdue, dpds)
         self.feature = feature
@@ -240,6 +241,9 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         self.parallel_backend = parallel_backend
         self.parallel_config = parallel_config
         self.del_grey = del_grey
+        from ..utils.overdue import validate_missing_target
+
+        self.handle_missing_target = validate_missing_target(handle_missing_target)
         if overdue_operator is not None:
             validate_overdue_operator(overdue_operator)
         self.overdue_operator = overdue_operator
@@ -354,7 +358,15 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             raise ValueError("原始数据拟合请使用 binner 或 rules；bin_specs 用于已有分箱统计表")
         reject_legacy_target_keywords(self.bin_params or {})
         grey = (self.bin_params or {}).get("del_grey", False) if self.del_grey is None else self.del_grey
-        df, targets = bind_targets(df, self.target, self.overdue, self.dpds, grey, self._resolved_overdue_operator())
+        df, targets = bind_targets(
+            df,
+            self.target,
+            self.overdue,
+            self.dpds,
+            grey,
+            self._resolved_overdue_operator(),
+            handle_missing_target=self.handle_missing_target,
+        )
         self.target_names_ = targets.names()
 
         # 调用 feature_bin_stats 生成分箱表
@@ -440,9 +452,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
             if any(int(key) != spec.bin_id for key, spec in specs.items()):
                 raise ValueError("bin_specs键必须与BinSpec.bin_id一致")
             if id_col is None:
-                raise ValueError(
-                    "编号型bin_specs/binner需要统计表保留稳定的“分箱”列；请使用feature_bin_stats(return_binner=True)"
-                )
+                raise ValueError("编号型bin_specs/binner需要统计表保留稳定的“分箱”列；请使用feature_bin_stats(return_binner=True)")
             ids = pd.to_numeric(rows[id_col], errors="coerce")
             if ids.isna().any() or ids.duplicated().any() or (ids % 1 != 0).any():
                 raise ValueError("统计表中的分箱编号必须为唯一整数")
@@ -472,6 +482,7 @@ class OverduePredictor(ParallelizableMixin, BaseEstimator, TransformerMixin):
         """兼容恢复新增比较符参数之前保存的预测器。"""
         state = dict(state)
         state.setdefault("overdue_operator", None)
+        state.setdefault("handle_missing_target", "drop")
         state.setdefault("binner", None)
         state.setdefault("bin_specs", None)
         state.setdefault("table_mode", "legacy")
@@ -1179,6 +1190,7 @@ def overdue_prediction_report(
     del_grey: Optional[bool] = None,
     overdue_operator: Optional[str] = None,
     bin_params: Optional[Dict] = None,
+    handle_missing_target="drop",
     **kwargs,
 ) -> pd.DataFrame:
     """逾期率预估报告便捷函数.
@@ -1270,7 +1282,7 @@ def overdue_prediction_report(
     ...     excel_writer='overdue_report.xlsx'
     ... )
 
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 None 表示沿用 ``bin_params`` 配置，未配置时为 False；显式值优先。
@@ -1278,6 +1290,8 @@ def overdue_prediction_report(
         满足比较条件记为坏样本(1)，否则为好样本(0)。
 
     :type overdue_operator: Optional[str]
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     # 确定拟合数据来源
     fit_data = bin_table if bin_table is not None else data
@@ -1300,6 +1314,7 @@ def overdue_prediction_report(
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
+        handle_missing_target=handle_missing_target,
     )
 
     predictor.fit(fit_data)

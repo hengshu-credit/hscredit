@@ -44,7 +44,13 @@ def _build_overdue_labels(
 
 
 def _create_binary_target(
-    df: pd.DataFrame, overdue_col: str, dpd: int, del_grey: bool = False, overdue_operator: str = ">"
+    df: pd.DataFrame,
+    overdue_col: str,
+    dpd: int,
+    del_grey: bool = False,
+    overdue_operator: str = ">",
+    *,
+    handle_missing_target="drop",
 ) -> pd.Series:
     """根据逾期天数创建二元目标变量.
 
@@ -53,13 +59,21 @@ def _create_binary_target(
     :param dpd: 逾期定义天数
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
     :return: 二元目标变量 (0/1)，灰样本为NaN
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
     validate_overdue_operator(overdue_operator)
     del_grey = del_grey and overdue_operator in (">", ">=")
-    return make_overdue_target(df[overdue_col], dpd, del_grey, overdue_operator)
+    return make_overdue_target(
+        df[overdue_col],
+        dpd,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
 
 
-def target_distribution(df: pd.DataFrame, target: str) -> pd.DataFrame:
+def target_distribution(df: pd.DataFrame, target: str, *, handle_missing_target="drop") -> pd.DataFrame:
     """目标变量分布统计.
 
     :param df: 输入数据
@@ -75,9 +89,11 @@ def target_distribution(df: pd.DataFrame, target: str) -> pd.DataFrame:
        类别   样本数   占比(%)  累计占比(%)
     0   0    8500   85.00      85.00
     1   1    1500   15.00     100.00
+
+    :param handle_missing_target: 缺失标签策略：drop 剔除（默认）、positive 归正、negative 归负、raise 报错；与 del_grey 独立。
     """
 
-    frame, targets = bind_targets(df, target=target)
+    frame, targets = bind_targets(df, target=target, handle_missing_target=handle_missing_target)
     results = {}
     for name, values in targets.y_map(frame).items():
         counts = values.value_counts().sort_index()
@@ -101,6 +117,7 @@ def bad_rate_overall(
     del_grey: bool = False,
     *,
     overdue_operator: str = ">",
+    handle_missing_target="drop",
 ) -> Union[Dict, pd.DataFrame]:
     """计算整体逾期率.
 
@@ -118,7 +135,7 @@ def bad_rate_overall(
     :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
         必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, List[int]]]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -145,10 +162,20 @@ def bad_rate_overall(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
 
     validate_dataframe(df)
-    frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
+    frame, targets = bind_targets(
+        df,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     rows = []
     for name, values in targets.y_map(frame, "plain").items():
         valid = values.dropna()
@@ -178,6 +205,7 @@ def bad_rate_by_dimension(
     *,
     segment_col: Optional[str] = None,
     overdue_operator: str = ">",
+    handle_missing_target="drop",
 ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """分维度逾期率分析.
 
@@ -197,7 +225,7 @@ def bad_rate_by_dimension(
     :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
         必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, List[int]]]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -223,13 +251,23 @@ def bad_rate_by_dimension(
     :type overdue_operator: str
 
     :param segment_col: 用于分组比较坏率的维度字段名。 默认 ``None``。
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
 
     dim_col = segment_col or dim_col
     if dim_col is None:
         raise ValueError("必须指定 dim_col 或 segment_col 参数")
     validate_dataframe(df, required_cols=[dim_col])
-    frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
+    frame, targets = bind_targets(
+        df,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     results = {}
     for name, definition in zip(targets.names("plain"), targets.labels):
         valid = frame.loc[frame[definition.column].notna()]
@@ -255,6 +293,7 @@ def bad_rate_trend(
     dimensions: Optional[List[str]] = None,
     *,
     overdue_operator: str = ">",
+    handle_missing_target="drop",
 ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """逾期率时间趋势分析.
 
@@ -274,7 +313,7 @@ def bad_rate_trend(
     :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
         必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, List[int]]]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -300,10 +339,20 @@ def bad_rate_trend(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
 
     validate_dataframe(df, required_cols=[date])
-    frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
+    frame, targets = bind_targets(
+        df,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     dates = pd.to_datetime(frame[date])
     periods = date_groups(dates, freq)
     results = {}
@@ -328,6 +377,7 @@ def bad_rate_by_bins(
     method: str = "quantile",
     *,
     overdue_operator: str = ">",
+    handle_missing_target="drop",
 ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """评分分箱逾期率分析.
 
@@ -347,7 +397,7 @@ def bad_rate_by_bins(
     :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
         必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, List[int]]]
-    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 值（含缺失）；
+    :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
@@ -373,10 +423,20 @@ def bad_rate_by_bins(
         ``<`` 和 ``<=`` 暂无灰客户，保留参数但不剔除样本。
 
     :type overdue_operator: str
+
+    :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
 
     validate_dataframe(df, required_cols=[feature])
-    frame, targets = bind_targets(df, target, overdue, dpds, del_grey, overdue_operator)
+    frame, targets = bind_targets(
+        df,
+        target,
+        overdue,
+        dpds,
+        del_grey,
+        overdue_operator,
+        handle_missing_target=handle_missing_target,
+    )
     if frame[feature].notna().sum() == 0:
         return pd.DataFrame()
     bins = (
@@ -394,9 +454,7 @@ def bad_rate_by_bins(
         grouped["样本占比(%)"] = (grouped["样本数"] / total * 100).round(2) if total else np.nan
         grouped["提升度"] = (grouped["逾期率"] / values.mean()).round(4)
         grouped["分箱"] = range(1, len(grouped) + 1)
-        results[name] = grouped[
-            ["分箱", "分箱区间", "样本数", "好样本数", "坏样本数", "逾期率(%)", "样本占比(%)", "提升度"]
-        ]
+        results[name] = grouped[["分箱", "分箱区间", "样本数", "好样本数", "坏样本数", "逾期率(%)", "样本占比(%)", "提升度"]]
     return results if len(results) > 1 else next(iter(results.values()))
 
 
