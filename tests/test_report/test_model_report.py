@@ -1411,7 +1411,8 @@ class TestModelReportRegression:
 
         contents_sheet = load_workbook(output)["目录"]
         assert contents_sheet.column_dimensions["B"].width > 8
-        assert contents_sheet.column_dimensions["C"].width > 20
+        # 跨 C:D 合并的长模型名称不应撑宽目录内容列。
+        assert 8 < contents_sheet.column_dimensions["C"].width < 20
         assert contents_sheet.column_dimensions["D"].width > 30
 
     def test_report_sheets_apply_requested_auto_width_ranges(self, tmp_path):

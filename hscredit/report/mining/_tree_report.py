@@ -492,7 +492,6 @@ def tree_report_excel(
             tree, writer, sheet, contexts, methods, bin_params, amount, del_grey, overdue_operator, node_order
         )
         _fit_report_layout(writer, names + [feature_sheet])
-        writer.adjust_columns_width(writer.get_sheet_by_name(feature_sheet), max_width=25)
         if save is not None:
             images = [(image, image._data()) for ws in writer.workbook for image in ws._images]
             for image, payload in images:

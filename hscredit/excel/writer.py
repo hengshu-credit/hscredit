@@ -390,6 +390,7 @@ class ExcelWriter:
         """批量调整多列宽度，确保已有单元格和模板列样式不丢失。
 
         通过恢复调用前的单元格样式快照，并保留模板列维度样式，避免列宽调整影响空白区域白底。
+        常用整数、小数及百分比格式按显示内容估算，多行文本取最长行；跨列合并单元格不参与单列计宽。
 
         :param worksheet: 工作表对象
         :type worksheet: Worksheet
@@ -436,6 +437,8 @@ class ExcelWriter:
         for col_letter in col_letters:
             columns_data[col_letter] = self._get_column_cells_data(worksheet, col_letter)
 
+        # 跨列标题不应把全部内容宽度压在首列；仅跨行合并的内容仍需计宽。
+        merged_anchors = self._horizontal_merge_anchors(worksheet)
         # 计算并设置每列的宽度
         for col_letter in col_letters:
             col_idx = column_index_from_string(col_letter)
@@ -444,12 +447,14 @@ class ExcelWriter:
             # 遍历该列所有单元格，计算最大内容宽度
             for row_idx in range(1, worksheet.max_row + 1):
                 cell = worksheet.cell(row=row_idx, column=col_idx)
-                if cell.value is not None:
-                    value_str = str(cell.value)
-                    _, eng_cnt, chi_cnt = self.check_contain_chinese(value_str)
-                    content_width = (
-                        eng_cnt * self.english_width + chi_cnt * self.chinese_width
-                    ) * self.fontsize + extra_padding
+                if cell.value is not None and (row_idx, col_idx) not in merged_anchors:
+                    content_width = self._calculate_content_width(
+                        cell.value,
+                        min_width=min_width,
+                        max_width=max_width,
+                        extra_padding=extra_padding,
+                        number_format=cell.number_format,
+                    )
                     max_content_width = max(max_content_width, content_width)
 
             # 应用列宽限制
@@ -460,18 +465,41 @@ class ExcelWriter:
         for col_letter, cells_data in columns_data.items():
             self._reapply_styles_to_column(worksheet, col_letter, cells_data)
 
+    @staticmethod
+    def _horizontal_merge_anchors(worksheet: Worksheet) -> set:
+        """返回跨列合并区域中保存内容的左上角坐标。"""
+        return {(r.min_row, r.min_col) for r in worksheet.merged_cells.ranges if r.min_col != r.max_col}
+
     def _calculate_content_width(
         self,
         value: Any,
         min_width: float = 8,
         max_width: float = 50,
         extra_padding: float = 2.0,
+        number_format: str = "General",
     ) -> float:
-        """按现有中英文字符权重计算单个值需要的列宽。"""
+        """按显示文本最长行及中英文字符权重估算列宽，不改动底层值。
+
+        支持报告常用的 0、#,##0、固定小数位及百分比格式；其他格式保留原始文本估算。
+        """
         if value is None:
             return min_width
-        _, eng_cnt, chi_cnt = self.check_contain_chinese(str(value))
-        width = (eng_cnt * self.english_width + chi_cnt * self.chinese_width) * self.fontsize + extra_padding
+        text = str(value)
+        if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, (bool, np.bool_)):
+            numeric_format = re.fullmatch(r"(0|#,##0)(?:\.(0+))?(%)?", number_format)
+            if numeric_format is not None:
+                integer, decimals, percent = numeric_format.groups()
+                grouping = "," if "," in integer else ""
+                precision = len(decimals or "")
+                kind = "%" if percent else "f"
+                text = format(value, f"{grouping}.{precision}{kind}")
+        width = min_width
+        for line in text.splitlines():
+            _, eng_cnt, chi_cnt = self.check_contain_chinese(line)
+            width = max(
+                width,
+                (eng_cnt * self.english_width + chi_cnt * self.chinese_width) * self.fontsize + extra_padding,
+            )
         return min(max(width, min_width), max_width)
 
     def _initial_fast_widths(
@@ -482,11 +510,15 @@ class ExcelWriter:
     ) -> Dict[int, float]:
         """读取写入前已有内容的列宽基线，不复制或修改单元格样式。"""
         widths = {col_idx: 8.0 for col_idx in range(start_col, end_col + 1)}
+        merged_anchors = self._horizontal_merge_anchors(worksheet)
         for col_idx in widths:
             for row_idx in range(1, worksheet.max_row + 1):
-                value = worksheet.cell(row=row_idx, column=col_idx).value
-                if value is not None:
-                    widths[col_idx] = max(widths[col_idx], self._calculate_content_width(value))
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                if cell.value is not None and (row_idx, col_idx) not in merged_anchors:
+                    widths[col_idx] = max(
+                        widths[col_idx],
+                        self._calculate_content_width(cell.value, number_format=cell.number_format),
+                    )
         return widths
 
     def _apply_fast_widths(self, worksheet: Worksheet, widths: Dict[int, float]) -> None:
@@ -764,16 +796,18 @@ class ExcelWriter:
         self._set_number_stored_as_text_cell(worksheet, cell, value)
 
         # 自动调整列宽
-        if auto_width:
+        if auto_width and (end_space is None or start_col == end_col):
             # 保存当前列的单元格数据
             cells_data = self._get_column_cells_data(worksheet, start_col)
 
             # 计算新宽度
             curr_width = worksheet.column_dimensions[start_col].width
-            _, eng_cnt, chi_cnt = self.check_contain_chinese(str(formatted_value))
-            calculated_width = min(
-                max([(eng_cnt * self.english_width + chi_cnt * self.chinese_width) * self.fontsize, 10, curr_width]),
-                max_col_width,
+            calculated_width = self._calculate_content_width(
+                formatted_value,
+                min_width=max(10, curr_width),
+                max_width=max_col_width,
+                extra_padding=0,
+                number_format=cell.number_format,
             )
 
             # 设置列宽
@@ -1489,10 +1523,10 @@ class ExcelWriter:
         formatted_value = self.astype_insertvalue(value, decimal=decimal)
         cell.value = formatted_value
         self._set_number_stored_as_text_cell(worksheet, cell, value)
-        if widths is not None:
+        if widths is not None and (end_col is None or end_col == col_index):
             widths[col_index] = max(
                 widths.get(col_index, 8.0),
-                self._calculate_content_width(formatted_value),
+                self._calculate_content_width(formatted_value, number_format=cell.number_format),
             )
 
     def _insert_rows_fast(

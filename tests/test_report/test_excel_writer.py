@@ -326,6 +326,60 @@ class TestExcelWriter:
         assert all(left.max < right.min for left, right in zip(dims, dims[1:]))
         loaded.close()
 
+    @pytest.mark.parametrize(
+        "value,number_format,display",
+        [
+            (0.12345678901234567, "0.00%", "12.35%"),
+            (-0.12345678901234567, "0.00%", "-12.35%"),
+            (1.2345678901234567, "0.0000", "1.2346"),
+            (1234.5678901234567, "#,##0.00", "1,234.57"),
+            (1234567, "#,##0", "1,234,567"),
+            ("0.12345678901234567", "0.00%", "0.12345678901234567"),
+            (1.2345678901234567, "General", "1.2345678901234567"),
+        ],
+    )
+    def test_adjust_columns_width_uses_displayed_numbers(self, value, number_format, display):
+        """列宽按显示精度估算，保留原始数值和格式，数字样文本不套用数值格式。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("显示宽度")
+        ws["B2"] = value
+        ws["B2"].number_format = number_format
+        writer.adjust_columns_width(ws, columns="B", max_width=25)
+        writer.save(self.test_file)
+        loaded = load_workbook(self.test_file)
+        cell = loaded["显示宽度"]["B2"]
+        assert loaded["显示宽度"].column_dimensions["B"].width == pytest.approx(min(25, max(8, len(display) * 1.2 + 2)))
+        assert cell.value == (pytest.approx(value) if isinstance(value, float) else value)
+        assert cell.number_format == ("@" if isinstance(value, str) else number_format)
+        loaded.close()
+
+    @pytest.mark.parametrize("speed", ["normal", "fast"])
+    def test_auto_width_handles_merged_titles_and_multiline_text(self, speed):
+        """跨列标题不撑宽首列，跨行文本仍计宽，多行文本只取最长行。"""
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("布局宽度")
+        ws.merge_cells("B1:F1")
+        ws["B1"] = "跨列合并的报告标题" * 10
+        ws["B2"] = 0.12345678901234567
+        ws["B2"].number_format = "0.00%"
+        ws.merge_cells("D2:D3")
+        ws["D2"] = "abcdefghijklmno"
+        group = "跨列合并的分组表头" * 10
+        data = pd.DataFrame(
+            [["短", "abcdefghi\n短\nabcdef", "短", "长文本" * 30, "短"]],
+            columns=pd.MultiIndex.from_tuples([(group, name) for name in ["甲", "乙", "丙", "丁", "戊"]]),
+        )
+        writer.insert_df2sheet(ws, data, "B5", auto_width=True, speed=speed)
+        writer.save(self.test_file)
+        loaded = load_workbook(self.test_file)
+        widths = loaded["布局宽度"].column_dimensions
+        assert widths["B"].width == pytest.approx(9.2)
+        assert widths["C"].width == pytest.approx(12.8)
+        assert widths["D"].width == pytest.approx(20)
+        assert widths["E"].width == 50
+        assert widths["F"].width == 8
+        loaded.close()
+
     def test_insert_value_with_merge(self):
         """测试合并单元格插入"""
         writer = ExcelWriter()

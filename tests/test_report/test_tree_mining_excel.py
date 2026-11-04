@@ -408,7 +408,7 @@ def test_group_statistics_share_overall_schema_and_raw_denominators(data, long_f
                         assert row[auc_col] == pytest.approx(expected)
 
 
-def test_feature_sheet_reuses_strategy_binning_and_caps_width(data, tmp_path, monkeypatch):
+def test_feature_sheet_reuses_strategy_binning_and_preserves_template_width(data, tmp_path, monkeypatch):
     from openpyxl.utils.cell import range_boundaries
     import hscredit.report.feature_analyzer as module
 
@@ -420,15 +420,11 @@ def test_feature_sheet_reuses_strategy_binning_and_caps_width(data, tmp_path, mo
         calls.append((kwargs["features"], kwargs["methods"], kwargs["long_format"]))
         return original(*args, **kwargs)
 
-    adjust_width = ExcelWriter.adjust_columns_width
-
-    def feature_width_only(writer, worksheet, **kwargs):
-        assert worksheet.title.endswith("_特征分箱")
-        assert kwargs["max_width"] == 25
-        return adjust_width(writer, worksheet, **kwargs)
+    def reject_auto_width(writer, worksheet, **kwargs):
+        pytest.fail("树报告应保留模板列宽，不应自动调整列宽")
 
     monkeypatch.setattr(module, "feature_binning_summary", capture)
-    monkeypatch.setattr(ExcelWriter, "adjust_columns_width", feature_width_only)
+    monkeypatch.setattr(ExcelWriter, "adjust_columns_width", reject_auto_width)
     path = tmp_path / "特征页.xlsx"
     tree.report(
         {"训练": data, "验证": data.iloc[::2]},
@@ -443,7 +439,11 @@ def test_feature_sheet_reuses_strategy_binning_and_caps_width(data, tmp_path, mo
     assert all(features == ["评分"] and long for features, _, long in calls)
     book = load_workbook(path)
     sheet = book["组合策略汇总_特征分箱"]
-    assert all(d.width <= 25 for d in sheet.column_dimensions.values())
+    template_writer = ExcelWriter()
+    assert {key: d.width for key, d in sheet.column_dimensions.items()} == {
+        key: d.width for key, d in template_writer.style_sheet.column_dimensions.items()
+    }
+    template_writer.workbook.close()
     tables = list(sheet.tables.values())
     assert len(tables) == 2
     summary_range = range_boundaries(sheet.auto_filter.ref)
