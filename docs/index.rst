@@ -84,53 +84,53 @@ hscredit 文档
    :maxdepth: 1
    :caption: 入门
 
-   功能总览 <overview>
-   图表对照 <showcase>
-   安装配置 <installation>
+   安装指南 <installation>
    快速开始 <quickstart>
-   标签处理 <overdue_labels>
-   规则置换 <rule_swap_approval>
-   分析参数 <analysis_parameters>
-   接口约定 <api/conventions>
-   并行计算 <parallelism>
+   功能总览 <overview>
+   功能与示例 <showcase>
 
 .. toctree::
    :maxdepth: 2
    :caption: 数据集
 
-   hscredit 现金贷数据集 <datasets>
-   授信特征摘要报告 <dataset-summary>
+   现金贷数据集 <datasets>
+   特征摘要报告 <dataset-summary>
+
+.. toctree::
+   :maxdepth: 1
+   :caption: 风控分析
+
+   标签与灰样本 <overdue_labels>
+   分析参数 <analysis_parameters>
+   规则置换评估 <rule_swap_approval>
+   手工树挖掘 <articles/manual_tree_rule_mining>
+   多叉树编辑 <multiway_tree>
 
 .. toctree::
    :maxdepth: 1
    :caption: 建模实践
 
-   模型流程 <articles/model-workflow>
-   迁移续训 <api/training_lifecycle>
-   损失指标 <articles/losses-guide>
-   参数搜索 <articles/tuning-guide>
-   手工树 <articles/manual_tree_rule_mining>
-   多叉树 <multiway_tree>
+   模型训练与保存 <articles/model-workflow>
+   预训练与续训 <api/training_lifecycle>
+   损失与评估 <articles/losses-guide>
+   超参数搜索 <articles/tuning-guide>
    模型解释 <articles/model-interpretability>
-   报告资源与部署 <articles/report-resources-deployment>
+   报告与部署 <articles/report-resources-deployment>
 
 .. toctree::
    :maxdepth: 2
-   :caption: 数据接入
+   :caption: 工具与集成
 
-   database
+   数据库接入 <database>
+   并行计算 <parallelism>
+   Agent Skills <skills>
 
 .. toctree::
    :maxdepth: 2
-   :caption: API 参考
+   :caption: 开发参考
 
+   接口约定 <api/conventions>
    api/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: 智能技能
-
-   智能技能 <skills>
 
 索引与检索
 ----------

@@ -1,12 +1,13 @@
 #feature-report details { margin-bottom: 1rem; }
 #feature-report summary { color: #583b89; cursor: pointer; }
-#feature-report .report-tools { margin: 1rem 0; }
+#feature-report .report-tools { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1.25rem; margin: 1rem 0; }
 #feature-report .report-tools label { margin: 0; }
 #feature-report input { width: 13rem; max-width: 100%; padding: .4rem .6rem; }
 
 #feature-report .report-grid {
   max-height: 66vh;
   overflow: auto;
+  overflow-anchor: none;
   border-block: 1px solid var(--hs-table-divider);
   border-top: 2px solid var(--hs-table-rule);
 }
@@ -45,8 +46,9 @@
 #feature-report th button { color: inherit; background: none; border: none; font: inherit; cursor: pointer; }
 #feature-report th[aria-sort="descending"] button::after { content: " ↓"; }
 #feature-report th[aria-sort="ascending"] button::after { content: " ↑"; }
-#feature-report td { text-align: right; background: white; }
-#feature-report tbody tr:nth-child(even) td { background: var(--hs-table-stripe); }
+#feature-report td { height: var(--report-row-height); box-sizing: border-box; padding-block: 0; text-align: right; background: white; }
+#feature-report tbody tr.report-even td { background: var(--hs-table-stripe); }
+#feature-report .report-spacer td { padding: 0; border: 0; }
 #feature-report tbody tr:hover td { background: var(--hs-table-hover); }
 #feature-report td:first-child, #feature-report thead tr:last-child th:first-child {
   position: sticky;
@@ -57,8 +59,9 @@
 #feature-report td:first-child {
   z-index: 1;
   max-width: min(17rem, 42vw);
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: #59368c;
   font-weight: 600;
 }
@@ -74,7 +77,7 @@
 }
 #feature-report .report-pagination { padding: .7rem 0; font-size: .82rem; }
 #feature-report .report-status { color: #61586f; margin-right: .6rem; }
-#feature-report .report-size {
+#feature-report select {
   width: auto;
   height: 2rem;
   margin-right: .55rem;

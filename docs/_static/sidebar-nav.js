@@ -101,9 +101,7 @@
 
     function resetNavigation() {
         var entries = getCurrentPageLinks();
-        var current = entries.find(function (entry) {
-            return makeUrl(entry.link.getAttribute("href")).hash === window.location.hash;
-        }) || entries[0];
+        var current = entryForTarget(entries, getTarget(window.location.hash)) || entries[0];
         var scroller = document.querySelector(".wy-side-scroll");
         var state = null;
         if (!restored) {
@@ -191,6 +189,13 @@
         return element.getBoundingClientRect().top + window.pageYOffset;
     }
 
+    function entryForTarget(entries, target) {
+        if (!target) { return null; }
+        // README 的历史锚点可能是标题前的 span，目录则链接到包含它的 section。
+        return entries.find(function (entry) { return entry.target === target; }) ||
+            entries.find(function (entry) { return entry.target === target.closest("section"); });
+    }
+
     function getCurrentPageLinks() {
         if (pageLinks) { return pageLinks; }
         var menu = document.querySelector(".wy-menu-vertical");
@@ -250,7 +255,12 @@
         var bottomGap = document.documentElement.scrollHeight - window.innerHeight - window.pageYOffset;
         var current = links[0];
 
-        if (window.pageYOffset <= 1) {
+        var fragment = window.location.hash && getTarget(window.location.hash);
+        // 浏览器会把靠近页尾的锚点停在最大滚动位置。两种落点都应高亮点击的标题。
+        var anchorTop = fragment ? Math.min(getTop(fragment), document.documentElement.scrollHeight - window.innerHeight) : null;
+        if (fragment && Math.abs(window.pageYOffset - Math.max(0, anchorTop)) < 2) {
+            current = entryForTarget(links, fragment) || current;
+        } else if (window.pageYOffset <= 1) {
             current = links[0];
         } else if (bottomGap < 4) {
             current = links[links.length - 1];

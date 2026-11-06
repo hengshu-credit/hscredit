@@ -111,7 +111,7 @@ pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
 
 ## 功能展示
 
-<a href="#数据集" style="color:#c02dd4;">数据集</a> · <a href="#特征分箱" style="color:#c02dd4;">特征分箱</a> · <a href="#特征编码" style="color:#c02dd4;">特征编码</a> · <a href="#特征筛选" style="color:#c02dd4;">特征筛选</a> · <a href="#风控建模" style="color:#c02dd4;">风控建模</a> · <a href="#规则分析" style="color:#c02dd4;">规则分析</a> · <a href="#数据挖掘" style="color:#c02dd4;">数据挖掘</a> · <a href="#excel-写入" style="color:#c02dd4;">Excel 写入</a> · <a href="#数据库读写" style="color:#c02dd4;">数据库读写</a> · <a href="#agent-能力" style="color:#c02dd4;">Agent 能力</a>
+<a href="#数据集" style="color:#c02dd4;">数据集</a> · <a href="#特征分箱" style="color:#c02dd4;">特征分箱</a> · <a href="#特征编码" style="color:#c02dd4;">特征编码</a> · <a href="#特征筛选" style="color:#c02dd4;">特征筛选</a> · <a href="#风控建模" style="color:#c02dd4;">风控建模</a> · <a href="#规则分析" style="color:#c02dd4;">规则分析</a> · <a href="#数据挖掘" style="color:#c02dd4;">数据挖掘</a> · <a href="#excel-写入" style="color:#c02dd4;">Excel 写入</a> · <a href="#数据库读写" style="color:#c02dd4;">数据库读写</a> · <a href="#agent-能力" style="color:#c02dd4;">Agent 能力</a> · <a href="#公共方法" style="color:#c02dd4;">公共方法</a>
 
 <a href="examples/29_readme_showcase.ipynb" style="color:#c02dd4;">完整 Notebook 示例</a>
 
@@ -124,7 +124,7 @@ pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
 <thead><tr><th style="background:#2639E9; color:white; padding:8px 12px;">项目</th><th style="background:#2639E9; color:white; border-left:2px solid white; padding:8px 12px;">内容</th></tr></thead>
 <tbody>
 <tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">数据集名称</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;"><code>hscredit</code></td></tr>
-<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">格式</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">Parquet 文件 333.11 MiB，完整 DataFrame 约 7.16 GiB</td></tr>
+<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">格式</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">Parquet 文件 357.89 MiB，完整 DataFrame 约 7.16 GiB</td></tr>
 <tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">行数 / 字段数</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">111,929 / 8,516</td></tr>
 <tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">唯一订单 / 唯一客户</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">111,929 / 110,283，同一客户可有多笔订单</td></tr>
 <tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">资金方 / 流量渠道</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">6 / 8</td></tr>
@@ -1161,3 +1161,76 @@ python skills/install.py --suite hscredit
 - <a href="https://github.com/amphibian-dev/toad" style="color:#c02dd4;">toad</a> · <a href="https://github.com/ShichenXie/scorecardpy" style="color:#c02dd4;">scorecardpy</a> · <a href="https://github.com/guillermo-navas-palencia/optbinning" style="color:#c02dd4;">OptBinning</a>：评分卡与分箱生态参考。
 
 开源许可：<a href="LICENSE" style="color:#c02dd4;">MIT License</a>。
+
+## 公共方法
+
+下面从现金贷订单中取一份可复现的小样本，演示并行计算、字段描述和结果保存。
+
+```python
+import numpy as np
+from hscredit import hscredit_dataset
+from hscredit.utils import seed_everything
+
+seed_everything(42)
+orders = hscredit_dataset(columns=["流量渠道", "loan_amt", "periods", "MOB3"])
+sample = orders.iloc[np.random.choice(len(orders), size=2000, replace=False)].copy()
+```
+
+### DataFrame 与 Series 的并行 apply
+
+`import hscredit` 会注册 pandas 访问器。`n_jobs=2` 指定最多使用两个工作单元，适合拆分较耗时的自定义函数。下面分别按行估算每期本金、按元素划分逾期档位。
+
+```python
+def principal_per_period(row):
+    return round(row["loan_amt"] / row["periods"], 2)
+
+def overdue_band(days):
+    if days > 30:
+        return "超过30天"
+    return "1至30天" if days > 0 else "0天"
+
+principal = sample[["loan_amt", "periods"]].hscredit(n_jobs=2).apply(
+    principal_per_period, axis=1
+)
+bands = sample["MOB3"].hscredit(n_jobs=2).apply(overdue_band)
+```
+
+### 单字段与分组描述
+
+`feature_describe` 给出样本数、查得率和分位数。`groupby_feature_describe` 在各渠道内计算同一组指标，便于比较额度分布。
+
+```python
+from hscredit.utils import feature_describe, groupby_feature_describe
+
+amount_profile = feature_describe(sample, feature="loan_amt", percentiles=[0.5, 0.9])
+channel_profile = groupby_feature_describe(
+    sample[["流量渠道", "loan_amt"]], by="流量渠道", percentiles=[0.5, 0.9], n_jobs=2
+)
+```
+
+### 在 Jupyter 中重载模块
+
+修改本地模块源码后，在下一个单元格用 `reload` 取得新的模块对象，再从该对象调用函数。
+
+```python
+from hscredit.utils import reload
+
+describe = reload("hscredit.utils.describe")
+describe.feature_describe(sample["loan_amt"], percentiles=[0.5, 0.9])
+```
+
+### 内存占用与结果保存
+
+`reduce_memory_usage` 返回采用较小数据类型的副本，浮点列会转换为 `float32`。可用 `memory_usage(deep=True)` 比较字节数。用 `save_pickle` 保存两张统计结果，下次打开 Notebook 后通过 `load_pickle` 读取。
+
+```python
+from hscredit.core.eda.utils import reduce_memory_usage
+from hscredit.utils import save_pickle, load_pickle
+
+compact = reduce_memory_usage(sample)
+print("压缩前后字节数", sample.memory_usage(deep=True).sum(), compact.memory_usage(deep=True).sum())
+
+save_pickle({"额度": amount_profile, "渠道": channel_profile}, "字段描述.pkl")
+profiles = load_pickle("字段描述.pkl")
+profiles["渠道"].head()
+```

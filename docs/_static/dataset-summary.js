@@ -6,6 +6,11 @@
   const table = view.querySelector("table");
   const count = view.querySelector(".report-status");
   const search = view.querySelector("input");
+  const typeSelect = view.querySelector(".report-type");
+  const typeCol = headers.indexOf("字段类型");
+  for (const type of [...new Set(rows.map(row => row[typeCol]))].sort()) {
+    typeSelect.add(new Option(type, type));
+  }
   const prev = view.querySelector(".report-prev");
   const next = view.querySelector(".report-next");
   const sizeSelect = view.querySelector(".report-size");
@@ -46,20 +51,42 @@
     svg.append(path);
     return svg;
   }
-  function draw() {
-    const start = page * pageSize, visible = matches.slice(start, start + pageSize);
+  const grid = view.querySelector(".report-grid");
+  const rowHeight = 34;
+  grid.style.setProperty("--report-row-height", rowHeight + "px");
+  let pageRows = [], windowStart = -1;
+  function spacer(height) {
+    const row = document.createElement("tr");
+    row.className = "report-spacer";
+    row.setAttribute("aria-hidden", "true");
+    const cell = row.insertCell();
+    cell.colSpan = headers.length;
+    cell.style.height = height + "px";
+    return row;
+  }
+  function drawRows() {
+    const large = pageRows.length > 200;
+    const start = large ? Math.max(0, Math.floor(grid.scrollTop / rowHeight) - 10) : 0;
+    if (start === windowStart) return;
+    windowStart = start;
+    const end = large ? Math.min(pageRows.length, start + Math.ceil(grid.clientHeight / rowHeight) + 22) : pageRows.length;
     const fragment = document.createDocumentFragment();
-    for (const values of visible) {
+    if (start) fragment.append(spacer(start * rowHeight));
+    for (let index = start; index < end; index++) {
+      const values = pageRows[index];
       const tr = document.createElement("tr");
+      if (index % 2) tr.className = "report-even";
       values.forEach((v, i) => {
         const td = tr.insertCell();
         if (Array.isArray(v)) td.append(line(v));
         else if (typeof v === "number") td.textContent = v === 0 && formats[i].endsWith(";0") ? "0" : formatters[i].format(v);
         else td.textContent = v ?? "—";
+        if (i === 0) td.title = td.textContent;
       });
       fragment.append(tr);
     }
-    if (!visible.length) {
+    if (end < pageRows.length) fragment.append(spacer((pageRows.length - end) * rowHeight));
+    if (!pageRows.length) {
       const tr = document.createElement("tr");
       const empty = tr.insertCell();
       empty.colSpan = headers.length;
@@ -68,12 +95,20 @@
       fragment.append(tr);
     }
     table.tBodies[0].replaceChildren(fragment);
+  }
+  function draw() {
+    const start = page * pageSize;
+    pageRows = matches.slice(start, start + pageSize);
+    grid.scrollTop = 0;
+    windowStart = -1;
+    drawRows();
     count.textContent = `共 ${matches.length.toLocaleString("zh-CN")} 条`;
     drawPageLinks();
     prev.disabled = !page;
     next.disabled = start + pageSize >= matches.length;
-    view.querySelector(".report-grid").scrollTop = 0;
   }
+  grid.addEventListener("scroll", drawRows, {passive: true});
+  window.addEventListener("resize", () => { windowStart = -1; drawRows(); });
   function drawPageLinks() {
     const total = Math.ceil(matches.length / pageSize);
     const first = Math.max(1, Math.min(page + 1 - 2, total - 4));
@@ -103,7 +138,8 @@
   }
   function filterAndSort() {
     const term = search.value.trim().toLowerCase();
-    matches = rows.filter(r => String(r[0]).toLowerCase().includes(term));
+    matches = rows.filter(row => (!typeSelect.value || row[typeCol] === typeSelect.value) &&
+      (String(row[0]).toLowerCase().includes(term) || String(row[typeCol]).toLowerCase().includes(term)));
     if (sortCol >= 0) matches.sort((a, b) => {
       const x = a[sortCol], y = b[sortCol];
       if (x == null || y == null) return Number(x == null) - Number(y == null);
@@ -137,6 +173,7 @@
     });
   });
   search.addEventListener("input", filterAndSort);
+  typeSelect.addEventListener("change", filterAndSort);
   sizeSelect.addEventListener("change", () => {
     pageSize = Number(sizeSelect.value);
     page = 0;

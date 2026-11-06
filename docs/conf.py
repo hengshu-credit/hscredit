@@ -42,6 +42,8 @@ extensions = [
     "sphinx.ext.todo",
     "myst_parser",  # 支持 Markdown（.md）文档
     "dataset_summary",  # 从文档随附的 Excel 生成特征摘要预览
+    "readme_showcase",
+    "navigation_titles",
 ]
 
 autosummary_generate = True
@@ -57,6 +59,7 @@ source_suffix = {
     ".md": "markdown",
 }
 master_doc = "index"
+toc_object_entries_show_parents = "hide"  # 方法名所在的父节点已经标明类名。
 root_doc = "index"
 
 # -- autodoc 配置 -----------------------------------------------------------
@@ -115,7 +118,8 @@ html_theme_options = {
     "logo_only": False,
     "prev_next_buttons_location": "bottom",
 }
-html_static_path = ["_static"]
+html_static_path = ["assets/readme", "_static"]
+html_show_sphinx = False
 # 原样复制到 HTML 根目录，供 GitHub Pages 识别自定义域名并关闭 Jekyll 处理。
 html_extra_path = ["CNAME", ".nojekyll"]
 html_title = f"hscredit {release} 文档"

@@ -213,7 +213,7 @@ samp,
     transition: color 0.15s ease, background-color 0.15s ease;
 }
 /* 展开分支和切换高亮不改变字重或触发浏览器滚动锚定。 */
-.wy-side-scroll { overflow-anchor: none; }
+.wy-side-scroll { width: 100%; overflow-anchor: none; }
 .wy-menu-vertical li[class*="toctree-l"] > a,
 .wy-menu-vertical li[class*="toctree-l"].current > a { font-weight: 400; }
 .wy-menu-vertical li.toctree-l1 > a,
@@ -267,12 +267,19 @@ samp,
     color: #ffffff !important;
 }
 
-/* 侧栏滚动条（webkit）*/
-.wy-nav-side::-webkit-scrollbar { width: 8px; }
-.wy-nav-side::-webkit-scrollbar-track { background: transparent; }
-.wy-nav-side::-webkit-scrollbar-thumb {
-    background: rgba(123, 47, 255, 0.5);
-    border-radius: 8px;
+/* 正文、菜单、代码块与表格使用同一套横向和纵向滚动条。 */
+:root { --hs-scroll-thumb: #9b82ca; --hs-scroll-track: #f4f0fa; }
+.wy-nav-side { --hs-scroll-thumb: #9d86cd; --hs-scroll-track: #251a45; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: var(--hs-scroll-track); }
+*::-webkit-scrollbar-thumb {
+    background: var(--hs-scroll-thumb);
+    border: 2px solid var(--hs-scroll-track);
+    border-radius: 6px;
+}
+*::-webkit-scrollbar-thumb:hover { background: #7952b3; }
+@supports not selector(::-webkit-scrollbar) {
+    * { scrollbar-color: var(--hs-scroll-thumb) var(--hs-scroll-track); scrollbar-width: thin; }
 }
 
 /* 侧栏底部「衡枢风控」署名分隔 */
@@ -284,7 +291,9 @@ samp,
 .wy-nav-content-wrap { background: var(--hs-page); }
 .wy-nav-content {
     background: #ffffff;
-    max-width: 76rem;
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
     box-shadow: 0 1px 40px rgba(36, 19, 73, 0.06);
     position: relative;
 }
@@ -460,7 +469,7 @@ samp,
 :root {
     --hs-table-group: #efe8fb;
     --hs-table-heading: #f8f5fd;
-    --hs-table-stripe: #f8f5fc;
+    --hs-table-stripe: #f1ecfa;
     --hs-table-hover: #f0eafa;
     --hs-table-rule: #ab83ed;
     --hs-table-divider: #d8c8ee;
@@ -512,11 +521,19 @@ samp,
     transition: background-color 0.14s ease;
 }
 .rst-content table.docutils:not(.field-list) tbody td:first-child { border-right: 1px solid var(--hs-table-divider); }
-.rst-content table.docutils:not(.field-list) tbody tr:nth-child(even) td { background: var(--hs-table-stripe); }
+.rst-content table.docutils:not(.field-list) tbody tr:nth-child(odd) > td { background: #fff; }
+.rst-content table.docutils:not(.field-list) tbody tr:nth-child(even) > td { background: var(--hs-table-stripe); }
 .rst-content table.docutils:not(.field-list) tbody tr:hover td { background: var(--hs-table-hover); }
 
 /* 首页能力一览表更通透 */
 .rst-content .list-table td p { margin-bottom: 0.4em; }
+
+/* README 的原生 HTML 表格也可横向浏览。布局用表格仅承载图文。 */
+#readme-showcase table { max-width: 100%; }
+#readme-showcase table:not(.docutils) { display: block; overflow-x: auto; }
+#readme-showcase table:has(> thead) > tbody > tr:nth-child(odd) > td { background: #fff; }
+#readme-showcase table:has(> thead) > tbody > tr:nth-child(even) > td { background: var(--hs-table-stripe); }
+#readme-showcase .hs-gallery-pane { max-height: 28rem; }
 
 /* 首页主视觉：以风控决策轨道串起衡枢的五段工作流。 */
 .hs-home-hero {
@@ -689,6 +706,26 @@ samp,
 }
 
 footer .rst-footer-buttons { margin-top: 1.2em; }
+.hs-footer-info { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: .45rem 1rem; color: var(--hs-text); font-size: .84rem; }
+.hs-footer-info span { max-width: 100%; }
+.hs-footer-contact { position: relative; }
+.hs-footer-contact img {
+    visibility: hidden;
+    position: absolute;
+    z-index: 3;
+    bottom: 100%;
+    left: 0;
+    width: 160px;
+    max-width: none;
+    height: auto;
+    box-sizing: content-box;
+    padding: .4rem;
+    background: #fff;
+    border: 1px solid var(--hs-table-divider);
+}
+.hs-footer-contact:last-child img { left: auto; right: 0; }
+.hs-footer-contact:hover img,
+.hs-footer-contact:focus-visible img { visibility: visible; }
 .hs-next-page-hint {
     margin: 0.8rem 0;
     color: #6b6280;

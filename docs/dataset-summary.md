@@ -6,7 +6,8 @@
 <section id="feature-report" aria-label="授信特征摘要">
   <details><summary>样本与计算口径</summary><ul></ul></details>
   <div class="report-tools">
-    <label>查找特征 <input type="search" placeholder="输入特征名" autocomplete="off"></label>
+    <label>查找特征 <input type="search" placeholder="字段名或字段类型" autocomplete="off"></label>
+    <label>字段类型 <select class="report-type" aria-label="字段类型"><option value="">全部类型</option></select></label>
   </div>
   <div class="report-grid" tabindex="0" role="region" aria-label="可横向滚动的特征统计表">
     <table aria-label="单击列名排序"><thead></thead><tbody></tbody></table>
@@ -17,6 +18,11 @@
       <option value="20">20条/页</option>
       <option value="50">50条/页</option>
       <option value="100">100条/页</option>
+      <option value="200">200条/页</option>
+      <option value="500">500条/页</option>
+      <option value="1000">1000条/页</option>
+      <option value="5000">5000条/页</option>
+      <option value="10000">10000条/页</option>
     </select>
     <button class="report-prev" type="button" aria-label="上一页">‹</button>
     <span class="report-pages"></span>

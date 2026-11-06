@@ -1,4 +1,8 @@
-// 触摸屏和键盘使用原生滚动；鼠标可按住拖动当前面板的原图。
+// README 中标为滚动查看的原图仍可用鼠标拖动、键盘或触屏浏览。
+for (const image of document.querySelectorAll('#readme-showcase img[src^="_static/showcase/"]')) {
+    const pane = image.closest('div[style*="overflow"]');
+    if (pane && pane.querySelectorAll("img").length === 1) pane.classList.add("hs-gallery-pane");
+}
 for (const pane of document.querySelectorAll(".hs-gallery-pane")) {
     const image = pane.querySelector("img");
     pane.tabIndex = 0;

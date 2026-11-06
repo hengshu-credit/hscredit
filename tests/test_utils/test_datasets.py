@@ -35,13 +35,23 @@ def test_dataset_population_and_observation_window():
     assert order["放款时间"].max() == pd.Timestamp("2024-06-17 23:57:25")
 
 
-def test_each_credit_feature_has_an_observation():
+def test_missing_sentinel_and_feature_coverage():
+    all_missing = []
     with pq.ParquetFile(DATA_PATH) as parquet:
         features = [name for name in parquet.schema_arrow.names if name not in ORDER_COLUMNS + OVERDUE_COLUMNS]
         for start in range(0, len(features), 64):
             block = parquet.read(columns=features[start : start + 64]).to_pandas()
-            observed = block.notna().any()
-            assert observed.all(), observed.index[~observed].tolist()
+            empty = block.isna().all()
+            all_missing.extend(empty.index[empty])
+    assert len(all_missing) == 74
+    assert "DJK_X1701" in all_missing
+
+    sample = hscredit_dataset(columns=["DJK_X1342", "DK_X311"])
+    assert sample["DJK_X1342"].isna().sum() == 14207 + 68508
+    assert not sample["DJK_X1342"].eq(-1).any()
+    # DK_X311 同时含有其他负数，按规则保留原有的一笔 -1。
+    assert sample["DK_X311"].eq(-1).sum() == 1
+    assert sample["DK_X311"].lt(-1).any()
 
 
 @pytest.fixture(scope="module")
