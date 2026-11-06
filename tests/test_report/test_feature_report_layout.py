@@ -85,7 +85,8 @@ def _conditional_format_colors(ws):
     return colors
 
 
-def test_long_format_bin_chart_counts_each_order_once(monkeypatch, tmp_path):
+@pytest.mark.parametrize("layout", [{"bin_params": {"long_format": True}}, {"long_format": True, "bin_params": {"long_format": False}}])
+def test_long_format_bin_chart_counts_each_order_once(monkeypatch, tmp_path, layout):
     data = pd.DataFrame({"score": range(60), "mob": [0, 10, 45] * 20, "amount": [100, 200, 300] * 20})
     writer = ExcelWriter(system="windows")
     writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
@@ -93,7 +94,8 @@ def test_long_format_bin_chart_counts_each_order_once(monkeypatch, tmp_path):
     monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda table, **kwargs: plotted.append(table))
     auto_feature_analysis(
         data, features=["score"], overdue=["mob"], dpds=[0, 30], amount="amount",
-        bin_params={"method": "quantile", "max_n_bins": 3, "long_format": True},
+        long_format=layout.get("long_format"),
+        bin_params={"method": "quantile", "max_n_bins": 3, "return_cols": ["坏样本率"], **layout["bin_params"]},
         excel_writer=writer, output_dir=str(tmp_path), pictures=["bin"], n_jobs=1,
     )
     chart, = plotted

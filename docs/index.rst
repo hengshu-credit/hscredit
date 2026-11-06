@@ -85,6 +85,7 @@ hscredit 文档
    :caption: 入门
 
    功能总览 <overview>
+   图表对照 <showcase>
    安装配置 <installation>
    快速开始 <quickstart>
    标签处理 <overdue_labels>

@@ -302,6 +302,7 @@ docs/validation/*
 !/docs/assets/readme/showcase/excel-showcase.xlsx
 !/docs/assets/readme/showcase/feature-analysis.xlsx
 !/docs/assets/readme/showcase/auto-model-report.xlsx
+!/docs/assets/readme/showcase/regression-model-report.xlsx
 !/docs/assets/readme/showcase/swap-out.xlsx
 !/docs/assets/readme/showcase/swap-out-cohort.xlsx
 !/docs/assets/readme/showcase/binary-tree-report.xlsx

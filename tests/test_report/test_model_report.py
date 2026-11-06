@@ -1561,6 +1561,36 @@ class TestModelReportRegression:
         assert tables["feat_psi_f0"]["预期坏样本率"].gt(0).any()
         assert tables["feat_psi_f0"]["实际坏样本率"].gt(0).any()
 
+    def test_long_format_preserves_each_labels_order_and_amount_totals(self, tmp_path):
+        train = self._multi_label_data()
+        test = train.iloc[::2].copy()
+        path = tmp_path / "long.xlsx"
+        report = model_report_module.auto_model_report(
+            MockModel(["f0"]), datasets={"训练集": train, "测试集": test}, features=["f0"],
+            overdue="MOB1", dpds=[3, 7], amount="放款金额", long_format=True,
+            excel_path=str(path), with_plots=False, n_jobs=1, verbose=False,
+        )
+        labels = ["MOB1@3", "MOB1@7"]
+        for dataset, frame in [("训练集", train), ("测试集", test)]:
+            for amount in (None, "放款金额"):
+                weights = frame[amount] if amount else pd.Series(1, index=frame.index)
+                for table in (
+                    report.get_bin_table(dataset, labels=labels, amount=amount),
+                    report.get_feature_bin_table("f0", dataset, labels=labels, amount=amount),
+                ):
+                    totals = table[table["分箱标签"] == "合计"].set_index("逾期标签")
+                    assert list(totals.index) == labels
+                    for label, dpd in zip(labels, [3, 7]):
+                        assert totals.loc[label, "样本总数"] == weights.sum()
+                        assert totals.loc[label, "坏样本数"] == weights[frame["MOB1"] > dpd].sum()
+        with path.open("rb") as stream:
+            workbook = load_workbook(stream, read_only=True)
+            for sheet in ["2-模型性能", "3-入模变量分析"]:
+                rows = list(workbook[sheet].values)
+                headers = [row for row in rows if "逾期标签" in row]
+                assert len(headers) == 2 and all(row.count("逾期标签") == 2 for row in headers)
+            workbook.close()
+
     def test_multi_label_tables_use_expected_layout(self, tmp_path):
         X = self._multi_label_data()
         report = ModelReport(

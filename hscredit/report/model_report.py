@@ -637,6 +637,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         metrics=None,
         sample_weight=None,
         show_weighted_metrics=False,
+        long_format: bool = False,
         binning_reference="train",
         rules=None,
         cache_policy="full",
@@ -725,6 +726,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
 
         :param show_weighted_metrics: 是否在实际订单指标右侧并列显示显式 sample_weight 的加权性能，默认 False。
+        :param long_format: 多标签评分与特征分箱表是否按标签逐行输出，默认 False 按标签展开列。
         :param binning_reference: 分箱基准：train（默认）复用训练规则，independent 为各数据集独立拟合。
         :param cache_policy: 派生缓存保留策略：full（默认）保留，none 在一次公开操作结束后释放。
         :param rules: 指定分箱规则；列表用于评分，字典按特征名指定，score 或 __score__ 指定评分规则。默认 None。
@@ -787,6 +789,9 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             raise ValidationError("cache_policy 必须为 'full' 或 'none'")
         self.cache_policy = cache_policy
         self._init_resource_state()
+        if not isinstance(long_format, (bool, np.bool_)):
+            raise ValidationError("long_format 必须为布尔值")
+        self.long_format = bool(long_format)
         self.binning_reference = binning_reference
         self.rules = copy.deepcopy(rules)
         self._reference_binners = {}
@@ -836,6 +841,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             "metrics": metrics,
             "sample_weight": sample_weight,
             "show_weighted_metrics": show_weighted_metrics,
+            "long_format": self.long_format,
             "binning_reference": binning_reference,
             "rules": self.rules,
             "cache_policy": cache_policy,
@@ -1026,6 +1032,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         metrics_payload = state.pop("_metrics_payload", None)
         self.__dict__.update(state)
         self.handle_missing_target = state.get("handle_missing_target", "drop")
+        self.long_format = state.get("long_format", False)
         self.binning_reference = state.get("binning_reference", "train")
         self.rules = state.get("rules")
         self.show_weighted_metrics = state.get("show_weighted_metrics", False)
@@ -1633,7 +1640,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         :param amount: 金额列名；分类数据中存在时追加金额指标，回归分箱仍使用件数口径。 默认 ``None``。
         :param margins: 是否追加合计行。 默认 ``True``。
         :param label: 指定单个分类目标名称；None 使用默认标签，回归不接受指定标签。
-        :param labels: 多个分类目标名，优先于 label，按多级列合并；回归不支持多标签。 默认 ``None``。
+        :param labels: 多个分类目标名，优先于 label，按 long_format 指定的布局展示；回归不支持多标签。 默认 ``None``。
         :return: 评分或连续预测值的分箱统计 DataFrame，分类结果在同次报告中缓存。
         """
         if self.task_type_ == "regression":
@@ -1641,6 +1648,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
 
             return bin_table(self, dataset, method, max_n_bins, margins, amount=amount, label=label, labels=labels)
         cache_key = (dataset, method, max_n_bins, amount, margins, label, tuple(labels or ()))
+        if self.long_format and labels is not None:
+            cache_key += ("long",)
         cached = self._bin_table_cache.get(cache_key)
         if cached is not None:
             return cached.copy()
@@ -1669,7 +1678,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         """使用 feature_bin_stats 生成评分分箱效果表。
 
         :param label: 多标签模式下指定单个标签名
-        :param labels: 多标签合并模式，传入标签名列表，返回 MultiIndex 列合并表
+        :param labels: 多标签合并模式，传入标签名列表，按 long_format 选择宽表或长表
         """
 
         dataset = self._resolve_dataset_key(dataset)
@@ -1711,6 +1720,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             desc="模型评分",
             max_n_bins=max_n_bins,
             missing_separate=True,
+            long_format=self.long_format and labels is not None,
             margins=margins,
             return_cols=score_return_cols,
             binner=reference_binner(self, score_col, method, max_n_bins, label, labels, is_score=True),
@@ -2472,14 +2482,16 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         :param amount: 金额列名；分类数据中存在时追加金额指标，回归分箱仍使用件数口径。 默认 ``None``。
         :param margins: 是否追加合计行。 默认 ``True``。
         :param label: 指定单个分类目标名称；None 使用默认标签，回归不接受指定标签。
-        :param labels: 多个分类目标名，优先于 label，按多级列合并；回归不支持多标签。 默认 ``None``。
-        :return: 特征分箱统计 DataFrame，分类多标签返回多级列。
+        :param labels: 多个分类目标名，优先于 label，按 long_format 指定的布局展示；回归不支持多标签。 默认 ``None``。
+        :return: 特征分箱统计 DataFrame，分类多标签可按列或按行输出。
         """
         if self.task_type_ == "regression":
             from ._regression_model import bin_table
 
             return bin_table(self, dataset, method, max_n_bins, margins, feature, amount, label, labels)
         cache_key = (feature, dataset, max_n_bins, method, margins, amount, label, tuple(labels or ()))
+        if self.long_format and labels is not None:
+            cache_key += ("long",)
         cached = self._feature_bin_table_cache.get(cache_key)
         if cached is not None:
             return cached.copy()
@@ -2510,7 +2522,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         """单特征分箱效果表，优先使用模型 binner。
 
         :param label: 多标签模式下指定单个标签名
-        :param labels: 多标签合并模式，传入标签名列表，返回 MultiIndex 列合并表
+        :param labels: 多标签合并模式，传入标签名列表，按 long_format 选择宽表或长表
         """
 
         dataset = self._resolve_dataset_key(dataset)
@@ -2532,6 +2544,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             method=method,
             max_n_bins=max_n_bins,
             margins=margins,
+            long_format=self.long_format and labels is not None,
             missing_separate=True,
             n_jobs=self.n_jobs,
             parallel_backend=self.parallel_backend,
@@ -4465,7 +4478,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 image_rows.append((ws, row_images))
 
             if is_multi:
-                # 多标签合并模式：所有标签合并为一个 MultiIndex 列的分箱表
+                # 订单与金额分箱并列展示，各自保留请求的标签布局。
                 if amount:
                     order_table = self.get_bin_table(
                         ds_key,
@@ -5494,6 +5507,7 @@ def auto_model_report(
     sample_weight=None,
     score_direction=None,
     show_weighted_metrics=False,
+    long_format: bool = False,
     binning_reference="train",
     rules=None,
     cache_policy="full",
@@ -5667,6 +5681,7 @@ def auto_model_report(
     :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
 
     :param show_weighted_metrics: 是否在实际订单指标右侧并列显示显式 sample_weight 的加权性能，默认 False。
+    :param long_format: 多标签评分与特征分箱表是否按标签逐行输出，默认 False 按标签展开列。
     :param binning_reference: 分箱基准：train（默认）复用训练规则，independent 为各数据集独立拟合。
     :param cache_policy: 派生缓存保留策略：full（默认）保留，none 在一次公开操作结束后释放。
     :param rules: 指定分箱规则；列表用于评分，字典按特征名指定，score 或 __score__ 指定评分规则。默认 None。
@@ -5696,6 +5711,7 @@ def auto_model_report(
         sample_weight=sample_weight,
         score_direction=score_direction,
         show_weighted_metrics=show_weighted_metrics,
+        long_format=long_format,
         binning_reference=binning_reference,
         rules=rules,
         cache_policy=cache_policy,

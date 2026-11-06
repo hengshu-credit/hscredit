@@ -774,3 +774,31 @@ input:focus-visible,
     .hs-home-hero__actions { display: grid; }
     .rst-content .hs-home-hero__action { width: 100%; }
 }
+/* 报告原图在各自面板内滚动，保留相邻面板的位置供对照。 */
+.rst-content .hs-gallery {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+    --pane-height: clamp(9rem, 25vh, 17rem);
+}
+.hs-gallery-item { min-width: 0; }
+.rst-content .hs-gallery-item > p { margin: 0 0 .35rem; }
+.hs-gallery-pane {
+    height: var(--pane-height);
+    overflow: auto;
+    overscroll-behavior: contain;
+    cursor: grab;
+}
+.hs-gallery-pane:focus-visible { outline: 2px solid #c02dd4; }
+.hs-gallery-pane.is-dragging { cursor: grabbing; user-select: none; }
+.rst-content .hs-gallery-pane img {
+    display: block;
+    max-width: none;
+    width: auto;
+    height: auto;
+}
+.hs-gallery-scorecard > :first-child { grid-row: span 2; }
+.hs-gallery-scorecard > :first-child .hs-gallery-pane {
+    height: calc(2 * var(--pane-height) + 2.8rem);
+}

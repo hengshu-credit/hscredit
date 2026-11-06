@@ -3290,6 +3290,7 @@ def auto_feature_analysis(
     del_grey: Optional[bool] = None,
     show_progress: bool = True,
     *,
+    long_format: Optional[bool] = None,
     overdue_operator: Optional[str] = None,
     mode: Optional[str] = None,
     return_result: bool = False,
@@ -3345,6 +3346,7 @@ def auto_feature_analysis(
     :param start_row: 默认值为 ``2`` 。起始行
     :param dropna: 默认值为 ``False`` 。是否剔除缺失值
     :param writer_params: 默认值为 ``None`` 。Excel 写入器初始化参数
+    :param long_format: 按标签逐行输出分箱表。省略时沿用 bin_params 的设置，默认使用宽表。
     :param bin_params: 默认值为 ``None`` 。分箱统计参数，支持 feature_bin_stats 的参数
     :param feature_map: 默认值为 ``None`` 。特征名称映射字典
     :param corr: 默认值为 ``False`` 。是否计算特征相关性
@@ -3446,6 +3448,7 @@ def _auto_feature_analysis_impl(
     del_grey: Optional[bool] = None,
     show_progress: bool = True,
     *,
+    long_format: Optional[bool] = None,
     overdue_operator: Optional[str] = None,
     _report_result=None,
     handle_missing_target="drop",
@@ -3469,6 +3472,7 @@ def _auto_feature_analysis_impl(
     :param start_row: 起始行
     :param dropna: 是否剔除缺失值
     :param writer_params: Excel 写入器初始化参数
+    :param long_format: 按标签逐行输出分箱表。省略时沿用 bin_params 的设置，默认使用宽表。
     :param bin_params: 分箱统计参数，支持 feature_bin_stats 的参数
     :param feature_map: 特征名称映射字典
     :param corr: 是否计算特征相关性
@@ -3516,6 +3520,10 @@ def _auto_feature_analysis_impl(
         bin_params = {}
     else:
         bin_params = dict(bin_params)
+    if long_format is not None:
+        if not isinstance(long_format, (bool, np.bool_)):
+            raise ValueError("long_format 必须为布尔值")
+        bin_params["long_format"] = bool(long_format)
     if del_grey is not None:
         bin_params["del_grey"] = del_grey
     overdue_operator = bin_params.get("overdue_operator", ">") if overdue_operator is None else overdue_operator
@@ -3569,6 +3577,9 @@ def _auto_feature_analysis_impl(
         merge_columns = ["指标名称", "指标含义", "分箱标签"]
     else:
         merge_columns = ["指标名称", "指标含义", "分箱标签", "样本总数", "样本占比"]
+
+    if bin_params.get("long_format"):
+        merge_columns.insert(2, "逾期标签")
 
     return_cols = []
     if bin_params and bin_params.get("return_cols"):

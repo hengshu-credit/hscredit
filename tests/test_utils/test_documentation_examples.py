@@ -154,10 +154,17 @@ def test_selectors_notebook_psi_example_compares_unequal_train_and_oot_splits():
             "稳定特征": np.tile([0.0, 1.0], 132),
         }
     )
+    train = df_model.iloc[:158]
+    validation = df_model.iloc[158:]
     namespace = {
         "PSISelector": PSISelector,
-        "df_model": df_model,
-        "numeric_features": numeric_features,
+        "X_after_effect": train,
+        "X_valid_after_effect": validation,
+        "y_train": {"MOB6@30": (train["数值特征"] % 3 == 0).astype(int)},
+        "LABELS": ["MOB6@30"],
+        "LIMITS": {"PSI": 0.25},
+        "N_JOBS": 1,
+        "display": lambda value: None,
     }
 
     assert len(psi_cells) == 1
@@ -166,5 +173,7 @@ def test_selectors_notebook_psi_example_compares_unequal_train_and_oot_splits():
     selector = namespace["psi_selector"]
     assert selector.n_features_in_ == 2
     assert selector.scores_.index.tolist() == numeric_features
-    assert selector.oot_df.equals(df_model.iloc[158:][numeric_features])
+    assert selector.oot_df.equals(validation)
     assert np.isfinite(selector.scores_.to_numpy()).all()
+    assert namespace["stable_features"] == ["稳定特征"]
+    pd.testing.assert_frame_equal(namespace["X_valid_after_psi"], validation[["稳定特征"]])

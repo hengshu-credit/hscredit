@@ -18,56 +18,50 @@
 
 **hscredit（衡枢真信）** 是面向信贷风控的 Python 工具箱：从授信数据中筛选能区分风险的变量，用评分卡、机器学习或决策树构建模型与规则，再用历史样本回测新策略的通过率和坏账率。分箱、编码和筛选可直接接入 sklearn Pipeline；从变量初筛到上线评审，都能沿用同一套逾期定义。
 
-<a href="#为什么选-hscredit" style="color:#c02dd4;">为什么选 hscredit</a> · <a href="#交流关注" style="color:#c02dd4;">交流关注</a> · <a href="#核心功能盘点" style="color:#c02dd4;">核心功能</a> · <a href="#安装" style="color:#c02dd4;">安装</a> · <a href="#功能展示" style="color:#c02dd4;">功能展示</a> · <a href="https://hscredit.hengshucredit.com/" style="color:#c02dd4;">在线文档</a>
-
 ## 为什么选 hscredit？
 
 **四套标准 SOP，一行代码出一份 Excel 报告。** 准备好样本和待评估的变量、规则或模型，即可按统一口径比较不同客群、不同逾期标签的表现。下次评审，换一批样本就能复评。
 
-<div style="max-width:100%; overflow-x:auto;">
-<table role="presentation" width="100%" style="display:table; table-layout:fixed; width:100%; min-width:960px; border:0; border-collapse:collapse;">
-<tbody>
-<tr>
-<td width="50%" valign="top" style="border:0; padding:8px;">
-  <strong>策略上线报告</strong> · <a href="docs/assets/readme/showcase/intro-strategy.png" style="color:#c02dd4;">查看全图</a> · <a href="docs/assets/readme/showcase/swap-out.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
-  逐条回测候选规则，对照策略调整前后的通过率和坏样本率，判断多拦住一批坏样本要牺牲多少通过量。
-  <p style="min-height:3em;"><code style="word-break:keep-all;">swap_out_report(df, rules, date="授信时间", save="策略.xlsx", **labels)</code></p>
-  <div style="height:320px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-strategy.png"><img src="docs/assets/readme/showcase/intro-strategy.png" alt="策略迭代，从规则定义到最后一条规则的稳定性明细" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
-</td>
-<td width="50%" valign="top" style="border:0; padding:8px;">
-  <strong>模型上线报告</strong> · <a href="docs/assets/readme/showcase/intro-model.png" style="color:#c02dd4;">查看全图</a> · <a href="docs/assets/readme/showcase/auto-model-report.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
-  并排比较训练集和测试集的 KS、AUC，再看风险最高的前 1%、5% 客群的坏样本率和 Lift，检验模型的区分能力。
-  <p style="min-height:3em;"><code style="word-break:keep-all;">auto_model_report(model, datasets, features=features, amount="loan_amt", excel_path="模型.xlsx", **labels)</code></p>
-  <div style="height:320px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-model.png"><img src="docs/assets/readme/showcase/intro-model.png" alt="模型性能，从多标签评估、TOP n% 到训练集订单与金额分箱合计" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top" style="border:0; padding:8px;">
-  <strong>规则挖掘报告</strong> · <a href="docs/assets/readme/showcase/intro-rules.png" style="color:#c02dd4;">查看全图</a> · <a href="docs/assets/readme/showcase/multiway-tree-report.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
-  把训练好的多叉树转成规则清单，按节点对照命中率、坏样本率和 Lift，找出既能覆盖足够样本、又能识别高风险的条件组合。
-  <p style="min-height:3em;"><code style="word-break:keep-all;">multiway_tree.report(datasets, amount="loan_amt", group="GROUP", save="规则.xlsx", **labels)</code></p>
-  <div style="height:320px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-rules.png"><img src="docs/assets/readme/showcase/intro-rules.png" alt="组合策略汇总，从基本信息到训练集策略详情及节点效果" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
-</td>
-<td width="50%" valign="top" style="border:0; padding:8px;">
-  <strong>三方数据分析报告</strong> · <a href="docs/assets/readme/showcase/intro-features.png" style="color:#c02dd4;">查看全图</a> · <a href="docs/assets/readme/showcase/feature-analysis.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
-  用缺失率看字段覆盖，用 IV、KS 和分箱坏样本率比较长短期风险的区分度，筛出值得接入的三方变量。
-  <p style="min-height:3em;"><code style="word-break:keep-all;">auto_feature_analysis(df, features, amount="loan_amt", bin_params={"long_format": True}, excel_writer="三方数据.xlsx", **labels)</code></p>
-  <div style="height:320px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-features.png"><img src="docs/assets/readme/showcase/intro-features.png" alt="特征分析，从样本概况到第一个特征的多标签订单与金额长表" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
+- **策略上线报告** · `swap_out_report` 逐条回测候选规则，比较策略调整前后的通过率与坏样本率。 <a href="docs/assets/readme/showcase/swap-out.xlsx?raw=true" style="color:#c02dd4;">下载 Excel</a>
+- **模型上线报告** · `auto_model_report` 对照训练集与测试集的 KS、AUC，检查高风险客群中的坏样本集中度。 <a href="docs/assets/readme/showcase/auto-model-report.xlsx?raw=true" style="color:#c02dd4;">下载 Excel</a>
+- **规则挖掘报告** · `multiway_tree.report` 把树的决策路径转为规则，按命中率、坏样本率和 Lift 比较节点。 <a href="docs/assets/readme/showcase/multiway-tree-report.xlsx?raw=true" style="color:#c02dd4;">下载 Excel</a>
+- **三方数据分析报告** · `auto_feature_analysis` 用覆盖率、IV、KS 和分箱坏样本率判断哪些字段值得接入。 <a href="docs/assets/readme/showcase/feature-analysis.xlsx?raw=true" style="color:#c02dd4;">下载 Excel</a>
 
-客群按数据中的 <code>GROUP</code> 划分，跨期表现按授信月份比较。四份示例使用相同的<a href="#数据集" style="color:#c02dd4;">标签配置</a> <code>labels</code>：分别评估 MOB1、MOB6 逾期超过 0 天及超过 30 天的表现。
+<details>
+<summary>四种报告的调用示例</summary>
+
+```python
+swap_out_report(df, rules, date="授信时间", save="策略.xlsx", **labels)
+auto_model_report(model, datasets, features=features, amount="loan_amt", long_format=True, excel_path="模型.xlsx", **labels)
+multiway_tree.report(datasets, amount="loan_amt", group="GROUP", save="规则.xlsx", **labels)
+auto_feature_analysis(df, features, amount="loan_amt", long_format=True, excel_writer="三方数据.xlsx", **labels)
+```
+
+</details>
+
+<p>
+<a href="docs/assets/readme/showcase/intro-strategy.png"><img src="docs/assets/readme/showcase/intro-strategy.png" alt="策略上线报告" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/intro-model.png"><img src="docs/assets/readme/showcase/intro-model.png" alt="模型上线报告" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/intro-strategy.png" style="color:#c02dd4;">策略上线报告</a> · <a href="docs/assets/readme/showcase/intro-model.png" style="color:#c02dd4;">模型上线报告</a>
+
+<p>
+<a href="docs/assets/readme/showcase/intro-rules.png"><img src="docs/assets/readme/showcase/intro-rules.png" alt="规则挖掘报告" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/intro-features.png"><img src="docs/assets/readme/showcase/intro-features.png" alt="三方数据分析报告" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/intro-rules.png" style="color:#c02dd4;">规则挖掘报告</a> · <a href="docs/assets/readme/showcase/intro-features.png" style="color:#c02dd4;">三方数据分析报告</a>
+
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-reports" style="color:#c02dd4;">按原始尺寸拖动对照</a>
 
 ## 交流关注
 
 <div align="center">
 
-| 微信 · itlubber | 微信公众号 · 衡枢风控 |
-|:---:|:---:|
-| <img src="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/wechat.svg" alt="微信 itlubber 二维码" width="200"><br>扫一扫，添加微信交流 | <img src="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/wechat-official-account.svg" alt="微信公众号 衡枢风控 二维码" width="200"><br>扫一扫关注，回复「入群」 |
+<p><img src="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/wechat.svg" alt="微信 itlubber 二维码" width="200">　<img src="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/wechat-official-account.svg" alt="微信公众号 衡枢风控 二维码" width="200"></p>
+
+微信 · itlubber　｜　微信公众号 · 衡枢风控（回复「入群」）
 
 邮箱：<a href="mailto:hscredit@hengshucredit.com" style="color:#c02dd4;">hscredit@hengshucredit.com</a>
 
@@ -93,7 +87,7 @@
 </table>
 </div>
 
-表格按单行排布，窄屏可横向滚动。详细接口见<a href="docs/overview.md" style="color:#c02dd4;">功能总览</a>。
+详细接口见<a href="docs/overview.md" style="color:#c02dd4;">功能总览</a>。
 
 ## 安装
 
@@ -123,7 +117,7 @@ pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
 
 ### 数据集
 
-`hscredit_dataset()` 加载内置现金贷放款订单数据；`split=True` 依次返回订单信息、逾期表现和授信时点特征 X，`columns` 支持按需读取字段。
+内置现金贷订单可按需读取授信特征、放款信息和逐月逾期表现。用 `split=True` 分开取数，再按业务表现期定义标签，即可跟踪同一变量在不同月份和客群中的风险变化。库中也提供 German Credit、Titanic 和 Iris 数据集，用于比较建模方法。
 
 <div style="max-width:100%; overflow-x:auto;">
 <table style="white-space:nowrap; border-collapse:collapse; font-size:13px;">
@@ -141,6 +135,7 @@ pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
 <tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">订单信息</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;"><code>放款编码</code>、<code>用户编码</code>、<code>loan_amt</code>、<code>periods</code>、<code>放款银行</code>、<code>流量渠道</code>、<code>授信时间</code>、<code>放款时间</code>、<code>etl_date</code></td></tr>
 <tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">逾期数据</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;"><code>DPD</code>、<code>CURRENT_DPD</code>、<code>MOB1</code>、<code>MOB2</code>、<code>MOB3</code>、<code>MOB4</code>、<code>MOB5</code>、<code>MOB6</code>、<code>MOB7</code>、<code>MOB8</code>、<code>MOB9</code>、<code>MOB10</code>、<code>MOB11</code>、<code>MOB12</code></td></tr>
 <tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">授信特征</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">多头查询、贷款账户与余额、还款压力、杠杆率、信用卡使用、公积金等授信时点风险信息。</td></tr>
+<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">数据详情描述</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">每行是一笔现金贷放款订单，关联授信时的特征、审批额度与期数，以及放款后的逐期逾期表现。</td></tr>
 </tbody></table>
 </div>
 
@@ -210,15 +205,11 @@ labels = {"overdue": ["MOB1", "MOB6"], "dpds": [0, 30], "overdue_operator": ">"}
 
 </details>
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/label-summary.png" alt="四种逾期标签" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/label-summary.png"><img src="docs/assets/readme/showcase/label-summary.png" alt="四种逾期标签"></a>
 
 ### 特征分箱
 
-统一处理数值、类别、缺失和特殊值，支持手工切分、自定义优化目标、单调约束，以及多标签、金额和二维交叉分析。
+可用等频、等宽等方法观察变量分布，也可按 IV、KS、Lift 或目标坏率寻找切点。对连续和类别变量，可指定切点或类别组合、单独处理缺失与特殊值，或加入单调性和自定义优化目标。分箱规则可复用于新样本，按订单、金额、标签、月份和客群比较效果。二维交叉分箱还能识别单个变量难以区分的人群。
 
 | 方法族 | 支持方法 |
 | --- | --- |
@@ -241,11 +232,7 @@ bins.show()
 multi_bins.show()
 ```
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/binning-multi.png" alt="多标签分箱统计表" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/binning-multi.png"><img src="docs/assets/readme/showcase/binning-multi.png" alt="多标签分箱统计表"></a>
 
 **比较方法与客群。** `feature_binning_summary` 对比不同分箱方法；`feature_group_binning_summary` 按授信月份或原始字段 `GROUP`（客群划分）汇总。
 
@@ -295,42 +282,21 @@ feature_bin_stats_2d(
 
 </details>
 
-<div style="max-width:100%; overflow-x:auto;">
-<table role="presentation" width="100%" style="display:table; width:100%; min-width:640px; table-layout:fixed; border:0; border-collapse:collapse;">
-<tr>
-<td width="50%" valign="top" style="width:50%; padding:4px; border:0; vertical-align:top;">
-<strong>方法摘要</strong>
-<div style="height:268px; max-width:100%; overflow:auto;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/binning-methods.png" alt="方法摘要" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</div></td>
-<td width="50%" valign="top" style="width:50%; padding:4px; border:0; vertical-align:top;">
-<strong>授信月份摘要</strong>
-<div style="height:268px; max-width:100%; overflow:auto;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/binning-groups.png" alt="授信月份摘要" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</div></td>
-</tr>
-<tr>
-<td width="50%" valign="top" style="width:50%; padding:4px; border:0; vertical-align:top;">
-<strong>单标签分箱表</strong>
-<div style="height:268px; max-width:100%; overflow:auto;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/binning.png" alt="单标签分箱表" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</div></td>
-<td width="50%" valign="top" style="width:50%; padding:4px; border:0; vertical-align:top;">
-<strong>二维分箱表</strong>
-<div style="height:268px; max-width:100%; overflow:auto;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/binning-2d.png" alt="二维分箱表" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</div></td>
-</tr>
-</table>
-</div>
+<p>
+<a href="docs/assets/readme/showcase/binning-methods.png"><img src="docs/assets/readme/showcase/binning-methods.png" alt="方法摘要" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/binning-groups.png"><img src="docs/assets/readme/showcase/binning-groups.png" alt="授信月份摘要" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/binning-methods.png" style="color:#c02dd4;">方法摘要</a> · <a href="docs/assets/readme/showcase/binning-groups.png" style="color:#c02dd4;">授信月份摘要</a>
+
+<p>
+<a href="docs/assets/readme/showcase/binning.png"><img src="docs/assets/readme/showcase/binning.png" alt="单标签分箱表" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/binning-2d.png"><img src="docs/assets/readme/showcase/binning-2d.png" alt="二维分箱表" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/binning.png" style="color:#c02dd4;">单标签分箱表</a> · <a href="docs/assets/readme/showcase/binning-2d.png" style="color:#c02dd4;">二维分箱表</a>
+
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-bin-tables" style="color:#c02dd4;">按原始尺寸拖动对照</a>
 
 <details>
 <summary>自定义分箱优化目标</summary>
@@ -377,20 +343,21 @@ bin_trend_plot(
 
 </details>
 
-<table width="100%" style="display:table; width:100%; table-layout:fixed; border-collapse:collapse;">
-<tr>
-<td width="50%" valign="top"><strong>单变量分箱与坏率</strong><br>
-<a href="docs/assets/readme/showcase/binning-plot.png"><img src="docs/assets/readme/showcase/binning-plot.png" alt="单变量分箱与坏率" width="100%" style="display:block; height:auto;"></a></td>
-<td width="50%" valign="top"><strong>MOB1 与 MOB6 多标签分箱</strong><br>
-<a href="docs/assets/readme/showcase/binning-multi-plot.png"><img src="docs/assets/readme/showcase/binning-multi-plot.png" alt="MOB1 与 MOB6 多标签分箱图" width="100%" style="display:block; height:auto;"></a></td>
-</tr>
-<tr>
-<td width="50%" valign="top"><strong>按授信月份的分箱趋势</strong><br>
-<a href="docs/assets/readme/showcase/binning-trend.png"><img src="docs/assets/readme/showcase/binning-trend.png" alt="按授信月份的分箱趋势" width="100%" style="display:block; height:auto;"></a></td>
-<td width="50%" valign="top"><strong>按客群的分箱趋势</strong><br>
-<a href="docs/assets/readme/showcase/binning-cohort-plot.png"><img src="docs/assets/readme/showcase/binning-cohort-plot.png" alt="按客群的分箱趋势" width="100%" style="display:block; height:auto;"></a></td>
-</tr>
-</table>
+<p>
+<a href="docs/assets/readme/showcase/binning-plot.png"><img src="docs/assets/readme/showcase/binning-plot.png" alt="单变量分箱" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/binning-multi-plot.png"><img src="docs/assets/readme/showcase/binning-multi-plot.png" alt="多标签分箱" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/binning-plot.png" style="color:#c02dd4;">单变量分箱</a> · <a href="docs/assets/readme/showcase/binning-multi-plot.png" style="color:#c02dd4;">多标签分箱</a>
+
+<p>
+<a href="docs/assets/readme/showcase/binning-trend.png"><img src="docs/assets/readme/showcase/binning-trend.png" alt="授信月份趋势" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/binning-cohort-plot.png"><img src="docs/assets/readme/showcase/binning-cohort-plot.png" alt="客群分箱趋势" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/binning-trend.png" style="color:#c02dd4;">授信月份趋势</a> · <a href="docs/assets/readme/showcase/binning-cohort-plot.png" style="color:#c02dd4;">客群分箱趋势</a>
+
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-bin-charts" style="color:#c02dd4;">按原始尺寸拖动对照</a>
 
 <details>
 <summary>二维交叉分箱</summary>
@@ -412,7 +379,7 @@ bin_2d_plot(
 
 ### 特征编码
 
-编码器遵循 `fit / transform / fit_transform` 接口，可直接接入 sklearn Pipeline。WOE 表达风险证据，TargetEncoder 提供 OOF 目标编码，CatBoostEncoder 提供有序目标编码。
+编码方式取决于变量的含义。类别可以转成频数、独热向量或有序值，也可以利用目标均值、WOE 或 CatBoost 有序统计表达风险。连续变量可按分位数映射，树模型可以输出叶节点编码，高基数类别也能单独处理。各编码器都能与分箱、筛选和模型串入 sklearn Pipeline。
 
 | 编码器 | 用途 |
 | --- | --- |
@@ -455,24 +422,25 @@ pipeline.transform(X_test).show()
 
 </details>
 
-<table>
-<tr>
-<td width="1%" nowrap align="right" valign="top"><strong>TargetEncoder</strong><br>
-<a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="目标编码" width="72"></a></td>
-<td valign="top"><strong>WOEEncoder</strong><br>
-<a href="docs/assets/readme/showcase/encoder-woe.png"><img src="docs/assets/readme/showcase/encoder-woe.png" alt="WOE 编码" width="801"></a></td>
-</tr>
-<tr>
-<td width="1%" nowrap align="right" valign="top"><strong>CatBoostEncoder</strong><br>
-<a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="CatBoost 编码" width="72"></a></td>
-<td valign="top"><strong>Pipeline</strong><br>
-<a href="docs/assets/readme/showcase/encoder-pipeline.png"><img src="docs/assets/readme/showcase/encoder-pipeline.png" alt="Pipeline 分箱与 WOE 编码" width="801"></a></td>
-</tr>
-</table>
+<p>
+<a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="TargetEncoder" width="72" align="top"></a>
+<a href="docs/assets/readme/showcase/encoder-woe.png"><img src="docs/assets/readme/showcase/encoder-woe.png" alt="WOEEncoder" width="73%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/encoder-target.png" style="color:#c02dd4;">TargetEncoder</a> · <a href="docs/assets/readme/showcase/encoder-woe.png" style="color:#c02dd4;">WOEEncoder</a>
+
+<p>
+<a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="CatBoostEncoder" width="72" align="top"></a>
+<a href="docs/assets/readme/showcase/encoder-pipeline.png"><img src="docs/assets/readme/showcase/encoder-pipeline.png" alt="Pipeline · 分箱与 WOE" width="73%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/encoder-catboost.png" style="color:#c02dd4;">CatBoostEncoder</a> · <a href="docs/assets/readme/showcase/encoder-pipeline.png" style="color:#c02dd4;">Pipeline · 分箱与 WOE</a>
+
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-encoders" style="color:#c02dd4;">按原始尺寸拖动对照</a>
 
 ### 特征筛选
 
-从数据质量、风险区分度、稳定性和模型贡献筛选变量，保留各阶段的入选、剔除原因和迭代记录。
+先用类型、字段名、缺失率、众数率、基数和方差清理候选字段，再用 IV、KS、Lift 和 PSI 权衡区分能力与稳定性。相关性与 VIF 可排查冗余变量。Boruta、递归消除、逐步回归和模型重要性则从模型效果挑选变量。组合筛选器和 Pipeline 可以保留每一步的指标、入选结果和剔除原因。
 
 | 分类 | 组件与作用 |
 | --- | --- |
@@ -510,42 +478,21 @@ for selector in selectors:
 
 </details>
 
-<div style="max-width:100%; overflow-x:auto;">
-<table role="presentation" width="100%" style="display:table; width:100%; min-width:640px; table-layout:fixed; border:0; border-collapse:collapse;">
-<tr>
-<td width="50%" valign="top" style="width:50%; padding:4px; border:0; vertical-align:top;">
-<strong>LiftSelector</strong>
-<div style="height:417px; max-width:100%; overflow:auto;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/selector-lift.png" alt="LiftSelector" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</div></td>
-<td width="50%" valign="top" style="width:50%; padding:4px; border:0; vertical-align:top;">
-<strong>NullImportanceSelector</strong>
-<div style="height:417px; max-width:100%; overflow:auto;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/selector-null-importance.png" alt="NullImportanceSelector" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</div></td>
-</tr>
-<tr>
-<td width="50%" valign="top" style="width:50%; padding:4px; border:0; vertical-align:top;">
-<strong>RFESelector</strong>
-<div style="height:417px; max-width:100%; overflow:auto;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/selector-rfe.png" alt="RFESelector" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</div></td>
-<td width="50%" valign="top" style="width:50%; padding:4px; border:0; vertical-align:top;">
-<strong>ScorecardFeatureSelection</strong>
-<div style="height:417px; max-width:100%; overflow:auto;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/selector-scorecard.png" alt="ScorecardFeatureSelection" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</div></td>
-</tr>
-</table>
-</div>
+<p>
+<a href="docs/assets/readme/showcase/selector-lift.png"><img src="docs/assets/readme/showcase/selector-lift.png" alt="LiftSelector" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/selector-null-importance.png"><img src="docs/assets/readme/showcase/selector-null-importance.png" alt="NullImportanceSelector" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/selector-lift.png" style="color:#c02dd4;">LiftSelector</a> · <a href="docs/assets/readme/showcase/selector-null-importance.png" style="color:#c02dd4;">NullImportanceSelector</a>
+
+<p>
+<a href="docs/assets/readme/showcase/selector-rfe.png"><img src="docs/assets/readme/showcase/selector-rfe.png" alt="RFESelector" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/selector-scorecard.png"><img src="docs/assets/readme/showcase/selector-scorecard.png" alt="ScorecardFeatureSelection" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/selector-rfe.png" style="color:#c02dd4;">RFESelector</a> · <a href="docs/assets/readme/showcase/selector-scorecard.png" style="color:#c02dd4;">ScorecardFeatureSelection</a>
+
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-selectors" style="color:#c02dd4;">按原始尺寸拖动对照</a>
 
 ```python
 from hscredit.core.selectors import NullSelector, CorrSelector, selection_report
@@ -569,15 +516,11 @@ summary, decisions = selection_report(selection)
 summary.show()
 ```
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/selection-summary.png" alt="Pipeline 筛选阶段汇总" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/selection-summary.png"><img src="docs/assets/readme/showcase/selection-summary.png" alt="Pipeline 筛选阶段汇总"></a>
 
 ### 风控建模
 
-从评分卡、Boosting 到表格神经网络，统一组织训练、评估、调参、解释和部署。
+从逻辑回归与评分卡，到随机森林、支持向量机、Boosting 和表格神经网络，可以针对评分、分类或回归任务比较模型。训练时可用自定义损失和业务指标做交叉验证与多目标调参。上线前可校准概率、转换评分，用 SHAP、原因码及反事实解释分析个体决策。多数据集报告和模型导出用于上线评审与部署。
 
 | 模型族 | 组件 |
 | --- | --- |
@@ -608,25 +551,15 @@ card.scorecard_points().show()
 card.scorecard_scale().show()
 ```
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;">
-<tr>
-<td valign="top" style="padding:0 12px 0 0; border:0; vertical-align:top;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<strong>评分卡分值表</strong>
-<img src="docs/assets/readme/showcase/scorecard-points.png" alt="评分卡分值表" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td>
-<td valign="top" style="padding:0; border:0; vertical-align:top;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;">
-<tr><td style="padding:0 0 12px; border:0;">
-<strong>LR 统计摘要</strong>
-<img src="docs/assets/readme/showcase/lr-summary.png" alt="逻辑回归统计摘要" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr>
-<tr><td style="padding:0; border:0;">
-<strong>评分刻度</strong>
-<img src="docs/assets/readme/showcase/scorecard-scale.png" alt="评分刻度" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<p>
+<a href="docs/assets/readme/showcase/scorecard-points.png"><img src="docs/assets/readme/showcase/scorecard-points.png" alt="评分卡分值" width="40%" align="left"></a>
+<a href="docs/assets/readme/showcase/lr-summary.png"><img src="docs/assets/readme/showcase/lr-summary.png" alt="逻辑回归统计摘要" width="51%" align="top"></a><br>
+<a href="docs/assets/readme/showcase/scorecard-scale.png"><img src="docs/assets/readme/showcase/scorecard-scale.png" alt="评分刻度" width="51%" align="top"></a><br clear="all">
+</p>
+
+<a href="docs/assets/readme/showcase/scorecard-points.png" style="color:#c02dd4;">评分卡分值</a> · <a href="docs/assets/readme/showcase/lr-summary.png" style="color:#c02dd4;">逻辑回归统计摘要</a> · <a href="docs/assets/readme/showcase/scorecard-scale.png" style="color:#c02dd4;">评分刻度</a>
+
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-scorecard" style="color:#c02dd4;">按原始尺寸拖动对照</a>
 
 **XGBoost 与超参数搜索。** 用 `.tune()` 指定搜索空间，也可用 `AutoTuner` 的预设空间；Dashboard 查看搜索过程，Pareto 前沿比较多个优化目标。
 
@@ -655,7 +588,7 @@ pareto_tuner = AutoTuner.create(
     n_jobs=1,
     search_space={"max_depth": [2, 3, 4], "learning_rate": [0.03, 0.1, 0.2]},
     fixed_params={"n_estimators": 30, "n_jobs": 1},
-    storage="sqlite:///搜索记录.db",
+    storage="sqlite:///hscredit.db",
     study_name="XGBoost多目标搜索",
 )
 pareto_tuner.fit(X_num, y_train, n_trials=8)
@@ -667,7 +600,7 @@ pareto_tuner.plot_pareto_front().show()
 ![plot_pareto_front 多目标搜索前沿及试验点悬浮信息](docs/assets/readme/showcase/tuning-pareto.png)
 
 ```bash
-optuna-dashboard sqlite:///搜索记录.db
+optuna-dashboard sqlite:///hscredit.db
 ```
 
 **评估与损失。** 选择区分度、稳定性、成本或利润指标，并为支持的模型配置自定义损失。
@@ -726,10 +659,7 @@ rule_model = RulesClassifier(rules=rule_set, n_jobs=1).fit(X_num, y_train)
 rule_model.predict(X_test_num)
 ```
 
-**TabPFN。** 支持预训练模型的上下文推理、无标签预训练和监督微调。
-
-<details>
-<summary>TabPFN 预训练与微调</summary>
+**TabPFN 预训练与微调。** 可以直接用预训练模型做上下文推理，也可以先用无标签授信特征预训练，再用逾期标签微调。
 
 ```python
 from hscredit import TabPFN
@@ -745,9 +675,15 @@ pfn_train.fit(
 )
 ```
 
-</details>
+![TabPFN 预训练数据的生成过程：采样超参数、构造结构因果模型并生成表格数据集](docs/assets/readme/showcase/tabpfn-prior-figure-2.webp)
 
-**auto_model_report。** 在训练、测试和时间外数据集上，生成分类或回归评估、变量分析、稳定性、训练过程与部署信息；分类报告支持多个逾期标签。
+图 2 展示了 TabPFN 如何生成用于预训练的合成表格数据。来源：Hollmann 等，<a href="https://www.nature.com/articles/s41586-024-08328-6#Fig2" style="color:#c02dd4;">Nature（2025）</a>，<a href="https://creativecommons.org/licenses/by/4.0/" style="color:#c02dd4;">CC BY 4.0</a>。
+
+**模型评估与上线报告**
+
+`auto_model_report` 可以把训练集、测试集和时间外样本放在同一份报告中。预测逾期时，关注风险排序能否区分好坏客户。预测授信额度时，关注预测值偏离实际额度多少。
+
+**分类模型预测逾期。** 用四种 MOB 逾期标签比较 KS 和 AUC，再按订单与金额查看各分数段的坏账表现。
 
 ```python
 from hscredit.report import auto_model_report
@@ -761,6 +697,7 @@ report = auto_model_report(
     amount="loan_amt",
     date="授信时间",
     group="GROUP",
+    long_format=True,
     excel_path="模型评估.xlsx",
     n_jobs=1,
     **labels,
@@ -768,31 +705,25 @@ report = auto_model_report(
 report.summary().show()
 ```
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/report-multi-label.png" alt="多数据集、多标签模型摘要" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/report-multi-label.png"><img src="docs/assets/readme/showcase/report-multi-label.png" alt="训练集、测试集在四种逾期口径下的 KS、AUC 和坏样本率"></a>
 
-<div style="max-width:100%; max-height:640px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-model.png"><img src="docs/assets/readme/showcase/intro-model.png" alt="模型性能，从多标签评估、TOP n% 到训练集订单与金额分箱合计" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
+<a href="docs/assets/readme/showcase/intro-model.png"><img src="docs/assets/readme/showcase/intro-model.png" alt="模型性能，含训练集与测试集的四标签订单、金额评分分箱及合计"></a>
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/model-top-excel.png" alt="模型尾部区分能力 TOP n%" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/model-top-excel.png"><img src="docs/assets/readme/showcase/model-top-excel.png" alt="分月模型效果（MOB1@0）"></a>
 
-<a href="docs/assets/readme/showcase/auto-model-report.xlsx?raw=true" download style="color:#c02dd4;">下载模型报告</a>
+<a href="docs/assets/readme/showcase/auto-model-report.xlsx?raw=true" download style="color:#c02dd4;">下载多标签分类模型报告</a>
+
+**回归模型预测金额。** 当目标从「是否逾期」换为「审批额度」，同一个报告接口会改用平均绝对误差、均方根误差和决定系数。下面用随机森林预测 `loan_amt`，比较模型在训练集和测试集上的金额误差。
 
 <details>
-<summary>回归模型报告</summary>
+<summary>训练额度预测模型并生成回归报告</summary>
 
 ```python
 from sklearn.ensemble import RandomForestRegressor
 
 regressor = RandomForestRegressor(n_estimators=40, max_depth=4, random_state=42)
 regressor.fit(X_num, train["loan_amt"])
-auto_model_report(
+amount_report = auto_model_report(
     regressor,
     datasets={"训练集": report_train, "测试集": report_test},
     features=features,
@@ -800,29 +731,42 @@ auto_model_report(
     excel_path="回归模型报告.xlsx",
     n_jobs=1,
 )
+amount_report.get_metrics().show()
 ```
 
 </details>
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/report-regression.png" alt="回归模型评估指标" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/report-regression.png"><img src="docs/assets/readme/showcase/report-regression.png" alt="回归模型评估指标"></a>
 
-**部署。** 保存完整模型或导出推理模型，使用相同的字段和预处理完成预测。
+按原始额度口径，测试集的平均绝对误差为 1,947.49，训练集为 1,940.93。<a href="docs/assets/readme/showcase/regression-model-report.xlsx?raw=true" download style="color:#c02dd4;">下载金额回归报告</a>
+
+**评分卡部署。** 将同一张评分卡导出为 PMML，供评分引擎直接计算客户分数。Python 服务也可保存并加载整张评分卡，用原始授信字段得到分数。
 
 ```python
-model.save_inference("xgboost_inference.pkl")
-restored = XGBoost.load("xgboost_inference.pkl")
-restored.predict_proba(X_test_num)
+# 交付给支持 PMML 的评分引擎
+card.export_pmml("scorecard.pmml")
+
+# 在 Python 服务中恢复分箱规则、WOE 映射和评分刻度
+card.save_pickle("scorecard.pkl")
+serving_card = ScoreCard.load_pickle("scorecard.pkl")
+scores = serving_card.predict(X_test)
+```
+
+XGBoost 模型和 sklearn Pipeline 也可用通用的 `save_pickle`、`load_pickle` 保存与恢复。
+
+```python
+from hscredit import load_pickle, save_pickle
+
+save_pickle(model, "xgboost.pkl")
+risk_model = load_pickle("xgboost.pkl")
+risk_probability = risk_model.predict_proba(X_test_num)[:, 1]
 ```
 
 <a href="examples/28_model_workflow.ipynb" style="color:#c02dd4;">模型流程</a> · <a href="examples/27_model_interpretability.ipynb" style="color:#c02dd4;">模型解释</a> · <a href="docs/articles/report-resources-deployment.md" style="color:#c02dd4;">部署文档</a>
 
 ### 规则分析
 
-把候选规则组合为策略，分析命中、风险覆盖、金额效果、客群差异与置入置出。
+用 Rule 表达单条条件，用与、或、非组合规则，用 RuleFlow 编排决策流程。已有策略可按规则命中、风险覆盖、通过率、坏样本和影响金额回测，再用 Swap 比较新旧策略放进和拦下了哪些客户。寻找新策略时，可开展单变量、多变量或多标签规则挖掘，也可在二叉树、多叉树上逐个调整业务分支。
 
 | 能力 | 入口 |
 | --- | --- |
@@ -842,11 +786,7 @@ query_rule = Rule("最近12个月多头查询次数 > 60", name="多头查询超
 query_rule.report(test, amount="loan_amt", margins=True, **labels).show()
 ```
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/rule-report.png" alt="Rule.report 单规则分析" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/rule-report.png"><img src="docs/assets/readme/showcase/rule-report.png" alt="Rule.report 单规则分析"></a>
 
 **规则集：`ruleset_analysis`**
 
@@ -863,11 +803,7 @@ ruleset_analysis(
 ).show()
 ```
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/ruleset-report.png" alt="ruleset_analysis 规则集分析" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/ruleset-report.png"><img src="docs/assets/readme/showcase/ruleset-report.png" alt="ruleset_analysis 规则集分析"></a>
 
 **置换与多规则报告。** `swap_analysis` 量化新旧策略的置入置出；`swap_out_report` 汇总组合效果、业务影响、时间或客群稳定性及分箱明细。
 
@@ -911,23 +847,15 @@ swap_out_report(
 
 </details>
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/swap-summary.png" alt="策略置换汇总" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/swap-summary.png"><img src="docs/assets/readme/showcase/swap-summary.png" alt="策略置换汇总"></a>
 
-<div style="max-width:100%; max-height:640px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-strategy.png"><img src="docs/assets/readme/showcase/intro-strategy.png" alt="策略迭代，从规则定义到最后一条规则的稳定性明细" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
+<a href="docs/assets/readme/showcase/intro-strategy.png"><img src="docs/assets/readme/showcase/intro-strategy.png" alt="策略迭代，从规则定义到最后一条规则的稳定性明细"></a>
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/swap-cohort-excel.png" alt="客群规则稳定性分析" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/swap-cohort-excel.png"><img src="docs/assets/readme/showcase/swap-cohort-excel.png" alt="客群规则稳定性分析"></a>
 
 <a href="docs/assets/readme/showcase/swap-out.xlsx?raw=true" download style="color:#c02dd4;">下载按月策略报告</a> · <a href="docs/assets/readme/showcase/swap-out-cohort.xlsx?raw=true" download style="color:#c02dd4;">下载客群策略报告</a>
 
-**二叉树与多叉树挖掘。** 根节点自动学习，非根节点按业务条件手工拆分；同一套规则在训练、测试集及多个标签上评估。
+**二叉树与多叉树挖掘。** 从树自动找到的首个风险切点出发，按业务条件细分子客群，再对照训练集和测试集的节点覆盖率、坏样本率与 Lift。
 
 <details>
 <summary>手工拆分与多数据集策略报告</summary>
@@ -963,36 +891,38 @@ for name, tree in [("二叉树", binary_tree), ("多叉树", multiway_tree)]:
 
 </details>
 
-<table>
-<tr>
-<td width="50%" valign="top"><strong>二叉树</strong><br>
-<a href="docs/assets/readme/showcase/tree-binary.png"><img src="docs/assets/readme/showcase/tree-binary.png" alt="二叉树非根节点手工拆分" width="100%"></a></td>
-<td width="50%" valign="top"><strong>多叉树</strong><br>
-<a href="docs/assets/readme/showcase/tree-multiway.png"><img src="docs/assets/readme/showcase/tree-multiway.png" alt="多叉树非根节点手工拆分" width="100%"></a></td>
-</tr>
-<tr>
-<td width="50%" valign="top"><strong>训练集节点效果</strong><br>
-<a href="docs/assets/readme/showcase/binary-tree-report-excel.png"><img src="docs/assets/readme/showcase/binary-tree-report-excel.png" alt="二叉树训练集节点效果" width="100%"></a></td>
-<td width="50%" valign="top"><strong>训练集节点效果</strong><br>
-<a href="docs/assets/readme/showcase/multiway-tree-report-excel.png"><img src="docs/assets/readme/showcase/multiway-tree-report-excel.png" alt="多叉树训练集节点效果" width="100%"></a></td>
-</tr>
-<tr>
-<td width="50%" valign="top"><strong>测试集节点效果</strong><br>
-<a href="docs/assets/readme/showcase/binary-tree-report-test-excel.png"><img src="docs/assets/readme/showcase/binary-tree-report-test-excel.png" alt="二叉树测试集节点效果" width="100%"></a></td>
-<td width="50%" valign="top"><strong>测试集节点效果</strong><br>
-<a href="docs/assets/readme/showcase/multiway-tree-report-test-excel.png"><img src="docs/assets/readme/showcase/multiway-tree-report-test-excel.png" alt="多叉树测试集节点效果" width="100%"></a></td>
-</tr>
-</table>
+<p>
+<a href="docs/assets/readme/showcase/tree-binary.png"><img src="docs/assets/readme/showcase/tree-binary.png" alt="二叉树" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/tree-multiway.png"><img src="docs/assets/readme/showcase/tree-multiway.png" alt="多叉树" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/tree-binary.png" style="color:#c02dd4;">二叉树</a> · <a href="docs/assets/readme/showcase/tree-multiway.png" style="color:#c02dd4;">多叉树</a>
+
+<p>
+<a href="docs/assets/readme/showcase/binary-tree-report-excel.png"><img src="docs/assets/readme/showcase/binary-tree-report-excel.png" alt="二叉树 · 训练集" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/multiway-tree-report-excel.png"><img src="docs/assets/readme/showcase/multiway-tree-report-excel.png" alt="多叉树 · 训练集" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/binary-tree-report-excel.png" style="color:#c02dd4;">二叉树 · 训练集</a> · <a href="docs/assets/readme/showcase/multiway-tree-report-excel.png" style="color:#c02dd4;">多叉树 · 训练集</a>
+
+<p>
+<a href="docs/assets/readme/showcase/binary-tree-report-test-excel.png"><img src="docs/assets/readme/showcase/binary-tree-report-test-excel.png" alt="二叉树 · 测试集" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/multiway-tree-report-test-excel.png"><img src="docs/assets/readme/showcase/multiway-tree-report-test-excel.png" alt="多叉树 · 测试集" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/binary-tree-report-test-excel.png" style="color:#c02dd4;">二叉树 · 测试集</a> · <a href="docs/assets/readme/showcase/multiway-tree-report-test-excel.png" style="color:#c02dd4;">多叉树 · 测试集</a>
+
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-trees" style="color:#c02dd4;">按原始尺寸拖动对照</a>
 
 **多叉树组合策略汇总** · 按授信月份和客群比较样本分布，再对照订单与金额两种口径下的节点命中效果。
 
-<div style="max-width:100%; max-height:640px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-rules.png"><img src="docs/assets/readme/showcase/intro-rules.png" alt="组合策略汇总，从基本信息到策略详情的最后一个节点" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
+<a href="docs/assets/readme/showcase/intro-rules.png"><img src="docs/assets/readme/showcase/intro-rules.png" alt="组合策略汇总，从基本信息到策略详情的最后一个节点"></a>
 
 <a href="docs/assets/readme/showcase/binary-tree-report.xlsx?raw=true" download style="color:#c02dd4;">下载二叉树报告</a> · <a href="docs/assets/readme/showcase/multiway-tree-report.xlsx?raw=true" download style="color:#c02dd4;">下载多叉树报告</a>
 
 ### 数据挖掘
 
-从样本质量、分布、区分度与稳定性出发，分析变量在不同时间、客群和逾期口径下的表现。
+从字段缺失、异常值、分布和相关性入手，结合分箱、交叉分析和时间趋势，判断风险信号在哪些客群中有效。Vintage 和 Roll Rate 用于观察逾期随账龄的发展与迁移。KS、ROC、混淆矩阵和 PSI 用于诊断模型区分度与漂移。可以单独取统计表、绘图，也可以把多标签和金额分析汇为一份特征报告。
 
 | 能力 | 代表功能 |
 | --- | --- |
@@ -1006,11 +936,7 @@ for name, tree in [("二叉树", binary_tree), ("多叉树", multiway_tree)]:
 df[analysis_features + ["坏样本"]].summary(y="坏样本").show()
 ```
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/eda-summary.png" alt="数据摘要" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/eda-summary.png"><img src="docs/assets/readme/showcase/eda-summary.png" alt="数据摘要"></a>
 
 <details>
 <summary>常用图表</summary>
@@ -1035,24 +961,28 @@ bad_rate_trend_plot(df, date="授信时间", **labels)
 
 </details>
 
-<table>
-<tr>
-<td width="33%" valign="top"><strong>KS / ROC</strong><br>
-<a href="docs/assets/readme/showcase/eda-ks.png"><img src="docs/assets/readme/showcase/eda-ks.png" alt="KS / ROC" width="100%"></a></td>
-<td width="33%" valign="top"><strong>相关性</strong><br>
-<a href="docs/assets/readme/showcase/eda-corr.png"><img src="docs/assets/readme/showcase/eda-corr.png" alt="相关性" width="100%"></a></td>
-<td width="33%" valign="top"><strong>预测概率分布</strong><br>
-<a href="docs/assets/readme/showcase/eda-hist.png"><img src="docs/assets/readme/showcase/eda-hist.png" alt="预测概率分布" width="100%"></a></td>
-</tr>
-<tr>
-<td width="33%" valign="top"><strong>混淆矩阵</strong><br>
-<a href="docs/assets/readme/showcase/eda-confusion.png"><img src="docs/assets/readme/showcase/eda-confusion.png" alt="混淆矩阵" width="100%"></a></td>
-<td width="33%" valign="top"><strong>PSI 稳定性</strong><br>
-<a href="docs/assets/readme/showcase/eda-psi.png"><img src="docs/assets/readme/showcase/eda-psi.png" alt="PSI 稳定性" width="100%"></a></td>
-<td width="33%" valign="top"><strong>授信月份坏率趋势</strong><br>
-<a href="docs/assets/readme/showcase/eda-trend.png"><img src="docs/assets/readme/showcase/eda-trend.png" alt="授信月份坏率趋势" width="100%"></a></td>
-</tr>
-</table>
+<p>
+<a href="docs/assets/readme/showcase/eda-ks.png"><img src="docs/assets/readme/showcase/eda-ks.png" alt="KS 与 ROC" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/eda-corr.png"><img src="docs/assets/readme/showcase/eda-corr.png" alt="特征相关性" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/eda-ks.png" style="color:#c02dd4;">KS 与 ROC</a> · <a href="docs/assets/readme/showcase/eda-corr.png" style="color:#c02dd4;">特征相关性</a>
+
+<p>
+<a href="docs/assets/readme/showcase/eda-hist.png"><img src="docs/assets/readme/showcase/eda-hist.png" alt="预测概率分布" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/eda-confusion.png"><img src="docs/assets/readme/showcase/eda-confusion.png" alt="混淆矩阵" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/eda-hist.png" style="color:#c02dd4;">预测概率分布</a> · <a href="docs/assets/readme/showcase/eda-confusion.png" style="color:#c02dd4;">混淆矩阵</a>
+
+<p>
+<a href="docs/assets/readme/showcase/eda-psi.png"><img src="docs/assets/readme/showcase/eda-psi.png" alt="PSI 稳定性" width="48%" align="top"></a>
+<a href="docs/assets/readme/showcase/eda-trend.png"><img src="docs/assets/readme/showcase/eda-trend.png" alt="坏样本率趋势" width="48%" align="top"></a>
+</p>
+
+<a href="docs/assets/readme/showcase/eda-psi.png" style="color:#c02dd4;">PSI 稳定性</a> · <a href="docs/assets/readme/showcase/eda-trend.png" style="color:#c02dd4;">坏样本率趋势</a>
+
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-diagnostics" style="color:#c02dd4;">按原始尺寸拖动对照</a>
 
 **auto_feature_analysis：多标签特征报告。** 一次输出数据摘要和变量分布，按逾期标签纵向展示各分箱的订单与金额表现。
 
@@ -1064,7 +994,8 @@ auto_feature_analysis(
     features=analysis_features,
     date="授信时间",
     amount="loan_amt",
-    bin_params={"method": "quantile", "max_n_bins": 4, "long_format": True},
+    long_format=True,
+    bin_params={"method": "quantile", "max_n_bins": 4},
     margins=True,
     excel_writer="特征分析.xlsx",
     n_jobs=1,
@@ -1072,13 +1003,13 @@ auto_feature_analysis(
 )
 ```
 
-<div style="max-width:100%; max-height:640px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-features.png"><img src="docs/assets/readme/showcase/intro-features.png" alt="特征分析，从样本概况到第一个特征的多标签订单与金额长表" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
+<a href="docs/assets/readme/showcase/intro-features.png"><img src="docs/assets/readme/showcase/intro-features.png" alt="非银机构借款总金额、最近12个月多头查询次数、个人消费贷借款总金额的四标签订单与金额分箱长表"></a>
 
 <a href="docs/assets/readme/showcase/feature-analysis.xlsx?raw=true" download style="color:#c02dd4;">下载多标签特征报告</a>
 
 ### Excel 写入
 
-将数据、图表、格式、超链接和原生透视表放入同一工作簿，支持快速导出和逐单元格调整。
+从一个 DataFrame 到多工作表报告，都可以按业务阅读顺序安排。支持多级表头、合并单元格、数值和条件格式、图片、原生图表、迷你图与透视表，也可设置超链接、筛选、冻结窗格和行高列宽。
 
 | 能力 | 入口 / 配置 |
 | --- | --- |
@@ -1144,23 +1075,15 @@ writer.save("Excel功能展示.xlsx")
 
 </details>
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/excel-showcase.png" alt="分箱表、多图与条件格式" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/excel-showcase.png"><img src="docs/assets/readme/showcase/excel-showcase.png" alt="分箱表、多图与条件格式"></a>
 
-<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
-<img src="docs/assets/readme/showcase/excel-pivot.png" alt="客群与授信月份原生透视表" style="display:block; width:auto; height:auto; max-width:none;">
-</td></tr></table>
-</td></tr></table>
+<a href="docs/assets/readme/showcase/excel-pivot.png"><img src="docs/assets/readme/showcase/excel-pivot.png" alt="客群与授信月份原生透视表"></a>
 
 <a href="docs/assets/readme/showcase/excel-showcase.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel 功能展示工作簿</a>
 
 ### 数据库读写
 
-统一连接池、参数化查询、元数据和写入接口；以迭代器分块读取、分批写入大表。
+同一套连接接口覆盖关系型数据库、数仓以及 MongoDB、Redis。SQL 端可查询表结构、导出字段清单、按 DataFrame 建表、执行参数化查询，并分批读写大表。NoSQL 端提供单条与批量增删改查，便于在特征明细、模型结果和线上查询之间交换数据。
 
 | 类型 | 适配器 | 读写能力 |
 | --- | --- | --- |
@@ -1212,7 +1135,7 @@ with Database(
 
 ### Agent 能力
 
-向已接入 hscredit Skills 的 ChatGPT 描述数据、目标和输出要求，模型调用相应能力并返回图表、模型或工作簿。
+通过自然语言调用八个 Skills，从发现可用操作、评估变量和筛选特征，到训练解释模型、回测规则、绘图和交付 Excel。可以让 ChatGPT 针对一个问题返回结果，也可以让它在同一份数据上依次调用多个能力。
 
 ```bash
 python skills/install.py --suite hscredit
