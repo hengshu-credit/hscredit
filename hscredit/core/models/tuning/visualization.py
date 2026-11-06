@@ -75,6 +75,9 @@ def _style_plotly(figure, name):
         hoverlabel=dict(bgcolor="white", bordercolor=primary, font=dict(family=family, size=sizes["tick"])),
         paper_bgcolor="white", plot_bgcolor="white", colorway=palette,
     )
+    if name == "plot_pareto_front":
+        # Optuna 的多行试验详情沿用原生 text 和 hovertemplate。
+        figure.update_layout(hoverlabel=dict(align="left", font=dict(family=f"Consolas, {family}", color="#29243D")))
     blue = get_palette("blue")
     axis = dict(
         showline=True, linecolor=primary, color=primary,
