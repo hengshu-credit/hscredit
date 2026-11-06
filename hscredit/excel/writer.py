@@ -1114,7 +1114,7 @@ class ExcelWriter:
         :type fig: str
         :param insert_space: 插入位置，如'B2'或(2, 2)
         :type insert_space: Union[str, Tuple[int, int]]
-        :param figsize: 图片大小(宽, 高)，默认为(600, 250)
+        :param figsize: 图片显示区域的最大宽、高（像素），默认 (600, 250)。图片按原始比例等比缩放至区域内。
         :type figsize: Tuple[int, int]
         :return: (下一行行号, 下一列列号)
         """
@@ -1128,7 +1128,8 @@ class ExcelWriter:
 
         # 插入图片
         image = Image(fig)
-        image.width, image.height = figsize
+        scale = min(figsize[0] / image.width, figsize[1] / image.height)
+        image.width, image.height = image.width * scale, image.height * scale
         worksheet.add_image(image, f"{start_col}{start_row}")
 
         # 计算占用的行数
@@ -3885,7 +3886,7 @@ def dataframe2excel(
     :type mode: str
     :param figures: 需要插入的图片路径，默认为None
     :type figures: Optional[Union[str, List[str]]]
-    :param figsize: 图片大小，默认为(600, 350)
+    :param figsize: 图片显示区域的最大宽、高（像素），默认 (600, 350)，保留原始宽高比。
     :type figsize: Tuple[int, int]
     :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :type image_bottom_padding_rows: int

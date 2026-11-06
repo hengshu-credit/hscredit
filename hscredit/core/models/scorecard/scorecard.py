@@ -908,6 +908,19 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         # 4. 使用默认参数
         return LogisticRegression(calculate_stats=self.calculate_stats, positive_woe_coef=True, max_iter=1000)
 
+    def _encoder_uses_bin_ids(self, feature):
+        """识别原生编码器拟合时使用的编号；区间标签和外部编码器沿用标签口径。"""
+        from ...binning.base import BaseBinning
+        from ...encoders import WOEEncoder
+
+        if not isinstance(self.binner, BaseBinning) or not isinstance(self.encoder, WOEEncoder):
+            return False
+        table = getattr(self.binner, "bin_tables_", {}).get(feature)
+        mapping = (getattr(self.encoder, "mapping_", None) or {}).get(feature, {})
+        if table is None or not {"分箱", "分箱标签"}.issubset(table.columns):
+            return False
+        return not any(label in mapping for label in table["分箱标签"]) and any(bin_id in mapping for bin_id in table["分箱"])
+
     def _transform_to_woe(self, X: pd.DataFrame) -> pd.DataFrame:
         """将原始数据转换为 WOE 数据.
 
@@ -929,10 +942,18 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
 
         # 情况1：既有 binner 又有 encoder，优先使用显式 encoder 的训练口径
         if self.binner is not None and self.encoder is not None:
-            try:
-                X_binned = self.binner.transform(X, metric="bins")
-            except TypeError:
-                X_binned = self.binner.transform(X)
+            id_columns = [col for col in X if self._encoder_uses_bin_ids(col)]
+            if id_columns and len(id_columns) == X.shape[1]:
+                X_binned = self.binner.transform(X, metric="indices")
+            else:
+                try:
+                    X_binned = self.binner.transform(X, metric="bins")
+                except TypeError:
+                    X_binned = self.binner.transform(X)
+                if id_columns:
+                    bin_ids = self.binner.transform(X, metric="indices")
+                    for col in id_columns:
+                        X_binned[col] = bin_ids[col]
             X_woe = self.encoder.transform(X_binned)
             if isinstance(X_woe, pd.DataFrame):
                 X_woe.attrs["hscredit_encoding"] = "woe"
@@ -1395,7 +1416,7 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
         return self
 
     def _inference_encoder_woe(self, feature, bin_labels):
-        """通过真实编码器转换小型分箱标签探针，不读取内部哨兵或训练折映射。"""
+        """按拟合口径对分箱编号或标签进行推理编码，保持分值表与实际评分一致。"""
         columns = list(getattr(self.encoder, "cols_", None) or self._feature_names)
         if feature not in columns:
             raise ValidationError(f"实际 WOE 编码器没有拟合字段: {feature}")
@@ -1405,7 +1426,11 @@ class ScoreCard(ExtraParamsMixin, ModelWorkflowMixin, StandardScoreTransformer):
             table = tables.get(column)
             if table is None or table.empty or "分箱标签" not in table:
                 raise ValidationError(f"缺少字段 {column} 的分箱标签，无法验证实际编码器映射")
-            probe[column] = list(bin_labels) if column == feature else [table["分箱标签"].iloc[0]] * len(bin_labels)
+            if self._encoder_uses_bin_ids(column):
+                values = table["分箱"]
+            else:
+                values = bin_labels if column == feature else table["分箱标签"].to_numpy()
+            probe[column] = list(values) if column == feature else [next(iter(values))] * len(bin_labels)
         transformed = self.encoder.transform(pd.DataFrame(probe))
         if isinstance(transformed, pd.DataFrame):
             values = transformed[feature].to_numpy(dtype=float)

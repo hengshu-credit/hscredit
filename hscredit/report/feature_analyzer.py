@@ -3973,6 +3973,9 @@ def _auto_feature_analysis_impl(
                         target_col = primary_bin_target if primary_bin_target in level1_cols else next(name for name in level1_cols if name != "分箱详情")
                         plot_table = sample_table[["分箱详情", target_col]]
                         plot_table.columns = [c[-1] for c in plot_table.columns]
+                    elif "逾期标签" in sample_table.columns:
+                        # 长表保留全部标签，单标签图与 KS 和分布图共用首个标签。
+                        plot_table = sample_table.loc[sample_table["逾期标签"].eq(targets.names()[0])].copy()
                     else:
                         plot_table = sample_table.copy()
 

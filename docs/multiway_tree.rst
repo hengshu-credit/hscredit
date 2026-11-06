@@ -277,13 +277,6 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
 分裂参数继续使用已有构造参数，二叉树的其他 sklearn 参数通过关键字传入；
 ``DecisionTreeAnalyzer`` 也保留已有的 ``tree_params`` 字典入口。
 
-2026-10-30 验证：Python 3.11.5（仓库验收解释器
-``.audit_tmp/defect-repairs/runtime/Scripts/python.exe``）。树报告、数据集传参、规则筛选、
-ExcelWriter、二叉/多叉树及其可视化共覆盖 338 项用例；规则筛选模块补充后单独运行 79 项通过。
-真实数据对两种手工树执行节点分裂后，按训练集 LIFT 与样本占比筛选，再核对三个数据集的
-多标签订单/金额结果、日期与商品类别分组、Excel 合并范围及数值格式。业务 Notebook 已完整执行。
-筛选与分组用例可运行 ``python -m pytest tests/test_report/test_tree_rule_filter.py -q --tb=short``。
-
 报告与模型效果的输入输出
 ------------------------
 

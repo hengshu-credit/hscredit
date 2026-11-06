@@ -91,18 +91,6 @@ TabNet 使用官方 ``pytorch_tabnet.tab_network.TabNet`` 网络和注意力机�
 `TabPFN 权重与模型保存说明 <https://github.com/PriorLabs/TabPFN#-faq>`_、
 `TabNet 半监督预训练 <https://github.com/dreamquark-ai/tabnet#semi-supervised-pre-training>`_。
 
-初始能力核对使用仓库验收解释器 ``.audit_tmp/defect-repairs/runtime/Scripts/python.exe``
-（Python 3.11.5、PyTorch 2.5.1+cu124、TabPFN 2.0.9、TabM 0.0.3、rtdl 0.0.2）。
-2026-10-29 的 net 专项与 Notebook 结构检查共 88 项通过；真实数据 970 行按 776/194 划分，
-四种模型分别完成二分类与回归、可用表示提取和八个制品恢复，实际均能输出 embedding。
-TabPFN 使用明确指定的本地 v2 分类/回归预训练权重，未把其他版本视为已运行验证。
-
-全库首次执行为 7,058 通过、9 个未配置数据库服务的跳过，以及 6 个 Windows 子进程输出解码失败。
-这 6 个失败已复现为 GBK 读取 UTF-8 输出；采用仓库 CI 的 ``PYTHONUTF8=1`` 后，
-包含全部失败项的相关 23 项复核通过。格式、关键静态错误、基础设施类型检查、包构建和 Twine 校验通过，
-文档构建无警告。上述为初始能力核对的本地结果；随后新增的预训练、微调和续训接口验收
-见 :doc:`training_lifecycle`，远程结果须以最终提交对应的 CI 检查为准。
-
 .. rubric:: 共同接口
 
 .. list-table::
@@ -348,51 +336,3 @@ TabPFN 默认搜索 ``n_estimators``、``softmax_temperature`` 等推理参数�
 
 .. autoclass:: hscredit.core.models.losses.TorchLossAdapter
    :members:
-
-.. rubric:: TabNet 验收记录（2026-10-31）
-
-使用既有验收解释器 ``.audit_tmp/defect-repairs/runtime/Scripts/python.exe``，
-Python 3.11.5、PyTorch 2.5.1+cu124、pytorch-tabnet 4.1.0。
-在无验证留出的对照用例中，相同数据、配置和种子下，封装与直接调用官方 TabNetPretrainer
-的逐轮损失及编码器权重完全一致。
-专项覆盖二分类/回归、官方预训练与迁移、样本权重、类别字段、注意力重要性独立核算、
-原生损失公式、调参及配置快照、保存恢复；另实测 CUDA 预训练与推理。
-
-模型及相关报告/文档回归共 1,848 项通过。两个 Notebook 使用 970 行真实数据，
-完成预训练、特征筛选、模型对比、调参、预测和报告，重新打开并核验 6 份工作簿；
-其中包括 target 多标签、overdue+dpds 多标签以及回归报告。测试数量不代表覆盖率，
-少量训练轮数及单次数据划分不构成效果基准。
-
-.. rubric:: 验收记录（2026-10-27）
-
-解释器为仓库既有的 ``E:\workspace\hscredit\.audit_tmp\defect-repairs\runtime\Scripts\python.exe``，
-Python 3.11.5、PyTorch 2.5.1+cu124、rtdl-revisiting-models 0.0.2、TabPFN 2.0.9、
-TabM 0.0.3、rtdl-num-embeddings 0.0.12、Optuna 4.9.0、NumPy 2.4.6、Pandas 2.3.3、
-scikit-learn 1.6.1。只向该验收环境补装缺失依赖，未升级共享 Anaconda。
-
-* net 最终专项：``test_net_models.py`` 与 ``test_net_training_and_tuning.py`` 共 81 项通过。
-  覆盖三种 TabM 架构及数值表示、分类/回归、成员损失独立公式、损失梯度有限差分、
-  五种优化器、嵌套配置、早停与全量重训、回归折外预测、评估权重、保存续跑、旧模型恢复和依赖懒加载。
-  TabPFN 单测使用边界替身，真实权重由 Notebook 验证。
-* 相关回归：``tests/test_models/``、``tests/test_report/test_metric_audit_real_data.py``、
-  ``tests/test_utils/test_documentation_examples.py`` 回归阶段共 1,769 项通过；此后补充的架构参数化及
-  NumPy 整数配置边界包含在上述 81 项最终专项中。两组结果有重叠，不能相加作为覆盖率。
-  大范围回归有 469 条既有运行/弃用等警告。
-* 两份 Notebook 的 6 + 7 个代码单元格全部执行。真实数据 970 行，基础示例为 776 行训练
-  （神经网络内部再留出验证）、194 行独立测试；四种模型分别执行 FPD 二分类及放款金额回归，
-  核对预测、embedding、独立计算的误差及八个制品恢复。训练/调参示例还验证条件优化器搜索、
-  损失参数搜索、二折回归与外部验证、原生 TabPFN 参数搜索；后者使用真实 v2 权重及 float32 推理。
-* 19 个相关 Python 文件及两份 Notebook 代码通过 Python 3.9 AST 语法检查；实际运行只验证 Python 3.11.5。
-  Black 与 Flake8 检查通过；构建元数据确认 ``net`` 包含 tabm、tabpfn 等全部依赖。
-  Sphinx 构建成功，本次 net/训练/调参文档无警告或错误；其他页面仍有分箱 docstring 格式、缺失图像及未入目录等诊断。
-
-可复现的测试入口：
-
-.. code-block:: powershell
-
-   $netPython = 'E:\workspace\hscredit\.audit_tmp\defect-repairs\runtime\Scripts\python.exe'
-   & $netPython -m pytest tests/test_models/test_net_models.py tests/test_models/test_net_training_and_tuning.py -q --tb=short
-   & $netPython -m pytest tests/test_models/ tests/test_report/test_metric_audit_real_data.py tests/test_utils/test_documentation_examples.py -q --tb=short
-
-真实权重验收请使用上方 Notebook，并将内核设为具备这些依赖的解释器。验证数据、
-所选权重和少量演示训练轮数不构成模型效果基准或效果保证。

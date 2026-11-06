@@ -200,21 +200,3 @@ NGBoost 原生路径需先 load 为对象；其续训固定旧初始分布，并
 `TabNet 预训练参考 <https://github.com/dreamquark-ai/tabnet#semi-supervised-pre-training>`_。
 
 完整真实数据演示见 :download:`pretraining_and_continuation.ipynb <../../examples/pretraining_and_continuation.ipynb>`。
-
-本地验收记录（2026-10-29）
---------------------------
-
-解释器为 ``.audit_tmp/defect-repairs/runtime/Scripts/python.exe``（Python 3.11.5），
-设置 ``PYTHONUTF8=1`` 和 ``PYTHONIOENCODING=utf-8``。训练扩展、net/boost 参数契约、
-net 调参、公开方法文档及 Notebook 结构共 254 项定向检查通过。
-Black、关键 Flake8、基础设施 Mypy、Python 3.9 语法检查、环境检查和无警告 Sphinx 构建通过。
-
-真实数据 Notebook 读取 ``examples/hscredit_yyp.xlsx`` 的 970 行，按 620/156/194
-划分训练、验证、独立测试集。验证四种 net 的 X-only 参数更新、二分类/回归、embedding 和制品恢复，
-TabPFN 普通 fit 不改权重、微调实际改权重，以及四种 boost 从 5 轮追加至 10 轮。
-参数更新按可训练参数内容核对，不把运行统计量变化当作权重学习；此小轮数验收不作为效果基准。
-
-实际权重运行使用独立目录中的 TabPFN 9.2.0、官方本地 v2 分类/回归权重，
-PyTorch 2.5.1+cu124、TabM 0.0.3、XGBoost 2.0.2、LightGBM 4.1.0、CatBoost 1.2.10、NGBoost 0.5.11。
-未升级共享 Anaconda，也未将 v2 权重验证推广到所有后续权重版本。
-远程完整测试及版本矩阵结果以本次最终提交 SHA 的 CI 为准，不能用上述本地定向结果替代。

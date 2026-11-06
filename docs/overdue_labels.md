@@ -139,11 +139,3 @@ JSON 不执行 lambda 字符串；Python callable 通过 `object_ref` 在 `envir
 旧的 `target={"overdue": "MOB1", "dpds": [7, 30]}` 需拆成独立参数；删除同时指定的 `target`。
 将 `target_col`、`dpd` 关键字改为 `target`、`dpds`，省略的阈值改为显式 `dpds=0`。
 可执行示例见 `examples/29_target_inputs.ipynb`。
-
-## 验证记录（2026-10-27）
-
-使用仓库验收解释器 `.audit_tmp/defect-repairs/runtime/Scripts/python.exe`（Python 3.11.5），
-对报告、规则、绘图、技能和模型范围执行回归，排除 slow/integration：首轮 3,618 项通过，
-5 项子进程编码用例在统一 UTF-8 后复验通过，合计 3,623 项完成验证，无未解决失败。
-完整真实数据参数矩阵及 Notebook 均使用 `examples/hscredit_yyp.xlsx` 的 970 行数据。
-运行命令、版本、环境诊断与源码 SHA256 见 [验证记录](validation/overdue-target-2026-10-27.json)。

@@ -416,7 +416,7 @@ class _FullWidthBinMetricSummary(AnchoredOffsetbox):
             bbox_to_anchor=(0.0, 1.0),
             bbox_transform=ax.transAxes,
         )
-        self.patch.set_boxstyle("round,pad=0")
+        self.patch.set_boxstyle("square,pad=0")
         self.patch.set_facecolor("white")
         self.patch.set_edgecolor(color)
         self.patch.set_alpha(0.9)
@@ -786,7 +786,7 @@ def bin_plot(
         "color": line_color,
         "fontsize": 10,
         "fontweight": "semibold",
-        "bbox": dict(boxstyle="round,pad=0.18", facecolor="white", edgecolor=line_color, linewidth=0.6, alpha=0.92),
+        "bbox": dict(boxstyle="square,pad=0.18", facecolor="white", edgecolor=line_color, linewidth=0.6, alpha=0.92),
     }
 
     # 获取或创建 Axes
@@ -1006,7 +1006,7 @@ def bin_plot(
                 va="bottom",
                 fontsize=summary_fontsize,
                 color=axis_theme,
-                bbox=dict(boxstyle="round,pad=0.28", facecolor="white", edgecolor=axis_theme, alpha=0.9, linewidth=0.8),
+                bbox=dict(boxstyle="square,pad=0.28", facecolor="white", edgecolor=axis_theme, alpha=0.9, linewidth=0.8),
             )
             gap_pixels = 8.0 * fig.dpi / 72.0
             axes_left_pixels = ax_pos.x0 * fig.bbox.width
@@ -1070,7 +1070,7 @@ def bin_plot(
                     fontsize=summary_fontsize,
                     color=axis_theme,
                     bbox=dict(
-                        boxstyle="round,pad=0.28",
+                        boxstyle="square,pad=0.28",
                         facecolor="white",
                         edgecolor=axis_theme,
                         alpha=0.9,
@@ -1879,6 +1879,8 @@ def dataframe_plot(
 
     for col in data.select_dtypes("float"):
         data[col] = data[col].apply(lambda x: np.nan if pd.isnull(x) else round(x, 4))
+
+    data = data.astype(object).where(data.notna(), "")
 
     cols_width = [max(data[col].apply(lambda x: len(str(x).encode())).max(), len(str(col).encode())) / 8.0 for col in data.columns]
 
@@ -3820,7 +3822,7 @@ def _draw_2d_bin_boundaries(
             zorder=5,
             clip_on=True,
             bbox={
-                "boxstyle": "round,pad=0.12",
+                "boxstyle": "square,pad=0.12",
                 "facecolor": "#FFFFFF",
                 "edgecolor": "none",
                 "alpha": 1.0,

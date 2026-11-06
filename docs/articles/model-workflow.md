@@ -96,8 +96,7 @@ best.evaluate(X_test, y_test, metrics=[metric, get_metric("auc")])
 
 函数内也提供完整参数说明和示例，可在 IDE 中查看或调用 `help(ModelTuner)`、
 `help(model.model_report)`、`help(report.to_excel)`。新增的
-[完整链路 Notebook](../../examples/model_training_chain.ipynb) 使用真实数据从搜索运行到模型保存和 Excel 导出；
-[链路复核记录](model-chain-review-2026-10-23.md) 说明已修复断点与剩余能力边界。
+[完整链路 Notebook](../../examples/model_training_chain.ipynb) 使用真实数据从搜索运行到模型保存和 Excel 导出。
 
 ### 全模型适配范围
 

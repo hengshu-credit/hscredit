@@ -35,7 +35,10 @@ net 网络的自定义损失、优化器配置、条件搜索、回归指标及�
 
 ``visualization`` 动态提供当前 Optuna 版本的全部可视化函数；可使用
 ``dir(tuner.visualization)`` 查看，参数、绘图条件和返回值遵循原生接口。
-原有 ``tuner.plot_*`` 便捷接口继续保留。
+交互图使用 hscredit 的字体、配色和坐标轴样式。多目标搜索完成后，运行
+``tuner.plot_pareto_front().show()`` 即可查看帕累托前沿。蓝色为普通试验，红色为前沿试验，
+颜色深浅表示各组内的试验编号。悬停可查看该点的试验编号、目标值和超参数，
+缩放和三维旋转沿用 Plotly 交互。使用 ``figure.write_html(...)`` 可导出交互图。
 完整样例见 :doc:`../articles/model-workflow`。
 
 .. autoclass:: hscredit.core.models.tuning.tuning.ModelTuner

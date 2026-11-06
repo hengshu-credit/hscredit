@@ -12,6 +12,7 @@
     --hs-violet: #7b2fff;
     --hs-magenta: #ff00c8;
     /* —— 结构色 —— */
+    --hs-link: #c02dd4;
     --hs-blue: #3a4dff;          /* 正文链接：在白底上可读 */
     --hs-violet-deep: #6d28d9;   /* 行内代码 / 强调 */
     --hs-ink: #140e35;           /* 侧栏深靛蓝（顶）*/
@@ -327,15 +328,15 @@ samp,
 /* 正文链接 */
 .rst-content a,
 .wy-nav-content a {
-    color: var(--hs-blue);
+    color: var(--hs-link);
     text-decoration: none;
-    border-bottom: 1px solid rgba(58, 77, 255, 0.28);
+    border-bottom: 1px solid rgba(192, 45, 212, 0.28);
     transition: color 0.15s ease, border-color 0.15s ease;
 }
 .rst-content a:hover,
 .wy-nav-content a:hover {
-    color: var(--hs-violet);
-    border-bottom-color: var(--hs-magenta);
+    color: #c02dd4;
+    border-bottom-color: #c02dd4;
 }
 .rst-content a.headerlink { border-bottom: none; color: var(--hs-magenta); }
 
@@ -456,7 +457,6 @@ samp,
 /* ===========================================================================
    5) 文档数据表与特征摘要共用的配色
    =========================================================================== */
-.rst-content table.docutils td,
 :root {
     --hs-table-group: #efe8fb;
     --hs-table-heading: #f8f5fd;
@@ -466,6 +466,7 @@ samp,
     --hs-table-divider: #d8c8ee;
     --hs-table-text: #382d4b;
 }
+.rst-content table.docutils td,
 .rst-content table.docutils th {
     white-space: normal !important;
     vertical-align: top;

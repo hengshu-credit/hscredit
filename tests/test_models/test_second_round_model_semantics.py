@@ -380,3 +380,39 @@ def test_v2_rule_artifact_cannot_silently_downgrade_to_display_labels():
     payload["__meta__"].pop("rule_records")
     with pytest.raises(ValueError, match="完整结构化规则"):
         ScoreCard().load_rules(payload)
+
+
+@pytest.mark.parametrize("representation", ["bins", "indices", "mixed"])
+def test_scorecard_exported_woe_and_points_reproduce_native_lr(representation):
+    """编号和区间标签拟合的编码器都应还原每箱 WOE 与逐笔总分。"""
+    rng = np.random.RandomState(83)
+    X = pd.DataFrame({"查询次数": rng.normal(size=180), "账户余额": rng.normal(size=180)})
+    y = (X["查询次数"] + 0.3 * X["账户余额"] + rng.normal(size=len(X)) > 0).astype(int)
+    binner = OptimalBinning(method="quantile", max_n_bins=4, n_jobs=1).fit(X, y)
+
+    def encode_input(frame):
+        labels = binner.transform(frame, metric="bins")
+        ids = binner.transform(frame, metric="indices")
+        for col in frame:
+            if representation == "indices" or (representation == "mixed" and col == "查询次数"):
+                labels[col] = ids[col]
+        return labels
+
+    encoder = WOEEncoder(regularization=1, n_jobs=1).fit(encode_input(X), y)
+    lr = LogisticRegression(calculate_stats=False, positive_woe_coef=False).fit(encoder.transform(encode_input(X)), y)
+    card = ScoreCard(binner=binner, encoder=encoder, lr_model=lr).fit(X, y, input_type="raw")
+    sample = pd.DataFrame({"查询次数": [-2, -0.5, 0.5, 2], "账户余额": [1, -1, 2, 0]})
+    expected = encoder.transform(encode_input(sample))
+    np.testing.assert_allclose(card.predict_proba(sample, input_type="raw"), lr.predict_proba(expected))
+    points = card.scorecard_points(decimal=8)
+    total = np.full(len(sample), points.iloc[0]["对应分数"])
+    ids = binner.transform(sample, metric="indices")
+    for col in sample:
+        rows = points[points["变量名称"] == col].reset_index(drop=True)
+        stats = binner.bin_tables_[col].reset_index(drop=True)
+        expected_woe = np.log(((stats["坏样本数"] + 1) / (y.sum() + 2)) / ((stats["好样本数"] + 1) / ((1 - y).sum() + 2))).clip(-5, 5)
+        np.testing.assert_allclose(rows["WOE值"], expected_woe, atol=0.000051)
+        contribution = dict(zip(stats["分箱"], rows["对应分数"]))
+        total += ids[col].map(contribution).to_numpy()
+    assert total.max() > total.min()
+    np.testing.assert_allclose(card.predict(sample, input_type="raw"), total, atol=0.0051)

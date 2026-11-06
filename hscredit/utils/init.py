@@ -88,6 +88,7 @@ def init_setting(font_path=None, seed=None, freeze_torch=False, logger=False, su
     plt.rcParams["font.family"] = resolved_font_name
 
     plt.rcParams["axes.unicode_minus"] = False
+    plt.rcParams["legend.fancybox"] = False
 
     if seed is not None:
         from .random import seed_everything

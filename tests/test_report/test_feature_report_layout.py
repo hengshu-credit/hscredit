@@ -85,6 +85,25 @@ def _conditional_format_colors(ws):
     return colors
 
 
+def test_long_format_bin_chart_counts_each_order_once(monkeypatch, tmp_path):
+    data = pd.DataFrame({"score": range(60), "mob": [0, 10, 45] * 20, "amount": [100, 200, 300] * 20})
+    writer = ExcelWriter(system="windows")
+    writer.insert_pic2sheet = types.MethodType(_mock_insert_pic2sheet, writer)
+    plotted = []
+    monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda table, **kwargs: plotted.append(table))
+    auto_feature_analysis(
+        data, features=["score"], overdue=["mob"], dpds=[0, 30], amount="amount",
+        bin_params={"method": "quantile", "max_n_bins": 3, "long_format": True},
+        excel_writer=writer, output_dir=str(tmp_path), pictures=["bin"], n_jobs=1,
+    )
+    chart, = plotted
+    assert chart["样本总数"].sum() == len(data)
+    assert chart["坏样本数"].sum() == (data["mob"] > 0).sum()
+    sheet = writer.get_sheet_by_name("分析报告")
+    labels = [cell.value for cell in sheet["D"] if cell.value in {"mob_0+", "mob_30+"}]
+    assert set(labels) == {"mob_0+", "mob_30+"}
+
+
 def test_auto_feature_analysis_reports_progress_before_current_feature_finishes(monkeypatch, tmp_path):
     """字段任务仍在执行时，进度条就必须实时展示当前字段。"""
     started = threading.Event()

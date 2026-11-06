@@ -29,13 +29,13 @@
 <tbody>
 <tr>
 <td width="50%" valign="top" style="border:0; padding:8px;">
-  <strong>策略上线报告</strong> · <a href="docs/assets/readme/showcase/swap-out.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
+  <strong>策略上线报告</strong> · <a href="docs/assets/readme/showcase/intro-strategy.png" style="color:#c02dd4;">查看全图</a> · <a href="docs/assets/readme/showcase/swap-out.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
   逐条回测候选规则，对照策略调整前后的通过率和坏样本率，判断多拦住一批坏样本要牺牲多少通过量。
   <p style="min-height:3em;"><code style="word-break:keep-all;">swap_out_report(df, rules, date="授信时间", save="策略.xlsx", **labels)</code></p>
   <div style="height:320px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-strategy.png"><img src="docs/assets/readme/showcase/intro-strategy.png" alt="策略迭代，从规则定义到最后一条规则的稳定性明细" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
 </td>
 <td width="50%" valign="top" style="border:0; padding:8px;">
-  <strong>模型上线报告</strong> · <a href="docs/assets/readme/showcase/auto-model-report.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
+  <strong>模型上线报告</strong> · <a href="docs/assets/readme/showcase/intro-model.png" style="color:#c02dd4;">查看全图</a> · <a href="docs/assets/readme/showcase/auto-model-report.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
   并排比较训练集和测试集的 KS、AUC，再看风险最高的前 1%、5% 客群的坏样本率和 Lift，检验模型的区分能力。
   <p style="min-height:3em;"><code style="word-break:keep-all;">auto_model_report(model, datasets, features=features, amount="loan_amt", excel_path="模型.xlsx", **labels)</code></p>
   <div style="height:320px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-model.png"><img src="docs/assets/readme/showcase/intro-model.png" alt="模型性能，从多标签评估、TOP n% 到训练集订单与金额分箱合计" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
@@ -43,13 +43,13 @@
 </tr>
 <tr>
 <td width="50%" valign="top" style="border:0; padding:8px;">
-  <strong>规则挖掘报告</strong> · <a href="docs/assets/readme/showcase/multiway-tree-report.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
+  <strong>规则挖掘报告</strong> · <a href="docs/assets/readme/showcase/intro-rules.png" style="color:#c02dd4;">查看全图</a> · <a href="docs/assets/readme/showcase/multiway-tree-report.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
   把训练好的多叉树转成规则清单，按节点对照命中率、坏样本率和 Lift，找出既能覆盖足够样本、又能识别高风险的条件组合。
   <p style="min-height:3em;"><code style="word-break:keep-all;">multiway_tree.report(datasets, amount="loan_amt", group="GROUP", save="规则.xlsx", **labels)</code></p>
   <div style="height:320px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-rules.png"><img src="docs/assets/readme/showcase/intro-rules.png" alt="组合策略汇总，从基本信息到训练集策略详情及节点效果" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
 </td>
 <td width="50%" valign="top" style="border:0; padding:8px;">
-  <strong>三方数据分析报告</strong> · <a href="docs/assets/readme/showcase/feature-analysis.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
+  <strong>三方数据分析报告</strong> · <a href="docs/assets/readme/showcase/intro-features.png" style="color:#c02dd4;">查看全图</a> · <a href="docs/assets/readme/showcase/feature-analysis.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel</a><br>
   用缺失率看字段覆盖，用 IV、KS 和分箱坏样本率比较长短期风险的区分度，筛出值得接入的三方变量。
   <p style="min-height:3em;"><code style="word-break:keep-all;">auto_feature_analysis(df, features, amount="loan_amt", bin_params={"long_format": True}, excel_writer="三方数据.xlsx", **labels)</code></p>
   <div style="height:320px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-features.png"><img src="docs/assets/readme/showcase/intro-features.png" alt="特征分析，从样本概况到第一个特征的多标签订单与金额长表" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
@@ -385,8 +385,10 @@ bin_trend_plot(
 <a href="docs/assets/readme/showcase/binning-multi-plot.png"><img src="docs/assets/readme/showcase/binning-multi-plot.png" alt="MOB1 与 MOB6 多标签分箱图" width="100%" style="display:block; height:auto;"></a></td>
 </tr>
 <tr>
-<td colspan="2" valign="top"><strong>按授信月份的分箱趋势</strong><br>
+<td width="50%" valign="top"><strong>按授信月份的分箱趋势</strong><br>
 <a href="docs/assets/readme/showcase/binning-trend.png"><img src="docs/assets/readme/showcase/binning-trend.png" alt="按授信月份的分箱趋势" width="100%" style="display:block; height:auto;"></a></td>
+<td width="50%" valign="top"><strong>按客群的分箱趋势</strong><br>
+<a href="docs/assets/readme/showcase/binning-cohort-plot.png"><img src="docs/assets/readme/showcase/binning-cohort-plot.png" alt="按客群的分箱趋势" width="100%" style="display:block; height:auto;"></a></td>
 </tr>
 </table>
 
@@ -456,20 +458,17 @@ pipeline.transform(X_test).show()
 <table>
 <tr>
 <td width="1%" nowrap align="right" valign="top"><strong>TargetEncoder</strong><br>
-<a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="目标编码" width="76"></a></td>
+<a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="目标编码" width="72"></a></td>
 <td valign="top"><strong>WOEEncoder</strong><br>
 <a href="docs/assets/readme/showcase/encoder-woe.png"><img src="docs/assets/readme/showcase/encoder-woe.png" alt="WOE 编码" width="801"></a></td>
 </tr>
 <tr>
 <td width="1%" nowrap align="right" valign="top"><strong>CatBoostEncoder</strong><br>
-<a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="CatBoost 编码" width="76"></a></td>
+<a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="CatBoost 编码" width="72"></a></td>
 <td valign="top"><strong>Pipeline</strong><br>
 <a href="docs/assets/readme/showcase/encoder-pipeline.png"><img src="docs/assets/readme/showcase/encoder-pipeline.png" alt="Pipeline 分箱与 WOE 编码" width="801"></a></td>
 </tr>
-</table></td>
-</tr>
 </table>
-</div>
 
 ### 特征筛选
 
@@ -920,7 +919,13 @@ swap_out_report(
 
 <div style="max-width:100%; max-height:640px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-strategy.png"><img src="docs/assets/readme/showcase/intro-strategy.png" alt="策略迭代，从规则定义到最后一条规则的稳定性明细" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
 
-<a href="docs/assets/readme/showcase/swap-out.xlsx?raw=true" download style="color:#c02dd4;">下载按月策略报告</a>
+<table role="presentation" style="display:block; width:max-content; max-width:100%; overflow-x:auto; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
+<table role="presentation" style="display:table; width:max-content; max-width:none; border:0; border-collapse:collapse;"><tr><td style="padding:0; border:0;">
+<img src="docs/assets/readme/showcase/swap-cohort-excel.png" alt="客群规则稳定性分析" style="display:block; width:auto; height:auto; max-width:none;">
+</td></tr></table>
+</td></tr></table>
+
+<a href="docs/assets/readme/showcase/swap-out.xlsx?raw=true" download style="color:#c02dd4;">下载按月策略报告</a> · <a href="docs/assets/readme/showcase/swap-out-cohort.xlsx?raw=true" download style="color:#c02dd4;">下载客群策略报告</a>
 
 **二叉树与多叉树挖掘。** 根节点自动学习，非根节点按业务条件手工拆分；同一套规则在训练、测试集及多个标签上评估。
 
@@ -978,6 +983,10 @@ for name, tree in [("二叉树", binary_tree), ("多叉树", multiway_tree)]:
 <a href="docs/assets/readme/showcase/multiway-tree-report-test-excel.png"><img src="docs/assets/readme/showcase/multiway-tree-report-test-excel.png" alt="多叉树测试集节点效果" width="100%"></a></td>
 </tr>
 </table>
+
+**多叉树组合策略汇总** · 按授信月份和客群比较样本分布，再对照订单与金额两种口径下的节点命中效果。
+
+<div style="max-width:100%; max-height:640px; overflow:auto;"><a href="docs/assets/readme/showcase/intro-rules.png"><img src="docs/assets/readme/showcase/intro-rules.png" alt="组合策略汇总，从基本信息到策略详情的最后一个节点" style="display:block; width:auto; height:auto; max-width:none;"></a></div>
 
 <a href="docs/assets/readme/showcase/binary-tree-report.xlsx?raw=true" download style="color:#c02dd4;">下载二叉树报告</a> · <a href="docs/assets/readme/showcase/multiway-tree-report.xlsx?raw=true" download style="color:#c02dd4;">下载多叉树报告</a>
 

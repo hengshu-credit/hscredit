@@ -131,13 +131,6 @@ hscredit 文档
 
    智能技能 <skills>
 
-.. toctree::
-   :maxdepth: 1
-   :caption: 项目
-
-   版本规划 <ROADMAP>
-   项目记录 <project_notes>
-
 索引与检索
 ----------
 

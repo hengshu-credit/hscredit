@@ -1,5 +1,4 @@
 include README.md
-include README-PYPI.md
 include LICENSE
 include pyproject.toml
 include setup.py
@@ -7,8 +6,8 @@ include requirements.txt
 include pytest.ini
 include Makefile
 
-recursive-include hscredit/resources/datasets *.parquet *.md *.svg
 recursive-include hscredit *.py *.xlsx *.csv *.ttf py.typed
+recursive-include hscredit/resources/datasets *.parquet *.md *.svg
 recursive-include docs *.md
 recursive-include examples *.ipynb
 recursive-include scripts *.py

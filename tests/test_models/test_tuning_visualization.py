@@ -12,6 +12,7 @@ import pytest
 from sklearn.datasets import make_classification
 
 from hscredit.core.models import LogisticRegression, ModelTuner, RandomForest
+from hscredit.core.viz.style import get_palette
 
 optuna = pytest.importorskip("optuna")
 pytest.importorskip("plotly")
@@ -99,6 +100,8 @@ def test_single_objective_native_plots_render_from_training_history(tuner, backe
     result = getattr(namespace, name)(**kwargs)
     if backend == "plotly":
         assert result.to_plotly_json()["data"]
+        assert list(result.layout.colorway) == get_palette("extended")
+        assert result.layout.font.family.startswith(matplotlib.rcParams["font.family"][0])
     else:
         assert np.asarray(result, dtype=object).size > 0
 
@@ -111,6 +114,53 @@ def test_pareto_hypervolume_and_callable_target_preserve_native_semantics(multi_
     if hasattr(namespace, "plot_hypervolume_history"):
         # reference_point 是 study 之后的原生位置参数，不应被当作 Study。
         assert namespace.plot_hypervolume_history([0.0, 0.0]) is not None
+
+
+@pytest.mark.parametrize("dimensions", [2, 3])
+@pytest.mark.parametrize("include_dominated", [True, False])
+def test_pareto_style_preserves_trial_groups_coordinates_and_hover(dimensions, include_dominated):
+    study = optuna.create_study(directions=["maximize"] * dimensions)
+    for number, values in enumerate([(0, 0, 0), (1, 2, 1), (2, 1, 2), (3, 3, 3)]):
+        study.add_trial(optuna.trial.create_trial(
+            values=values[:dimensions], params={"深度": number + 1},
+            distributions={"深度": optuna.distributions.IntDistribution(1, 4)},
+            user_attrs={"各折指标": [0.7, 0.8]},
+            system_attrs={"constraints": [1.0 if number == 3 else 0.0]},
+        ))
+    tuner = ModelTuner(RandomForest, study=study, metric=["auc", "ks", "ks_diff"][:dimensions])
+    names = ["区分能力", "风险区分度", "稳定性"][:dimensions]
+    kwargs = dict(target_names=names, include_dominated_trials=include_dominated)
+    native = optuna.visualization.plot_pareto_front(study, **kwargs)
+    for plot in (tuner.plot_pareto_front, tuner.visualization.plot_pareto_front):
+        fig = plot(**kwargs)
+        axes = fig.layout.scene if dimensions == 3 else fig.layout
+        assert [axes[key].title.text for key in ("xaxis", "yaxis", "zaxis")[:dimensions]] == names
+        assert axes.xaxis.linecolor == get_palette()[0]
+        assert len(fig.data) == len(native.data)
+        for trace, original in zip(fig.data, native.data):
+            assert trace.type == original.type
+            assert trace.x == original.x and trace.y == original.y
+            if dimensions == 3:
+                assert trace.z == original.z
+            assert trace.text == original.text and trace.hovertemplate == original.hovertemplate
+            if isinstance(original.marker.color, str):
+                assert trace.marker.color == get_palette("semantic")["neutral"]
+            else:
+                assert trace.marker.color == original.marker.color
+        assert [color for _, color in fig.data[-1].marker.colorscale] == get_palette("red")
+        assert fig.data[-1].marker.colorbar.dtick >= 1
+
+
+def test_matplotlib_pareto_uses_theme_without_changing_global_style(multi_tuner):
+    from matplotlib.colors import to_hex
+
+    with matplotlib.rc_context({"axes.facecolor": "ivory"}):
+        ax = multi_tuner.visualization.matplotlib.plot_pareto_front()
+        assert matplotlib.rcParams["axes.facecolor"] == "ivory"
+    assert to_hex(ax.spines["left"].get_edgecolor()) == get_palette()[0].lower()
+    assert ax.get_title() == "多目标优化 · 帕累托前沿"
+    best = next(points for points in ax.collections if points.get_label() == "前沿试验")
+    assert to_hex(best.get_facecolor()[0]) == get_palette()[1].lower()
 
 
 @pytest.mark.parametrize("backend", ["plotly", "matplotlib"])

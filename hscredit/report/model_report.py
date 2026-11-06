@@ -2680,8 +2680,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
     ) -> pd.DataFrame:
         """多标签合并模式的 LIFT 表。
 
-        行: TOP 1% / TOP 3% / TOP 5% / TOP 10% / TOTAL
-        列: (数据集, 标签, 指标) 三层 MultiIndex
+        行索引为（数据集，统计项），列索引为（统计指标，尾部分档）。
+        每个逾期标签下包含各 TOP 分档及 TOTAL。
         """
         if labels is None:
             labels = self._label_names
@@ -2697,10 +2697,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             )
             per_label[lbl] = sub.set_index(["数据集", "统计项"])
 
-        result_df = pd.concat(per_label, axis=1)
-        result_df.columns = pd.MultiIndex.from_tuples(list(result_df.columns), names=["标签", "统计指标"])
-        result_df.index = result_df.index.set_names(["数据集", "统计项"])
-        return result_df
+        return pd.concat(per_label, axis=1, names=["统计指标", "尾部分档"])
 
     def _get_features_summary(self) -> pd.DataFrame:
         """使用 pd.DataFrame.summary() 获取入模变量综合统计."""
@@ -4048,15 +4045,15 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 overall_bad_rate = overall_bad / overall_n * 100
                 overall_desc = f"样本数: {overall_n}, " f"{label_text}: {round(overall_bad_rate, 2)}%"
         else:
-            overall_desc = "N/A"
+            overall_desc = ""
 
         # ---- Step 3: 固定描述行 ----
-        data_source_str = data_source if data_source else "N/A"
+        data_source_str = data_source if data_source else ""
         fixed_rows: List[Dict[str, Any]] = [
-            {"统计项": "样本区间", "统计内容": sample_interval or "N/A"},
+            {"统计项": "样本区间", "统计内容": sample_interval or ""},
             {"统计项": "整体样本", "统计内容": overall_desc},
-            {"统计项": "模型名称", "统计内容": model_name or "N/A"},
-            {"统计项": "取样逻辑", "统计内容": project_desc or "N/A"},
+            {"统计项": "模型名称", "统计内容": model_name or ""},
+            {"统计项": "取样逻辑", "统计内容": project_desc or ""},
             {"统计项": "数据源", "统计内容": data_source_str},
         ]
         # ---- Step 4: 各数据集描述行（与整体样本同一张表，多标签逐标签展示坏样本率） ----
@@ -4339,13 +4336,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     index=True,
                 )
                 end_row = max(end_row1, end_row2)
-                writer.insert_value2sheet(ws, (table_start + 2, 2), value="统计指标", style="header_left")
-                writer.insert_value2sheet(
-                    ws,
-                    (table_start + 2, end_col1 + 1),
-                    value="统计指标",
-                    style="header_left",
-                )
                 from openpyxl.utils import get_column_letter
 
                 # 金额口径表起始列为 end_col1 + 1，占据 索引层级 + 数据列 共 nlevels+ncols
@@ -4370,13 +4360,12 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     percent_cols=list(lift_table.columns),
                     index=True,
                 )
-                writer.insert_value2sheet(ws, (table_start, 2), value="统计指标", style="header_middle")
                 from openpyxl.utils import get_column_letter
 
                 filter_end_col = 2 + lift_table.index.nlevels + len(lift_table.columns) - 1
                 writer.add_auto_filter(
                     ws,
-                    f"B{table_start + lift_table.columns.nlevels}:" f"{get_column_letter(filter_end_col)}{end_row - 1}",
+                    f"B{table_start + lift_table.columns.nlevels - 1}:" f"{get_column_letter(filter_end_col)}{end_row - 1}",
                 )
             section_idx += 1
         elif amount:

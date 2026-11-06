@@ -14,7 +14,6 @@ from openpyxl.utils import column_index_from_string, get_column_letter
 
 from hscredit.excel import ExcelWriter, dataframe2excel, register_pivot_aggregation
 from hscredit.utils import fonts
-import hscredit.excel.writer as writer_module
 
 
 def _conditional_format_colors(worksheet):
@@ -615,23 +614,28 @@ class TestExcelWriter:
         assert "Sheet1" in loaded_wb.sheetnames
         assert "Sheet2" in loaded_wb.sheetnames
 
-    def test_insert_picture_row_span_uses_ceil(self, monkeypatch):
-        """测试图片占用行数使用向上取整，避免覆盖下方内容"""
+    @pytest.mark.parametrize("source_size, expected_size", [((1200, 300), (600, 150)), ((200, 400), (125, 250)), ((300, 300), (250, 250))])
+    def test_insert_picture_preserves_ratio_and_reserves_rows(self, tmp_path, source_size, expected_size):
+        """横图、竖图和方图按同一比例缩放，并为后续内容预留行数。"""
+        from PIL import Image
+        from openpyxl.utils.units import pixels_to_EMU
 
-        class DummyImage:
-            def __init__(self, _fig):
-                self.width = None
-                self.height = None
-
-        monkeypatch.setattr(writer_module, "Image", DummyImage)
+        picture = tmp_path / "图.png"
+        Image.new("RGB", source_size).save(picture)
 
         writer = ExcelWriter(system="windows")
         ws = writer.get_sheet_by_name("Test")
 
-        end_row, end_col = writer.insert_pic2sheet(ws, "dummy.png", "B2", figsize=(600, 250))
+        end_row, end_col = writer.insert_pic2sheet(ws, str(picture), "B2", figsize=(600, 250))
 
         assert end_row == 18
         assert end_col == 10
+        output = tmp_path / "报告.xlsx"
+        writer.save(str(output))
+        workbook = load_workbook(output)
+        ext = workbook["Test"]._images[0].anchor.ext
+        assert (ext.cx, ext.cy) == tuple(map(pixels_to_EMU, expected_size))
+        workbook.close()
 
 
 class TestExcelChart:
@@ -1916,3 +1920,32 @@ class TestPivotTable:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_native_pivot_uses_field_captions_and_hierarchical_merging(tmp_path):
+    import xml.etree.ElementTree as ET
+    import zipfile
+    from hscredit.excel import ExcelWriter
+
+    data = pd.DataFrame({"所属行业": ["制造业", "制造业", "零售业"], "授信月份": ["2025-01", "2025-02", "2025-01"], "金额": [10, 20, 30]})
+    writer = ExcelWriter()
+    writer.insert_pivot_table2sheet(
+        worksheet="透视表",
+        data=data,
+        pivot_anchor="B2",
+        rows="所属行业",
+        columns="授信月份",
+        values=[{"field": "金额", "agg": "sum", "name": "金额合计"}, {"field": "金额", "agg": "sum", "show_as": "全局占比", "name": "金额占比"}],
+    )
+    path = tmp_path / "透视表.xlsx"
+    writer.save(str(path))
+    with zipfile.ZipFile(path) as archive:
+        tree = ET.fromstring(archive.read("xl/pivotTables/pivotTable1.xml"))
+    assert tree.attrib["rowHeaderCaption"] == "所属行业"
+    assert tree.attrib["colHeaderCaption"] == "授信月份"
+    assert tree.attrib["mergeItem"] == "1"
+    assert tree.attrib["compact"] == "0" and tree.attrib["outline"] == "0"
+    fields = tree.find("{*}pivotFields")
+    for field in fields:
+        if field.attrib.get("axis") in {"axisRow", "axisCol"}:
+            assert field.attrib["compact"] == "0" and field.attrib["outline"] == "0"

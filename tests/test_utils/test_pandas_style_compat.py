@@ -117,7 +117,7 @@ def test_style_rule_table_renders_colors_formats_and_missing_values():
     assert "#e8f5e9" in html and "#fff8e1" in html
     assert "20.00%" in html and "1.25" in html
     assert ">分箱<" not in html
-    assert ">-<" in html
+    assert "></td>" in html
 
 
 @pytest.mark.parametrize("multi_level", [False, True])
@@ -147,7 +147,7 @@ def test_dataframe_show_renders_complex_values_without_changing_data(monkeypatch
     assert "[0.1, 0.2]" in html and "[1. 2.]" in html
     assert "切分点" in html and "25.00%" in html
     assert "&lt;b&gt;原样文本&lt;/b&gt;" in html and "<b>原样文本</b>" not in html
-    assert ">-<" in html
+    assert "></td>" in html
     assert "linear-gradient" not in html
     output = tmp_path / "复杂类型.html"
     assert result.export_html(str(output)) is result
@@ -170,7 +170,7 @@ def test_show_keeps_numeric_bars_formats_and_precision(multi_level):
     html = style_bin_table(table, precision={"坏样本率": 3}).to_html()
     assert "12.500%" in html and "12.34%" in html
     assert ">1.25<" in html and "125.00%" not in html
-    assert ">10<" in html and ">-<" in html
+    assert ">10<" in html and "></td>" in html
     assert "linear-gradient" in html
     plain = style_bin_table(table, percent_format=False, highlight_bad_rate=False, highlight_lift=False, highlight_ks=False).to_html()
     assert "linear-gradient" not in plain
@@ -179,15 +179,51 @@ def test_show_keeps_numeric_bars_formats_and_precision(multi_level):
 @pytest.mark.parametrize("styler_factory", [style_bin_table, style_rule_table])
 @pytest.mark.parametrize("multi_level", [False, True])
 def test_table_header_stripes_and_hover(styler_factory, multi_level):
+    from hscredit.excel import ExcelWriter
+
     table = pd.DataFrame({"指标含义": ["低分", "高分"], "样本总数": [10, 20]})
     if multi_level:
         table.columns = pd.MultiIndex.from_product([["结果"], table.columns])
     html = styler_factory(table).to_html()
     assert "thead th" in html and "#2639E9" in html and "#ffffff" in html
     assert "tbody tr:nth-child(odd)" in html
-    assert "tbody tr:nth-child(even)" in html and "#f8f9ff" in html
+    assert "tbody tr:nth-child(even)" in html and ExcelWriter.calculate_rgba_color("2639E9", 0.85).lower() in html.lower()
     assert "tbody tr:hover" in html and "#e8eaff" in html
     assert "tbody tr:hover td" in html and "tbody tr:hover th" in html
+
+
+@pytest.mark.parametrize("styler_factory", [style_bin_table, style_rule_table])
+@pytest.mark.parametrize(
+    "row_index, visible",
+    [
+        (pd.RangeIndex(2), False),
+        (pd.Index([3, 17]), False),
+        (pd.Index([3, 17], name="订单编号"), True),
+        (pd.Index(["MOB1@30", "MOB6@30"], name="逾期指标"), True),
+        (pd.Index(["低风险", "高风险"]), True),
+        (pd.date_range("2025-01-01", periods=2), True),
+        (pd.MultiIndex.from_tuples([("训练集", "MOB1"), ("测试集", "MOB6")]), True),
+    ],
+)
+def test_table_hides_row_numbers_but_retains_business_index(styler_factory, row_index, visible):
+    table = pd.DataFrame({"样本总数": [123, 456]}, index=row_index)
+    original = table.copy(deep=True)
+    html = styler_factory(table).to_html()
+    assert ('class="row_heading' in html) is visible
+    assert ">123<" in html and ">456<" in html
+    assert 'class="row_heading' in styler_factory(table, index=True).to_html()
+    assert 'class="row_heading' not in styler_factory(table, index=False).to_html()
+    pd.testing.assert_frame_equal(table, original)
+
+
+def test_show_can_explicitly_keep_or_hide_index(monkeypatch):
+    rendered = []
+    monkeypatch.setattr("IPython.display.display", lambda obj: rendered.append(obj.to_html()))
+    table = pd.DataFrame({"样本总数": [10]}, index=pd.Index([42], name="订单编号"))
+    table.show(index=False)
+    table.show(index=True)
+    assert 'class="row_heading' not in rendered[0]
+    assert 'class="row_heading' in rendered[1] and ">42<" in rendered[1]
 
 
 def test_show_explicit_columns_override_automatic_formats_and_flags(monkeypatch):
@@ -278,7 +314,7 @@ def test_show_condition_color_forms(value):
 def test_show_color_blocks_preserve_missing_and_constant_columns():
     table = pd.DataFrame({"常量": [1.0, 1.0, np.nan], "缺失": [np.nan] * 3})
     styler = style_bin_table(table, color_cols=["常量", "缺失"], condition_color="123456")
-    assert ">-<" in styler.to_html()
+    assert "></td>" in styler.to_html()
     styles = styler._compute().ctx
     assert dict(styles[0, 0])["background-color"] == dict(styles[1, 0])["background-color"]
     assert "background-color" not in dict(styles[2, 0])
@@ -304,3 +340,18 @@ def test_show_two_color_scale_and_default_color_fallback():
 def test_show_invalid_colors_report_chinese_error(kwargs):
     with pytest.raises(ValueError, match="六位十六进制"):
         style_bin_table(pd.DataFrame({"得分": [0.0, 1.0]}), **kwargs).to_html()
+
+
+def test_show_report_index_corner_and_percentage_units():
+    columns = pd.MultiIndex.from_tuples([("样本数", "测试集"), ("坏样本率", "测试集")], names=["统计指标", "数据集"])
+    table = pd.DataFrame([[120, 0.0824]], columns=columns, index=pd.Index(["MOB6@30"], name="逾期指标"))
+    html = style_bin_table(table).to_html()
+    header = html.split("<thead>")[1].split("</thead>")[0]
+    assert header.count("<tr>") == 2 and "逾期指标" in header and "数据集" not in header
+    assert ">120<" in html and ">8.24%<" in html
+    assert table.columns.names == ["统计指标", "数据集"]
+    swap = pd.DataFrame({"坏样本率": ["0.0824"], "风险改善": ["0.2080"], "风险拒绝比": ["0.3371"], "坏账率变化(绝对)": ["-0.0216"], "原通过率": ["100.00%"], "LIFT": ["0.7920"]})
+    result = style_bin_table(swap).to_html()
+    for value in ["8.24%", "20.80%", "33.71%", "-2.16%", "100.00%", "0.7920"]:
+        assert f">{value}<" in result
+    assert swap.iloc[0, 0] == "0.0824"

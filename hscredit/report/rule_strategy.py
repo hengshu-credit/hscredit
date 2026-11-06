@@ -894,6 +894,8 @@ _SWAP_PERCENT_NAMES = [
     "通过率",
     "逾期改善",
     "坏账改善",
+    "风险改善",
+    "风险拒绝比",
     "LIFT值",
     "拒绝LIFT",
     "LIFT指标",
@@ -913,20 +915,20 @@ _CF_OVERVIEW_SCALE = ["坏样本率"]  # 样本情况：坏样本率 → 色阶
 
 # 数据条按指标着色：同一张表内并排的各指标使用不同色相，便于区分，避免满屏同色
 _CF_BAR_COLORS = {
-    "样本占比": "63C384",  # 绿 —— 规模/通过占比
-    "金额占比": "4BACC6",  # 青 —— 金额规模
+    "样本占比": "F7A09E",
+    "金额占比": "FE9A52",
     "坏样本率": "F4796B",  # 红 —— 风险
-    "坏账改善": "8E7CC3",  # 紫 —— 坏账改善
+    "坏账改善": "FE7715",
     "LIFT值": "F76E6C",  # 红 —— 区分度
     "拒绝LIFT": "F76E6C",  # 红 —— 拒绝区分度
     "LIFT指标": "F76E6C",  # 红 —— 稳定性区分度
-    "分档KS值": "5B9BD5",  # 蓝 —— 分档 KS
-    "风险拒绝比": "6E8FC7",  # 靛 —— 拒绝效率
+    "分档KS值": "FE7715",
+    "风险拒绝比": "F76E6C",
 }
-_CF_BAR_DEFAULT_COLOR = "638EC6"
-# 色阶：绿-黄-红三色（min→percentile50→max）
-_CF_SCALE_COLORS = ("63BE7B", "FFEB84", "F8696B")
-_CF_SCALE_COLORS_BY_NAME = {"分档KS值": ("FFFFFF", "63BE7B")}
+_CF_BAR_DEFAULT_COLOR = "F76E6C"
+# 暖色副主题色阶，浅色到深色表示指标强度。
+_CF_SCALE_COLORS = ("FFFFFF", "FFD8C6", "F76E6C")
+_CF_SCALE_COLORS_BY_NAME = {"分档KS值": ("FFFFFF", "FE7715")}
 _SWAP_TITLE_COLOR = "FE7715"
 _SWAP_FIXED_COLUMN_WIDTH = 11
 

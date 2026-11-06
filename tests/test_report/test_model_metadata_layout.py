@@ -83,3 +83,41 @@ def test_categorical_model_report_plots_only_numeric_correlations(tmp_path, work
     assert result.complete
     assert (tmp_path / "类别输入_assets/feature_corr.png").is_file()
     assert set(report.get_features_corr()) == {"甲", "乙"}
+
+
+@pytest.mark.parametrize("amount", [None, "金额"])
+def test_top_percent_filter_targets_last_header_and_preserves_corner_border(tmp_path, amount):
+    from openpyxl.utils.cell import range_boundaries
+
+    data = pd.DataFrame(
+        {
+            "数值": np.arange(40),
+            "MOB1": [0, 1, 31, 45] * 10,
+            "MOB6": [0, 35, 2, 60] * 10,
+            "金额": np.arange(40) + 100,
+        }
+    )
+    model = NoImportanceClassifier().fit(data[["数值"]], data.MOB6.gt(30).astype(int))
+    report = ModelReport(model, datasets={"训练集": data, "测试集": data.copy()}, features=["数值"], overdue=["MOB1", "MOB6"], dpds=[0, 30], n_jobs=1)
+    path = tmp_path / "表头.xlsx"
+    report.to_excel(path, with_plots=False, amount=amount)
+    workbook = load_workbook(path)
+    sheet = workbook["2-模型性能"]
+    left, top, right, bottom = range_boundaries(sheet.auto_filter.ref)
+    header = [sheet.cell(top, col).value for col in range(left, right + 1)]
+    assert "TOP 1%" in header and "统计项" in header
+    assert "坏样本率" not in header and "LIFT值" not in header
+    assert sheet.cell(top + 1, left + 1).value == "坏样本率"
+    starts = [cell.column for cell in sheet[top] if cell.value == "数据集"]
+    assert len(starts) == (2 if amount else 1)
+    for start in starts:
+        corner = sheet.cell(top - 1, start)
+        assert corner.value == "统计指标"
+        assert corner.border.left.color.rgb[-6:] == "2639E9"
+        assert any(r.min_row == top - 1 and r.min_col == start and r.max_col == start + 1 for r in sheet.merged_cells.ranges)
+    basic = workbook["1-基本信息"]
+    assert not [cell.coordinate for row in basic for cell in row if cell.value == "N/A"]
+    for key in ("样本区间", "取样逻辑", "数据源"):
+        cell = next(c for row in basic for c in row if c.value == key)
+        assert basic.cell(cell.row, cell.column + 1).value in (None, "")
+    workbook.close()

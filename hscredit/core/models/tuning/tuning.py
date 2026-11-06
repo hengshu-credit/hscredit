@@ -3277,7 +3277,7 @@ class ModelTuner(ArtifactSerializableMixin):
         """
         from .visualization import _OptunaVisualization
 
-        return _OptunaVisualization(self)
+        return _OptunaVisualization(self, optuna.visualization)
 
     def _publicize_plot_figure(self, figure: Any) -> Any:
         """清理 Plotly 图对象中的 Optuna 内部潜变量名。"""
@@ -3329,9 +3329,9 @@ class ModelTuner(ArtifactSerializableMixin):
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_optimization_history(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            return self.visualization.plot_optimization_history(target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
 
-        return optuna.visualization.plot_optimization_history(self.study_, **kwargs)
+        return self.visualization.plot_optimization_history(**kwargs)
 
     def plot_param_importances(self, target: Optional[int] = None, **kwargs):
         """绘制参数重要性.
@@ -3351,9 +3351,9 @@ class ModelTuner(ArtifactSerializableMixin):
         target = self._resolve_multi_objective_target(target)
         kwargs = self._translate_plot_params(kwargs)
         if self._is_multi_objective:
-            figure = optuna.visualization.plot_param_importances(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            figure = self.visualization.plot_param_importances(target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
         else:
-            figure = optuna.visualization.plot_param_importances(self.study_, **kwargs)
+            figure = self.visualization.plot_param_importances(**kwargs)
         return self._publicize_plot_figure(figure)
 
     def plot_slice(self, target: Optional[int] = None, **kwargs):
@@ -3374,9 +3374,9 @@ class ModelTuner(ArtifactSerializableMixin):
         target = self._resolve_multi_objective_target(target)
         kwargs = self._translate_plot_params(kwargs)
         if self._is_multi_objective:
-            figure = optuna.visualization.plot_slice(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            figure = self.visualization.plot_slice(target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
         else:
-            figure = optuna.visualization.plot_slice(self.study_, **kwargs)
+            figure = self.visualization.plot_slice(**kwargs)
         return self._publicize_plot_figure(figure)
 
     def plot_pareto_front(self, **kwargs):
@@ -3395,7 +3395,8 @@ class ModelTuner(ArtifactSerializableMixin):
         if not self._is_multi_objective:
             raise ValueError("只有多目标优化才能绘制帕累托前沿")
 
-        return optuna.visualization.plot_pareto_front(self.study_, target_names=self.metric_names, **kwargs)
+        kwargs.setdefault("target_names", self.metric_names)
+        return self.visualization.plot_pareto_front(**kwargs)
 
     def plot_contour(self, params: Optional[List[str]] = None, target: Optional[int] = None, **kwargs):
         """绘制参数等高线图.
@@ -3422,15 +3423,14 @@ class ModelTuner(ArtifactSerializableMixin):
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            figure = optuna.visualization.plot_contour(
-                self.study_,
+            figure = self.visualization.plot_contour(
                 params=internal_params,
                 target=lambda t: t.values[target],
                 target_name=self.metric_names[target],
                 **kwargs,
             )
         else:
-            figure = optuna.visualization.plot_contour(self.study_, params=internal_params, **kwargs)
+            figure = self.visualization.plot_contour(params=internal_params, **kwargs)
         return self._publicize_plot_figure(figure)
 
     def plot_parallel_coordinate(self, target: Optional[int] = None, **kwargs):
@@ -3451,9 +3451,9 @@ class ModelTuner(ArtifactSerializableMixin):
         target = self._resolve_multi_objective_target(target)
         kwargs = self._translate_plot_params(kwargs)
         if self._is_multi_objective:
-            figure = optuna.visualization.plot_parallel_coordinate(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            figure = self.visualization.plot_parallel_coordinate(target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
         else:
-            figure = optuna.visualization.plot_parallel_coordinate(self.study_, **kwargs)
+            figure = self.visualization.plot_parallel_coordinate(**kwargs)
         return self._publicize_plot_figure(figure)
 
     def plot_edf(self, target: Optional[int] = None, **kwargs):
@@ -3473,9 +3473,9 @@ class ModelTuner(ArtifactSerializableMixin):
 
         target = self._resolve_multi_objective_target(target)
         if self._is_multi_objective:
-            return optuna.visualization.plot_edf(self.study_, target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
+            return self.visualization.plot_edf(target=lambda t: t.values[target], target_name=self.metric_names[target], **kwargs)
 
-        return optuna.visualization.plot_edf(self.study_, **kwargs)
+        return self.visualization.plot_edf(**kwargs)
 
 
 class AutoTuner:

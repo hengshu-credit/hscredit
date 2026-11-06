@@ -923,6 +923,10 @@ class TestModelReportRegression:
         )
 
         assert report.feature_names == ["f0"]
+        for table in (order_table, amount_table):
+            assert table.columns.names == ["统计指标", "尾部分档"]
+            assert table.index.names == ["数据集", "统计项"]
+            assert list(table[report._label_names[0]].columns) == ["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"]
         assert not order_table.isna().any().any()
         assert not amount_table.isna().any().any()
         assert not order_table.equals(amount_table)

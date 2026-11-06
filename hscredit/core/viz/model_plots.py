@@ -592,7 +592,7 @@ def plot_model_feature_importance(
                         transform=ax.transAxes,
                         va="top",
                         fontsize=9,
-                        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.82, "edgecolor": PRIMARY_COLORS[0]},
+                        bbox={"boxstyle": "square", "facecolor": "white", "alpha": 0.82, "edgecolor": PRIMARY_COLORS[0]},
                     )
 
             ax.set_title(f"Top {rank_position}: {names[feature_index]}", fontsize=11)

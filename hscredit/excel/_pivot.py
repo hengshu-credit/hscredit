@@ -863,6 +863,8 @@ def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, 
         is_axis = i in axis_of
         if is_axis:
             attrs += ' axis="{}"'.format(axis_of[i])
+            # 字段层级也需声明表格布局，否则 Excel 会按字段默认的紧凑布局刷新。
+            attrs += ' compact="0" outline="0"'
         if i in data_field_idx:
             attrs += ' dataField="1"'
         attrs += ' showAll="0"'
@@ -988,7 +990,9 @@ def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, 
         'applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" '
         'dataCaption="值" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" '
         'itemPrintTitles="1" createdVersion="6" indent="0" compact="0" compactData="0" '
-        'outline="1" outlineData="1" gridDropZones="0" multipleFieldFilters="0"{rgt}{cgt}>'
+        'outline="0" outlineData="0" mergeItem="1" gridDropZones="0" '
+        'rowHeaderCaption="{row_caption}" colHeaderCaption="{col_caption}" '
+        'multipleFieldFilters="0"{rgt}{cgt}>'
         "{location}"
         '<pivotFields count="{nf}">{pivot_fields}</pivotFields>'
         "{row_fields}{row_items}{col_fields}{col_items}{page_fields}{data_fields}"
@@ -1000,6 +1004,8 @@ def render_pivot_table_xml(spec: Dict[str, Any], fmt_id_map: Optional[Dict[str, 
         name=_esc(spec["name"]),
         cid=spec["cache_id"],
         apply_num=apply_num,
+        row_caption=_esc(" / ".join(field_infos[i]["name"] for i in row_idx)),
+        col_caption=_esc(" / ".join(field_infos[i]["name"] for i in col_idx)),
         rgt="" if spec["show_row_totals"] else ' rowGrandTotals="0"',
         cgt="" if spec["show_col_totals"] else ' colGrandTotals="0"',
         location=location_xml,

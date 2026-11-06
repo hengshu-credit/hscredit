@@ -85,7 +85,6 @@ docs: ## 构建文档
 
 # 构建发布包（包含文档构建）
 build: docs ## 构建发布包（同时构建文档）
-	python scripts/build_pypi_readme.py
 	python -m pip install --upgrade build twine
 	rm -rf dist/ build/
 	python -m build

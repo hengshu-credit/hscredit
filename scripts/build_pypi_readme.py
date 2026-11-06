@@ -1,4 +1,4 @@
-"""生成保留完整内容、使用版本化绝对链接的 PyPI 项目说明。"""
+"""构建时在内存中转换 README 资源链接，不生成或维护第二份文档。"""
 
 import ast
 from pathlib import Path
@@ -13,9 +13,7 @@ def project_version():
     """从版本字面量读取版本号，避免构建期导入运行依赖。"""
     module = ast.parse((ROOT / "hscredit" / "__init__.py").read_text(encoding="utf-8"))
     for node in module.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets
-        ):
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets):
             return ast.literal_eval(node.value)
     raise ValueError("未找到项目版本号 __version__")
 
@@ -31,7 +29,7 @@ def render_readme(source, version):
             return target
         path = parsed.path.removeprefix("./")
         encoded = quote(path, safe="/")
-        if image:
+        if image or parsed.path.lower().endswith(".xlsx"):
             url = f"https://raw.githubusercontent.com/{REPOSITORY}/{tag}/{encoded}"
         else:
             kind = "tree" if (ROOT / path).is_dir() else "blob"
@@ -56,14 +54,3 @@ def render_readme(source, version):
         piece = re.sub(r"(!?\[[^\]\n]*\]\()([^\)\n]+)\)", markdown_link, pieces[index])
         pieces[index] = re.sub(r"""\b(href|src)=(["'])(.*?)\2""", html_link, piece)
     return "".join(pieces)
-
-
-def main():
-    source = (ROOT / "README.md").read_text(encoding="utf-8")
-    result = render_readme(source, project_version())
-    (ROOT / "README-PYPI.md").write_text(result, encoding="utf-8")
-    print("已生成完整 PyPI 说明：README-PYPI.md")
-
-
-if __name__ == "__main__":
-    main()

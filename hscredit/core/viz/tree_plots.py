@@ -970,7 +970,7 @@ def plot_tree_matplotlib(
         label_fontsize = 9 if is_root_edge else 8
         label_pad = 0.2 if is_root_edge else 0.12
         bbox_props = dict(
-            boxstyle=f"round,pad={label_pad}",
+            boxstyle=f"square,pad={label_pad}",
             facecolor=label_bg,
             edgecolor=edge_color,
             linewidth=1.2,

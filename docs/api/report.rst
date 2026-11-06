@@ -12,7 +12,7 @@
 
 .. rubric:: 模型报告的配置、评估与导出
 
-分类、回归及所有模型的完整链路验收见 :doc:`model_workflow_validation`。
+分类、回归及模型完整流程见 :doc:`../articles/model-workflow`。
 ``prediction_method=None`` 默认使用分类模型的 ``predict_proba``，纯评分转换器的
 ``transform``，回归模型的 ``predict``。ScoreCard 等具有 ``predict_proba`` 的分类模型
 仍默认输出概率。显式 ``prediction_method`` 优先，可指定模型已实现的方法名或 callable；

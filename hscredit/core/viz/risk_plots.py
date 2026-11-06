@@ -816,7 +816,7 @@ def score_dist_plot(
             ha="right",
             va="top",
             fontsize=fontsize - 2,
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+            bbox=dict(boxstyle="square", facecolor="white", alpha=0.8),
         )
 
     # 图例（顶部居中，与 hist_plot 一致）
