@@ -93,12 +93,19 @@ def test_long_format_bin_chart_counts_each_order_once(monkeypatch, tmp_path, lay
     plotted = []
     monkeypatch.setattr(feature_analyzer_module, "bin_plot", lambda table, **kwargs: plotted.append(table))
     auto_feature_analysis(
-        data, features=["score"], overdue=["mob"], dpds=[0, 30], amount="amount",
+        data,
+        features=["score"],
+        overdue=["mob"],
+        dpds=[0, 30],
+        amount="amount",
         long_format=layout.get("long_format"),
         bin_params={"method": "quantile", "max_n_bins": 3, "return_cols": ["坏样本率"], **layout["bin_params"]},
-        excel_writer=writer, output_dir=str(tmp_path), pictures=["bin"], n_jobs=1,
+        excel_writer=writer,
+        output_dir=str(tmp_path),
+        pictures=["bin"],
+        n_jobs=1,
     )
-    chart, = plotted
+    (chart,) = plotted
     assert chart["样本总数"].sum() == len(data)
     assert chart["坏样本数"].sum() == (data["mob"] > 0).sum()
     sheet = writer.get_sheet_by_name("分析报告")

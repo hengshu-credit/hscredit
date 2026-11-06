@@ -121,12 +121,15 @@ def test_pareto_hypervolume_and_callable_target_preserve_native_semantics(multi_
 def test_pareto_style_preserves_trial_groups_coordinates_and_hover(dimensions, include_dominated):
     study = optuna.create_study(directions=["maximize"] * dimensions)
     for number, values in enumerate([(0, 0, 0), (1, 2, 1), (2, 1, 2), (3, 3, 3)]):
-        study.add_trial(optuna.trial.create_trial(
-            values=values[:dimensions], params={"深度": number + 1},
-            distributions={"深度": optuna.distributions.IntDistribution(1, 4)},
-            user_attrs={"各折指标": [0.7, 0.8]},
-            system_attrs={"constraints": [1.0 if number == 3 else 0.0]},
-        ))
+        study.add_trial(
+            optuna.trial.create_trial(
+                values=values[:dimensions],
+                params={"深度": number + 1},
+                distributions={"深度": optuna.distributions.IntDistribution(1, 4)},
+                user_attrs={"各折指标": [0.7, 0.8]},
+                system_attrs={"constraints": [1.0 if number == 3 else 0.0]},
+            )
+        )
     tuner = ModelTuner(RandomForest, study=study, metric=["auc", "ks", "ks_diff"][:dimensions])
     names = ["区分能力", "风险区分度", "稳定性"][:dimensions]
     kwargs = dict(target_names=names, include_dominated_trials=include_dominated)

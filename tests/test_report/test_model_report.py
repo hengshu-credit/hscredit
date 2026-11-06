@@ -1566,9 +1566,17 @@ class TestModelReportRegression:
         test = train.iloc[::2].copy()
         path = tmp_path / "long.xlsx"
         report = model_report_module.auto_model_report(
-            MockModel(["f0"]), datasets={"训练集": train, "测试集": test}, features=["f0"],
-            overdue="MOB1", dpds=[3, 7], amount="放款金额", long_format=True,
-            excel_path=str(path), with_plots=False, n_jobs=1, verbose=False,
+            MockModel(["f0"]),
+            datasets={"训练集": train, "测试集": test},
+            features=["f0"],
+            overdue="MOB1",
+            dpds=[3, 7],
+            amount="放款金额",
+            long_format=True,
+            excel_path=str(path),
+            with_plots=False,
+            n_jobs=1,
+            verbose=False,
         )
         labels = ["MOB1@3", "MOB1@7"]
         for dataset, frame in [("训练集", train), ("测试集", test)]:
