@@ -454,9 +454,18 @@ samp,
 .rst-content .caution .admonition-title { background: #db2777; }
 
 /* ===========================================================================
-   5) 表格 —— 风控台账
+   5) 文档数据表与特征摘要共用的配色
    =========================================================================== */
 .rst-content table.docutils td,
+:root {
+    --hs-table-group: #efe8fb;
+    --hs-table-heading: #f8f5fd;
+    --hs-table-stripe: #f8f5fc;
+    --hs-table-hover: #f0eafa;
+    --hs-table-rule: #ab83ed;
+    --hs-table-divider: #d8c8ee;
+    --hs-table-text: #382d4b;
+}
 .rst-content table.docutils th {
     white-space: normal !important;
     vertical-align: top;
@@ -464,29 +473,25 @@ samp,
 .rst-content table.docutils:not(.field-list) {
     width: 100%;
     overflow: hidden;
-    border: 1px solid #ded8ef;
-    border-top: 3px solid var(--hs-violet);
+    border: 0;
+    border-top: 2px solid var(--hs-table-rule);
     border-collapse: separate;
     border-spacing: 0;
-    border-radius: 9px;
     background: #ffffff;
-    box-shadow: 0 8px 24px rgba(36, 19, 73, 0.07);
 }
 .rst-content table.docutils thead th {
-    padding: 0.78rem 0.9rem;
+    padding: 0.55rem 0.8rem;
     border: 0;
-    border-right: 1px solid rgba(199, 189, 242, 0.18);
-    background: #211642;
-    color: #f7f4ff;
+    border-bottom: 1px solid var(--hs-table-rule);
+    background: var(--hs-table-group);
+    color: var(--hs-table-text);
     font-size: 0.84rem;
     font-weight: 700;
-    letter-spacing: 0.045em;
     line-height: 1.4;
     text-align: left;
 }
 .rst-content table.docutils thead th:first-child {
-    padding-left: 1.05rem;
-    box-shadow: inset 4px 0 0 var(--hs-cyan);
+    border-right: 1px solid var(--hs-table-divider);
 }
 .rst-content table.docutils thead th:last-child { border-right: 0; }
 .rst-content table.docutils thead th p {
@@ -496,21 +501,18 @@ samp,
 }
 .rst-content table.docutils thead th a,
 .rst-content table.docutils thead th a:hover {
-    color: #ffffff;
-    border-bottom-color: rgba(0, 245, 255, 0.65);
+    color: #583b89;
+    border-bottom-color: var(--hs-table-rule);
 }
 .rst-content table.docutils:not(.field-list) tbody td {
-    padding: 0.68rem 0.9rem;
+    padding: 0.55rem 0.8rem;
     border: 0;
-    border-right: 1px solid #eeeaf7;
-    border-bottom: 1px solid #e8e3f3;
     background: #ffffff;
     transition: background-color 0.14s ease;
 }
-.rst-content table.docutils:not(.field-list) tbody td:last-child { border-right: 0; }
-.rst-content table.docutils:not(.field-list) tbody tr:last-child td { border-bottom: 0; }
-.rst-content table.docutils:not(.field-list) tbody tr:nth-child(even) td { background: #faf9fd; }
-.rst-content table.docutils:not(.field-list) tbody tr:hover td { background: #f2effb; }
+.rst-content table.docutils:not(.field-list) tbody td:first-child { border-right: 1px solid var(--hs-table-divider); }
+.rst-content table.docutils:not(.field-list) tbody tr:nth-child(even) td { background: var(--hs-table-stripe); }
+.rst-content table.docutils:not(.field-list) tbody tr:hover td { background: var(--hs-table-hover); }
 
 /* 首页能力一览表更通透 */
 .rst-content .list-table td p { margin-bottom: 0.4em; }

@@ -222,6 +222,7 @@ def feature_summary(
     method: str = "quantile",
     bin_params: Optional[Dict[str, Any]] = None,
     *,
+    fillna: Optional[float] = None,
     mode: str = "best_effort",
     return_result: bool = False,
 ) -> pd.DataFrame:
@@ -245,6 +246,9 @@ def feature_summary(
     :type features: List[str]
     :param y: 默认值为 ``None`` 。目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/特征重要性
     :type y: Optional[Union[str, pd.Series, np.ndarray, List, Tuple]]
+    :param fillna: KS、AUC 使用的数值特征缺失填充值。默认 None，按特征与标签成对剔除缺失。
+        传入有限数值（如 0 或 -999）时先填特征，缺失标签仍被剔除。
+    :type fillna: Optional[float]
     :param val_df: 默认值为 ``None`` 。验证集，用于计算PSI，不传则使用psi_method指定的方式
     :type val_df: Optional[pd.DataFrame]
     :param models: 默认值为 ``None`` 。已训练好的模型字典，格式{'模型名': model}，用于获取特征重要性
@@ -315,7 +319,8 @@ def feature_summary(
 
         - 质量指标: 零值率、负值率、重复率
 
-        - 预测指标（传入y时）: IV、KS、趋势
+        - 预测指标（传入y时）: 数值字段的 IV、KS、AUC 和趋势。IV 和趋势使用原始特征分箱，分箱不可行时 IV 为 NaN。
+          AUC 沿用 hscredit.core.metrics.auc 的自动方向口径。单类样本的 KS 为 0，AUC 为 NaN。
 
         - 稳定性指标: PSI
 
@@ -422,6 +427,7 @@ def feature_summary(
         show_progress=show_progress,
         method=method,
         bin_params=bin_params,
+        fillna=fillna,
     )
 
     def add_importance(name, calculate):
@@ -503,7 +509,7 @@ def feature_summary(
     for c in effect_cols:
         if "重要性" in c:
             importance_cols.append(c)
-        elif c in ("KS", "IV", "PSI", "趋势"):
+        elif c in ("KS", "AUC", "IV", "PSI", "趋势"):
             metric_cols.append(c)
         else:
             other_effect.append(c)

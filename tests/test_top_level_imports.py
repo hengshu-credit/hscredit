@@ -18,6 +18,7 @@ def test_star_import_exposes_key_top_level_apis():
             'feature_efficiency_analysis',
             'ruleset_analysis',
             'germancredit',
+            'hscredit_dataset',
             'bin_plot',
             'data_info',
             'seed_everything',

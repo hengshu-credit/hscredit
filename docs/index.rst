@@ -94,6 +94,13 @@ hscredit 文档
    并行计算 <parallelism>
 
 .. toctree::
+   :maxdepth: 2
+   :caption: 数据集
+
+   hscredit 现金贷数据集 <datasets>
+   授信特征摘要报告 <dataset-summary>
+
+.. toctree::
    :maxdepth: 1
    :caption: 建模实践
 

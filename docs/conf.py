@@ -41,6 +41,7 @@ extensions = [
     "sphinx.ext.mathjax",  # 数学公式
     "sphinx.ext.todo",
     "myst_parser",  # 支持 Markdown（.md）文档
+    "dataset_summary",  # 从文档随附的 Excel 生成特征摘要预览
 ]
 
 autosummary_generate = True

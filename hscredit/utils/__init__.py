@@ -45,7 +45,7 @@ else:
         validate_parallel_config,
     )
     from .describe import feature_describe, groupby_feature_describe
-    from .datasets import germancredit
+    from .datasets import germancredit, hscredit_dataset
     from .misc import reload, round_float, trapz
     from .init import init_setting
     from .fonts import FONT_NAME, get_bundled_font_path, install_bundled_font
@@ -93,6 +93,7 @@ else:
         "groupby_feature_describe",
         # 数据集
         "germancredit",
+        "hscredit_dataset",
         # 杂项工具
         "round_float",
         "reload",

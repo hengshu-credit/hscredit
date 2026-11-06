@@ -8,6 +8,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from numbers import Real
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -412,6 +413,9 @@ def _prepare_numeric_batch_stats(
         return None
 
     numeric = df.loc[:, numeric_features]
+    # pandas 的线性分位数需做减法，布尔字段以 0/1 插值并保留缺失。
+    bool_types = {f: "Float64" for f in numeric_features if pd.api.types.is_bool_dtype(numeric[f])}
+    quantile_data = numeric.astype(bool_types, copy=False) if bool_types else numeric
     return _NumericBatchStats(
         zero_count=(numeric == 0).sum(),
         negative_count=(numeric < 0).sum(),
@@ -419,7 +423,7 @@ def _prepare_numeric_batch_stats(
         maximum=numeric.max(),
         mean=numeric.mean(),
         std=numeric.std(),
-        quantiles=numeric.quantile(list(percentiles)),
+        quantiles=quantile_data.quantile(list(percentiles)),
     )
 
 
@@ -535,11 +539,12 @@ def _summarize_basic_feature(
                 "标准差": std if not pd.isna(std) else None,
             }
         )
-        for percentile in percentiles:
-            if numeric_stats is not None:
-                value = numeric_stats.quantiles.loc[percentile, feature]
-            else:
-                value = series.quantile(percentile)
+        if numeric_stats is not None:
+            quantiles = numeric_stats.quantiles[feature]
+        else:
+            values = non_null_series.astype(float) if pd.api.types.is_bool_dtype(series) else non_null_series
+            quantiles = values.quantile(list(percentiles))
+        for percentile, value in quantiles.items():
             result[f"{int(percentile * 100)}%"] = value
         return result
 
@@ -634,8 +639,9 @@ def _predictive_metrics(
     y_series: Optional[pd.Series],
     max_n_bins: int,
     binning_config: Optional[Dict[str, Any]] = None,
+    fillna: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """在一个字段任务内完成 IV、KS，并由 IV 的同一分箱表识别趋势。"""
+    """在一个字段任务内完成 IV、KS、AUC，并由 IV 的同一分箱表识别趋势。"""
     if y_series is None:
         return {}
 
@@ -643,13 +649,14 @@ def _predictive_metrics(
     result = {
         "IV": np.nan,
         "KS": np.nan,
+        "AUC": np.nan,
         "趋势": "unknown" if is_numeric else "categorical",
     }
     if not is_numeric:
         return result
 
     from ..binning import OptimalBinning
-    from ..metrics import iv as iv_metric
+    from ..metrics import auc as auc_metric
     from ..metrics import ks as ks_metric
 
     effective_config = binning_config or {
@@ -657,32 +664,26 @@ def _predictive_metrics(
         "max_n_bins": max_n_bins,
     }
     feature_config = _binning_config_for_feature(effective_config, feature)
-    bin_table = pd.DataFrame()
     try:
         binner = OptimalBinning(**feature_config)
         binner.fit(series.to_frame(name=feature), y_series)
         bin_table = binner.bin_tables_.get(feature, pd.DataFrame())
-        if not bin_table.empty and "分档IV值" in bin_table.columns:
-            result["IV"] = bin_table["分档IV值"].sum()
     except Exception:
-        try:
-            fallback_config = _binning_config_for_feature(effective_config, feature, internal_feature="feature")
-            method, bins, min_bin_size, metric_kwargs = _metric_binning_arguments(fallback_config)
-            result["IV"] = iv_metric(
-                y_series,
-                series,
-                method=method,
-                max_n_bins=bins,
-                min_bin_size=min_bin_size,
-                **metric_kwargs,
-            )
-        except Exception:
-            result["IV"] = np.nan
+        # 拟合失败时 IV 留空。删除缺失行后重试会改变分箱约束的样本分母。
+        bin_table = pd.DataFrame()
+    if "分档IV值" in bin_table:
+        result["IV"] = bin_table["分档IV值"].sum(min_count=1)
 
-    try:
-        result["KS"] = ks_metric(y_series, series)
-    except Exception:
-        result["KS"] = np.nan
+    # 排序指标共用一份分数。浮点副本允许可空整数使用小数填充值。
+    scores = series.to_numpy(dtype=float, na_value=np.nan)
+    if fillna is not None:
+        scores = np.where(np.isnan(scores), fillna, scores)
+    for name, metric in (("KS", ks_metric), ("AUC", auc_metric)):
+        try:
+            result[name] = metric(y_series, scores)
+        except ValueError:
+            # 没有可用样本、AUC 只有一个类别等情况沿用各指标的定义域。
+            result[name] = np.nan
 
     result["趋势"] = _trend_from_bin_table(bin_table)
     return result
@@ -795,6 +796,7 @@ def _summarize_complete_batch(
     max_n_bins: int,
     reporter,
     binning_config: Optional[Dict[str, Any]] = None,
+    fillna: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """在一个工作单元内完成字段批次的所有适用指标。"""
     results = []
@@ -822,7 +824,7 @@ def _summarize_complete_batch(
                 force_numeric,
                 numeric_stats,
             )
-            result.update(_predictive_metrics(feature, series, y_series, max_n_bins, binning_config))
+            result.update(_predictive_metrics(feature, series, y_series, max_n_bins, binning_config, fillna))
             psi_value = _psi_for_feature(df, feature, psi_context, max_n_bins, binning_config)
             if psi_context is not None:
                 result["PSI"] = psi_value
@@ -855,6 +857,7 @@ class _FeatureSummaryBatchTask:
     max_n_bins: int
     reporter: Any
     binning_config: Optional[Dict[str, Any]] = None
+    fillna: Optional[float] = None
 
 
 def _run_feature_summary_batch(
@@ -872,6 +875,7 @@ def _run_feature_summary_batch(
         task.max_n_bins,
         task.reporter,
         task.binning_config,
+        task.fillna,
     )
 
 
@@ -897,10 +901,13 @@ def build_feature_summary_fields(
     show_progress: bool,
     method: str,
     bin_params: Optional[Dict[str, Any]],
+    fillna: Optional[float] = None,
 ) -> pd.DataFrame:
     """按字段批次并行计算全部字段级摘要指标。"""
     # 在任何全表 PSI 预处理前校验，避免非法参数触发无意义的大表扫描。
     _resolve_n_jobs(n_jobs, len(features))
+    if fillna is not None and (not isinstance(fillna, Real) or not math.isfinite(fillna)):
+        raise ValueError("fillna 必须为有限数值或 None")
     # 默认等频 10 箱；外层便捷参数在此覆盖 bin_params 中的同名透传值。
     effective_binning_config = _normalize_binning_config(
         method,
@@ -970,6 +977,7 @@ def build_feature_summary_fields(
                 max_n_bins=max_n_bins,
                 reporter=task_reporter,
                 binning_config=_slice_binning_config(effective_binning_config, batch),
+                fillna=fillna,
             )
             for batch in batches
         ]

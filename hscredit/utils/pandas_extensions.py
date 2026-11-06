@@ -79,13 +79,16 @@ def _summary_method(
     show_progress: bool = False,
     method: str = "quantile",
     bin_params: Optional[Dict[str, Any]] = None,
+    *,
+    fillna: Optional[float] = None,
 ) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
     """DataFrame 数据分布摘要统计.
 
-    快速获取数据集特征详情，包括基础统计、IV、KS、趋势、PSI和特征重要性。
+    快速获取数据集特征详情，包括基础统计、IV、KS、AUC、趋势、PSI和特征重要性。
 
     :param features: 特征列表，None则分析全部
-    :param y: 目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/趋势/特征重要性
+    :param y: 目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/AUC/趋势/特征重要性
+    :param fillna: 计算 KS、AUC 时的特征缺失填充值。默认按特征与标签均有值的记录计算。
     :param val_df: 验证集，用于计算PSI
     :param models: 已训练好的模型字典，用于获取特征重要性
     :param model_type: 模型类型，用于自动训练模型提取特征重要性
@@ -145,6 +148,7 @@ def _summary_method(
         show_progress=show_progress,
         method=method,
         bin_params=bin_params,
+        fillna=fillna,
     )
 
     if return_type == "dict":
@@ -177,12 +181,15 @@ def _series_summary_method(
     return_type: Literal["dataframe", "dict"] = "dataframe",
     method: str = "quantile",
     bin_params: Optional[Dict[str, Any]] = None,
+    *,
+    fillna: Optional[float] = None,
 ) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
     """Series 单字段综合摘要统计。
 
     y 支持数组、列表、元组或 Series。IV、趋势和 PSI 默认共用 quantile 等频
     10 分箱；显式参数优先于 bin_params，配置优先于默认值。
     user_splits 字典使用当前 Series 名称作为字段键。
+    fillna 可指定 KS、AUC 的特征缺失填充值，默认剔除特征或标签缺失的记录。
     """
     if isinstance(y, str):
         raise ValueError("Series.summary 的 y 不支持列名，请直接传入数组、列表或 Series")
@@ -215,6 +222,7 @@ def _series_summary_method(
         return_type=return_type,
         method=method,
         bin_params=bin_params,
+        fillna=fillna,
     )
 
 

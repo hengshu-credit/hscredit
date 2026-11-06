@@ -218,6 +218,18 @@ async function main() {
                 .evaluateAll(links => links.filter(link => getComputedStyle(link).borderImageSource !== "none").length);
             assert.equal(inactiveHighlights, 0, "展开的旧分支仍显示当前项霓虹边框");
         }
+        // 两份数据集文档各有一个同级入口，从说明页进入报告后再次核对侧栏。
+        await page.goto(base + "/datasets.html");
+        for (const filename of ["datasets.html", "dataset-summary.html"]) {
+            if (filename === "dataset-summary.html") {
+                await page.locator(".rst-content a[href='dataset-summary.html']").first().click();
+                await page.waitForURL(base + "/" + filename);
+            }
+            const menu = page.locator(nav + " p.caption").filter({ hasText: /^数据集$/ })
+                .locator("xpath=following-sibling::ul[1]");
+            assert.deepEqual(await menu.locator(":scope > li > a").allTextContents(),
+                ["hscredit 现金贷数据集", "授信特征摘要报告"], "数据集侧栏入口重复或父级错误");
+        }
         // 使用完整导航中的真实最后一页，而不是删掉页面节点制造末页。
         await page.goto(base + "/index.html");
         const lastUrl = await page.locator(`${nav} a[href]`).evaluateAll(links => {

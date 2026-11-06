@@ -4,8 +4,91 @@
 """
 
 import os
+import re
+from importlib.resources import as_file, files
+from typing import Optional, Sequence, Tuple, Union
 import pandas as pd
 from pandas.api.types import CategoricalDtype
+
+_HSCREDIT_ORDER_COLUMNS = frozenset(
+    {
+        "放款编码",
+        "用户编码",
+        "loan_amt",
+        "periods",
+        "放款银行",
+        "流量渠道",
+        "授信时间",
+        "放款时间",
+        "etl_date",
+        "etl_time",
+    }
+)
+
+
+def hscredit_dataset(
+    split: bool = False,
+    *,
+    columns: Optional[Sequence[str]] = None,
+) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
+    """加载内置 hscredit 现金贷单笔单批放款数据集。
+
+    **参数**
+
+    :param split: 默认返回全部原始数据；为 True 时依次返回 ``(订单信息, 逾期数据, X)``。
+        订单信息包含订单/用户编号、审批额度与期数、资金方、渠道、授信/借款申请时间、
+        抽数日期。逾期数据包含 DPD、CURRENT_DPD 和 MOBn；其余授信时点字段归入 X。
+    :type split: bool
+    :param columns: 仅读取指定原始字段，降低内存开销；拆分时各组也只包含所选字段。
+        省略时读取全部 8,516 列。完整 DataFrame 约占 7.16 GiB，加载与拆分另需临时空间。
+
+    :type columns: Optional[Sequence[str]]
+
+    **返回**
+
+    DataFrame 或三个 DataFrame 的元组
+        保留源数据的行索引、字段名、类型和值，不填补缺失、不生成标签、不抽样。
+        三组内字段保持读取顺序，互不重叠且覆盖全部读取字段。
+
+    **参考样例**
+
+    >>> data = hscredit_dataset()
+    >>> order, overdue, X = hscredit_dataset(split=True)
+    >>> sample = hscredit_dataset(columns=["用户编码", "age_year", "MOB1"])
+
+    标签需根据表现期和逾期阈值显式构造；原始数据不包含预设的二分类标签。
+    详细业务口径见 ``resources/datasets/README.md``。
+    """
+    if not isinstance(split, bool):
+        raise TypeError("split 必须为布尔值")
+    if columns is not None:
+        if isinstance(columns, (str, bytes)):
+            raise TypeError("columns 必须为字段名序列，不能是单个字符串")
+        columns = list(columns)
+        if not all(isinstance(column, str) for column in columns):
+            raise TypeError("columns 中的字段名必须为字符串")
+        if len(columns) != len(set(columns)):
+            raise ValueError("columns 不能包含重复字段")
+    resource = files("hscredit").joinpath("resources").joinpath("datasets").joinpath("hscredit.parquet")
+    with as_file(resource) as path:
+        if columns is not None:
+            from pyarrow.parquet import ParquetFile
+
+            with ParquetFile(path) as parquet:
+                available = set(parquet.schema_arrow.names)
+                row_count = parquet.metadata.num_rows
+            missing = [column for column in columns if column not in available]
+            if missing:
+                raise ValueError(f"hscredit 数据集不存在字段：{missing}")
+        # pandas/pyarrow 对零列投影会丢失 RangeIndex，显式保留原始行数。
+        data = pd.DataFrame(index=pd.RangeIndex(row_count)) if columns == [] else pd.read_parquet(path, columns=columns, engine="pyarrow")
+    if not split:
+        return data
+    order_columns = [column for column in data if column in _HSCREDIT_ORDER_COLUMNS]
+    overdue_columns = [column for column in data if column in {"DPD", "CURRENT_DPD"} or re.fullmatch(r"MOB[1-9][0-9]*", column)]
+    excluded = set(order_columns) | set(overdue_columns)
+    feature_columns = [column for column in data if column not in excluded]
+    return data[order_columns].copy(), data[overdue_columns].copy(), data[feature_columns].copy()
 
 
 def germancredit():

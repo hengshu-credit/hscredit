@@ -76,6 +76,8 @@ jobs:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - name: 安装 Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
@@ -123,6 +125,8 @@ jobs:
             pkg_resources: "absent"
     steps:
       - uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - name: 安装 Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
@@ -166,6 +170,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - name: 安装 Python
         uses: actions/setup-python@v7

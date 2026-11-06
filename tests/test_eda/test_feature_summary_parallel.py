@@ -615,6 +615,61 @@ def test_predictive_metrics_keep_full_precision():
     assert row["KS"] == expected_ks
 
 
+def test_sparse_feature_infeasible_iv_does_not_change_population():
+    """全样本分箱不可行，非缺失的两笔订单仍可有完全分离的 KS。"""
+    x = pd.Series([1.0, 2.0] + [np.nan] * 998, name="x")
+    y = pd.Series([0, 1] * 500)
+    row = _row(feature_summary(x.to_frame(), y=y, n_jobs=1), "x")
+    assert row["样本数"] == 1000
+    assert row["缺失数"] == 998
+    assert np.isnan(row["IV"])
+    assert row["趋势"] == "unknown"
+    assert row["KS"] == 1.0
+    assert row["AUC"] == 1.0
+
+
+@pytest.mark.parametrize("fillna, expected_auc", [(0, 0.75), (0.5, 0.875)])
+def test_summary_fillna_only_affects_ranking_metrics(fillna, expected_auc):
+    x = pd.Series([0, 1, pd.NA, pd.NA] * 75, dtype="Int64", name="x")
+    y = pd.Series([0, 1, 0, 1] * 75)
+    original = x.copy()
+    default = x.summary(y=y, n_jobs=1)
+    filled = x.to_frame().assign(target=y).summary(y="target", fillna=fillna, n_jobs=1)
+
+    assert default.loc[0, "KS"] == default.loc[0, "AUC"] == 1.0
+    assert filled.loc[0, "KS"] == pytest.approx(0.5)
+    assert filled.loc[0, "AUC"] == pytest.approx(expected_auc)
+    assert pd.notna(default.loc[0, "IV"])
+    assert filled.loc[0, "缺失率"] == 0.5
+    pdt.assert_frame_equal(default.drop(columns=["KS", "AUC"]), filled.drop(columns=["KS", "AUC"]))
+    pdt.assert_series_equal(x, original)
+
+
+def test_fillna_keeps_missing_targets_out_and_preserves_single_class_ks():
+    x = pd.Series([1.0, np.nan, -100.0], name="x")
+    y = pd.Series([0.0, 1.0, np.nan])
+    # 默认只有一个有效类别；显式填 0 后两类完全反向分离，AUC 使用库的自动方向。
+    default = x.summary(y=y, n_jobs=1).iloc[0]
+    assert default["KS"] == 0 and np.isnan(default["AUC"])
+    filled = x.summary(y=y, fillna=0, n_jobs=1).iloc[0]
+    assert filled["KS"] == filled["AUC"] == 1
+
+
+def test_summary_nullable_boolean_ranking_fill_and_distribution():
+    s = pd.Series([False, True, pd.NA, pd.NA], dtype="boolean", name="规则")
+    row = s.summary(y=[0, 1, 0, 1], fillna=0.5, n_jobs=1).iloc[0]
+    assert row["缺失率"] == 0.5
+    assert row["50%"] == 0.5
+    assert row["KS"] == 0.5
+    assert row["AUC"] == 0.875
+
+
+@pytest.mark.parametrize("invalid", ["0", np.inf, np.nan])
+def test_summary_rejects_invalid_ranking_fill_value(invalid):
+    with pytest.raises(ValueError, match="fillna"):
+        pd.Series([0.0, 1.0]).summary(y=[0, 1], fillna=invalid)
+
+
 def test_outer_binning_args_control_iv_and_keep_extension_params():
     """IV 应使用外层方法、箱数和随机种子，同时保留 params 扩展参数。"""
     from hscredit.core.binning import OptimalBinning
