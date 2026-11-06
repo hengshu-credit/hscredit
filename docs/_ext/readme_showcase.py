@@ -16,6 +16,7 @@ GALLERIES = {
     "风控建模": "gallery-scorecard",
     "手工拆分与多数据集策略报告": "gallery-trees",
     "常用图表": "gallery-diagnostics",
+    "公共方法": "public-utils",
 }
 
 
