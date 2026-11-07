@@ -20,15 +20,37 @@
 
 ## 为什么选 hscredit？
 
-**四套标准 SOP，一行代码出一份 Excel 报告。** 准备好样本和待评估的变量、规则或模型，即可按统一口径比较不同客群、不同逾期标签的表现。下次评审，换一批样本就能复评。
-
-- **策略上线报告** · `swap_out_report` 逐条回测候选规则，比较策略调整前后的通过率与坏样本率。 <a href="docs/assets/readme/showcase/swap-out.xlsx?raw=true" style="color:#c02dd4;">下载 Excel</a>
-- **模型上线报告** · `auto_model_report` 对照训练集与测试集的 KS、AUC，检查高风险客群中的坏样本集中度。 <a href="docs/assets/readme/showcase/auto-model-report.xlsx?raw=true" style="color:#c02dd4;">下载 Excel</a>
-- **规则挖掘报告** · `multiway_tree.report` 把树的决策路径转为规则，按命中率、坏样本率和 Lift 比较节点。 <a href="docs/assets/readme/showcase/multiway-tree-report.xlsx?raw=true" style="color:#c02dd4;">下载 Excel</a>
-- **三方数据分析报告** · `auto_feature_analysis` 用覆盖率、IV、KS 和分箱坏样本率判断哪些字段值得接入。 <a href="docs/assets/readme/showcase/feature-analysis.xlsx?raw=true" style="color:#c02dd4;">下载 Excel</a>
+<table>
+<tr>
+  <td width="50%" valign="top">
+    <p><strong>策略上线报告</strong><br>逐条回测候选规则，比较策略调整前后的通过率与坏样本率。</p>
+    <a href="docs/assets/readme/showcase/intro-strategy.png"><img src="docs/assets/readme/showcase/intro-strategy.png" alt="策略上线报告" width="100%"></a><br>
+    <a href="docs/assets/readme/showcase/swap-out.xlsx?raw=true" title="swap_out_report">下载 Excel</a>
+  </td>
+  <td width="50%" valign="top">
+    <p><strong>模型上线报告</strong><br>对照训练集与测试集的 KS、AUC，检查高风险客群中的坏样本集中度。</p>
+    <a href="docs/assets/readme/showcase/intro-model.png"><img src="docs/assets/readme/showcase/intro-model.png" alt="模型上线报告" width="100%"></a><br>
+    <a href="docs/assets/readme/showcase/auto-model-report.xlsx?raw=true" title="auto_model_report">下载 Excel</a>
+  </td>
+</tr>
+<tr>
+  <td width="50%" valign="top">
+    <p><strong>规则挖掘报告</strong><br>把树的决策路径转为规则，按命中率、坏样本率和 Lift 比较节点。</p>
+    <a href="docs/assets/readme/showcase/intro-rules.png"><img src="docs/assets/readme/showcase/intro-rules.png" alt="规则挖掘报告" width="100%"></a><br>
+    <a href="docs/assets/readme/showcase/multiway-tree-report.xlsx?raw=true" title="multiway_tree.report">下载 Excel</a>
+  </td>
+  <td width="50%" valign="top">
+    <p><strong>三方数据分析报告</strong><br>用覆盖率、IV、KS 和分箱坏样本率判断哪些字段值得接入。</p>
+    <a href="docs/assets/readme/showcase/intro-features.png"><img src="docs/assets/readme/showcase/intro-features.png" alt="三方数据分析报告" width="100%"></a><br>
+    <a href="docs/assets/readme/showcase/feature-analysis.xlsx?raw=true" title="auto_feature_analysis">下载 Excel</a>
+  </td>
+</tr>
+</table>
 
 <details>
 <summary>四种报告的调用示例</summary>
+
+**四套标准 SOP，一行代码出一份 Excel 报告。** 准备好样本和待评估的变量、规则或模型，即可按统一口径比较不同客群、不同逾期标签的表现。下次评审，换一批样本就能复评。
 
 ```python
 swap_out_report(df, rules, date="授信时间", save="策略.xlsx", **labels)
@@ -39,21 +61,7 @@ auto_feature_analysis(df, features, amount="loan_amt", long_format=True, excel_w
 
 </details>
 
-<p>
-<a href="docs/assets/readme/showcase/intro-strategy.png"><img src="docs/assets/readme/showcase/intro-strategy.png" alt="策略上线报告" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/intro-model.png"><img src="docs/assets/readme/showcase/intro-model.png" alt="模型上线报告" width="48%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/intro-strategy.png" style="color:#c02dd4;">策略上线报告</a> · <a href="docs/assets/readme/showcase/intro-model.png" style="color:#c02dd4;">模型上线报告</a>
-
-<p>
-<a href="docs/assets/readme/showcase/intro-rules.png"><img src="docs/assets/readme/showcase/intro-rules.png" alt="规则挖掘报告" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/intro-features.png"><img src="docs/assets/readme/showcase/intro-features.png" alt="三方数据分析报告" width="48%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/intro-rules.png" style="color:#c02dd4;">规则挖掘报告</a> · <a href="docs/assets/readme/showcase/intro-features.png" style="color:#c02dd4;">三方数据分析报告</a>
-
-<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-reports" style="color:#c02dd4;">按原始尺寸拖动对照</a>
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-reports" style="color:#c02dd4;">在文档中查看报告示例</a>
 
 ## 交流关注
 
@@ -282,21 +290,22 @@ feature_bin_stats_2d(
 
 </details>
 
-<p>
-<a href="docs/assets/readme/showcase/binning-methods.png"><img src="docs/assets/readme/showcase/binning-methods.png" alt="方法摘要" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/binning-groups.png"><img src="docs/assets/readme/showcase/binning-groups.png" alt="授信月份摘要" width="48%" align="top"></a>
-</p>
+<table>
+<tr>
+  <td width="50%" align="center" valign="top"><strong>方法摘要</strong><br>
+    <a href="docs/assets/readme/showcase/binning-methods.png"><img src="docs/assets/readme/showcase/binning-methods.png" alt="方法摘要" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>授信月份摘要</strong><br>
+    <a href="docs/assets/readme/showcase/binning-groups.png"><img src="docs/assets/readme/showcase/binning-groups.png" alt="授信月份摘要" width="100%"></a></td>
+</tr>
+<tr>
+  <td width="50%" align="center" valign="top"><strong>单标签分箱表</strong><br>
+    <a href="docs/assets/readme/showcase/binning.png"><img src="docs/assets/readme/showcase/binning.png" alt="单标签分箱表" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>二维分箱表</strong><br>
+    <a href="docs/assets/readme/showcase/binning-2d.png"><img src="docs/assets/readme/showcase/binning-2d.png" alt="二维分箱表" width="100%"></a></td>
+</tr>
+</table>
 
-<a href="docs/assets/readme/showcase/binning-methods.png" style="color:#c02dd4;">方法摘要</a> · <a href="docs/assets/readme/showcase/binning-groups.png" style="color:#c02dd4;">授信月份摘要</a>
-
-<p>
-<a href="docs/assets/readme/showcase/binning.png"><img src="docs/assets/readme/showcase/binning.png" alt="单标签分箱表" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/binning-2d.png"><img src="docs/assets/readme/showcase/binning-2d.png" alt="二维分箱表" width="48%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/binning.png" style="color:#c02dd4;">单标签分箱表</a> · <a href="docs/assets/readme/showcase/binning-2d.png" style="color:#c02dd4;">二维分箱表</a>
-
-<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-bin-tables" style="color:#c02dd4;">按原始尺寸拖动对照</a>
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-bin-tables" style="color:#c02dd4;">在文档中查看分箱统计表</a>
 
 <details>
 <summary>自定义分箱优化目标</summary>
@@ -343,21 +352,22 @@ bin_trend_plot(
 
 </details>
 
-<p>
-<a href="docs/assets/readme/showcase/binning-plot.png"><img src="docs/assets/readme/showcase/binning-plot.png" alt="单变量分箱" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/binning-multi-plot.png"><img src="docs/assets/readme/showcase/binning-multi-plot.png" alt="多标签分箱" width="48%" align="top"></a>
-</p>
+<table>
+<tr>
+  <td width="50%" align="center" valign="top"><strong>单变量分箱</strong><br>
+    <a href="docs/assets/readme/showcase/binning-plot.png"><img src="docs/assets/readme/showcase/binning-plot.png" alt="单变量分箱" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>多标签分箱</strong><br>
+    <a href="docs/assets/readme/showcase/binning-multi-plot.png"><img src="docs/assets/readme/showcase/binning-multi-plot.png" alt="多标签分箱" width="100%"></a></td>
+</tr>
+<tr>
+  <td width="50%" align="center" valign="top"><strong>授信月份趋势</strong><br>
+    <a href="docs/assets/readme/showcase/binning-trend.png"><img src="docs/assets/readme/showcase/binning-trend.png" alt="授信月份趋势" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>客群分箱趋势</strong><br>
+    <a href="docs/assets/readme/showcase/binning-cohort-plot.png"><img src="docs/assets/readme/showcase/binning-cohort-plot.png" alt="客群分箱趋势" width="100%"></a></td>
+</tr>
+</table>
 
-<a href="docs/assets/readme/showcase/binning-plot.png" style="color:#c02dd4;">单变量分箱</a> · <a href="docs/assets/readme/showcase/binning-multi-plot.png" style="color:#c02dd4;">多标签分箱</a>
-
-<p>
-<a href="docs/assets/readme/showcase/binning-trend.png"><img src="docs/assets/readme/showcase/binning-trend.png" alt="授信月份趋势" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/binning-cohort-plot.png"><img src="docs/assets/readme/showcase/binning-cohort-plot.png" alt="客群分箱趋势" width="48%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/binning-trend.png" style="color:#c02dd4;">授信月份趋势</a> · <a href="docs/assets/readme/showcase/binning-cohort-plot.png" style="color:#c02dd4;">客群分箱趋势</a>
-
-<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-bin-charts" style="color:#c02dd4;">按原始尺寸拖动对照</a>
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-bin-charts" style="color:#c02dd4;">在文档中查看分箱图与跨期趋势</a>
 
 <details>
 <summary>二维交叉分箱</summary>
@@ -422,21 +432,33 @@ pipeline.transform(X_test).show()
 
 </details>
 
-<p>
-<a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="TargetEncoder" width="72" align="top"></a>
-<a href="docs/assets/readme/showcase/encoder-woe.png"><img src="docs/assets/readme/showcase/encoder-woe.png" alt="WOEEncoder" width="73%" align="top"></a>
-</p>
+<table>
+<tr>
+  <th width="1%" align="left">TargetEncoder</th>
+  <th>WOEEncoder</th>
+</tr>
+<tr>
+  <td colspan="2" align="center">
+    <a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="TargetEncoder" width="8%"></a>
+    <a href="docs/assets/readme/showcase/encoder-woe.png"><img src="docs/assets/readme/showcase/encoder-woe.png" alt="WOEEncoder" width="89%"></a>
+  </td>
+</tr>
+</table>
 
-<a href="docs/assets/readme/showcase/encoder-target.png" style="color:#c02dd4;">TargetEncoder</a> · <a href="docs/assets/readme/showcase/encoder-woe.png" style="color:#c02dd4;">WOEEncoder</a>
+<table>
+<tr>
+  <th width="1%" align="left">CatBoostEncoder</th>
+  <th>Pipeline · 分箱与 WOE</th>
+</tr>
+<tr>
+  <td colspan="2" align="center">
+    <a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="CatBoostEncoder" width="8%"></a>
+    <a href="docs/assets/readme/showcase/encoder-pipeline.png"><img src="docs/assets/readme/showcase/encoder-pipeline.png" alt="Pipeline · 分箱与 WOE" width="89%"></a>
+  </td>
+</tr>
+</table>
 
-<p>
-<a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="CatBoostEncoder" width="72" align="top"></a>
-<a href="docs/assets/readme/showcase/encoder-pipeline.png"><img src="docs/assets/readme/showcase/encoder-pipeline.png" alt="Pipeline · 分箱与 WOE" width="73%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/encoder-catboost.png" style="color:#c02dd4;">CatBoostEncoder</a> · <a href="docs/assets/readme/showcase/encoder-pipeline.png" style="color:#c02dd4;">Pipeline · 分箱与 WOE</a>
-
-<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-encoders" style="color:#c02dd4;">按原始尺寸拖动对照</a>
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-encoders" style="color:#c02dd4;">在文档中查看编码示例</a>
 
 ### 特征筛选
 
@@ -478,21 +500,22 @@ for selector in selectors:
 
 </details>
 
-<p>
-<a href="docs/assets/readme/showcase/selector-lift.png"><img src="docs/assets/readme/showcase/selector-lift.png" alt="LiftSelector" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/selector-null-importance.png"><img src="docs/assets/readme/showcase/selector-null-importance.png" alt="NullImportanceSelector" width="48%" align="top"></a>
-</p>
+<table>
+<tr>
+  <td width="50%" align="center" valign="top"><strong>Lift 筛选</strong><br>
+    <a href="docs/assets/readme/showcase/selector-lift.png"><img src="docs/assets/readme/showcase/selector-lift.png" alt="LiftSelector" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>Null Importance 筛选</strong><br>
+    <a href="docs/assets/readme/showcase/selector-null-importance.png"><img src="docs/assets/readme/showcase/selector-null-importance.png" alt="NullImportanceSelector" width="100%"></a></td>
+</tr>
+<tr>
+  <td width="50%" align="center" valign="top"><strong>递归特征消除（RFE）</strong><br>
+    <a href="docs/assets/readme/showcase/selector-rfe.png"><img src="docs/assets/readme/showcase/selector-rfe.png" alt="RFESelector" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>评分卡组合筛选</strong><br>
+    <a href="docs/assets/readme/showcase/selector-scorecard.png"><img src="docs/assets/readme/showcase/selector-scorecard.png" alt="ScorecardFeatureSelection" width="100%"></a></td>
+</tr>
+</table>
 
-<a href="docs/assets/readme/showcase/selector-lift.png" style="color:#c02dd4;">LiftSelector</a> · <a href="docs/assets/readme/showcase/selector-null-importance.png" style="color:#c02dd4;">NullImportanceSelector</a>
-
-<p>
-<a href="docs/assets/readme/showcase/selector-rfe.png"><img src="docs/assets/readme/showcase/selector-rfe.png" alt="RFESelector" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/selector-scorecard.png"><img src="docs/assets/readme/showcase/selector-scorecard.png" alt="ScorecardFeatureSelection" width="48%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/selector-rfe.png" style="color:#c02dd4;">RFESelector</a> · <a href="docs/assets/readme/showcase/selector-scorecard.png" style="color:#c02dd4;">ScorecardFeatureSelection</a>
-
-<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-selectors" style="color:#c02dd4;">按原始尺寸拖动对照</a>
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-selectors" style="color:#c02dd4;">在文档中查看筛选示例</a>
 
 ```python
 from hscredit.core.selectors import NullSelector, CorrSelector, selection_report
@@ -551,15 +574,18 @@ card.scorecard_points().show()
 card.scorecard_scale().show()
 ```
 
-<p>
-<a href="docs/assets/readme/showcase/scorecard-points.png"><img src="docs/assets/readme/showcase/scorecard-points.png" alt="评分卡分值" width="40%" align="left"></a>
-<a href="docs/assets/readme/showcase/lr-summary.png"><img src="docs/assets/readme/showcase/lr-summary.png" alt="逻辑回归统计摘要" width="51%" align="top"></a><br>
-<a href="docs/assets/readme/showcase/scorecard-scale.png"><img src="docs/assets/readme/showcase/scorecard-scale.png" alt="评分刻度" width="51%" align="top"></a><br clear="all">
-</p>
+<table>
+<tr>
+  <td width="50%" align="center" valign="top"><strong>评分卡分值</strong><br>
+    <a href="docs/assets/readme/showcase/scorecard-points.png"><img src="docs/assets/readme/showcase/scorecard-points.png" alt="评分卡分值" width="55%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>逻辑回归统计摘要</strong><br>
+    <a href="docs/assets/readme/showcase/lr-summary.png"><img src="docs/assets/readme/showcase/lr-summary.png" alt="逻辑回归统计摘要" width="100%"></a><br>
+    <strong>评分刻度</strong><br>
+    <a href="docs/assets/readme/showcase/scorecard-scale.png"><img src="docs/assets/readme/showcase/scorecard-scale.png" alt="评分刻度" width="100%"></a></td>
+</tr>
+</table>
 
-<a href="docs/assets/readme/showcase/scorecard-points.png" style="color:#c02dd4;">评分卡分值</a> · <a href="docs/assets/readme/showcase/lr-summary.png" style="color:#c02dd4;">逻辑回归统计摘要</a> · <a href="docs/assets/readme/showcase/scorecard-scale.png" style="color:#c02dd4;">评分刻度</a>
-
-<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-scorecard" style="color:#c02dd4;">按原始尺寸拖动对照</a>
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-scorecard" style="color:#c02dd4;">在文档中查看评分卡示例</a>
 
 **XGBoost 与超参数搜索。** 用 `.tune()` 指定搜索空间，也可用 `AutoTuner` 的预设空间；Dashboard 查看搜索过程，Pareto 前沿比较多个优化目标。
 
@@ -705,11 +731,7 @@ report = auto_model_report(
 report.summary().show()
 ```
 
-<a href="docs/assets/readme/showcase/report-multi-label.png"><img src="docs/assets/readme/showcase/report-multi-label.png" alt="训练集、测试集在四种逾期口径下的 KS、AUC 和坏样本率"></a>
-
 <a href="docs/assets/readme/showcase/intro-model.png"><img src="docs/assets/readme/showcase/intro-model.png" alt="模型性能，含训练集与测试集的四标签订单、金额评分分箱及合计"></a>
-
-<a href="docs/assets/readme/showcase/model-top-excel.png"><img src="docs/assets/readme/showcase/model-top-excel.png" alt="分月模型效果（MOB1@0）"></a>
 
 <a href="docs/assets/readme/showcase/auto-model-report.xlsx?raw=true" download style="color:#c02dd4;">下载多标签分类模型报告</a>
 
@@ -891,28 +913,32 @@ for name, tree in [("二叉树", binary_tree), ("多叉树", multiway_tree)]:
 
 </details>
 
-<p>
-<a href="docs/assets/readme/showcase/tree-binary.png"><img src="docs/assets/readme/showcase/tree-binary.png" alt="二叉树" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/tree-multiway.png"><img src="docs/assets/readme/showcase/tree-multiway.png" alt="多叉树" width="48%" align="top"></a>
-</p>
+<table>
+<tr>
+  <th scope="col" width="50%">二叉树</th>
+  <th scope="col" width="50%">多叉树</th>
+</tr>
+<tr>
+  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/tree-binary.png"><img src="docs/assets/readme/showcase/tree-binary.png" alt="二叉树" width="72.27%"></a></td>
+  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/tree-multiway.png"><img src="docs/assets/readme/showcase/tree-multiway.png" alt="多叉树" width="100%"></a></td>
+</tr>
+<tr>
+  <th colspan="2">训练集节点效果</th>
+</tr>
+<tr>
+  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/binary-tree-report-excel.png"><img src="docs/assets/readme/showcase/binary-tree-report-excel.png" alt="二叉树 · 训练集节点效果" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/multiway-tree-report-excel.png"><img src="docs/assets/readme/showcase/multiway-tree-report-excel.png" alt="多叉树 · 训练集节点效果" width="100%"></a></td>
+</tr>
+<tr>
+  <th colspan="2">测试集节点效果</th>
+</tr>
+<tr>
+  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/binary-tree-report-test-excel.png"><img src="docs/assets/readme/showcase/binary-tree-report-test-excel.png" alt="二叉树 · 测试集节点效果" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/multiway-tree-report-test-excel.png"><img src="docs/assets/readme/showcase/multiway-tree-report-test-excel.png" alt="多叉树 · 测试集节点效果" width="100%"></a></td>
+</tr>
+</table>
 
-<a href="docs/assets/readme/showcase/tree-binary.png" style="color:#c02dd4;">二叉树</a> · <a href="docs/assets/readme/showcase/tree-multiway.png" style="color:#c02dd4;">多叉树</a>
-
-<p>
-<a href="docs/assets/readme/showcase/binary-tree-report-excel.png"><img src="docs/assets/readme/showcase/binary-tree-report-excel.png" alt="二叉树 · 训练集" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/multiway-tree-report-excel.png"><img src="docs/assets/readme/showcase/multiway-tree-report-excel.png" alt="多叉树 · 训练集" width="48%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/binary-tree-report-excel.png" style="color:#c02dd4;">二叉树 · 训练集</a> · <a href="docs/assets/readme/showcase/multiway-tree-report-excel.png" style="color:#c02dd4;">多叉树 · 训练集</a>
-
-<p>
-<a href="docs/assets/readme/showcase/binary-tree-report-test-excel.png"><img src="docs/assets/readme/showcase/binary-tree-report-test-excel.png" alt="二叉树 · 测试集" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/multiway-tree-report-test-excel.png"><img src="docs/assets/readme/showcase/multiway-tree-report-test-excel.png" alt="多叉树 · 测试集" width="48%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/binary-tree-report-test-excel.png" style="color:#c02dd4;">二叉树 · 测试集</a> · <a href="docs/assets/readme/showcase/multiway-tree-report-test-excel.png" style="color:#c02dd4;">多叉树 · 测试集</a>
-
-<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-trees" style="color:#c02dd4;">按原始尺寸拖动对照</a>
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-trees" style="color:#c02dd4;">在文档中查看决策树报告</a>
 
 **多叉树组合策略汇总** · 按授信月份和客群比较样本分布，再对照订单与金额两种口径下的节点命中效果。
 
@@ -961,28 +987,26 @@ bad_rate_trend_plot(df, date="授信时间", **labels)
 
 </details>
 
-<p>
-<a href="docs/assets/readme/showcase/eda-ks.png"><img src="docs/assets/readme/showcase/eda-ks.png" alt="KS 与 ROC" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/eda-corr.png"><img src="docs/assets/readme/showcase/eda-corr.png" alt="特征相关性" width="48%" align="top"></a>
-</p>
+<table>
+<tr>
+  <td width="33.33%" align="center" valign="top"><strong>KS 与 ROC</strong><br>
+    <a href="docs/assets/readme/showcase/eda-ks.png"><img src="docs/assets/readme/showcase/eda-ks.png" alt="KS 与 ROC" width="100%"></a></td>
+  <td width="33.33%" align="center" valign="top"><strong>特征相关性</strong><br>
+    <a href="docs/assets/readme/showcase/eda-corr.png"><img src="docs/assets/readme/showcase/eda-corr.png" alt="特征相关性" width="100%"></a></td>
+  <td width="33.33%" align="center" valign="top"><strong>预测概率分布</strong><br>
+    <a href="docs/assets/readme/showcase/eda-hist.png"><img src="docs/assets/readme/showcase/eda-hist.png" alt="预测概率分布" width="100%"></a></td>
+</tr>
+<tr>
+  <td width="33.33%" align="center" valign="top"><strong>混淆矩阵</strong><br>
+    <a href="docs/assets/readme/showcase/eda-confusion.png"><img src="docs/assets/readme/showcase/eda-confusion.png" alt="混淆矩阵" width="100%"></a></td>
+  <td width="33.33%" align="center" valign="top"><strong>PSI 稳定性</strong><br>
+    <a href="docs/assets/readme/showcase/eda-psi.png"><img src="docs/assets/readme/showcase/eda-psi.png" alt="PSI 稳定性" width="100%"></a></td>
+  <td width="33.33%" align="center" valign="top"><strong>坏样本率趋势</strong><br>
+    <a href="docs/assets/readme/showcase/eda-trend.png"><img src="docs/assets/readme/showcase/eda-trend.png" alt="坏样本率趋势" width="100%"></a></td>
+</tr>
+</table>
 
-<a href="docs/assets/readme/showcase/eda-ks.png" style="color:#c02dd4;">KS 与 ROC</a> · <a href="docs/assets/readme/showcase/eda-corr.png" style="color:#c02dd4;">特征相关性</a>
-
-<p>
-<a href="docs/assets/readme/showcase/eda-hist.png"><img src="docs/assets/readme/showcase/eda-hist.png" alt="预测概率分布" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/eda-confusion.png"><img src="docs/assets/readme/showcase/eda-confusion.png" alt="混淆矩阵" width="48%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/eda-hist.png" style="color:#c02dd4;">预测概率分布</a> · <a href="docs/assets/readme/showcase/eda-confusion.png" style="color:#c02dd4;">混淆矩阵</a>
-
-<p>
-<a href="docs/assets/readme/showcase/eda-psi.png"><img src="docs/assets/readme/showcase/eda-psi.png" alt="PSI 稳定性" width="48%" align="top"></a>
-<a href="docs/assets/readme/showcase/eda-trend.png"><img src="docs/assets/readme/showcase/eda-trend.png" alt="坏样本率趋势" width="48%" align="top"></a>
-</p>
-
-<a href="docs/assets/readme/showcase/eda-psi.png" style="color:#c02dd4;">PSI 稳定性</a> · <a href="docs/assets/readme/showcase/eda-trend.png" style="color:#c02dd4;">坏样本率趋势</a>
-
-<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-diagnostics" style="color:#c02dd4;">按原始尺寸拖动对照</a>
+<a href="https://hscredit.hengshucredit.com/showcase.html#gallery-diagnostics" style="color:#c02dd4;">在文档中查看诊断图表</a>
 
 **auto_feature_analysis：多标签特征报告。** 一次输出数据摘要和变量分布，按逾期标签纵向展示各分箱的订单与金额表现。
 
@@ -1152,16 +1176,6 @@ python skills/install.py --suite hscredit
 | <a href="skills/hsreport/SKILL.md" style="color:#c02dd4;">hsreport</a> | 汇总变量、模型或策略的完整分析报告 | “请调用 hsreport，把训练集和测试集的四种 MOB 标签整理成可下载的模型评估 Excel。” | 多数据集、多标签的最终报告工作簿 |
 | <a href="skills/hsexcel/SKILL.md" style="color:#c02dd4;">hsexcel</a> | 编排多表、图像、格式和原生透视表 | “请用 hsexcel 把分箱表和两张图写入 Excel，设置百分比、条件格式、冻结窗口和客群透视表。” | 带原生透视表和格式的最终 Excel |
 
-## 参考引用
-
-- <a href="https://hscredit.hengshucredit.com/" style="color:#c02dd4;">hscredit 在线文档</a> · <a href="https://hscredit.hengshucredit.com/api/index.html" style="color:#c02dd4;">API 参考</a> · <a href="examples/" style="color:#c02dd4;">全部 Notebook</a> · <a href="https://github.com/hengshu-credit/hscredit/issues" style="color:#c02dd4;">GitHub Issues</a>
-- <a href="https://scikit-learn.org/" style="color:#c02dd4;">scikit-learn</a>：估计器接口、Pipeline 与模型评估。
-- <a href="https://xgboost.readthedocs.io/" style="color:#c02dd4;">XGBoost</a> · <a href="https://lightgbm.readthedocs.io/" style="color:#c02dd4;">LightGBM</a> · <a href="https://catboost.ai/" style="color:#c02dd4;">CatBoost</a> · <a href="https://optuna.org/" style="color:#c02dd4;">Optuna</a>：梯度提升与参数优化。
-- <a href="https://shap.readthedocs.io/" style="color:#c02dd4;">SHAP</a> · <a href="https://github.com/PriorLabs/TabPFN" style="color:#c02dd4;">TabPFN</a> · <a href="https://developers.google.com/optimization" style="color:#c02dd4;">OR-Tools</a>：模型解释、表格基础模型与约束优化。
-- <a href="https://github.com/amphibian-dev/toad" style="color:#c02dd4;">toad</a> · <a href="https://github.com/ShichenXie/scorecardpy" style="color:#c02dd4;">scorecardpy</a> · <a href="https://github.com/guillermo-navas-palencia/optbinning" style="color:#c02dd4;">OptBinning</a>：评分卡与分箱生态参考。
-
-开源许可：<a href="LICENSE" style="color:#c02dd4;">MIT License</a>。
-
 ## 公共方法
 
 下面从现金贷订单中取一份可复现的小样本，演示并行计算、字段描述和结果保存。
@@ -1234,3 +1248,16 @@ save_pickle({"额度": amount_profile, "渠道": channel_profile}, "字段描述
 profiles = load_pickle("字段描述.pkl")
 profiles["渠道"].head()
 ```
+
+## 参考引用
+
+- <a href="https://github.com/itlubber" style="color:#c02dd4;">itlubber 的 GitHub 主页</a>
+- <a href="https://github.com/itlubber/scorecardpipeline" style="color:#c02dd4;">scorecardpipeline</a> · 评分卡建模、风控策略分析与报告生成。
+- <a href="https://github.com/itlubber/pdtr" style="color:#c02dd4;">pdtr</a> · 单变量规则与决策树规则挖掘。
+- <a href="https://hscredit.hengshucredit.com/" style="color:#c02dd4;">hscredit 在线文档</a> · <a href="https://hscredit.hengshucredit.com/api/index.html" style="color:#c02dd4;">API 参考</a> · <a href="examples/" style="color:#c02dd4;">全部 Notebook</a> · <a href="https://github.com/hengshu-credit/hscredit/issues" style="color:#c02dd4;">GitHub Issues</a>
+- <a href="https://scikit-learn.org/" style="color:#c02dd4;">scikit-learn</a>：估计器接口、Pipeline 与模型评估。
+- <a href="https://xgboost.readthedocs.io/" style="color:#c02dd4;">XGBoost</a> · <a href="https://lightgbm.readthedocs.io/" style="color:#c02dd4;">LightGBM</a> · <a href="https://catboost.ai/" style="color:#c02dd4;">CatBoost</a> · <a href="https://optuna.org/" style="color:#c02dd4;">Optuna</a>：梯度提升与参数优化。
+- <a href="https://shap.readthedocs.io/" style="color:#c02dd4;">SHAP</a> · <a href="https://github.com/PriorLabs/TabPFN" style="color:#c02dd4;">TabPFN</a> · <a href="https://developers.google.com/optimization" style="color:#c02dd4;">OR-Tools</a>：模型解释、表格基础模型与约束优化。
+- <a href="https://github.com/amphibian-dev/toad" style="color:#c02dd4;">toad</a> · <a href="https://github.com/ShichenXie/scorecardpy" style="color:#c02dd4;">scorecardpy</a> · <a href="https://github.com/guillermo-navas-palencia/optbinning" style="color:#c02dd4;">OptBinning</a>：评分卡与分箱生态参考。
+
+开源许可：<a href="LICENSE" style="color:#c02dd4;">MIT License</a>。
