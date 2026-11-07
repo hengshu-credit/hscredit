@@ -272,15 +272,16 @@ async function main() {
                 assert(Math.abs(after.headers[i] - left) <= 1 && Math.abs(after.data[i] - left) <= 1,
                     `统计详情第 ${i + 1} 列滚动后错位`);
             });
+            return before.headers[1] - before.headers[0];
         }
         await ready();
-        await checkFrozenColumns();
+        const featureNameWidth = await checkFrozenColumns();
         await page.locator("#feature-report .report-next").click();
-        await checkFrozenColumns();
+        assert.equal(await checkFrozenColumns(), featureNameWidth, "翻页改变了特征名列宽");
         await page.locator("#feature-report .report-size").selectOption("10000");
         await grid.evaluate(el => { el.scrollTop = 3400; });
         await grid.locator("tbody tr.report-spacer:first-child").waitFor({ state: "attached" });
-        await checkFrozenColumns();
+        assert.equal(await checkFrozenColumns(), featureNameWidth, "虚拟滚动改变了特征名列宽");
         // 使用完整导航中的真实最后一页，而不是删掉页面节点制造末页。
         await page.goto(base + "/index.html");
         const lastUrl = await page.locator(`${nav} a[href]`).evaluateAll(links => {

@@ -60,9 +60,15 @@
 #feature-report .report-frozen:first-child {
   text-align: left;
 }
+#feature-report th[scope="col"]:first-child,
 #feature-report td.report-frozen:first-child {
-  max-width: min(17rem, 42vw);
-  white-space: nowrap;
+  --report-feature-width: min(10rem, 42vw);
+  box-sizing: border-box;
+  width: var(--report-feature-width);
+  min-width: var(--report-feature-width);
+  max-width: var(--report-feature-width);
+}
+#feature-report td.report-frozen:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
   color: #59368c;
