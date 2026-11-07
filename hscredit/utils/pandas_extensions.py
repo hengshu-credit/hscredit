@@ -39,6 +39,7 @@ from html import escape
 import pandas as pd
 from .._compat import map_styler, prepare_dependency
 from .arguments import binning_options
+from .targets import TargetInput
 
 logger = logging.getLogger(__name__)
 import numpy as np
@@ -81,6 +82,12 @@ def _summary_method(
     bin_params: Optional[Dict[str, Any]] = None,
     *,
     fillna: Optional[float] = None,
+    target: Optional[TargetInput] = None,
+    overdue: Optional[Union[str, List[str], pd.Series, pd.DataFrame]] = None,
+    dpds: Optional[Union[float, List[float]]] = None,
+    del_grey: bool = False,
+    overdue_operator: str = ">",
+    handle_missing_target: str = "drop",
 ) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
     """DataFrame 数据分布摘要统计.
 
@@ -89,6 +96,12 @@ def _summary_method(
     :param features: 特征列表，None则分析全部
     :param y: 目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/AUC/趋势/特征重要性
     :param fillna: 计算 KS、AUC 时的特征缺失填充值。默认按特征与标签均有值的记录计算。
+    :param target: 列名、列名列表、标签向量、callable 或标签字典，与 y、overdue + dpds 互斥。
+    :param overdue: 一个或多个逾期天数字段，或按索引对齐的外部逾期 Series、DataFrame。
+    :param dpds: 单个或多个阈值，与 overdue 组合生成各标签。
+    :param del_grey: 是否按标签剔除灰样本。
+    :param overdue_operator: 定义正样本的比较符，支持 >、>=、<、<=。
+    :param handle_missing_target: 原始标签缺失时采用 drop、positive、negative 或 raise。
     :param val_df: 验证集，用于计算PSI
     :param models: 已训练好的模型字典，用于获取特征重要性
     :param model_type: 模型类型，用于自动训练模型提取特征重要性
@@ -128,6 +141,12 @@ def _summary_method(
         df=self,
         features=features,
         y=y,
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
+        del_grey=del_grey,
+        overdue_operator=overdue_operator,
+        handle_missing_target=handle_missing_target,
         val_df=val_df,
         models=models,
         model_type=model_type,
@@ -183,6 +202,12 @@ def _series_summary_method(
     bin_params: Optional[Dict[str, Any]] = None,
     *,
     fillna: Optional[float] = None,
+    target: Optional[TargetInput] = None,
+    overdue: Optional[Union[pd.Series, pd.DataFrame]] = None,
+    dpds: Optional[Union[float, List[float]]] = None,
+    del_grey: bool = False,
+    overdue_operator: str = ">",
+    handle_missing_target: str = "drop",
 ) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
     """Series 单字段综合摘要统计。
 
@@ -190,9 +215,15 @@ def _series_summary_method(
     10 分箱；显式参数优先于 bin_params，配置优先于默认值。
     user_splits 字典使用当前 Series 名称作为字段键。
     fillna 可指定 KS、AUC 的特征缺失填充值，默认剔除特征或标签缺失的记录。
+    target 支持外部标签向量、callable 或具名标签字典。del_grey 和 handle_missing_target
+    逐标签生效。overdue 可传外部逾期 Series 或 DataFrame，配合 dpds 和 overdue_operator 定义标签。
     """
     if isinstance(y, str):
         raise ValueError("Series.summary 的 y 不支持列名，请直接传入数组、列表或 Series")
+    if isinstance(target, str):
+        raise ValueError("Series.summary 的 target 请传入标签数据或 callable；按列名取标签请使用 DataFrame.summary")
+    if overdue is not None and not isinstance(overdue, (pd.Series, pd.DataFrame)):
+        raise ValueError("Series.summary 的 overdue 请传入逾期 Series 或 DataFrame；按列名取数请使用 DataFrame.summary")
 
     frame = self.to_frame()
     if isinstance(val_df, pd.Series):
@@ -201,6 +232,12 @@ def _series_summary_method(
     return _summary_method(
         frame,
         y=y,
+        target=target,
+        overdue=overdue,
+        dpds=dpds,
+        del_grey=del_grey,
+        overdue_operator=overdue_operator,
+        handle_missing_target=handle_missing_target,
         val_df=val_df,
         models=models,
         model_type=model_type,

@@ -11,7 +11,7 @@
 
 ## 适用入口
 
-以下 32 个公开入口统一提供 `target`、`overdue_operator` 和 `del_grey`；类配置适用于后续拟合或报告。
+以下公开入口统一提供 `target`、`overdue_operator` 和 `del_grey`。类配置适用于后续拟合或报告。
 
 | 范围 | 入口 |
 | --- | --- |
@@ -20,7 +20,7 @@
 | 逾期预测与置换 | `OverduePredictor`、`overdue_prediction_report`、`swap_analysis` |
 | 模型报告 | `ModelReport`、`auto_model_report`、`BaseRiskModel.report`、`LogisticRegression.report`、`ModelWorkflowMixin.model_report`、`ModelWorkflowMixin.report` |
 | 树规则报告 | `DecisionTreeAnalyzer.report/get_rule_table`、`ManualTreeExtractor.report/get_rule_table` |
-| EDA | `bad_rate_overall`、`bad_rate_by_dimension`、`bad_rate_trend`、`bad_rate_by_bins` |
+| EDA | `feature_summary`、`DataFrame.summary`、`Series.summary`、`bad_rate_overall`、`bad_rate_by_dimension`、`bad_rate_trend`、`bad_rate_by_bins` |
 | 绘图 | `distribution_plot`、`bin_overdues_plot`、`bad_rate_trend_plot` |
 
 继承统一模型工作流的组件可在 `model.model_report(...)` 中直接传入上述参数，IDE 与 `help()` 可查看完整签名。
@@ -48,12 +48,13 @@ multiple = feature_bin_stats(
 字典键决定输出名称和顺序，`xxx_7+`、`xxx@7` 不会被逾期命名规则改写。
 `分箱详情` 是表头保留名。字典值不能是列名字符串，需读取列时请传 Series 或 callable。
 
-| 设置 | target 中非 0/1 值（包含缺失）的处理 |
+| 设置 | target 中非缺失、非 0/1 值的处理 |
 | --- | --- |
 | `del_grey=False` | 按负样本 0 计算 |
 | `del_grey=True` | 仅从当前标签的有效样本中剔除 |
 
-数值 1/True 为正样本，0/False 为负样本；其它值为灰客户。该规则不受 `overdue_operator` 影响。
+数值 1/True 为正样本，0/False 为负样本，其余非缺失值为灰客户。该规则不受 `overdue_operator` 影响。
+原始标签缺失由 `handle_missing_target` 单独处理。默认 `"drop"` 从当前标签的指标中剔除该行，`"positive"` 计为 1，`"negative"` 计为 0，`"raise"` 遇到缺失即报错。
 各标签的样本数、金额、坏率和模型指标使用各自分母，不能把某标签的灰客户从其它标签同时删除。
 
 金额的数值校验针对各标签的有效人群，已剔除行不会混入当前标签的分母。结果表与报告不额外输出指标状态或原因说明。
@@ -78,7 +79,7 @@ target = lambda df, threshold=7: df["MOB1"].gt(threshold)
 重复索引必须完全同序。数组和列表按位置对应。长度不一致、索引覆盖不完整、二维结果或标量均报错，
 不广播、不截断、不取索引交集。函数内部错误保留异常链，不更换参数重试。
 
-比较表达式可能已将原始缺失变成 False；需要标记未表现样本时应显式返回缺失，并开启剔灰：
+比较表达式可能已将原始缺失变成 False。需要按缺失策略处理未表现样本时，应让 callable 显式返回缺失值。
 
 ```python
 target = lambda df: df["MOB1"].gt(7).astype(float).where(df["MOB1"].notna())
@@ -118,6 +119,31 @@ table = feature_bin_stats(data, "评分", margins=True, **params)
 `3.0`、`"3.0"` 和 `3` 规范为同一阈值；组合模式去重阈值，配对模式保留各字段对应阈值。
 
 ## 输出与参数优先级
+
+(feature-summary-labels)=
+### 单标签与多标签特征摘要
+
+`feature_summary(data, ...)` 与 `data.summary(...)` 使用同一套统计口径。无标签或实际只有一个标签时返回单层列。多个标签时，每个特征占一行，一级表头依次为“统计详情”、各标签、“分布详情”。
+
+```python
+from hscredit import feature_summary, hscredit_dataset
+
+data = hscredit_dataset(columns=["age_year", "DK_X1995_2", "MOB3", "MOB6"])
+features = ["age_year", "DK_X1995_2"]
+single = data.summary(features=features, overdue="MOB3", dpds=30)
+multi = feature_summary(data, features=features, overdue=["MOB3", "MOB6"], dpds=30, fillna=-99999)
+mob3 = multi["MOB3@30"][["IV", "KS", "AUC", "趋势"]]
+```
+
+样本数、特征缺失率、PSI 和分位数按完整特征样本计算一次。IV、KS、AUC、趋势及自动训练的模型重要性分别使用各标签的有效样本。`fillna` 仅填补 KS 和 AUC 的数值特征缺失值。默认比较符 `>` 的分组名如 `MOB3@30`，其他比较符直接显示为 `MOB3>=30` 等。
+
+已有标签列可以传 `target="是否逾期"` 或 `target=["三期逾期", "六期逾期"]`。需要自定义名称时使用标签字典。使用 callable 时可显式指定 `features`，选取授信时点的特征。旧参数 `y` 保留按位置匹配单标签向量的行为。
+
+分开保存 X 和逾期天数时，可直接传 `X.summary(overdue=days[["MOB3", "MOB6"]], dpds=30)`。单特征也可用 `X["age_year"].summary(overdue=days["MOB3"], dpds=30)`。外部逾期数据按索引对齐。
+
+使用 `summary(return_type="dict")` 时，每个特征返回一条记录。多标签记录使用 `("MOB3@30", "KS")` 这样的二元组键，单标签记录沿用 `"KS"` 等字符串键。
+
+### 其他报告
 
 - 分箱和规则复用现有多级表头；长表继续使用 `逾期标签` 列，自定义名称原样显示。
 - 公共分箱在首个可拟合标签上学习一次，其余标签复用分箱重新统计。某标签缺少的箱不会导致其它标签丢箱。

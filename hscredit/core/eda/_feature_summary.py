@@ -1,11 +1,12 @@
 """综合特征摘要的输入归一化与并行计算实现。"""
 
 from hscredit.utils.dates import date_groups
-from hscredit.utils.arguments import analysis_inputs
+from hscredit.utils.arguments import analysis_inputs, bind_column
 
 import math
 import threading
 import time
+from collections.abc import Mapping
 from collections import OrderedDict
 from dataclasses import dataclass
 from numbers import Real
@@ -16,6 +17,8 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 from ...utils.parallel import ParallelWorkload, parallel_execute, resolve_n_jobs
+from ...utils.overdue import validate_missing_target, validate_overdue_operator
+from ...utils.targets import bind_targets, validate_target_mode
 
 TargetLike = Union[str, Sequence[Any], np.ndarray, pd.Series]
 _NESTED_BINNING_METHODS = frozenset({"genetic", "or_tools", "cp_sat"})
@@ -165,11 +168,8 @@ def _metric_binning_arguments(binning_config: Dict[str, Any]) -> Tuple[str, int,
     return method, max_n_bins, min_bin_size, metric_kwargs
 
 
-def _normalize_target(df: pd.DataFrame, y: Optional[TargetLike]) -> Optional[pd.Series]:
+def _normalize_target(df: pd.DataFrame, y: TargetLike) -> pd.Series:
     """将外部目标变量按位置对齐到输入数据索引。"""
-    if y is None:
-        return None
-
     if isinstance(y, str):
         if y not in df.columns:
             raise ValueError(f"目标列 '{y}' 不存在")
@@ -180,6 +180,71 @@ def _normalize_target(df: pd.DataFrame, y: Optional[TargetLike]) -> Optional[pd.
         raise ValueError("目标变量长度与数据不匹配")
 
     return pd.Series(values, index=df.index)
+
+
+@dataclass(frozen=True)
+class _SummaryLabel:
+    """一项标签的有效值及对应的原始行位置，所有特征共用。"""
+
+    name: str
+    values: pd.Series
+    rows: Union[slice, np.ndarray]
+
+
+def _summary_labels(df, y, target, overdue, dpds, del_grey, overdue_operator, handle_missing_target):
+    """保留旧 y 的位置绑定，标签定义与灰样本处理由公共解析器负责。"""
+    if y is not None and target is not None:
+        raise ValueError("y 和 target 不能同时指定")
+    excluded = set()
+    if y is not None:
+        if isinstance(y, str):
+            excluded.add(y)
+        target = _normalize_target(df, y)
+    validate_target_mode(target, overdue, dpds)
+    if target is None and overdue is None:
+        validate_missing_target(handle_missing_target)
+        validate_overdue_operator(overdue_operator)
+        return [], excluded
+
+    # 分开加载 X 和逾期表现时，先按索引绑定表现数据，无需复制或拼接宽特征表。
+    data = df
+    if isinstance(overdue, (pd.Series, pd.DataFrame)):
+        days = overdue.to_frame(name=overdue.name or "overdue") if isinstance(overdue, pd.Series) else overdue
+        if not days.columns.is_unique or not all(isinstance(col, str) and col for col in days):
+            raise ValueError("外部逾期字段名必须是唯一的非空字符串")
+        data = pd.DataFrame(index=df.index)
+        for col in days:
+            data, _ = bind_column(data, days[col], col)
+        overdue = list(days.columns)
+
+    # 除标准向量和标签字典外，也允许直接选择多个表内标签列。
+    if isinstance(target, (list, tuple)) and target and all(isinstance(col, str) and col in df for col in target):
+        excluded.update(target)
+        target = {col: df[col] for col in target}
+    elif y is None:
+        sources = target.values() if isinstance(target, Mapping) else (target,)
+        for value in sources:
+            if isinstance(value, pd.Series) and value.name in df:
+                source = df[value.name]
+                if not source.index.equals(value.index) and source.index.is_unique and value.index.is_unique:
+                    source = source.reindex(value.index)
+                if source.equals(value):
+                    excluded.add(value.name)
+
+    frame, bound = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, handle_missing_target=handle_missing_target)
+    if data is df:
+        excluded.update(bound.source_columns)
+        excluded.update(bound.columns)
+    else:
+        excluded.update(col for col in overdue if col in df and data[col].equals(df[col]))
+    labels = []
+    for name, values in bound.y_map(frame, "at").items():
+        if len(bound) > 1 and name in ("统计详情", "分布详情"):
+            raise ValueError(f"多标签摘要不能使用保留组名“{name}”作为标签名")
+        valid = values.notna().to_numpy()
+        rows = slice(None) if valid.all() else np.flatnonzero(valid)
+        labels.append(_SummaryLabel(name, values.iloc[rows], rows))
+    return labels, excluded
 
 
 def _ratio(numerator: int, denominator: int) -> float:
@@ -636,15 +701,12 @@ def _prepare_psi_context(
 def _predictive_metrics(
     feature,
     series: pd.Series,
-    y_series: Optional[pd.Series],
+    y_series: pd.Series,
     max_n_bins: int,
     binning_config: Optional[Dict[str, Any]] = None,
     fillna: Optional[float] = None,
 ) -> Dict[str, Any]:
     """在一个字段任务内完成 IV、KS、AUC，并由 IV 的同一分箱表识别趋势。"""
-    if y_series is None:
-        return {}
-
     is_numeric = pd.api.types.is_numeric_dtype(series)
     result = {
         "IV": np.nan,
@@ -652,7 +714,7 @@ def _predictive_metrics(
         "AUC": np.nan,
         "趋势": "unknown" if is_numeric else "categorical",
     }
-    if not is_numeric:
+    if not is_numeric or series.empty:
         return result
 
     from ..binning import OptimalBinning
@@ -791,7 +853,7 @@ def _summarize_complete_batch(
     percentiles: Sequence[float],
     numeric_as_categorical: Sequence[Any],
     force_numeric: Sequence[Any],
-    y_series: Optional[pd.Series],
+    labels: Sequence[_SummaryLabel],
     psi_context: Optional[_PsiContext],
     max_n_bins: int,
     reporter,
@@ -824,7 +886,12 @@ def _summarize_complete_batch(
                 force_numeric,
                 numeric_stats,
             )
-            result.update(_predictive_metrics(feature, series, y_series, max_n_bins, binning_config, fillna))
+            for label in labels:
+                metrics = _predictive_metrics(feature, series.iloc[label.rows], label.values, max_n_bins, binning_config, fillna)
+                if len(labels) > 1:
+                    result.update({(label.name, metric): value for metric, value in metrics.items()})
+                else:
+                    result.update(metrics)
             psi_value = _psi_for_feature(df, feature, psi_context, max_n_bins, binning_config)
             if psi_context is not None:
                 result["PSI"] = psi_value
@@ -852,7 +919,7 @@ class _FeatureSummaryBatchTask:
     percentiles: Sequence[float]
     numeric_as_categorical: Sequence[Any]
     force_numeric: Sequence[Any]
-    y_series: Optional[pd.Series]
+    labels: Sequence[_SummaryLabel]
     psi_context: Optional[_PsiContext]
     max_n_bins: int
     reporter: Any
@@ -870,7 +937,7 @@ def _run_feature_summary_batch(
         task.percentiles,
         task.numeric_as_categorical,
         task.force_numeric,
-        task.y_series,
+        task.labels,
         task.psi_context,
         task.max_n_bins,
         task.reporter,
@@ -886,7 +953,7 @@ def build_feature_summary_fields(
     percentiles: Sequence[float],
     numeric_as_categorical: Optional[Sequence[Any]],
     force_numeric: Optional[Sequence[Any]],
-    y_series: Optional[pd.Series],
+    labels: Sequence[_SummaryLabel],
     val_df: Optional[pd.DataFrame],
     max_n_bins: int,
     psi_method: str,
@@ -932,7 +999,7 @@ def build_feature_summary_fields(
         n_jobs=n_jobs,
         feature_count=len(features),
         row_count=len(df),
-        has_expensive_metrics=y_series is not None or psi_context is not None,
+        has_expensive_metrics=bool(labels) or psi_context is not None,
         has_python_objects=any(not pd.api.types.is_numeric_dtype(df[feature]) for feature in features),
     )
     if parallel_backend is not None:
@@ -972,7 +1039,7 @@ def build_feature_summary_fields(
                 percentiles=percentiles,
                 numeric_as_categorical=numeric_as_categorical,
                 force_numeric=force_numeric,
-                y_series=y_series,
+                labels=labels,
                 psi_context=(_slice_psi_context(psi_context, batch) if backend == "processes" else psi_context),
                 max_n_bins=max_n_bins,
                 reporter=task_reporter,
@@ -1003,8 +1070,8 @@ def build_feature_summary_fields(
                 task_count=len(tasks),
                 rows=len(df),
                 columns=len(features),
-                data_bytes=int(df.loc[:, features].memory_usage(deep=True).sum()),
-                cost_per_item=(12.0 if y_series is not None or psi_context is not None else 1.0),
+                data_bytes=int(df.index.memory_usage(deep=True) + sum(df[col].memory_usage(index=False, deep=True) for col in features)),
+                cost_per_item=(12.0 if labels or psi_context is not None else 1.0),
                 capability={
                     "sequential": "serial_only",
                     "threads": "thread_safe",

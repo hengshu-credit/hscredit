@@ -6,6 +6,7 @@
 
 from hscredit.utils.dates import date_groups
 from hscredit.utils.arguments import analysis_inputs, binning_options
+from hscredit.utils.targets import TargetInput
 
 import numpy as np
 import pandas as pd
@@ -223,6 +224,12 @@ def feature_summary(
     bin_params: Optional[Dict[str, Any]] = None,
     *,
     fillna: Optional[float] = None,
+    target: Optional[TargetInput] = None,
+    overdue: Optional[Union[str, List[str], pd.Series, pd.DataFrame]] = None,
+    dpds: Optional[Union[float, List[float]]] = None,
+    del_grey: bool = False,
+    overdue_operator: str = ">",
+    handle_missing_target: str = "drop",
     mode: str = "best_effort",
     return_result: bool = False,
 ) -> pd.DataFrame:
@@ -246,8 +253,15 @@ def feature_summary(
     :type features: List[str]
     :param y: 默认值为 ``None`` 。目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/特征重要性
     :type y: Optional[Union[str, pd.Series, np.ndarray, List, Tuple]]
+    :param target: 标签列名、列名列表、一维标签、callable 或 {名称: 标签向量或 callable}。
+        Series 按索引对齐，旧参数 y 仍按位置绑定。y、target、overdue + dpds 三者互斥。
+    :param overdue: 一个或多个逾期天数字段，与 dpds 配合使用。外部逾期 Series 或 DataFrame 按索引对齐。
+    :param dpds: 单个阈值或阈值序列，按字段和阈值的组合分别计算指标。
+    :param overdue_operator: 逾期标签比较符，支持 >、>=、<、<=，默认 >。
+    :param del_grey: 是否按各标签独立剔除灰样本，灰区由标签模式和比较符确定。
+    :param handle_missing_target: 原始标签缺失时 drop 剔除、positive 归正、negative 归负或 raise 报错。
     :param fillna: KS、AUC 使用的数值特征缺失填充值。默认 None，按特征与标签成对剔除缺失。
-        传入有限数值（如 0 或 -999）时先填特征，缺失标签仍被剔除。
+        传入有限数值（如 0 或 -999）时先填特征；标签缺失由 handle_missing_target 处理。
     :type fillna: Optional[float]
     :param val_df: 默认值为 ``None`` 。验证集，用于计算PSI，不传则使用psi_method指定的方式
     :type val_df: Optional[pd.DataFrame]
@@ -329,6 +343,10 @@ def feature_summary(
     所有比例字段返回0~1原始小数，所有数值指标均保留底层计算完整精度；展示格式由
     pandas Styler或ExcelWriter的percent_cols等外部配置负责。
 
+    无标签或只有一个标签时返回单层列。多个标签时按「统计详情、各标签、分布详情」
+    返回二级表头。样本数、分布和 PSI 共用完整特征样本，各标签的 IV、KS、AUC、
+    趋势以及自动训练的重要性使用该标签的有效行。
+
     趋势列说明:
 
         - ascending: 坏样本率单调递增
@@ -350,6 +368,8 @@ def feature_summary(
 
     >>> # 包含IV、KS、趋势（传入目标变量）
     >>> summary = feature_summary(df, y='target')
+
+    >>> summary = feature_summary(df, features=['age_year'], overdue=['MOB3', 'MOB6'], dpds=30, fillna=-99999)
 
     >>> # 包含PSI（随机拆分）
     >>> summary = feature_summary(df, y='target', psi_method='random_split')
@@ -388,31 +408,21 @@ def feature_summary(
     if percentiles is None:
         percentiles = [0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]
 
-    if features is None:
-        if isinstance(y, str):
-            features = [c for c in df.columns if c != y]
-        else:
-            features = df.columns.tolist()
-        if len(features) == 0:
-            features = df.columns.tolist()
+    from ._feature_summary import _summary_labels, build_feature_summary_fields
 
-    # 获取目标变量。外部数组型目标按位置匹配，不受双方索引标签影响。
-    from ._feature_summary import _normalize_target
-
-    y_series = _normalize_target(df, y)
-    if isinstance(y, str) and y in features:
-        features = [f for f in features if f != y]
-
-    valid_features = [feature for feature in features if feature in df.columns]
-    from ._feature_summary import build_feature_summary_fields
+    labels, excluded = _summary_labels(df, y, target, overdue, dpds, del_grey, overdue_operator, handle_missing_target)
+    features = [col for col in (df.columns if features is None else features) if col not in excluded and col in df]
+    multi = len(labels) > 1
+    # 标签口径已解析，不再让配置字典中的同名项作用于底层分箱器。
+    bin_params = {key: value for key, value in (bin_params or {}).items() if key not in {"del_grey", "overdue_operator", "handle_missing_target", "fillna"}}
 
     results_df = build_feature_summary_fields(
         df=df,
-        features=valid_features,
+        features=features,
         percentiles=percentiles,
         numeric_as_categorical=numeric_as_categorical,
         force_numeric=force_numeric,
-        y_series=y_series,
+        labels=labels,
         val_df=val_df,
         max_n_bins=max_n_bins,
         psi_method=psi_method,
@@ -430,20 +440,24 @@ def feature_summary(
         fillna=fillna,
     )
 
-    def add_importance(name, calculate):
+    def add_importance(name, calculate, label=None):
         """显式请求的模型计算必须留下成功或失败状态。"""
+        column = f"{name}重要性"
         section = f"模型重要性:{name}"
-        report_result.plan(section, input_rows=len(df))
+        if label is not None and multi:
+            section += f":{label.name}"
+        report_result.plan(section, input_rows=len(label.values) if label is not None else len(df))
 
         def compute():
             values = calculate()
             if not isinstance(values, pd.Series) or not values.index.is_unique:
                 raise TypeError("模型重要性必须返回以唯一特征名为索引的 Series")
-            return values.reindex(features).to_frame(name=f"{name}重要性")
+            return values.reindex(features).to_frame(name=column)
 
         report_result.run(section, compute)
         if report_result.sections[section].status == "成功":
-            results_df[f"{name}重要性"] = report_result[section].iloc[:, 0]
+            key = (label.name, column) if label is not None and multi else column
+            results_df[key] = report_result[section].iloc[:, 0]
         else:
             warnings.warn(f"{section}失败: {report_result.sections[section].reason}", UserWarning, stacklevel=3)
 
@@ -455,19 +469,16 @@ def feature_summary(
     # 自动训练模型获取特征重要性（使用hscredit统一封装模型）
     if model_type is not None:
 
-        def train_importance():
-            if y_series is None:
-                raise ValueError("自动训练模型重要性必须提供目标变量 y")
+        def train_importance(label):
+            if label is None:
+                raise ValueError("自动训练模型重要性必须提供目标变量 y、target 或 overdue+dpds")
             # 过滤有效特征：存在于df中、且有非空值
-            valid_features = [f for f in features if f in df.columns and df[f].notna().sum() > 0]
-
-            # 只保留数值型特征（模型无法处理object/datetime等类型）
-            numeric_features = [f for f in valid_features if pd.api.types.is_numeric_dtype(df[f])]
-
-            if len(numeric_features) == 0:
+            numeric_features = [f for f in features if pd.api.types.is_numeric_dtype(df[f])]
+            X_train = df.loc[:, numeric_features].iloc[label.rows].dropna(axis=1, how="all")
+            if X_train.empty:
                 raise ValueError("没有数值型特征可用于训练模型")
 
-            X_train = df[numeric_features].fillna(df[numeric_features].median())
+            X_train = X_train.fillna(X_train.median())
 
             # 默认参数
             default_params = {"random_state": random_state}
@@ -490,10 +501,11 @@ def feature_summary(
             model_class = getattr(model_module, model_names[model_type])
 
             model = model_class(**default_params)
-            model.fit(X_train, y_series)
+            model.fit(X_train, label.values)
             return model.get_feature_importances()
 
-        add_importance(model_type, train_importance)
+        for label in labels or [None]:
+            add_importance(model_type, lambda label=label: train_importance(label), label)
 
     # 重置索引，使特征名成为列
     results_df = results_df.reset_index()
@@ -501,20 +513,26 @@ def feature_summary(
     # 将特征效果指标（特征重要性、KS、IV、PSI、趋势）调整到靠前位置
     # 基础统计列之后的合理位置：放在缺失率之后，唯一值数之前
     base_cols = ["特征名", "字段类型", "样本数", "缺失数", "缺失率"]
-    effect_cols = [c for c in results_df.columns if c not in base_cols]
-    # 特征重要性列（包含"重要性"字样）放最前，KS/IV/趋势/PSI紧随其后，其他放最后
-    importance_cols = []
-    metric_cols = []
-    other_effect = []
-    for c in effect_cols:
-        if "重要性" in c:
-            importance_cols.append(c)
-        elif c in ("KS", "AUC", "IV", "PSI", "趋势"):
-            metric_cols.append(c)
-        else:
-            other_effect.append(c)
-    # 保持原有顺序：特征重要性 -> KS/IV/PSI/趋势 -> 其他
-    results_df = results_df[base_cols + importance_cols + metric_cols + other_effect]
+    metrics = ["IV", "KS", "AUC", "趋势"]
+    importance = [col for col in results_df if isinstance(col, str) and col.endswith("重要性")]
+    if multi:
+        common = base_cols + importance
+        if "PSI" in results_df:
+            common.append("PSI")
+        distribution = [col for col in results_df if isinstance(col, str) and col not in common]
+        groups = {"统计详情": results_df[common]}
+        for label in labels:
+            columns = [(label.name, metric) for metric in metrics]
+            if model_type is not None:
+                columns.append((label.name, f"{model_type}重要性"))
+            block = results_df.reindex(columns=columns)
+            block.columns = [col[1] for col in columns]
+            groups[label.name] = block
+        groups["分布详情"] = results_df[distribution]
+        results_df = pd.concat(groups, axis=1)
+    else:
+        first = base_cols + importance + [col for col in results_df if col in (*metrics, "PSI")]
+        results_df = results_df[first + [col for col in results_df if col not in first]]
 
     results_df.attrs["分析状态"] = report_result.status_table().to_dict("records")
     results_df.attrs["完整"] = report_result.complete
