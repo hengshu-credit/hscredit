@@ -1,7 +1,6 @@
 """公开文档示例可执行性测试."""
 
 import json
-import os
 import re
 from pathlib import Path
 
@@ -59,21 +58,14 @@ def test_full_chain_notebook_covers_public_model_families():
     assert not any(cell.get("outputs") for cell in book.cells if cell.cell_type == "code")
 
 
-def test_quickstart_markdown_python_blocks_execute(tmp_path):
-    text = (PROJECT_ROOT / "docs" / "quickstart.md").read_text(encoding="utf-8")
-    blocks = re.findall(r"```python\n(.*?)```", text, flags=re.S)
-    namespace = {"__name__": "__documentation_example__"}
-    original_cwd = Path.cwd()
-    os.chdir(tmp_path)
-    try:
-        for index, block in enumerate(blocks, start=1):
-            exec(
-                compile(block, f"docs/quickstart.md:代码块{index}", "exec"),
-                namespace,
-            )
-    finally:
-        os.chdir(original_cwd)
-    assert len(blocks) == 8
+def test_showcase_feature_description_example_executes():
+    text = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    section = text.split("### 单字段与分组描述\n", 1)[1].split("\n### ", 1)[0]
+    (block,) = re.findall(r"```python\n(.*?)```", section, flags=re.S)
+    namespace = {"sample": pd.DataFrame({"流量渠道": ["A", "A", "B"], "loan_amt": [100, 200, 300]})}
+    exec(compile(block, "README.md:单字段与分组描述", "exec"), namespace)
+    assert namespace["amount_profile"]["50%"] == 200
+    assert namespace["channel_profile"].loc[("loan_amt", "50%"), "A"] == 150
 
 
 def test_executable_quickstart_notebook(tmp_path, monkeypatch):
@@ -96,11 +88,7 @@ def test_executable_quickstart_notebook(tmp_path, monkeypatch):
 
 
 def test_public_docs_do_not_use_removed_example_parameters():
-    paths = [
-        PROJECT_ROOT / "README.md",
-        PROJECT_ROOT / "docs" / "quickstart.md",
-    ]
-    text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    text = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     assert "save_path=" not in text
     assert not re.search(r"extract_rules\([^)]*(top_n|metric)", text)
 
@@ -109,7 +97,6 @@ def test_active_docs_and_examples_use_new_model_subpackages():
     """公开入口不能继续推荐已删除的 evaluation 包或不存在的示例文件。"""
     paths = [
         PROJECT_ROOT / "README.md",
-        PROJECT_ROOT / "docs" / "quickstart.md",
         PROJECT_ROOT / "docs" / "articles" / "model-interpretability.md",
         PROJECT_ROOT / "examples" / "00_quickstart.ipynb",
         PROJECT_ROOT / "examples" / "27_model_interpretability.ipynb",

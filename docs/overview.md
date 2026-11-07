@@ -89,4 +89,4 @@ summary[["特征名", "样本数", "缺失率", "IV", "KS", "AUC"]]
 - **日常分析工具**：`feature_describe` 与 `groupby_feature_describe` 做单字段和分组描述，`seed_everything` 固定随机种子，`reload` 在 Notebook 中重载模块，`reduce_memory_usage` 压缩 DataFrame 内存，`save_pickle` / `load_pickle` 保存和读取中间结果。{ref}`公共方法示例 <public-utils>`
 - **Agent Skills**：可通过 `hscredit` Skill 发现和路由操作，由 `hsbin`、`hsselect`、`hsmodel`、`hsrule`、`hsreport`、`hsviz`、`hsexcel` 分别完成分箱、筛选、建模、规则、报告、绘图和 Excel 导出。[Skills 使用指南](skills.md) · [运行接口](api/skills_runtime.rst)
 
-需要从头跑通一套模型时，按[快速开始](quickstart.md)执行。Boosting、神经网络、调参、PMML 和数据库驱动可按需安装对应的扩展依赖。[安装指南](installation.md)
+完整建模流程见{ref}`功能与示例中的风控建模 <gallery-scorecard>`。Boosting、神经网络、调参、PMML 和数据库驱动可按需安装对应的扩展依赖。[安装指南](installation.md)

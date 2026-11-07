@@ -97,8 +97,10 @@ async function main() {
             await ready();
             stable(before, await state(link), ["top", "left", "side", "body"]);
         }
-        await page.goto(base + "/quickstart.html");
+        await page.goto(base + "/showcase.html");
         await ready();
+        const introMenu = page.locator(nav + " p.caption").filter({ hasText: /^入门$/ }).locator("xpath=following-sibling::ul[1]");
+        assert.deepEqual(await introMenu.locator(":scope > li > a").allTextContents(), ["安装指南", "功能与示例", "功能总览"]);
         for (const name of ["installation", "analysis_parameters", "database", "skills", "multiway_tree"]) {
             assert(await page.locator(`${nav} a[href^="${name}.html#"]`).count() > 0, `${name} 缺少小标题`);
         }
@@ -152,7 +154,7 @@ async function main() {
 
         // 正文触底后才接受继续下滚；静止、侧栏和嵌套区域不翻页。
         await page.setViewportSize({ width: 1440, height: 1000 });
-        await page.goto(base + "/quickstart.html");
+        await page.goto(base + "/showcase.html");
         await ready();
         const nextUrl = await page.locator("footer a[rel='next']").evaluate(a => a.href);
         assert(await page.locator(".hs-next-page-hint").count() === 1, "缺少继续阅读提示");
@@ -160,11 +162,11 @@ async function main() {
         await page.mouse.wheel(0, 100000);
         await page.waitForFunction(() => document.scrollingElement.scrollHeight - innerHeight - scrollY <= 2);
         await page.waitForTimeout(450);
-        assert.equal(page.url(), base + "/quickstart.html", "首次触底或静止时自动翻页");
+        assert.equal(page.url(), base + "/showcase.html", "首次触底或静止时自动翻页");
         await page.mouse.move(150, 700);
         await page.mouse.wheel(0, 600);
         await page.waitForTimeout(200);
-        assert.equal(page.url(), base + "/quickstart.html", "侧栏滚动触发翻页");
+        assert.equal(page.url(), base + "/showcase.html", "侧栏滚动触发翻页");
         // 用实际滚动容器覆盖图表、代码和表格的边界情况。
         await page.evaluate(() => {
             const area = document.createElement("div");
@@ -177,15 +179,15 @@ async function main() {
         await page.locator("#nested-scroll-test").hover();
         await page.mouse.wheel(0, 600);
         await page.waitForTimeout(200);
-        assert.equal(page.url(), base + "/quickstart.html", "嵌套区域触底导致翻页");
+        assert.equal(page.url(), base + "/showcase.html", "嵌套区域触底导致翻页");
         await page.locator("#nested-scroll-test").evaluate(el => el.remove());
         await page.mouse.move(1000, 750);
         await page.mouse.wheel(200, 10);
         await page.waitForTimeout(200);
-        assert.equal(page.url(), base + "/quickstart.html", "横向滚动触发翻页");
+        assert.equal(page.url(), base + "/showcase.html", "横向滚动触发翻页");
         await page.locator(".wy-nav-content").dispatchEvent("wheel", { deltaY: 400, ctrlKey: true });
         await page.waitForTimeout(200);
-        assert.equal(page.url(), base + "/quickstart.html", "缩放手势触发翻页");
+        assert.equal(page.url(), base + "/showcase.html", "缩放手势触发翻页");
         await page.mouse.wheel(0, 120);
         await page.waitForURL(nextUrl);
         await ready();
@@ -218,14 +220,33 @@ async function main() {
                 .evaluateAll(links => links.filter(link => getComputedStyle(link).borderImageSource !== "none").length);
             assert.equal(inactiveHighlights, 0, "展开的旧分支仍显示当前项霓虹边框");
         }
-        // 同页父标题和第一个子标题距离很近时，高亮仍须对应所点击的入口。
+        // 正文快捷入口与侧栏的模块必须指向同一节，模型报告保留自己的分类和回归子目录。
         await page.goto(base + "/showcase.html");
         await ready();
-        const examples = page.locator(nav).getByText("功能示例", { exact: true });
-        await prepare(examples);
-        await examples.click();
+        const shortcuts = page.locator("#readme-showcase > p").filter({ has: page.locator('a[href="#showcase-dataset"]') }).locator("a");
+        assert.deepEqual(await shortcuts.allTextContents(),
+            ["数据集", "特征分箱", "特征编码", "特征筛选", "风控建模", "规则分析", "数据挖掘", "Excel 写入", "数据库读写", "Agent 能力", "公共方法"]);
+        for (const shortcut of await shortcuts.all()) {
+            const href = await shortcut.getAttribute("href");
+            const sideLink = page.locator(`${nav} .toctree-l2 > a[href^="#"]`).filter({ hasText: await shortcut.innerText() });
+            const sectionMatches = await sideLink.evaluate((link, hash) => {
+                const section = fragment => document.getElementById(fragment.slice(1)).closest("section");
+                return section(link.closest("a").hash) === section(hash);
+            }, href);
+            assert(sectionMatches, `模块入口未对应侧栏：${href}`);
+        }
+        const model = page.locator(`${nav} a[href="#gallery-scorecard"]`);
+        await shortcuts.filter({ hasText: "风控建模" }).click();
         await ready();
-        assert.equal(await examples.getAttribute("aria-current"), "location", "功能示例的锚点被子节抢占");
+        assert.equal(await model.getAttribute("aria-current"), "location", "风控建模的锚点被子节抢占");
+        const reports = model.locator("..").getByText("模型评估与上线报告", { exact: true });
+        const reportLinks = reports.locator("..").locator(":scope > ul > li > a");
+        assert.deepEqual(await reportLinks.allTextContents(), ["分类模型预测逾期", "回归模型预测金额"]);
+        if (!await reportLinks.first().isVisible()) { await toggle(reports); }
+        await prepare(reportLinks.last());
+        await reportLinks.last().click();
+        await ready();
+        assert.equal(await reportLinks.last().getAttribute("aria-current"), "location", "回归模型报告未定位到所选章节");
         const reloadSection = page.locator(nav).getByText("Jupyter 模块重载", { exact: true });
         if (!await reloadSection.isVisible()) {
             await toggle(page.locator(nav).getByText("公共方法", { exact: true }));
@@ -300,7 +321,7 @@ async function main() {
 
         const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
         mobile.on("pageerror", error => errors.push(error.message));
-        await mobile.goto(base + "/quickstart.html");
+        await mobile.goto(base + "/showcase.html");
         const mobileNext = await mobile.locator("footer a[rel='next']").evaluate(a => a.href);
         const input = await mobile.context().newCDPSession(mobile);
         async function swipe(distance) {
@@ -312,10 +333,10 @@ async function main() {
         await swipe(250);
         await mobile.waitForFunction(() => document.scrollingElement.scrollHeight - innerHeight - scrollY <= 2);
         await mobile.waitForTimeout(450);
-        assert.equal(mobile.url(), base + "/quickstart.html", "首次滑动触底时自动翻页");
+        assert.equal(mobile.url(), base + "/showcase.html", "首次滑动触底时自动翻页");
         await swipe(30);
         await mobile.waitForTimeout(200);
-        assert.equal(mobile.url(), base + "/quickstart.html", "轻微触摸触发翻页");
+        assert.equal(mobile.url(), base + "/showcase.html", "轻微触摸触发翻页");
         await swipe(180);
         await mobile.waitForURL(mobileNext);
         await mobile.evaluate(() => document.fonts.ready);

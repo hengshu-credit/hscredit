@@ -52,42 +52,15 @@ hscredit 文档
 
 按任务查找 Python 入口和指南，见 :doc:`overview`。
 
-快速开始
---------
-
-.. code-block:: bash
-
-   pip install hscredit
-
-.. code-block:: python
-
-   from hscredit.utils.datasets import germancredit
-   from hscredit.core.binning import OptimalBinning
-   from hscredit.core.models import ScoreCard
-
-   df = germancredit()
-   X_train = df[["duration_in_month", "credit_amount", "age_in_years"]]
-   y_train = df["class"]
-   X_test = X_train.iloc[:20]
-
-   binner = OptimalBinning(method="best_iv", max_n_bins=5)
-   binner.fit(X_train, y_train)
-   X_woe = binner.transform(X_train, metric="woe")
-
-   scorecard = ScoreCard(pdo=60, rate=2, base_odds=35, base_score=750, binner=binner)
-   scorecard.fit(X_woe, y_train)
-   scores = scorecard.predict(X_test)
-
-更多端到端示例见 :doc:`quickstart`。
+从现金贷数据集开始，按步骤查看分箱、评分卡建模和策略回测的代码与报告，见 :doc:`showcase`。
 
 .. toctree::
    :maxdepth: 1
    :caption: 入门
 
    安装指南 <installation>
-   快速开始 <quickstart>
-   功能总览 <overview>
    功能与示例 <showcase>
+   功能总览 <overview>
 
 .. toctree::
    :maxdepth: 2

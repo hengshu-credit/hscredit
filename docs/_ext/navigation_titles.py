@@ -4,23 +4,20 @@ import re
 
 from docutils import nodes
 
-
 SHORT_TITLES = {
     "showcase": {
         "为什么选 hscredit？": "四类风控报告",
         "核心功能盘点": "模块概览",
-        "功能展示": "功能示例",
+        "数据加载、标签与训练集划分": "加载与样本划分",
+        "WOE、目标编码与 Pipeline": "编码与 Pipeline",
         "分箱摘要、客群比较与二维分箱表": "分箱分析",
         "分箱图与跨期趋势": "分箱可视化",
         "手工拆分与多数据集策略报告": "决策树规则报告",
         "常用图表": "诊断图与特征报告",
+        "auto_feature_analysis：多标签特征报告": "多标签特征报告",
+        "写入数据、多图、格式与透视表": "图表与透视表",
         "DataFrame 与 Series 的并行 apply": "并行 apply",
         "在 Jupyter 中重载模块": "Jupyter 模块重载",
-    },
-    "quickstart": {
-        "准备数据并按时间切分": "按时间切分数据",
-        "机器学习模型与概率校准": "训练与概率校准",
-        "模型报告和制品保存": "报告与保存",
     },
     "articles/tuning-guide": {
         "先选对入口": "调参入口",
