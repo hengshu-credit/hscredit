@@ -247,6 +247,40 @@ async function main() {
             assert.deepEqual(await menu.locator(":scope > li > a").allTextContents(),
                 ["现金贷数据集", "特征摘要报告"], "数据集侧栏入口重复或父级错误");
         }
+        // 在真实报告上验证两层表头和数据列，覆盖翻页及虚拟滚动创建的新行。
+        const grid = page.locator("#feature-report .report-grid");
+        async function checkFrozenColumns() {
+            await grid.evaluate(el => { el.scrollLeft = 0; });
+            const positions = () => grid.evaluate(el => {
+                const table = el.querySelector("table");
+                const group = table.tHead.rows[0].cells[0];
+                const cells = table.tBodies[0].querySelector("tr:not(.report-spacer)").cells;
+                const left = cell => cell.getBoundingClientRect().left;
+                return {
+                    group: left(group),
+                    headers: Array.from(table.tHead.rows[1].cells).slice(0, group.colSpan).map(left),
+                    data: Array.from(cells).slice(0, group.colSpan).map(left),
+                    metric: left(cells[group.colSpan]),
+                };
+            });
+            const before = await positions();
+            await grid.evaluate(el => { el.scrollLeft = 480; });
+            const after = await positions();
+            assert(after.metric < before.metric - 400, "MOB 指标未随表格滚动");
+            assert(Math.abs(after.group - before.group) <= 1, "统计详情分组表头未冻结");
+            before.headers.forEach((left, i) => {
+                assert(Math.abs(after.headers[i] - left) <= 1 && Math.abs(after.data[i] - left) <= 1,
+                    `统计详情第 ${i + 1} 列滚动后错位`);
+            });
+        }
+        await ready();
+        await checkFrozenColumns();
+        await page.locator("#feature-report .report-next").click();
+        await checkFrozenColumns();
+        await page.locator("#feature-report .report-size").selectOption("10000");
+        await grid.evaluate(el => { el.scrollTop = 3400; });
+        await grid.locator("tbody tr.report-spacer:first-child").waitFor({ state: "attached" });
+        await checkFrozenColumns();
         // 使用完整导航中的真实最后一页，而不是删掉页面节点制造末页。
         await page.goto(base + "/index.html");
         const lastUrl = await page.locator(`${nav} a[href]`).evaluateAll(links => {

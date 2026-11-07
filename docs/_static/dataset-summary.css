@@ -50,14 +50,17 @@
 #feature-report tbody tr.report-even td { background: var(--hs-table-stripe); }
 #feature-report .report-spacer td { padding: 0; border: 0; }
 #feature-report tbody tr:hover td { background: var(--hs-table-hover); }
-#feature-report td:first-child, #feature-report thead tr:last-child th:first-child {
+#feature-report .report-frozen {
   position: sticky;
-  left: 0;
-  text-align: left;
-  border-right: 1px solid var(--hs-table-divider);
-}
-#feature-report td:first-child {
   z-index: 1;
+}
+#feature-report .report-frozen-end {
+  box-shadow: inset -1px 0 var(--hs-table-divider);
+}
+#feature-report .report-frozen:first-child {
+  text-align: left;
+}
+#feature-report td.report-frozen:first-child {
   max-width: min(17rem, 42vw);
   white-space: nowrap;
   overflow: hidden;

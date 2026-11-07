@@ -4,6 +4,13 @@
   const report = JSON.parse(document.querySelector("#feature-report-data").textContent);
   const {rows, headers, formats} = report;
   const table = view.querySelector("table");
+  const frozenCount = report.groups[0][1];
+  function freezeCell(cell, index) {
+    if (index >= frozenCount) return;
+    cell.classList.add("report-frozen");
+    cell.style.left = `var(--report-left-${index}, 0px)`;
+    if (index + cell.colSpan === frozenCount) cell.classList.add("report-frozen-end");
+  }
   const count = view.querySelector(".report-status");
   const search = view.querySelector("input");
   const typeSelect = view.querySelector(".report-type");
@@ -78,6 +85,7 @@
       if (index % 2) tr.className = "report-even";
       values.forEach((v, i) => {
         const td = tr.insertCell();
+        freezeCell(td, i);
         if (Array.isArray(v)) td.append(line(v));
         else if (typeof v === "number") td.textContent = v === 0 && formats[i].endsWith(";0") ? "0" : formatters[i].format(v);
         else td.textContent = v ?? "—";
@@ -159,8 +167,10 @@
     th.colSpan = width; th.scope = "colgroup"; th.textContent = name;
     bands.append(th);
   }
+  freezeCell(bands.cells[0], 0);
   headers.forEach((name, i) => {
     const th = document.createElement("th"); th.scope = "col"; labels.append(th);
+    freezeCell(th, i);
     if (name === "数据分布") { th.textContent = name; return; }
     const button = document.createElement("button");
     button.type = "button"; button.textContent = name; button.title = "按" + name + "排序"; th.append(button);
@@ -189,4 +199,20 @@
   prev.addEventListener("click", () => { page--; draw(); });
   next.addEventListener("click", () => { page++; draw(); });
   draw();
+  // 用实际列宽对齐表头及虚拟滚动新增的行。窄屏允许整组左移，以便读全右侧指标。
+  const columnHeaders = Array.from(labels.cells);
+  function updateFrozenOffsets() {
+    const widths = columnHeaders.map(th => th.getBoundingClientRect().width);
+    const frozenWidths = widths.slice(0, frozenCount);
+    const groupWidth = frozenWidths.reduce((sum, width) => sum + width, 0);
+    const metricWidth = Math.min(grid.clientWidth, Math.max(0, ...widths.slice(frozenCount)));
+    let left = Math.min(0, grid.clientWidth - groupWidth - metricWidth);
+    frozenWidths.forEach((width, i) => {
+      table.style.setProperty(`--report-left-${i}`, left + "px");
+      left += width;
+    });
+  }
+  updateFrozenOffsets();
+  const resizeObserver = new ResizeObserver(updateFrozenOffsets);
+  for (const element of [grid, ...columnHeaders]) resizeObserver.observe(element);
 })();
