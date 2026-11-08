@@ -126,6 +126,23 @@ def test_tree_float32_rounding_boundary():
         np.testing.assert_array_equal(Rule(miner._rule_to_string(item)).predict(raw), expected)
 
 
+@pytest.mark.parametrize("dtype", ["boolean", "object", "string", "category"])
+def test_tree_exported_rules_match_missing_and_ordinary_groups(dtype):
+    values = [True, False, None] if dtype == "boolean" else ["nan", "其他", None]
+    data = pd.DataFrame({"x": pd.Series(values * 20, dtype=dtype), "target": ([1, 0, 0] if dtype == "boolean" else [0, 0, 1]) * 20})
+    miner = TreeRuleExtractor(algorithm="dt", max_depth=1, min_samples_leaf=1, min_samples_split=2, n_jobs=1, random_state=4).fit(data)
+    rules = miner.get_rules()
+    assert len(rules) == 2
+    assert all(".notna()" not in rule.expr for rule in rules)
+    with_missing = next(rule for rule in rules if ".isna()" in rule.expr)
+    expected = [False, True, True] if dtype == "boolean" else [False, False, True]
+    np.testing.assert_array_equal(with_missing.predict(data.iloc[:3]), expected)
+    other = next(rule for rule in rules if rule is not with_missing)
+    np.testing.assert_array_equal(other.predict(data.iloc[:3]), np.logical_not(expected))
+    if dtype != "boolean":
+        assert " in " not in with_missing.expr
+
+
 def test_bin_spec_artifact_boundary_roundtrip_and_version(tmp_path):
     spec = BinSpec("中文 字段", 2, lower=0.123456789, upper=None, exclude_values=(999,), include_missing=True)
     raw = pd.DataFrame({"中文 字段": [spec.lower, np.nextafter(spec.lower, -np.inf), np.nan, np.inf, 999]})

@@ -876,7 +876,7 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
                 start_col=col,
                 amount_basis=basis == "金额维度",
                 percent_cols=percent,
-                condition_cols=["坏样本率", "金额坏率", "LIFT值"],
+                condition_cols=["命中率", "样本占比", "坏样本率", "金额坏率", "LIFT值", "坏账改善"],
                 decimal=None,
                 left_cols=["指标含义", "组合策略"],
                 merge_columns=merge_columns,
@@ -963,7 +963,10 @@ def _write_feature_binning(
                 verbose=0,
                 handle_missing_target=handle_missing_target,
             )
-            # 保留 feature_binning_summary 的指标 × 标签宽表；KS/AUC 使用原始特征的统一指标入口。
+            # 树报告将各数据集的排名指标也并入同一张指标 × 标签表。
+            if not isinstance(summary.columns, pd.MultiIndex):
+                label = bound.names("at")[0]
+                summary.columns = pd.MultiIndex.from_tuples([("分箱详情", col) if col in ("指标名称", "分箱方法") else (col, label) for col in summary])
             summary = summary.drop(columns=[c for c in summary if c[0] == "分档KS值"])
             ranking = _feature_ranking_metrics(prepared, bound, features, weight)
             for (metric, label), values in ranking.items():

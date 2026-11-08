@@ -105,27 +105,53 @@ class BinSpec:
         missing = f"({name}.isna())"
         if self.kind == "missing":
             return missing
-        parts = []
-        if self.kind in {"categories", "other"}:
-            members = ", ".join(value_expression(value) for value in self.values)
-            parts.append(f"({name} {'not in' if self.kind == 'other' else 'in'} [{members}])")
+
+        def membership(values, operator="in"):
+            members = ", ".join(value_expression(value) for value in values)
+            return f"({name} {operator} [{members}])"
+
+        def complement(values):
+            # not in 会命中缺失，仅在缺失归属其他分支时排除它。
+            values = tuple(value for value in values if not pd.isna(value))
+            parts = [membership(values, "not in")] if values else []
+            if not self.include_missing:
+                parts.append(f"({name}.notna())")
+            # 排除集合为空时仍需返回逐行掩码，以便与其他字段的规则组合。
+            return " & ".join(parts) or membership((), "not in")
+
+        alternatives = []
+        if self.kind == "other":
+            alternatives.append(complement((*self.values, *self.exclude_values)))
+        elif self.kind == "categories":
+            members = tuple(value for value in self.values if not pd.isna(value) and value not in self.exclude_values)
+            if self.unknown:
+                # 接收未知值的类别箱只需排除其余已知类别。
+                accepted = set(members)
+                alternatives.append(complement(value for value in self.known_values if value not in accepted))
+            else:
+                if members:
+                    alternatives.append(membership(members))
+                if self.include_missing:
+                    alternatives.append(missing)
+        elif self.lower is None and self.upper is None:
+            alternatives.append(complement(self.exclude_values))
         else:
+            parts = []
             if self.lower is not None:
                 parts.append(f"({name} {'>=' if self.closed_left else '>'} {value_expression(self.lower)})")
             if self.upper is not None:
                 parts.append(f"({name} {'<=' if self.closed_right else '<'} {value_expression(self.upper)})")
-        parts.append(f"({name}.notna())")
-        if self.exclude_values:
-            members = ", ".join(value_expression(value) for value in self.exclude_values)
-            parts.append(f"({name} not in [{members}])")
-        expression = " & ".join(parts)
+            if self.exclude_values:
+                parts.append(membership(self.exclude_values, "not in"))
+            alternatives.append(" & ".join(parts))
+            if self.include_missing and not self.unknown:
+                alternatives.append(missing)
+
+        if self.kind == "interval" and self.unknown:
+            alternatives.append(complement(self.known_values))
         if self.include_values:
-            members = ", ".join(value_expression(value) for value in self.include_values)
-            expression = f"({expression}) | ({name} in [{members}])"
-        if self.unknown and self.kind != "other":
-            members = ", ".join(value_expression(value) for value in self.known_values)
-            expression = f"({expression}) | (({name} not in [{members}]) & ({name}.notna()))"
-        return f"({expression}) | {missing}" if self.include_missing else expression
+            alternatives.append(membership(self.include_values))
+        return " | ".join(alternatives) or membership(())
 
     @classmethod
     def from_binner(cls, binner, feature):

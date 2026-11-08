@@ -42,6 +42,32 @@ def test_ruleset_analysis_exposes_del_grey_parameter():
     assert "del_grey" in signature(ruleset_analysis).parameters
 
 
+def test_prior_rule_long_report_preserves_each_targets_population():
+    data = pd.DataFrame({"x": [0, 1, 2, 3, 4, 5], "days": [0, 2, 4, 0, 1, None], "amount": [1, 2, 4, 8, 16, 32]})
+    rule, prior = Rule("x >= 2"), Rule("x == 0")
+    long = rule.report(data, overdue="days", dpds=[0, 3], del_grey=True, prior_rules=prior, amount="amount", margins=True, long_format=True, filter_cols=["样本总数", "坏样本数"])
+    assert list(long["逾期标签"].drop_duplicates()) == ["days 0+", "days 3+"]
+    for label, threshold in [("days 0+", 0), ("days 3+", 3)]:
+        valid = data.loc[data.days.eq(0) | data.days.gt(threshold)].copy()
+        valid["target"] = valid.days.gt(threshold)
+        expected = rule.report(valid, target="target", prior_rules=prior, amount="amount", margins=True, filter_cols=["样本总数", "坏样本数"])
+        actual = long.loc[long["逾期标签"].eq(label)].drop(columns="逾期标签").reset_index(drop=True)
+        pd.testing.assert_frame_equal(actual, expected)
+        totals = actual.loc[actual["分箱"] == "合计"].set_index("规则分类")["样本总数"]
+        assert totals["先验规则"] == valid.amount.sum()
+        assert totals["验证规则"] == valid.loc[valid.x != 0, "amount"].sum()
+
+
+def test_ruleset_long_report_matches_individual_labels():
+    data = pd.DataFrame({"age": [18, 22, 25, 31, 33], "first": [0, 0, 1, 1, 0], "later": [0, 1, 1, 1, 0]})
+    rules = [Rule("age >= 30"), Rule("age >= 21")]
+    table = ruleset_analysis(data, rules, target={"早期": data["first"], "后期": data["later"]}, long_format=True)
+    for label, source in [("早期", "first"), ("后期", "later")]:
+        expected = ruleset_analysis(data, rules, target=source)
+        actual = table.loc[table["逾期标签"] == label].drop(columns="逾期标签").reset_index(drop=True)
+        pd.testing.assert_frame_equal(actual, expected)
+
+
 def test_multi_label_rule_analysis_writes_excel(tmp_path, monkeypatch):
     class DummyMiner:
         def __init__(self, **kwargs):

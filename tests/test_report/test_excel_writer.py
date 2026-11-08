@@ -124,22 +124,48 @@ class TestExcelWriter:
         assert saved["透视分析"]["A1"].value is None
         saved.close()
 
-    def test_condition_color_defaults_to_secondary_theme_for_data_bar(self):
-        """ExcelWriter 默认应使用副主题色生成数据条。"""
+    def test_unnamed_data_bar_uses_a_tint_of_the_theme(self):
+        """无指标名的数据条使用淡主题色。"""
         writer = ExcelWriter()
         worksheet = writer.get_sheet_by_name("Condition")
 
         writer.add_conditional_formatting(worksheet, "B2", "B3")
 
         data_bar_colors, _ = _conditional_format_colors(worksheet)
-        assert writer.condition_color == "F76E6C"
-        assert data_bar_colors == ["00F76E6C"]
+        assert writer.condition_color == "A3ABF5"
+        assert data_bar_colors == ["FFA3ABF5"]
+
+    def test_centered_data_bar_survives_rename_and_template_round_trip(self, tmp_path):
+        from xml.etree import ElementTree as ET
+        from zipfile import ZipFile
+        from hscredit.excel._data_bars import MAIN, X14, XM
+
+        first = tmp_path / "first.xlsx"
+        final = tmp_path / "final.xlsx"
+        writer = ExcelWriter()
+        sheet = writer.get_sheet_by_name("数据")
+        for row, value in enumerate([-0.25, 0.0, 0.5], 2):
+            sheet.cell(row, 2, value)
+        writer.add_conditional_formatting(sheet, "B2", "B4", "B86991", bar_type="centered", negative_color="CACFF9")
+        sheet.title = "改名 & 比较"
+        writer.save(first)
+        loaded = ExcelWriter(style_excel=str(first))
+        frame = pd.DataFrame([[1, 0, -1]], index=["净变化"])
+        frame.save(loaded, worksheet=loaded.get_sheet_by_name(sheet.title), start_row=8, centered_bar_rows=["净变化"])
+        loaded.save(final)
+        with ZipFile(final) as z:
+            root = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
+        linked = {r.findtext(f"{{{MAIN}}}extLst/{{{MAIN}}}ext/{{{X14}}}id") for r in root.iter(f"{{{MAIN}}}cfRule")}
+        ext = list(root.iter(f"{{{X14}}}cfRule"))
+        assert len(ext) == 2 and {r.get("id") for r in ext} == linked
+        assert all(r.find(f"{{{X14}}}dataBar").get("axisPosition") == "middle" for r in ext)
+        assert {cf.findtext(f"{{{XM}}}sqref") for cf in root.iter(f"{{{X14}}}conditionalFormatting")} == {"B2:B4", "B9:D9"}
 
     @pytest.mark.parametrize(
         ("call_color", "expected_color"),
         [
-            (None, "00112233"),
-            ("445566", "00445566"),
+            (None, "FF112233"),
+            ("445566", "FF445566"),
         ],
     )
     def test_add_conditional_formatting_prefers_call_color_over_writer_color(
@@ -1170,9 +1196,9 @@ class TestDataframe2Excel:
     @pytest.mark.parametrize(
         ("call_color", "expected_color"),
         [
-            (None, "00112233"),
-            ("445566", "00445566"),
-            ({"未命中字段": "445566"}, "00112233"),
+            (None, "FF112233"),
+            ("445566", "FF445566"),
+            ({"未命中字段": "445566"}, "FF112233"),
         ],
     )
     def test_dataframe2excel_prefers_call_color_over_existing_writer_color(
@@ -1196,13 +1222,13 @@ class TestDataframe2Excel:
 
         data_bar_colors, color_scale_colors = _conditional_format_colors(worksheet)
         assert data_bar_colors == [expected_color]
-        assert expected_color in color_scale_colors
+        assert expected_color[-6:] in [rgb[-6:] for rgb in color_scale_colors]
 
     @pytest.mark.parametrize(
         ("writer_params", "expected_color"),
         [
-            ({}, "00F76E6C"),
-            ({"condition_color": "112233"}, "00112233"),
+            ({}, "FFA3ABF5"),
+            ({"condition_color": "112233"}, "FF112233"),
         ],
     )
     def test_dataframe2excel_file_path_uses_writer_condition_color(
@@ -1238,7 +1264,7 @@ class TestDataframe2Excel:
         )
 
         data_bar_colors, _ = _conditional_format_colors(worksheet)
-        assert data_bar_colors == ["00112233"]
+        assert data_bar_colors == ["FF112233"]
 
     def test_write_with_custom_format(self):
         """测试自定义格式"""

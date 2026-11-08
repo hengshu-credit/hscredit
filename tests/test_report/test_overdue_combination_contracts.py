@@ -149,6 +149,32 @@ def test_rule_swap_analysis_rejects_mixed_target_modes():
         rule_swap_analysis(_data(), score="score", target="target", overdue="MOB1", dpds=[3], n_jobs=1)
 
 
+def test_long_bin_table_plot_reads_each_labels_rows_once(monkeypatch):
+    from hscredit.core.viz import binning_plots
+    import matplotlib.pyplot as plt
+
+    table = feature_bin_stats(_data(), features=["score", "other"], overdue="MOB1", dpds=[0, 3], del_grey=True, long_format=True, margins=True, n_jobs=1)
+    observed = {}
+    original = binning_plots.bin_plot
+
+    def record(data, *, title, **kwargs):
+        observed[title] = data.copy()
+        return original(data=data, title=title, **kwargs)
+
+    monkeypatch.setattr(binning_plots, "bin_plot", record)
+    with pytest.raises(ValueError, match="多特征"):
+        bin_overdues_plot(bin_table=table)
+    fig = bin_overdues_plot(bin_table=table, feature="score")
+    try:
+        assert list(observed) == ["MOB1_0+", "MOB1_3+"]
+        for name, group in observed.items():
+            expected = table.loc[table["指标名称"].eq("score") & table["逾期标签"].eq(name) & table["分箱标签"].ne("合计")]
+            pd.testing.assert_frame_equal(group, expected)
+        assert not any("Error:" in text.get_text() for ax in fig.axes for text in ax.texts)
+    finally:
+        plt.close(fig)
+
+
 @pytest.mark.parametrize(
     "call",
     [

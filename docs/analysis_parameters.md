@@ -87,6 +87,8 @@
 
 ## 指标边界、合计与精度
 
+`feature_binning_summary` 按特征和分箱方法比较效果，`feature_group_binning_summary` 在此基础上增加分组字段和分组值。直接用 `target` 传列名、单个一维 list、Series、ndarray 或 callable 时，摘要返回单层列名。用标签字典或 `overdue + dpds` 时，效果列使用“指标 → 坏率标签”两级表头，保留定义的标签顺序。`long_format` 仅控制分箱明细的布局。
+
 `feature_bin_stats` 和 `feature_bin_stats_2d` 支持 `round_digits=False` 返回原始精度；默认在合计完成后才舍入展示值。`return_cols` 也在合计完成后生效，不会因隐藏计数列而丢失总体坏率。多特征和长表多标签分别合计，重复添加合计不会叠加已有合计行。
 
 结果表和报告只展示指标数值，不添加指标状态、原因列或额外的“不适用”说明。坏账改善沿用兼容值：全拒绝且总体坏率大于 0 时为 1，总体坏率为 0 时为 0。全部拒绝时，风险拒绝比和累计风险拒绝比为 NaN；未拒绝时风险拒绝比为 0。NaN 在 Excel 中显示为空。单类分箱 KS 保留 0。

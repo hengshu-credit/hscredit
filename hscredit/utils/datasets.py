@@ -3,12 +3,74 @@
 提供示例数据集的加载功能。
 """
 
+import hashlib
 import os
 import re
+import tempfile
+from contextlib import contextmanager
 from importlib.resources import as_file, files
+from pathlib import Path
 from typing import Optional, Sequence, Tuple, Union
+from urllib.request import Request, urlopen
 import pandas as pd
 from pandas.api.types import CategoricalDtype
+
+_DATASET_URL = "https://github.com/hengshu-credit/hscredit/releases/download/v0.1.3/hscredit.parquet"
+_DATASET_SHA256 = "6c4e4790f3a56472d36e58517df349aeb18d3ca709d6b424f51a6556fa8d14f9"
+_DATASET_BYTES = 375272455
+
+
+def _verified_dataset(path):
+    if not path.is_file() or path.stat().st_size != _DATASET_BYTES:
+        return False
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest() == _DATASET_SHA256
+
+
+@contextmanager
+def _hscredit_dataset_path():
+    """优先使用源码中的 Parquet，安装包通过校验后原子发布到本地缓存。"""
+    resource = files("hscredit").joinpath("resources").joinpath("datasets").joinpath("hscredit.parquet")
+    if resource.is_file():
+        with as_file(resource) as path:
+            with path.open("rb") as stream:
+                is_pointer = stream.read(42).startswith(b"version https://git-lfs.github.com/spec/v1")
+            if not is_pointer:
+                yield path
+                return
+
+    root = Path(os.environ.get("HSCREDIT_DATA_HOME") or Path.home() / ".cache" / "hscredit").expanduser()
+    target = root / "datasets" / _DATASET_SHA256 / "hscredit.parquet"
+    if not _verified_dataset(target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".part", delete=False) as temp:
+            partial = Path(temp.name)
+        try:
+            request = Request(_DATASET_URL, headers={"User-Agent": "hscredit-dataset"})
+            with urlopen(request, timeout=60) as response, partial.open("wb") as output:
+                total = 0
+                for block in iter(lambda: response.read(1024 * 1024), b""):
+                    total += len(block)
+                    if total > _DATASET_BYTES:
+                        raise ValueError("下载的 hscredit 数据集超出预期大小")
+                    output.write(block)
+            if not _verified_dataset(partial):
+                raise ValueError("下载的 hscredit 数据集大小或 SHA-256 校验失败")
+            try:
+                os.replace(partial, target)
+            except PermissionError:
+                # Windows 上另一进程可能已完成下载，并打开了经过校验的文件。
+                if not _verified_dataset(target):
+                    raise
+        except OSError as exc:
+            raise OSError(f"无法缓存 hscredit 数据集。可从 {_DATASET_URL} 下载至 {target}") from exc
+        finally:
+            partial.unlink(missing_ok=True)
+    yield target
+
 
 _HSCREDIT_ORDER_COLUMNS = frozenset(
     {
@@ -31,7 +93,7 @@ def hscredit_dataset(
     *,
     columns: Optional[Sequence[str]] = None,
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
-    """加载内置 hscredit 现金贷单笔单批放款数据集。
+    """加载 hscredit 现金贷单笔单批放款数据集。PyPI 安装后首次加载会下载并校验缓存。
 
     **参数**
 
@@ -69,8 +131,7 @@ def hscredit_dataset(
             raise TypeError("columns 中的字段名必须为字符串")
         if len(columns) != len(set(columns)):
             raise ValueError("columns 不能包含重复字段")
-    resource = files("hscredit").joinpath("resources").joinpath("datasets").joinpath("hscredit.parquet")
-    with as_file(resource) as path:
+    with _hscredit_dataset_path() as path:
         if columns is not None:
             from pyarrow.parquet import ParquetFile
 

@@ -906,29 +906,13 @@ _SWAP_COUNT_NAMES = ["样本总数", "好样本数", "坏样本数", "金额总�
 # 各表条件格式：仅对关键列着色（数据条/色阶），保持与模板一致的克制风格，避免满屏色块。
 # 业务/规则口径同时列出样本与金额两种列名，便于订单/金额口径表各自匹配到对应列。
 _CF_IMPACT_BAR = ["样本占比", "金额占比", "拒绝LIFT", "风险拒绝比"]  # 业务影响：占比/拒绝LIFT/风险拒绝比 → 数据条
-_CF_EFFECT_BAR = ["样本占比", "金额占比", "坏样本率", "LIFT值"]  # 规则效果：占比/坏样本率/LIFT → 数据条
+_CF_EFFECT_BAR = ["样本占比", "金额占比", "坏样本率", "LIFT值", "坏账改善"]  # 规则效果：占比/坏样本率/LIFT → 数据条
 _CF_STABILITY_BAR = ["坏样本率", "样本占比", "LIFT指标"]  # 稳定性：坏样本率/样本占比/LIFT → 数据条
-_CF_BIN_BAR = ["LIFT值"]  # 分箱详情：LIFT → 数据条
+_CF_BIN_BAR = ["样本占比", "LIFT值", "坏账改善"]  # 分箱详情：LIFT → 数据条
 _CF_BIN_SCALE = ["分档KS值"]  # 分箱详情：KS → 色阶
-_CF_VARBIN_BAR = ["坏样本率", "LIFT值"]  # 变量分箱明细：坏样本率/LIFT → 数据条
-_CF_OVERVIEW_SCALE = ["坏样本率"]  # 样本情况：坏样本率 → 色阶
+_CF_VARBIN_BAR = ["样本占比", "坏样本率", "LIFT值", "坏账改善"]  # 变量分箱明细：坏样本率/LIFT → 数据条
+_CF_OVERVIEW_BAR = ["坏样本率"]  # 样本情况：坏样本率 → 实心数据条
 
-# 数据条按指标着色：同一张表内并排的各指标使用不同色相，便于区分，避免满屏同色
-_CF_BAR_COLORS = {
-    "样本占比": "F7A09E",
-    "金额占比": "FE9A52",
-    "坏样本率": "F4796B",  # 红 —— 风险
-    "坏账改善": "FE7715",
-    "LIFT值": "F76E6C",  # 红 —— 区分度
-    "拒绝LIFT": "F76E6C",  # 红 —— 拒绝区分度
-    "LIFT指标": "F76E6C",  # 红 —— 稳定性区分度
-    "分档KS值": "FE7715",
-    "风险拒绝比": "F76E6C",
-}
-_CF_BAR_DEFAULT_COLOR = "F76E6C"
-# 暖色副主题色阶，浅色到深色表示指标强度。
-_CF_SCALE_COLORS = ("FFFFFF", "FFD8C6", "F76E6C")
-_CF_SCALE_COLORS_BY_NAME = {"分档KS值": ("FFFFFF", "FE7715")}
 _SWAP_TITLE_COLOR = "FE7715"
 _SWAP_FIXED_COLUMN_WIDTH = 11
 
@@ -1006,6 +990,8 @@ def _display_target_label(label: Any, target_names: Optional[Mapping[str, str]])
 
 def _rename_target_level(table: pd.DataFrame, target_names: Optional[Mapping[str, str]], level: int = 1) -> pd.DataFrame:
     """规整多层列中某一层的逾期标签（统一形式 + target_names 映射），非标签值保持不变。"""
+    if not isinstance(table.columns, pd.MultiIndex):
+        return table
     mapping = {}
     for label in dict.fromkeys(table.columns.get_level_values(level)):
         display = _display_target_label(label, target_names)
@@ -1225,16 +1211,6 @@ def _write_subtitle(writer, worksheet, row: int, text: str, start_col: int) -> N
     cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
 
 
-def _cf_condition_color(bar_names: Optional[Sequence[str]], scale_names: Optional[Sequence[str]]) -> dict:
-    """构建 ``dataframe2excel`` 的 ``condition_color`` 字典：数据条按指标取单色、色阶取三色锚点."""
-    color_map: Dict[str, Any] = {}
-    for name in bar_names or []:
-        color_map[name] = _CF_BAR_COLORS.get(name, _CF_BAR_DEFAULT_COLOR)
-    for name in scale_names or []:
-        color_map[name] = list(_CF_SCALE_COLORS_BY_NAME.get(name, _CF_SCALE_COLORS))
-    return color_map
-
-
 def _rule_detail_lines(rules: Sequence["Rule"]) -> List[str]:
     """构建迭代规则详情文本：规则名与表达式相同时仅展示规则名。"""
     lines = []
@@ -1286,9 +1262,6 @@ def _write_swap_table(
         params.setdefault("condition_cols", bar_cols)
     if scale_cols:
         params.setdefault("color_cols", scale_cols)
-    color_map = _cf_condition_color(bar_names, scale_names)
-    if color_map:
-        params.setdefault("condition_color", color_map)
     return dataframe2excel(
         table,
         excel_writer=writer,
@@ -1318,7 +1291,7 @@ def _add_group_databars(writer, worksheet, table: pd.DataFrame, end_row: int, st
             worksheet,
             f"{first_letter}{data_first}",
             f"{last_letter}{data_last}",
-            condition_color=_CF_BAR_COLORS.get(group, _CF_BAR_DEFAULT_COLOR),
+            condition_color=writer._colors_for_metric(group)[-1],
         )
 
 
@@ -1844,7 +1817,7 @@ def swap_out_report(
         row,
         start_col,
         None,
-        scale_names=_CF_OVERVIEW_SCALE,
+        bar_names=_CF_OVERVIEW_BAR,
     )
     if corr is not None:
         row += _GAP_INNER
@@ -1867,7 +1840,7 @@ def swap_out_report(
             row,
             start_col,
             None,
-            merge_column=[("分箱详情", "分箱方法")],
+            merge_column=["分箱方法"],
             merge=True,
             bar_names=_CF_BIN_BAR,
             scale_names=_CF_BIN_SCALE,

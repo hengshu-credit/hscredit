@@ -37,11 +37,11 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.formatting.rule import DataBarRule, ColorScaleRule
+from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils import get_column_letter, column_index_from_string, range_boundaries
 from openpyxl.styles import NamedStyle, Border, Side, Alignment, PatternFill, Font
 
-from . import _pivot
+from . import _data_bars, _pivot
 
 # hscredit 可视化主题配色（与 core.viz 保持一致）：主题蓝 / 坏样本红 / 提升橙
 HSCREDIT_CHART_COLORS = ["2639E9", "F76E6C", "FE7715"]
@@ -78,7 +78,7 @@ class ExcelWriter:
     :type opacity: float
     :param system: 操作系统类型，可选'mac'、'windows'、'linux'，默认自动检测
     :type system: Optional[str]
-    :param condition_color: 条件格式颜色（不包含#），默认为副主题色"F76E6C"
+    :param condition_color: 默认按指标使用主题配色，可传入颜色统一覆盖。
     :type condition_color: str
     :param max_table_cells: 默认值为 ``None`` 。单次表格写入的单元格数量上限，None不额外限制
         包括表头和可选索引，始终检查Excel工作表行列上限
@@ -121,7 +121,7 @@ class ExcelWriter:
         theme_color: str = "2639E9",
         opacity: float = 0.85,
         system: Optional[str] = None,
-        condition_color: str = "F76E6C",
+        condition_color: Optional[str] = None,
         max_table_cells: Optional[int] = None,
     ):
         # 系统检测
@@ -155,6 +155,7 @@ class ExcelWriter:
 
         if os.path.exists(style_excel):
             self.workbook = load_workbook(style_excel)
+            _data_bars.restore(self.workbook, style_excel)
             if style_sheet_name in self.workbook.sheetnames:
                 self.style_sheet = self.workbook[style_sheet_name]
             else:
@@ -239,7 +240,19 @@ class ExcelWriter:
         self._filename = filename
         return self
 
-    def add_conditional_formatting(self, worksheet: Worksheet, start_space: str, end_space: str, condition_color: Optional[str] = None) -> None:
+    @property
+    def condition_color(self) -> str:
+        """不带指标名时使用的条件格式颜色。"""
+        return self._condition_color or self.calculate_rgba_color(self.theme_color, 0.58, prefix="")
+
+    @condition_color.setter
+    def condition_color(self, value: Optional[str]) -> None:
+        self._condition_color = value
+
+    def _colors_for_metric(self, metric, overrides=None):
+        return _metric_colors(metric, self.theme_color, overrides, self._condition_color)
+
+    def add_conditional_formatting(self, worksheet: Worksheet, start_space: str, end_space: str, condition_color: Optional[str] = None, *, bar_type: str = "solid", negative_color: Optional[str] = None) -> None:
         """设置条件格式（数据条）。
 
         :param worksheet: 工作表对象
@@ -250,11 +263,18 @@ class ExcelWriter:
         :type end_space: str
         :param condition_color: 条件格式颜色，默认使用ExcelWriter的condition_color
         :type condition_color: Optional[str]
+        :param bar_type: solid 为实心数据条，centered 将零轴固定在单元格中央，两侧按相同尺度绘制。
+        :param negative_color: 居中数据条的负值颜色，默认淡主题色；condition_color 指定正值颜色。
         """
-        worksheet.conditional_formatting.add(
-            f"{start_space}:{end_space}",
-            DataBarRule(start_type="min", end_type="max", color=condition_color or self.condition_color),
-        )
+        if bar_type not in ("solid", "centered"):
+            raise ValueError("bar_type 必须为 solid 或 centered")
+        region = f"{start_space}:{end_space}"
+        if bar_type == "centered":
+            colors = self._colors_for_metric("坏账改善", condition_color)
+            positive, negative = colors[-1], _clean_hex(negative_color or colors[0])
+        else:
+            positive, negative = _clean_hex(condition_color or self.condition_color), None
+        worksheet.conditional_formatting.add(region, _data_bars.solid_bar(region, positive, negative))
 
     @staticmethod
     def set_column_width(worksheet: Worksheet, column: Union[str, int], width: float) -> None:
@@ -3584,7 +3604,7 @@ class ExcelWriter:
         """保存Excel文件。
 
         .. note::
-            迷你图、数据透视表/透视图均在 openpyxl 保存后通过注入 xlsx 内部 XML 实现。
+            实心和居中数据条、迷你图、数据透视表/透视图在 openpyxl 保存后写入 XLSX 扩展。
             将已有文件作为 ``style_excel`` 加载可保留并追加透视表；但仅在保存阶段通过
             ``mode='append'`` 合并另一个目标文件时，只复制单元格值/样式，不保证保留该目标
             文件中的迷你图、透视表、原生图与图片。
@@ -3604,10 +3624,12 @@ class ExcelWriter:
         # 处理append模式
         if os.path.exists(filename) and self.mode == "append":
             _workbook = load_workbook(filename)
+            _data_bars.restore(_workbook, filename)
 
             for _sheet_name in _workbook.sheetnames:
                 if _sheet_name not in self.workbook.sheetnames:
                     _worksheet = self.get_sheet_by_name(_sheet_name)
+                    _worksheet.conditional_formatting = copy.deepcopy(_workbook[_sheet_name].conditional_formatting)
 
                     for i, row in enumerate(_workbook[_sheet_name].iter_rows()):
                         for j, cell in enumerate(row):
@@ -3631,6 +3653,7 @@ class ExcelWriter:
             self._inject_sparklines(temporary)
             self._inject_pivots(temporary)
             self._inject_number_stored_as_text_ignored_errors(temporary)
+            _data_bars.write(self.workbook, temporary)
             with zipfile.ZipFile(temporary, "r") as package:
                 broken = package.testzip()
                 if broken is not None:
@@ -3738,7 +3761,42 @@ def _coerce_color_anchors(color_value: Union[str, List[str]]) -> List[str]:
     return anchors
 
 
-def _build_color_scale_rule(values: pd.Series, color_value: Union[str, List[str]]) -> ColorScaleRule:
+def _metric_color_role(column):
+    """从内向外识别指标层，兼容（标签，指标）及（指标，数据集）表头。"""
+    for level in reversed(column if isinstance(column, tuple) else (column,)):
+        name = str(level).upper()
+        if "坏账改善" in name or name == "风险改善":
+            return "improvement"
+        if "LIFT" in name:
+            return "lift"
+        if name.endswith(("坏样本率", "坏账率", "坏率", "逾期率")):
+            return "risk"
+        if name.endswith(("占比", "命中率", "通过率")):
+            return "share"
+    return None
+
+
+def _metric_colors(column, theme, overrides=None, fallback=None):
+    """HTML 与 Excel 共用的颜色锚点；改善指标的两端分别表示负值和正值。"""
+    role = _metric_color_role(column)
+    custom = _coerce_color_anchors(_resolve_condition_value(overrides, column, fallback))
+    if role == "improvement":
+        negative = ExcelWriter.calculate_rgba_color(theme, 0.76, prefix="")
+        if len(custom) == 3:
+            return custom
+        return [custom[0] if len(custom) == 2 else negative, "FFFFFF", custom[-1] if custom else "D58B9F"]
+    if custom:
+        return custom
+    if role == "risk":
+        return ["CD778E"]
+    if role == "lift":
+        return ["B86991"]
+    if role == "share":
+        return ["6979DE" if _clean_hex(theme) == "2639E9" else _clean_hex(theme)]
+    return [ExcelWriter.calculate_rgba_color(theme, 0.58, prefix="")]
+
+
+def _build_color_scale_rule(values: pd.Series, color_value: Union[str, List[str]], *, center_zero=False) -> ColorScaleRule:
     """根据锚点颜色构建颜色渐变规则 ``ColorScaleRule`` ，支持单/双/三色阶。
 
     :param values: 当前列（或行）数据，用于确定最小/最大值
@@ -3755,6 +3813,12 @@ def _build_color_scale_rule(values: pd.Series, color_value: Union[str, List[str]
     anchors = _coerce_color_anchors(color_value)
     vmin, vmax = values.min(), values.max()
 
+    if len(anchors) == 1:
+        anchors = [anchors[0], "FFFFFF", anchors[0]]
+        center_zero = True
+    if center_zero:
+        bound = max(abs(vmin), abs(vmax)) or 1.0
+        return ColorScaleRule(start_type="num", start_value=-bound, start_color=anchors[0], mid_type="num", mid_value=0, mid_color=anchors[1], end_type="num", end_value=bound, end_color=anchors[-1])
     if len(anchors) >= 3:
         return ColorScaleRule(
             start_type="num",
@@ -3767,27 +3831,55 @@ def _build_color_scale_rule(values: pd.Series, color_value: Union[str, List[str]
             end_value=vmax,
             end_color=anchors[2],
         )
-    if len(anchors) == 2:
-        return ColorScaleRule(
-            start_type="num",
-            start_value=vmin,
-            start_color=anchors[0],
-            end_type="num",
-            end_value=vmax,
-            end_color=anchors[1],
-        )
-    _color = anchors[0]
     return ColorScaleRule(
         start_type="num",
         start_value=vmin,
-        start_color=_color,
-        mid_type="num",
-        mid_value=0.0,
-        mid_color="FFFFFF",
+        start_color=anchors[0],
         end_type="num",
         end_value=vmax,
-        end_color=_color,
+        end_color=anchors[-1],
     )
+
+
+def _write_metric_formats(writer, sheet, data, top, left, condition_cols, color_cols, condition_rows, color_rows, condition_color, centered_bar_cols=None, centered_bar_rows=None):
+    """按实际写入的数值区域添加条件格式，显式色阶优先于数据条。"""
+    if data.empty:
+        return
+
+    def apply(metric, values, start, end, kind):
+        colors = writer._colors_for_metric(metric, condition_color)
+        if kind == "centered":
+            custom = _resolve_condition_value(condition_color, metric, writer._condition_color)
+            negative, _, positive = _metric_colors("坏账改善", writer.theme_color, custom)
+            writer.add_conditional_formatting(sheet, start, end, condition_color=positive, negative_color=negative, bar_type="centered")
+        elif kind == "scale":
+            numbers = pd.to_numeric(values, errors="coerce").dropna()
+            numbers = numbers[np.isfinite(numbers)]
+            if not numbers.empty:
+                rule = _build_color_scale_rule(numbers, colors, center_zero=_metric_color_role(metric) == "improvement")
+                sheet.conditional_formatting.add(f"{start}:{end}", rule)
+        else:
+            writer.add_conditional_formatting(sheet, start, end, condition_color=colors[-1])
+
+    def selected(axis, bars, scales, centered):
+        styles = {}
+        for names, kind in ((bars, "solid"), (scales, "scale"), (centered, "centered")):
+            for name in names or []:
+                styles[tuple(name) if isinstance(name, list) else name] = kind
+        if styles:
+            for i, metric in enumerate(axis):
+                kind = _resolve_condition_value(styles, metric, None)
+                if kind:
+                    if kind == "solid" and _metric_color_role(metric) == "improvement":
+                        kind = "centered"
+                    yield i, metric, kind
+
+    for i, metric, kind in selected(data.columns, condition_cols, color_cols, centered_bar_cols):
+        col = get_column_letter(left + i)
+        apply(metric, data.iloc[:, i], f"{col}{top}", f"{col}{top + len(data) - 1}", kind)
+    for i, metric, kind in selected(data.index, condition_rows, color_rows, centered_bar_rows):
+        row = top + i
+        apply(metric, data.iloc[i], f"{get_column_letter(left)}{row}", f"{get_column_letter(left + len(data.columns) - 1)}{row}", kind)
 
 
 def dataframe2excel(
@@ -3822,6 +3914,8 @@ def dataframe2excel(
     speed: str = "auto",
     merge_hierarchy: Union[bool, Sequence[Any]] = True,
     merge_border: bool = False,
+    centered_bar_cols: Optional[List] = None,
+    centered_bar_rows: Optional[List] = None,
     auto_width: bool = False,
     auto_height: bool = False,
     **kwargs,
@@ -3842,8 +3936,10 @@ def dataframe2excel(
     :type header: bool
     :param theme_color: 主题颜色，默认为"2639E9"
     :type theme_color: str
-    :param condition_color: 条件格式（数据条/颜色渐变）颜色，默认为None（使用ExcelWriter的condition_color，
-        其默认值为副主题色"F76E6C"）。单次传入值优先于ExcelWriter配置。支持三种类型：
+    :param centered_bar_cols: 指定居中双向数据条列，零轴在单元格中点；负值向左，正值向右。
+    :param centered_bar_rows: 指定居中双向数据条行，各行单独按数值范围缩放。
+    :param condition_color: 条件格式颜色，默认按指标配色。双向数据条的颜色列表以首色表示负值、末色表示正值。
+        支持以下三种配置类型：
 
         - str：所有 condition_cols/color_cols/condition_rows/color_rows 统一使用该颜色
 
@@ -3945,7 +4041,6 @@ def dataframe2excel(
         writer = excel_writer
     else:
         writer = ExcelWriter(theme_color=theme_color, mode=mode, **writer_params)
-    default_condition_color = writer.condition_color
 
     if isinstance(sheet_name, Worksheet):
         worksheet = sheet_name
@@ -4022,36 +4117,6 @@ def dataframe2excel(
             conditional_column = get_column_letter(start_col + data.columns.get_loc(c) + data.index.nlevels if kwargs.get("index", False) else start_col + data.columns.get_loc(c))
             writer.set_number_format(worksheet, f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", custom_format)
 
-    # 设置条件格式列
-    if condition_cols and len(data) > 0:
-        if not isinstance(condition_cols[0], (tuple, list)):
-            condition_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in condition_cols) or (not isinstance(c, tuple) and c in condition_cols)]
-        for c in [c for c in condition_cols if c in data.columns]:
-            conditional_column = get_column_letter(start_col + data.columns.get_loc(c) + data.index.nlevels if kwargs.get("index", False) else start_col + data.columns.get_loc(c))
-            writer.add_conditional_formatting(
-                worksheet,
-                f"{conditional_column}{end_row - len(data)}",
-                f"{conditional_column}{end_row - 1}",
-                condition_color=resolve_condition_color(condition_color, c, default_condition_color),
-            )
-
-    # 设置颜色渐变列
-    if color_cols and len(data) > 0:
-        if not isinstance(color_cols[0], (tuple, list)):
-            color_cols = [c for c in data.columns if (isinstance(c, tuple) and c[-1] in color_cols) or (not isinstance(c, tuple) and c in color_cols)]
-        for c in [c for c in color_cols if c in data.columns]:
-            try:
-                rule = _build_color_scale_rule(
-                    data[c],
-                    _resolve_condition_value(condition_color, c, default_condition_color),
-                )
-                conditional_column = get_column_letter(start_col + data.columns.get_loc(c) + data.index.nlevels if kwargs.get("index", False) else start_col + data.columns.get_loc(c))
-                worksheet.conditional_formatting.add(f"{conditional_column}{end_row - len(data)}:{conditional_column}{end_row - 1}", rule)
-            except Exception:
-                import traceback
-
-                traceback.print_exc()
-
     # 设置百分比格式行
     if percent_rows:
         if not isinstance(percent_rows[0], (tuple, list)):
@@ -4080,42 +4145,20 @@ def dataframe2excel(
                 custom_format,
             )
 
-    # 设置条件格式行
-    if condition_rows:
-        if not isinstance(condition_rows[0], (tuple, list)):
-            condition_rows = [c for c in data.index if (isinstance(c, tuple) and c[-1] in condition_rows) or (not isinstance(c, tuple) and c in condition_rows)]
-        for c in [c for c in condition_rows if c in data.index]:
-            insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
-            index_row = start_row + insert_row + data.columns.nlevels if header else start_row + insert_row
-            index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
-            writer.add_conditional_formatting(
-                worksheet,
-                f"{get_column_letter(index_col)}{index_row}",
-                f"{get_column_letter(index_col + len(data.columns) - 1)}{index_row}",
-                condition_color=resolve_condition_color(condition_color, c, default_condition_color),
-            )
-
-    # 设置颜色渐变行
-    if color_rows:
-        if not isinstance(color_rows[0], (tuple, list)):
-            color_rows = [c for c in data.index if (isinstance(c, tuple) and c[-1] in color_rows) or (not isinstance(c, tuple) and c in color_rows)]
-        for c in [c for c in color_rows if c in data.index]:
-            try:
-                insert_row = data.index.get_loc(c).start if data.index.nlevels > 1 and not isinstance(data.index.get_loc(c), (int, float)) else data.index.get_loc(c)
-                rule = _build_color_scale_rule(
-                    data.loc[c],
-                    _resolve_condition_value(condition_color, c, default_condition_color),
-                )
-                index_row = start_row + insert_row + data.columns.nlevels if header else start_row + insert_row
-                index_col = start_col + data.index.nlevels if kwargs.get("index", False) else start_col
-                worksheet.conditional_formatting.add(
-                    f"{get_column_letter(index_col)}{index_row}:{get_column_letter(index_col + len(data.columns) - 1)}{index_row}",
-                    rule,
-                )
-            except Exception:
-                import traceback
-
-                traceback.print_exc()
+    _write_metric_formats(
+        writer,
+        worksheet,
+        data,
+        end_row - len(data),
+        start_col + (data.index.nlevels if kwargs.get("index", False) else 0),
+        condition_cols,
+        color_cols,
+        condition_rows,
+        color_rows,
+        condition_color,
+        centered_bar_cols,
+        centered_bar_rows,
+    )
 
     # 应用自定义列对齐（仅数据行，非表头）
     if left_cols or right_cols:

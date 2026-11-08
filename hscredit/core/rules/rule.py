@@ -512,6 +512,7 @@ class Rule(ParallelizableMixin):
         amount: Optional[str] = None,
         margins: bool = False,
         *,
+        long_format: bool = False,
         overdue_operator: str = ">",
         handle_missing_target="drop",
         **kwargs,
@@ -555,6 +556,9 @@ class Rule(ParallelizableMixin):
         :type amount: Optional[str]
         :param margins: 是否在报告末尾添加合计行，默认为False
         :type margins: bool
+        :param long_format: True 按标签纵向排列，保留逾期标签、先验规则和验证规则各自的统计行。
+            默认 False，保留原有表头。
+        :type long_format: bool
         :return: 规则效果评估表DataFrame。
             单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）；
             列包括：规则分类、指标名称、指标含义、分箱、样本总数、样本占比、
@@ -586,6 +590,8 @@ class Rule(ParallelizableMixin):
 
         :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
         """
+        if not isinstance(long_format, (bool, np.bool_)):
+            raise ValueError("long_format 必须为布尔值")
         validate_overdue_operator(overdue_operator)
         reject_legacy_target_keywords(kwargs)
         datasets, targets = bind_targets(
@@ -772,17 +778,24 @@ class Rule(ParallelizableMixin):
                     operation="规则多标签报告",
                 ),
             )
-            merge_keys = pd.concat([item[merge_columns] for item in tables], ignore_index=True).drop_duplicates()
-            merge_keys.columns = pd.MultiIndex.from_tuples([(detail_group_name, column) for column in merge_columns])
-            table = pd.DataFrame()
-            for position, (label, current) in enumerate(zip(labels, tables)):
-                current.columns = pd.MultiIndex.from_tuples([(detail_group_name if column in merge_columns else label, column) for column in current.columns])
-                table = current if position == 0 else table.merge(current, on=[(detail_group_name, column) for column in merge_columns], how="outer", sort=False)
-            table = merge_keys.merge(table, on=list(merge_keys.columns), how="left", sort=False)
+            if long_format:
+                for label, current in zip(labels, tables):
+                    current.insert(1, "逾期标签", label)
+                table = pd.concat(tables, ignore_index=True)
+            else:
+                merge_keys = pd.concat([item[merge_columns] for item in tables], ignore_index=True).drop_duplicates()
+                merge_keys.columns = pd.MultiIndex.from_tuples([(detail_group_name, column) for column in merge_columns])
+                table = pd.DataFrame()
+                for position, (label, current) in enumerate(zip(labels, tables)):
+                    current.columns = pd.MultiIndex.from_tuples([(detail_group_name if column in merge_columns else label, column) for column in current.columns])
+                    table = current if position == 0 else table.merge(current, on=[(detail_group_name, column) for column in merge_columns], how="outer", sort=False)
+                table = merge_keys.merge(table, on=list(merge_keys.columns), how="left", sort=False)
         else:
             column = targets.columns[0]
             valid = datasets[column].notna()
             table = _report_one_rule(datasets.loc[valid], column, desc=desc, prior_rules=prior_rules)
+            if long_format:
+                table.insert(1, "逾期标签", targets.names("space")[0])
         table.attrs["target_mode"] = targets.mode
         table.attrs["target_names"] = targets.names("space")
         table.attrs["统计口径"] = {
@@ -808,7 +821,7 @@ class Rule(ParallelizableMixin):
                     table = table[cols_to_keep]
             else:
                 # 单层级列结构
-                cols_to_keep = [c for c in table.columns if c in filter_cols or c in ["规则分类", "指标名称", "指标含义", "分箱"]]
+                cols_to_keep = [c for c in table.columns if c in filter_cols or c in ["规则分类", "逾期标签", "指标名称", "指标含义", "分箱"]]
                 if cols_to_keep:
                     table = table[cols_to_keep]
 

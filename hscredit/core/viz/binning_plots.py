@@ -3340,7 +3340,7 @@ def bin_overdues_plot(
 
     1. 原始数据 + overdue + dpds：根据原始数据计算分箱并绘图
 
-    2. 分箱表（来自 feature_bin_stats）：直接解析多级表头分箱表并绘图
+    2. 分箱表（来自 feature_bin_stats）：读取多级表头，或按长表的逾期标签列分别绘图。
 
     :param dpi: 默认值为 ``240`` 。保存图片的分辨率（每英寸点数）；仅在保存图片时影响输出文件的像素尺寸
     :type dpi: int
@@ -3358,8 +3358,8 @@ def bin_overdues_plot(
     :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
         必须与 ``overdue`` 同时传入。字段与阈值一一对应，二者长度必须一致。
     :type dpds: Optional[List[int]]
-    :param bin_table: 默认值为 ``None`` 。分箱表（来自 feature_bin_stats 的多级表头 DataFrame）
-        传入后将直接使用分箱表绘图，忽略 data/overdue/dpds 参数
+    :param bin_table: 默认值为 ``None`` 。feature_bin_stats 返回的宽表或长表。
+        长表按逾期标签拆分子图；多特征长表需用 feature 指定要绘制的字段。
 
     :type bin_table: Optional[pd.DataFrame]
     :param method: 分箱方法，默认 'quantile'
@@ -3451,18 +3451,27 @@ def bin_overdues_plot(
 
     # 检查是否为分箱表模式
     if bin_table is not None:
-        # 分箱表模式：直接解析多级表头分箱表
-        if not _is_multiindex_bin_table(bin_table):
-            raise ValueError("bin_table 必须是多级表头的分箱表（来自 feature_bin_stats）")
-
-        # 提取目标名称列表
-        target_names = _extract_target_names_from_bin_table(bin_table)
+        long_table = not _is_multiindex_bin_table(bin_table)
+        if long_table:
+            if not {"逾期标签", "分箱标签", "样本总数", "坏样本率"}.issubset(bin_table.columns):
+                raise ValueError("bin_table 必须是多级表头的分箱表或含逾期标签的长格式分箱表（来自 feature_bin_stats）")
+            bin_table = _exclude_total_bin_rows(bin_table)
+            if "指标名称" in bin_table:
+                if feature is not None:
+                    bin_table = bin_table.loc[bin_table["指标名称"] == feature]
+                elif bin_table["指标名称"].nunique() > 1:
+                    raise ValueError("多特征长格式分箱表需要用 feature 选择一个字段")
+            target_names = bin_table["逾期标签"].drop_duplicates().tolist()
+        else:
+            target_names = _extract_target_names_from_bin_table(bin_table)
 
         if len(target_names) == 0:
             raise ValueError("分箱表中没有找到目标列（除了 '分箱详情'）")
 
         # 从分箱详情中提取特征名（使用第一个分箱行）
-        if ("分箱详情", "指标名称") in bin_table.columns:
+        if long_table and "指标名称" in bin_table:
+            feature = bin_table["指标名称"].iloc[0]
+        elif ("分箱详情", "指标名称") in bin_table.columns:
             feature = bin_table[("分箱详情", "指标名称")].iloc[0]
         else:
             feature = "Feature"
@@ -3488,7 +3497,7 @@ def bin_overdues_plot(
 
             try:
                 # 提取该目标的统计信息
-                stats_df = _get_stats_for_target(bin_table, target_name)
+                stats_df = bin_table.loc[bin_table["逾期标签"] == target_name] if long_table else _get_stats_for_target(bin_table, target_name)
 
                 if stats_df.empty:
                     ax.text(0.5, 0.5, "No Data", ha="center", va="center", transform=ax.transAxes)

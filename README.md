@@ -125,7 +125,7 @@ pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
 
 ### 数据集
 
-内置现金贷订单可按需读取授信特征、放款信息和逐月逾期表现。用 `split=True` 分开取数，再按业务表现期定义标签，即可跟踪同一变量在不同月份和客群中的风险变化。库中也提供 German Credit、Titanic 和 Iris 数据集，用于比较建模方法。
+现金贷订单可按需读取授信特征、放款信息和逐月逾期表现。通过 PyPI 安装后，首次加载会从 GitHub Release 下载 357.89 MiB 的 Parquet 并校验 SHA-256，后续可离线使用缓存。用 `split=True` 分开取数，再按业务表现期定义标签，即可跟踪同一变量在不同月份和客群中的风险变化。库中也提供 German Credit、Titanic 和 Iris 数据集，用于比较建模方法。
 
 <div style="max-width:100%; overflow-x:auto;">
 <table style="white-space:nowrap; border-collapse:collapse; font-size:13px;">
@@ -232,17 +232,23 @@ labels = {"overdue": ["MOB1", "MOB6"], "dpds": [0, 30], "overdue_operator": ">"}
 from hscredit.report import feature_bin_stats
 
 bin_options = dict(
-    feature="最近12个月多头查询次数", method="quantile", max_n_bins=4, margins=True, n_jobs=1
+    feature="最近12个月多头查询次数", method="quantile", max_n_bins=4,
+    margins=True, long_format=True, n_jobs=1,
 )
 bins = feature_bin_stats(df, target="坏样本", **bin_options)
 multi_bins = feature_bin_stats(df, **bin_options, **labels)
-bins.show()
-multi_bins.show()
+bin_cols = ["逾期标签", "分箱标签", "样本总数", "样本占比", "坏样本率", "LIFT值", "坏账改善", "分档IV值"]
+bins[bin_cols].show()
+multi_bins[bin_cols].show()
 ```
 
-<a href="docs/assets/readme/showcase/binning-multi.png"><img src="docs/assets/readme/showcase/binning-multi.png" alt="多标签分箱统计表"></a>
+样本占比、坏样本率和 Lift 分别用实心蓝紫、灰玫瑰和莓红色数据条。坏账改善的零轴固定在单元格中央，负值向左绘制淡蓝紫条，正值向右绘制玫瑰色条。
+
+<a href="docs/assets/readme/showcase/binning-multi.png"><img src="docs/assets/readme/showcase/binning-multi.png" alt="多头查询次数分箱，按 MOB1、MOB6 的 0 天和 30 天标签逐组展示，含各组合计"></a>
 
 **比较方法与客群。** `feature_binning_summary` 对比不同分箱方法；`feature_group_binning_summary` 按授信月份或原始字段 `GROUP`（客群划分）汇总。
+
+下方两表均分析“最近 12 个月多头查询次数”，坏样本定义为 MOB6 > 30。KS 和 Lift 取各分箱的最大值，坏样本数与坏样本率按整组订单统计。
 
 <details>
 <summary>分箱摘要、客群比较与二维分箱表</summary>
@@ -259,11 +265,19 @@ bin_tables, summary = feature_binning_summary(
     feature="最近12个月多头查询次数",
     methods=["quantile", "tree", "chi"],
     target="坏样本",
+    long_format=True,
     max_n_bins=4,
     margins=True,
     n_jobs=1,
 )
 summary.show()
+
+month_tables, month_summary = feature_group_binning_summary(
+    df, feature="最近12个月多头查询次数", methods=["quantile", "tree", "chi"],
+    target="坏样本", date="授信时间", freq="M", max_n_bins=4,
+    margins=True, long_format=True, n_jobs=1,
+)
+month_summary.show()
 
 cohort_tables, cohort_summary = feature_group_binning_summary(
     df,
@@ -271,6 +285,7 @@ cohort_tables, cohort_summary = feature_group_binning_summary(
     group="GROUP",
     dropna=False,
     methods="quantile",
+    long_format=True,
     max_n_bins=4,
     margins=True,
     n_jobs=1,
@@ -278,32 +293,35 @@ cohort_tables, cohort_summary = feature_group_binning_summary(
 )
 cohort_summary.show()
 
-feature_bin_stats_2d(
+bins_2d = feature_bin_stats_2d(
     df,
     features=["最近12个月多头查询次数", "非银机构借款总金额"],
     target="坏样本",
     max_n_bins=3,
     margins=True,
+    long_format=True,
     n_jobs=1,
-).show()
+)
+bins_2d[bin_cols].show()
 ```
 
 </details>
 
-<table>
-<tr>
-  <td width="50%" align="center" valign="top"><strong>方法摘要</strong><br>
-    <a href="docs/assets/readme/showcase/binning-methods.png"><img src="docs/assets/readme/showcase/binning-methods.png" alt="方法摘要" width="100%"></a></td>
-  <td width="50%" align="center" valign="top"><strong>授信月份摘要</strong><br>
-    <a href="docs/assets/readme/showcase/binning-groups.png"><img src="docs/assets/readme/showcase/binning-groups.png" alt="授信月份摘要" width="100%"></a></td>
-</tr>
-<tr>
-  <td width="50%" align="center" valign="top"><strong>单标签分箱表</strong><br>
-    <a href="docs/assets/readme/showcase/binning.png"><img src="docs/assets/readme/showcase/binning.png" alt="单标签分箱表" width="100%"></a></td>
-  <td width="50%" align="center" valign="top"><strong>二维分箱表</strong><br>
-    <a href="docs/assets/readme/showcase/binning-2d.png"><img src="docs/assets/readme/showcase/binning-2d.png" alt="二维分箱表" width="100%"></a></td>
-</tr>
-</table>
+**不同分箱方法的特征效果**
+
+<a href="docs/assets/readme/showcase/binning-methods.png"><img src="docs/assets/readme/showcase/binning-methods.png" alt="各分箱方法在同一特征上的效果"></a>
+
+**各方法按授信月份的特征效果**
+
+<a href="docs/assets/readme/showcase/binning-groups.png"><img src="docs/assets/readme/showcase/binning-groups.png" alt="等频、决策树和卡方分箱在各授信月份的特征效果"></a>
+
+**单标签分箱表** · 最近 12 个月多头查询次数，坏样本为 MOB6 > 30。
+
+<a href="docs/assets/readme/showcase/binning.png"><img src="docs/assets/readme/showcase/binning.png" alt="最近12个月多头查询次数单标签分箱表"></a>
+
+**二维分箱表** · 将多头查询次数与非银机构借款总金额交叉分箱，比较各组合的坏样本率和 Lift。
+
+<a href="docs/assets/readme/showcase/binning-2d.png"><img src="docs/assets/readme/showcase/binning-2d.png" alt="多头查询次数与非银机构借款总金额的二维分箱表"></a>
 
 <a href="https://hscredit.hengshucredit.com/showcase.html#gallery-bin-tables" style="color:#c02dd4;">在文档中查看分箱统计表</a>
 
@@ -330,7 +348,7 @@ binner.fit(X_train[["最近12个月多头查询次数"]], y_train)
 from hscredit.core.viz import bin_plot, bin_overdues_plot, bin_trend_plot
 
 bin_plot(bins)
-bin_overdues_plot(bin_table=multi_bins, n_jobs=1)
+bin_overdues_plot(bin_table=multi_bins, max_cols=2, n_jobs=1)
 bin_trend_plot(
     df,
     feature="最近12个月多头查询次数",
@@ -758,7 +776,7 @@ amount_report.get_metrics().show()
 
 </details>
 
-<a href="docs/assets/readme/showcase/report-regression.png"><img src="docs/assets/readme/showcase/report-regression.png" alt="回归模型评估指标"></a>
+<a href="docs/assets/readme/showcase/report-regression.png"><img src="docs/assets/readme/showcase/report-regression.png" alt="回归模型性能报告：预测误差与均值基准、训练集与测试集预测分箱、实际与预测及残差分布"></a>
 
 按原始额度口径，测试集的平均绝对误差为 1,947.49，训练集为 1,940.93。<a href="docs/assets/readme/showcase/regression-model-report.xlsx?raw=true" download style="color:#c02dd4;">下载金额回归报告</a>
 
@@ -801,25 +819,33 @@ risk_probability = risk_model.predict_proba(X_test_num)[:, 1]
 
 **单规则：`rule.report`**
 
+先用“贷款本月应还金额超过 2 万”筛出已命中客户，再在剩余客户中验证“多头查询超过 60 次”。报告按四种逾期标签分别列出先验规则和验证规则的命中、未命中与合计。传入 `amount="loan_amt"` 后，样本总数和坏样本率按授信额度统计。
+
 ```python
 from hscredit import Rule
 
 query_rule = Rule("最近12个月多头查询次数 > 60", name="多头查询超过60次")
-query_rule.report(test, amount="loan_amt", margins=True, **labels).show()
+payment_rule = Rule("贷款本月应还金额 > 20000", name="月应还额超过2万")
+rule_metrics = ["样本总数", "样本占比", "坏样本率", "LIFT值", "坏账改善"]
+query_rule.report(
+    test, prior_rules=payment_rule, amount="loan_amt", margins=True,
+    long_format=True, filter_cols=rule_metrics, **labels,
+).show()
 ```
 
-<a href="docs/assets/readme/showcase/rule-report.png"><img src="docs/assets/readme/showcase/rule-report.png" alt="Rule.report 单规则分析"></a>
+<a href="docs/assets/readme/showcase/rule-report.png"><img src="docs/assets/readme/showcase/rule-report.png" alt="按逾期标签对照先验规则及剩余客户中验证规则的命中效果"></a>
 
 **规则集：`ruleset_analysis`**
 
 ```python
 from hscredit.report import ruleset_analysis
 
-payment_rule = Rule("贷款本月应还金额 > 20000", name="月应还额超过2万")
 ruleset_analysis(
     test,
     rules=[query_rule, payment_rule],
     amount="loan_amt",
+    long_format=True,
+    filter_cols=rule_metrics,
     n_jobs=1,
     **labels,
 ).show()
@@ -1037,7 +1063,7 @@ auto_feature_analysis(
 
 | 能力 | 入口 / 配置 |
 | --- | --- |
-| 条件格式 | `condition_cols` 数据条、`color_cols` 色阶、`add_conditional_formatting` |
+| 条件格式 | `condition_cols` 实心数据条、`centered_bar_cols` 居中双向数据条、`color_cols` 色阶 |
 | 内容格式 | `percent_cols`、`custom_format`、`set_number_format`、字体、对齐、填充、边框 |
 | 数据 + 多图 | `dataframe2excel(..., figures=[...])`、`insert_pic2sheet` |
 | 导航与阅读 | `insert_hyperlink2sheet`、`set_freeze_panes`、自动筛选 |
@@ -1057,13 +1083,13 @@ bin_trend_plot(
 )
 writer = ExcelWriter()
 dataframe2excel(
-    bins,
+    bins[bin_cols],
     writer,
     sheet_name="分箱分析",
     figures=["分箱.png", "月份.png"],
-    percent_cols=["坏样本率"],
-    condition_cols=["LIFT值"],
-    condition_color="F76E6C",
+    percent_cols=["样本占比", "坏样本率", "坏账改善"],
+    condition_cols=["样本占比", "坏样本率", "LIFT值"],
+    centered_bar_cols=["坏账改善"],
     auto_width=True,
 )
 sheet = writer.get_sheet_by_name("分箱分析")

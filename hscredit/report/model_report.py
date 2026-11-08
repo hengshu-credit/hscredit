@@ -608,7 +608,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         "累积坏账改善",
         "分档KS值",
     ]
-    _CONDITION_COLS = ["坏样本率", "LIFT值", "累积LIFT值"]
+    _CONDITION_COLS = ["样本占比", "坏样本率", "LIFT值", "累积LIFT值", "坏账改善", "累积坏账改善"]
 
     def __init__(
         self,
@@ -4510,7 +4510,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         start_col=2,
                         percent_cols=pct_cols,
                         condition_cols=cond_cols,
-                        condition_color="F76E6C",
                     )
                     amount_end_row, _ = dataframe2excel(
                         amount_table,
@@ -4521,7 +4520,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         start_col=order_end_col + 1,
                         percent_cols=amt_pct,
                         condition_cols=amt_cond,
-                        condition_color="F76E6C",
                     )
                     end_row = max(order_end_row, amount_end_row)
                 else:
@@ -4542,7 +4540,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         start_row=end_row + 1,
                         percent_cols=pct_cols,
                         condition_cols=cond_cols,
-                        condition_color="F76E6C",
                     )
             elif amount:
                 # 订单口径和金额口径左右并排（参考3-入模变量分析的分箱表布局）
@@ -4559,7 +4556,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     start_col=2,
                     percent_cols=pct_cols,
                     condition_cols=cond_cols,
-                    condition_color="F76E6C",
                 )
                 try:
                     amount_table = self.get_bin_table(ds_key, method=method, max_n_bins=max_n_bins, amount=amount, margins=True)
@@ -4574,7 +4570,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         start_col=order_end_col + 1,
                         percent_cols=amt_pct,
                         condition_cols=amt_cond,
-                        condition_color="F76E6C",
                     )
                     end_row = max(order_end_row, amount_end_row)
                 except Exception as exc:
@@ -4591,7 +4586,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     start_row=end_row + 1,
                     percent_cols=pct_cols,
                     condition_cols=cond_cols,
-                    condition_color="F76E6C",
                 )
             section_idx += 1
 
@@ -4630,7 +4624,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 sheet_name=ws,
                 start_row=features_summary_start_row,
                 right_cols=[0],
-                condition_color="F76E6C",
                 percent_cols=["缺失率", "KS", "PSI", "众数占比", "零值率", "负值率", "重复率"],
                 condition_cols=["IV", "KS"],
             )
@@ -4745,7 +4738,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                             start_col=2,
                             percent_cols=ft_pct,
                             condition_cols=ft_cond,
-                            condition_color="F76E6C",
                         )
                         ft_amt = self.get_feature_bin_table(
                             feat,
@@ -4767,7 +4759,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                             start_col=order_end_col + 1,
                             percent_cols=amt_pct,
                             condition_cols=amt_cond,
-                            condition_color="F76E6C",
                         )
                         end_row = max(order_end_row, amount_end_row)
                     else:
@@ -4779,7 +4770,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                             start_row=end_row + 1,
                             percent_cols=ft_pct,
                             condition_cols=ft_cond,
-                            condition_color="F76E6C",
                         )
                 except Exception as exc:
                     raise RuntimeError(f"生成特征有效性分箱表失败 [特征={feat}, 数据集={ds.label}]") from exc

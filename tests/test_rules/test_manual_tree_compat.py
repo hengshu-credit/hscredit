@@ -26,6 +26,27 @@ def tree():
     return ManualTreeExtractor(target="逾期", max_depth=1, min_samples_split=2, min_samples_leaf=1, n_jobs=1).fit(data, features=["评分"])
 
 
+@pytest.mark.parametrize("extractor", [DecisionTreeAnalyzer, ManualTreeExtractor])
+def test_binary_rules_match_nullable_feature(extractor):
+    data = pd.DataFrame({"信用 评分": [1, 2, 3, 4] * 5, "逾期": [0, 0, 1, 1] * 5})
+    tree = extractor(target="逾期", missing=-1, max_depth=1, min_samples_leaf=1, min_samples_split=2, n_jobs=1).fit(data)
+    raw = pd.DataFrame({"信用 评分": pd.Series([1, pd.NA, 4], dtype="Int64")})
+    left, right = tree.get_rules()
+    assert ".isna()" in left.expr and ".notna()" not in right.expr
+    assert left.predict(raw).tolist() == [True, True, False]
+    assert right.predict(raw).tolist() == [False, False, True]
+
+
+@pytest.mark.skipif(not manual_tree._SKLEARN_NATIVE_MISSING, reason="需要 sklearn 原生缺失路由")
+def test_binary_missing_only_split():
+    data = pd.DataFrame({"评分": [1.0, 2.0, np.nan] * 10, "逾期": [0, 0, 1] * 10})
+    tree = DecisionTreeAnalyzer(target="逾期", max_depth=1, min_samples_leaf=1, min_samples_split=2, n_jobs=1).fit(data)
+    observed, missing = tree.get_rules()
+    assert observed.expr == "(评分.notna())" and missing.expr == "(评分.isna())"
+    for node, rule in zip(tree.get_leaf_node_ids(), (observed, missing)):
+        np.testing.assert_array_equal(rule.predict(data), tree.apply(data) == node)
+
+
 def test_display_renders_both_figure_and_html(monkeypatch, tree):
     outputs = []
 

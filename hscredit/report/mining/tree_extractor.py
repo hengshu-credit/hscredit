@@ -411,6 +411,9 @@ class TreeRuleExtractor(BaseRuleMiner):
                     code = int(le.transform([key])[0])
                     members.setdefault(code, []).append(value)
                 self._raw_category_values_[col] = members
+            elif pd.api.types.is_bool_dtype(X[col]):
+                # 布尔字段沿用数值零填充的路由，可空 boolean 需要布尔型填充值。
+                X_encoded[col] = X[col].fillna(False)
 
         return X_encoded.fillna(0)
 

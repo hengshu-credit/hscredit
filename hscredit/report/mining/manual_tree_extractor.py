@@ -35,6 +35,7 @@ import sklearn
 from packaging.version import Version
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 
+from ...core.binning.spec import field_expression, value_expression
 from ...utils.overdue import validate_overdue_operator
 from ...core.rules.rule import Rule
 from ...exceptions import InputValidationError
@@ -288,6 +289,26 @@ def _resolve_fit_data(
     return data, feats
 
 
+def _binary_rule_expression(rule_list: List) -> str:
+    """将二叉树路径转换为原始字段上的 pandas 表达式。"""
+    parts = []
+    for item in rule_list:
+        feature, operator, threshold = item[:3]
+        name = field_expression(feature)
+        include_missing = len(item) > 3 and item[3]
+        # sklearn 用正无穷阈值将非缺失值和缺失值分开。
+        if threshold == np.inf and operator == ">" and include_missing:
+            condition = f"({name}.isna())"
+        elif threshold == np.inf and operator == "<=" and not include_missing:
+            condition = f"({name}.notna())"
+        else:
+            condition = f"({name} {operator} {value_expression(float(threshold))})"
+            if include_missing:
+                condition = f"({condition} | ({name}.isna()))"
+        parts.append(condition)
+    return " & ".join(parts) or "True"
+
+
 def _rule_generator(clf, feature_name_list: List[str], missing: Optional[float] = None) -> pd.DataFrame:
     """从训练好的决策树（或模拟树对象）提取规则 DataFrame。
 
@@ -309,9 +330,7 @@ def _rule_generator(clf, feature_name_list: List[str], missing: Optional[float] 
         node / if_leaf / rule_list / node_path / node_samples / node_value / impurity
 
     .. note::
-        当某节点缺失样本被路由到当前路径方向时，对应条件追加 ``| (特征 != 特征)``
-        （ ``NaN != NaN`` 为 True，用于在 pandas eval 中识别缺失），确保规则在数据集
-        上的命中样本数与决策树节点样本数完全一致。
+        路径记录各字段的缺失路由，生成规则时使用 ``特征.isna()`` 匹配缺失样本。
     """
     children_left = list(clf.tree_.children_left)
     children_right = list(clf.tree_.children_right)
@@ -1703,6 +1722,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
             parts.append(f"{text}(含缺失)" if include_nan else text)
         return " 且 ".join(parts)
 
+    _rule_to_expr = staticmethod(_binary_rule_expression)
+
     def _format_rule(self, rule_list: List) -> Optional[Rule]:
         """将规则列表解析为  :class:`Rule`  对象。
 
@@ -1722,26 +1743,6 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         text = self._rule_list_to_text(rule_list)
         expr = self._rule_to_expr(rule_list)
         return Rule(expr=expr, name=text, description=text)
-
-    def _rule_to_expr(self, rule_list: List) -> str:
-        """将规则列表转换为 pandas eval 表达式。
-
-        当规则需纳入缺失样本时（决策树将缺失值路由到当前路径方向），对应条件追加
-        ``| (特征 != 特征)`` （NaN != NaN 为 True，用于在 pandas eval 中识别缺失），
-        确保命中样本数与决策树节点样本数完全一致。
-        """
-        if not rule_list:
-            return "True"
-        parts = []
-        for item in rule_list:
-            feat, op, thres = item[0], item[1], item[2]
-            include_nan = bool(item[3]) if len(item) > 3 else False
-            feat_esc = f"`{feat}`" if not str(feat).isidentifier() else str(feat)
-            cond = f"({feat_esc} {op} {repr(float(thres))})"
-            if include_nan:
-                cond = f"({cond} | ({feat_esc} != {feat_esc}))"
-            parts.append(cond)
-        return " & ".join(parts)
 
     # -------------------------------------------------------------------------
     # 可视化与导出
@@ -2574,6 +2575,8 @@ class ManualTreeExtractor(ParallelizableMixin):
             parts.append(f"{text}(含缺失)" if include_nan else text)
         return " 且 ".join(parts)
 
+    _rule_to_expr = staticmethod(_binary_rule_expression)
+
     def _format_rule(self, rule_list: List) -> Optional[Rule]:
         """将规则列表解析为  :class:`Rule`  对象。
 
@@ -3005,26 +3008,6 @@ class ManualTreeExtractor(ParallelizableMixin):
             rule.name = f"TreeNode_{int(row['node'])}"
             rules.append(rule)
         return rules
-
-    def _rule_to_expr(self, rule_list: List) -> str:
-        """将规则列表转换为 pandas eval 表达式。
-
-        当规则需纳入缺失样本时（决策树将缺失值路由到当前路径方向），对应条件追加
-        ``| (特征 != 特征)`` （NaN != NaN 为 True，用于在 pandas eval 中识别缺失），
-        确保命中样本数与决策树节点样本数完全一致。
-        """
-        if not rule_list:
-            return "True"
-        parts = []
-        for item in rule_list:
-            feat, op, thres = item[0], item[1], item[2]
-            include_nan = bool(item[3]) if len(item) > 3 else False
-            feat_esc = f"`{feat}`" if not str(feat).isidentifier() else str(feat)
-            cond = f"({feat_esc} {op} {repr(float(thres))})"
-            if include_nan:
-                cond = f"({cond} | ({feat_esc} != {feat_esc}))"
-            parts.append(cond)
-        return " & ".join(parts)
 
     # -------------------------------------------------------------------------
     # 辅助方法

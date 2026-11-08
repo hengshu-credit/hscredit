@@ -8,6 +8,7 @@ include Makefile
 
 recursive-include hscredit *.py *.xlsx *.csv *.ttf py.typed
 recursive-include hscredit/resources/datasets *.parquet *.md *.svg
+exclude hscredit/resources/datasets/hscredit.parquet
 recursive-include docs *.md
 recursive-include examples *.ipynb
 recursive-include scripts *.py

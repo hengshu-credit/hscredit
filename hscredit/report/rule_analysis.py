@@ -1006,6 +1006,7 @@ def ruleset_analysis(
     parallel_config: Optional[Dict] = None,
     del_grey: bool = False,
     *,
+    long_format: bool = False,
     overdue_operator: str = ">",
     handle_missing_target="drop",
     **kwargs,
@@ -1058,7 +1059,9 @@ def ruleset_analysis(
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
-    :return: 规则集效果评估表。单标签时返回单层列结构，多标签时返回多层列结构（MultiIndex）
+    :param long_format: True 按逾期标签逐行展示规则命中及剩余样本，默认 False。
+    :type long_format: bool
+    :return: 规则集效果评估表，默认多标签时返回多层列结构（MultiIndex）。
 
     **参考样例**
 
@@ -1119,6 +1122,8 @@ def ruleset_analysis(
         **kwargs,
         handle_missing_target=handle_missing_target,
     )
+    if long_format is not False:
+        execution_kwargs["long_format"] = long_format
     table_total = _configured_rule_report(
         all_rules,
         datasets,
@@ -1132,7 +1137,7 @@ def ruleset_analysis(
         table_total = table_total.drop(columns=[c for c in cols_to_drop if c in table_total.columns])
         original_row = table_total.loc[table_total[(detail_group, "分箱")] == "原始样本", :]
     else:
-        table_total["分箱"] = ["所有规则", "剩余样本", "原始样本"]
+        table_total["分箱"] = table_total["分箱"].replace({"命中": "所有规则", "未命中": "剩余样本", "合计": "原始样本"})
         cols_to_drop = ["规则分类", "指标名称"]
         table_total = table_total.drop(columns=[c for c in cols_to_drop if c in table_total.columns])
         original_row = table_total.loc[table_total["分箱"] == "原始样本", :]
@@ -1151,7 +1156,7 @@ def ruleset_analysis(
             cols_to_drop = [(detail_group, "规则分类"), (detail_group, "指标名称")]
             table = table.drop(columns=[c for c in cols_to_drop if c in table.columns])
         else:
-            table["分箱"] = [rule.expr, "剩余样本"]
+            table["分箱"] = table["分箱"].replace({"命中": rule.expr, "未命中": "剩余样本"})
             cols_to_drop = ["规则分类", "指标名称"]
             table = table.drop(columns=[c for c in cols_to_drop if c in table.columns])
 
@@ -1171,6 +1176,8 @@ def ruleset_analysis(
         summary_row = table_total.loc[table_total["分箱"] == "所有规则", :]
 
     report = pd.concat([report, summary_row]).reset_index(drop=True)
+    if long_format:
+        report = pd.concat([group for _, group in report.groupby("逾期标签", sort=False)], ignore_index=True)
     return report
 
 

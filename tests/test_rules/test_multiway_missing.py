@@ -74,6 +74,7 @@ def test_dedicated_numeric_branch_is_only_missing_and_boundary_exact(nullable):
     root = tree.nodes_[0]
     assert root.missing_separate and root.missing_branch == 3
     assert root.branches[3].kind == "missing"
+    assert all(".notna()" not in rule.expr for rule in tree.get_rules())
     raw = pd.DataFrame({"评分": [1.0, np.nextafter(1.0, np.inf), 2.0, np.nan, -np.inf, np.inf]})
     if nullable:
         raw["评分"] = raw["评分"].astype("Float64")
@@ -269,27 +270,33 @@ def test_older_model_without_missing_config_keeps_merge_default(tmp_path):
     assert restored.nodes_[0].missing_separate
 
 
-def test_categorical_missing_group_and_unknown_are_distinct():
+@pytest.mark.parametrize("dtype", ["object", "string", "category"])
+def test_categorical_missing_group_and_unknown_are_distinct(dtype):
     data = pd.DataFrame({"类别": ["A"] * 20 + ["B", "C", None] * 5, "target": [0] * 20 + [1, 0, 1] * 5})
     tree = MultiwayTreeExtractor(max_depth=2).fit(data)
     tree.manual_split(feature="类别", category_groups=[["A"], [np.nan], ["B", "C"]])
     root = tree.nodes_[0]
     assert root.missing_branch == 1 and root.missing_separate and root.unknown_branch == 0
-    raw = pd.DataFrame({"类别": pd.Series([None, "未知", "A", "B", "C"], dtype="string")})
+    raw = pd.DataFrame({"类别": pd.Series([None, "未知", "A", "B", "C"], dtype=dtype)})
     assert tree.apply(raw).tolist() == [root.children[i] for i in [1, 0, 0, 2, 2]]
     assert_partition(tree, raw)
+    unknown, missing, ordinary = tree.get_rules()
+    assert ".notna()" in unknown.expr and ".isna()" in missing.expr
+    assert ".notna()" not in ordinary.expr
     tree.manual_split(feature="类别", category_groups=[["A"], ["B", "C", np.nan]])
     assert not tree.nodes_[0].missing_separate and tree.nodes_[0].missing_branch == 1
     assert_partition(tree, raw)
     tree.manual_split(feature="类别", category_groups=[["A"], ["B", "C", np.nan]], missing_branch=0)
     assert tree.nodes_[0].missing_branch == 0
     assert_partition(tree, raw)
+    assert all(".notna()" not in rule.expr for rule in tree.get_rules())
 
 
-def test_categories_without_marker_can_request_separate_missing():
-    data = pd.DataFrame({"类别": ["A", "B", None] * 10, "target": [0, 1, 1] * 10})
+@pytest.mark.parametrize("dtype, values", [("object", ["A", "B"]), ("boolean", [True, False])])
+def test_categories_without_marker_can_request_separate_missing(dtype, values):
+    data = pd.DataFrame({"类别": pd.Series((values + [None]) * 10, dtype=dtype), "target": [0, 1, 1] * 10})
     tree = MultiwayTreeExtractor().fit(data)
-    tree.manual_split(feature="类别", category_groups=[["A"], ["B"]], missing_separate=True)
+    tree.manual_split(feature="类别", category_groups=[[value] for value in values], missing_separate=True)
     assert len(tree.nodes_[0].children) == 3 and tree.nodes_[0].missing_branch == 2
     assert_partition(tree, data)
 

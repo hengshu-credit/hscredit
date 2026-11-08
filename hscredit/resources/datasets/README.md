@@ -1,6 +1,6 @@
 # hscredit 现金贷数据集
 
-`hscredit` 是现金贷**单笔单批放款订单**数据集，每行对应一笔放款订单。风险特征取自该笔借据的授信给额环节，订单信息与贷后表现取自同一观察日期。数据统一维护在 `hscredit/resources/datasets/hscredit.parquet`，可离线加载，无需另外下载数据。
+`hscredit` 是现金贷**单笔单批放款订单**数据集，每行对应一笔放款订单。风险特征取自该笔借据的授信给额环节，订单信息与贷后表现取自同一观察日期。
 
 ## 业务流程与时间口径
 
@@ -72,6 +72,10 @@ X 包含 8,493 个授信时点特征。数据按整列判断缺失码：若数�
 数值 0 和布尔值 False 均按原值保留。例如 `DJK_X986`、`DK_BALANCE`、`LZ_SCORE` 等均保留原名。现有资料未提供每个风险字段的完整数据字典，因此不根据缩写臆造计算公式、统计窗口、单位、评分方向或缺失码含义。X 中的授信前历史逾期信息与本笔借据的贷后 `DPD` / `MOBn` 是不同口径。
 
 ## 加载方式
+
+通过 PyPI 安装后，首次调用 `hscredit_dataset()` 会从 [GitHub Release 下载完整 Parquet](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.3/hscredit.parquet)。文件大小为 357.89 MiB，SHA-256 为 `6c4e4790f3a56472d36e58517df349aeb18d3ca709d6b424f51a6556fa8d14f9`。校验通过后可离线复用。默认缓存于 `~/.cache/hscredit/datasets/<SHA-256>/hscredit.parquet`，可用环境变量 `HSCREDIT_DATA_HOME` 指定缓存根目录。
+
+通过 Git LFS 检出完整仓库时，函数优先读取 `hscredit/resources/datasets/hscredit.parquet`。两种安装方式均支持按列加载及拆分订单、逾期和特征数据。
 
 从 Git 仓库安装时，先在仓库根目录运行 `git lfs pull` 获取 Parquet 数据文件，再安装或构建包。
 

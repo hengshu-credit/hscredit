@@ -618,6 +618,16 @@ def _summary_target_columns(table: pd.DataFrame) -> List[Tuple[str, str]]:
     return targets
 
 
+def _binning_summary_frame(rows, dimensions, metrics, targets):
+    """显式单标签使用平面列，标签字典与逾期定义保留指标和标签两个维度。"""
+    labels = targets.names("at")
+    columns = [("分箱详情", field) for field in dimensions] + [(metric, label) for metric in metrics for label in labels]
+    result = pd.DataFrame(rows).reindex(columns=pd.MultiIndex.from_tuples(columns))
+    if targets.mode == "target" and not targets.explicit_multi and len(labels) == 1:
+        result.columns = [*dimensions, *metrics]
+    return result
+
+
 def _aggregate_summary_metrics(valid: pd.DataFrame, resolve, metrics: List[str]) -> Dict[str, float]:
     """按  :data:`_BINNING_SUMMARY_AGG`  定义的聚合方式汇总单个目标的指标。
 
@@ -862,7 +872,7 @@ def feature_binning_summary(
     :type n_jobs: Union[int, float]
 
     :return: ``(binning_tables, binning_summary)`` 。分箱表结构为
-        ``{feature: {method: binning_table}}`` ，摘要使用两级列索引。
+        ``{feature: {method: binning_table}}`` ，直接传入单标签时摘要为单层列，标签字典或 overdue + dpds 使用（指标，坏率标签）两级列。
 
     **参考样例**
 
@@ -980,15 +990,7 @@ def feature_binning_summary(
         row.update(_summarize_binning_table(table, single_target_name=single_target_name, metrics=normalized_metrics))
         summary_rows.append(row)
 
-    binning_summary = pd.DataFrame(summary_rows)
-    ordered_columns = [("分箱详情", "分箱方法"), ("分箱详情", "指标名称")]
-    target_names = []
-    for row in summary_rows:
-        for metric, target_name in row:
-            if metric in normalized_metrics and target_name not in target_names:
-                target_names.append(target_name)
-    ordered_columns.extend((metric, target_name) for metric in normalized_metrics for target_name in target_names)
-    binning_summary = binning_summary.reindex(columns=pd.MultiIndex.from_tuples(ordered_columns))
+    binning_summary = _binning_summary_frame(summary_rows, ["分箱方法", "指标名称"], normalized_metrics, target)
     return binning_tables, binning_summary
 
 
@@ -1242,7 +1244,7 @@ def feature_group_binning_summary(
     :param metrics: summary 汇总指标，规则与  :func:`feature_binning_summary`  一致
     :type metrics: Union[str, List[str]]
     :return: ``(binning_tables, binning_summary)`` 。分箱表结构为
-        ``{feature: {method: {group: binning_table}}}`` ；summary 使用两级列索引。
+        ``{feature: {method: {group: binning_table}}}`` ；直接传入单标签时摘要为单层列，标签字典或 overdue + dpds 使用（指标，坏率标签）两级列。
 
     **参考样例**
 
@@ -1382,20 +1384,7 @@ def feature_group_binning_summary(
             )
             summary_rows.append(row)
 
-    binning_summary = pd.DataFrame(summary_rows)
-    ordered_columns = [
-        ("分箱详情", "分箱方法"),
-        ("分箱详情", "指标名称"),
-        ("分箱详情", "分组字段"),
-        ("分箱详情", "分组"),
-    ]
-    target_names = []
-    for row in summary_rows:
-        for metric, target_name in row:
-            if metric in normalized_metrics and target_name not in target_names:
-                target_names.append(target_name)
-    ordered_columns.extend((metric, target_name) for metric in normalized_metrics for target_name in target_names)
-    binning_summary = binning_summary.reindex(columns=pd.MultiIndex.from_tuples(ordered_columns))
+    binning_summary = _binning_summary_frame(summary_rows, ["分箱方法", "指标名称", "分组字段", "分组"], normalized_metrics, target)
     return binning_tables, binning_summary
 
 
@@ -3286,7 +3275,7 @@ def auto_feature_analysis(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
-    condition_color="F76E6C",
+    condition_color=None,
     del_grey: Optional[bool] = None,
     show_progress: bool = True,
     *,
@@ -3356,7 +3345,7 @@ def auto_feature_analysis(
     :param margins: 是否在每个特征分箱表末尾添加合计行，默认 False
     :param amount: 默认值为 ``None`` 。放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
     :param image_table_gap_rows: 默认值为 ``None`` 。图片区与分箱表之间的额外空行数
-    :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"`` ；支持颜色字符串、色阶列表或按列配置的字典
+    :param condition_color: 条件格式颜色，默认按指标选色 ；支持颜色字符串、色阶列表或按列配置的字典
     :param del_grey: 是否逐标签剔除灰客户。``target`` 模式剔除非 0/1 的非缺失值；缺失由 handle_missing_target 独立处理；
         逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
@@ -3444,7 +3433,7 @@ def _auto_feature_analysis_impl(
     n_jobs=-1,
     parallel_backend=None,
     parallel_config=None,
-    condition_color="F76E6C",
+    condition_color=None,
     del_grey: Optional[bool] = None,
     show_progress: bool = True,
     *,
@@ -3482,7 +3471,7 @@ def _auto_feature_analysis_impl(
     :param margins: 是否在每个特征分箱表末尾添加合计行，默认 False
     :param amount: 放款金额或余额字段名称。传入后同时生成订单口径和金额口径两张分箱表
     :param image_table_gap_rows: 图片区与分箱表之间的额外空行数
-    :param condition_color: 条件格式颜色，默认使用副主题色 ``"F76E6C"`` ；支持颜色字符串、色阶列表或按列配置的字典
+    :param condition_color: 条件格式颜色，默认按指标选色 ；支持颜色字符串、色阶列表或按列配置的字典
     :param del_grey: 是否按 overdue_operator 对应区间剔除灰样本； ``<`` 、 ``<=`` 下不剔除。
         显式传入时优先于 ``bin_params['del_grey']`` ；默认 None 表示沿用 ``bin_params`` 配置。
         启用后，样本总体分布、样本时间分布及时间分布图也会按各逾期口径剔除灰样本
@@ -4113,7 +4102,7 @@ def _auto_feature_analysis_impl(
                         "累积LIFT值",
                         "累积坏账改善",
                     ],
-                    condition_cols=["坏样本率", "LIFT值"],
+                    condition_cols=["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"],
                     condition_color=condition_color,
                     merge_column=["指标名称", "指标含义"],
                     merge=True,
@@ -4135,7 +4124,7 @@ def _auto_feature_analysis_impl(
                         "累积LIFT值",
                         "累积坏账改善",
                     ],
-                    condition_cols=["坏样本率", "LIFT值"],
+                    condition_cols=["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"],
                     condition_color=condition_color,
                     merge_column=["指标名称", "指标含义"],
                     merge=True,
@@ -4172,7 +4161,7 @@ def _auto_feature_analysis_impl(
                             "累积LIFT值",
                             "累积坏账改善",
                         ],
-                        condition_cols=["坏样本率", "LIFT值"],
+                        condition_cols=["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"],
                         condition_color=condition_color,
                         merge_column=["指标名称", "指标含义"],
                         merge=True,
@@ -4195,7 +4184,7 @@ def _auto_feature_analysis_impl(
                             "累积LIFT值",
                             "累积坏账改善",
                         ],
-                        condition_cols=["坏样本率", "LIFT值"],
+                        condition_cols=["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"],
                         condition_color=condition_color,
                         merge_column=["指标名称", "指标含义"],
                         merge=True,

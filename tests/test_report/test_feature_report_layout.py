@@ -539,7 +539,7 @@ def test_auto_feature_analysis_numbers_titles_and_formats_feature_summary(monkey
     assert color_scale_headers == {"KS", "IV"}
 
 
-def test_auto_feature_analysis_defaults_condition_color_to_secondary_theme(monkeypatch, tmp_path):
+def test_auto_feature_analysis_uses_metric_colors_by_default(monkeypatch, tmp_path):
     monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
 
     data = pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]})
@@ -558,7 +558,7 @@ def test_auto_feature_analysis_defaults_condition_color_to_secondary_theme(monke
 
     ws = writer.get_sheet_by_name("default_condition_color")
     colors = _conditional_format_colors(ws)
-    assert "00F76E6C" in colors
+    assert {"FFCD778E", "FFB86991"}.issubset(colors)
     assert "002639E9" not in colors
 
 

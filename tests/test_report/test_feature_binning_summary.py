@@ -127,18 +127,24 @@ def test_feature_binning_summary_single_level_bin_params_apply_to_all(sample_dat
     assert ("坏样本率", "MOB1@3") in summary.columns
 
 
-def test_feature_binning_summary_uses_target_name_for_single_target(sample_data):
+@pytest.mark.parametrize("grouped", [False, True])
+@pytest.mark.parametrize("form", ["column", "list", "series", "array"])
+def test_direct_target_has_flat_metric_columns(sample_data, grouped, form):
     sample_data["是否坏样本"] = (sample_data["MOB1"] > 3).astype(int)
-    _, summary = feature_binning_summary(
-        sample_data,
-        feature="特征1",
-        methods="quantile",
-        target="是否坏样本",
-        max_n_bins=3,
-    )
-
-    assert ("分档KS值", "是否坏样本") in summary.columns
-    assert ("坏样本率", "是否坏样本") in summary.columns
+    y = sample_data["是否坏样本"]
+    sample_data["客群"] = np.where(np.arange(len(y)) % 2, "A", "B")
+    function = feature_group_binning_summary if grouped else feature_binning_summary
+    kwargs = dict(feature="特征1", methods="quantile", max_n_bins=3, n_jobs=1)
+    if grouped:
+        kwargs["group"] = "客群"
+    target = {"column": "是否坏样本", "list": y.tolist(), "series": y, "array": y.to_numpy()}[form]
+    _, flat = function(sample_data, target=target, **kwargs)
+    _, labeled = function(sample_data, target={"自定义口径": y}, **kwargs)
+    assert flat.columns.nlevels == 1 and labeled.columns.nlevels == 2
+    expected = labeled.copy()
+    expected.columns = [name if group == "分箱详情" else group for group, name in labeled.columns]
+    pd.testing.assert_frame_equal(flat, expected)
+    assert flat["坏样本数"].sum() == y.sum()
 
 
 def test_feature_binning_summary_rejects_invalid_method(sample_data):
@@ -232,8 +238,8 @@ def test_feature_group_binning_summary_by_category_supports_categorical_feature(
     )
 
     assert list(tables["职业"]["quantile"]) == ["线下", "线上"]
-    assert list(summary[("分箱详情", "分组")]) == ["线下", "线上"]
-    assert ("坏样本率", "FPD") in summary.columns
+    assert list(summary["分组"]) == ["线下", "线上"]
+    assert "坏样本率" in summary.columns
     assert all(not table["分箱标签"].astype(str).str.startswith("bin_").all() for table in tables["职业"]["quantile"].values())
 
 

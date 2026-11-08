@@ -1,6 +1,8 @@
 """内置现金贷数据集的原值保留、字段隔离和公开加载接口验证。"""
 
 import os
+import hashlib
+import io
 from datetime import date
 from pathlib import Path
 import subprocess
@@ -18,6 +20,31 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_PATH = ROOT / "hscredit/resources/datasets/hscredit.parquet"
 ORDER_COLUMNS = ["放款编码", "放款银行", "流量渠道", "用户编码", "loan_amt", "periods", "授信时间", "放款时间", "etl_date"]
 OVERDUE_COLUMNS = ["DPD", *[f"MOB{i}" for i in range(1, 13)], "CURRENT_DPD"]
+
+
+def test_release_download_verified_before_caching_and_reused_offline(tmp_path, monkeypatch):
+    from hscredit.utils import datasets
+
+    source = io.BytesIO()
+    pd.DataFrame({"MOB3": [0, 31]}).to_parquet(source, index=False)
+    payload = source.getvalue()
+    digest = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(datasets, "files", lambda _: tmp_path / "wheel")
+    monkeypatch.setattr(datasets, "_DATASET_SHA256", digest)
+    monkeypatch.setattr(datasets, "_DATASET_BYTES", len(payload))
+    monkeypatch.setenv("HSCREDIT_DATA_HOME", str(tmp_path / "cache"))
+    cached = tmp_path / "cache" / "datasets" / digest / "hscredit.parquet"
+    monkeypatch.setattr(datasets, "urlopen", lambda *a, **kw: io.BytesIO(b"x" * len(payload)))
+    with pytest.raises(ValueError, match="校验失败"):
+        hscredit_dataset()
+    assert not cached.exists() and not list(cached.parent.glob("*.part"))
+    monkeypatch.setattr(datasets, "urlopen", lambda *a, **kw: io.BytesIO(payload))
+    assert hscredit_dataset(columns=["MOB3"]).MOB3.tolist() == [0, 31]
+    cached.write_bytes(b"z" * len(payload))
+    assert hscredit_dataset(split=True)[1].MOB3.tolist() == [0, 31]
+    assert cached.read_bytes() == payload
+    monkeypatch.setattr(datasets, "urlopen", lambda *a, **kw: pytest.fail("有效缓存应离线加载"))
+    assert hscredit_dataset(columns=[]).shape == (2, 0)
 
 
 def test_dataset_population_and_observation_window():

@@ -6,7 +6,7 @@ hscredit 面向信贷风控的策略分析和模型开发。可以从一批放�
 
 | 要做的事 | 入口与结果 |
 | --- | --- |
-| 读取样例数据 | `hscredit_dataset()` 离线读取内置现金贷订单。`columns` 按需读取字段，`split=True` 分开返回订单信息、贷后表现和授信特征。可在线浏览全部授信特征的分布及两个标签下的 IV、KS、AUC。`hscredit.utils.datasets` 还提供 German Credit、Titanic 和 Iris 数据入口。[数据集说明](datasets.md) · [特征摘要报告](dataset-summary.md) |
+| 读取样例数据 | `hscredit_dataset()` 加载现金贷订单，PyPI 安装后首次下载并校验，后续可离线读取缓存。`columns` 按需读取字段，`split=True` 分开返回订单信息、贷后表现和授信特征。可在线浏览全部授信特征的分布及两个标签下的 IV、KS、AUC。`hscredit.utils.datasets` 还提供 German Credit、Titanic 和 Iris 数据入口。[数据集说明](datasets.md) · [特征摘要报告](dataset-summary.md) |
 | 定义好坏样本 | 支持标签列、外部标签、标签函数，以及由 `overdue`、`dpds` 和比较符组合生成的多个逾期标签。比较策略时可统一灰样本处理、观察日期、客群和金额口径。[标签与灰样本](overdue_labels.md) · [分析参数](analysis_parameters.md) |
 | 分训练集与测试集 | `time_train_test_split` 按时间顺序切分，`oot_split` 指定时间外验证窗口，`group_train_test_split` 按客户等分组隔离样本。[样本切分 API](api/model_selection.rst) |
 | 接入业务数据 | `Database` 支持 MySQL、Oracle、Hive、Impala、StarRocks、ClickHouse、MaxCompute、Redis 和 MongoDB。可按适配器能力使用连接池、参数化 SQL、流式读写、元数据查询或 NoSQL 操作。[数据库接入](database.md) |

@@ -192,6 +192,23 @@ Excel ``hscredit.excel``
    writer.adjust_rows_height(worksheet)
    writer.save("报告.xlsx")
 
+.. rubric:: 指标条件格式
+
+分箱和规则表使用主题蓝紫色标记样本占比、金额占比，使用灰玫瑰色标记坏样本率，使用偏紫的莓红色标记 Lift。
+样本占比、坏样本率和 Lift 均使用实心填充。坏账改善和累积坏账改善以单元格中央为零轴，负值向左绘制淡主题色条，正值向右绘制玫瑰色条，零仅显示轴线。
+同一列仅有正值或仅有负值时，中心仍为零。
+
+.. code-block:: python
+
+   from hscredit.excel import dataframe2excel
+
+   table.show()
+   dataframe2excel(table, "规则效果.xlsx", sheet_name="效果",
+                   condition_cols=["样本占比", "坏样本率", "LIFT值"],
+                   centered_bar_cols=["坏账改善"])
+
+两种入口均支持通过 ``condition_color`` 按指标覆盖颜色。双向数据条使用颜色列表的首色、末色作为负值、正值颜色。单个区域可用 ``writer.add_conditional_formatting(ws, "B2", "B20", bar_type="centered")``。
+
 .. automodule:: hscredit.excel
    :members:
    :imported-members:

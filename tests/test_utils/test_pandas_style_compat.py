@@ -254,6 +254,50 @@ def test_show_empty_lists_disable_automatic_formats():
     assert "10.00%" not in html and "linear-gradient" not in html
 
 
+@pytest.mark.parametrize("values", [[-1, 0, 1], [-1, 0, 0], [0, 0, 1], [0, 0, 0]])
+def test_metric_palette_and_zero_center_in_html_and_excel(tmp_path, values):
+    from openpyxl import load_workbook
+    from hscredit.excel import dataframe2excel
+
+    data = pd.DataFrame({"样本占比": [0.2, 0.5, 0.3], "坏样本率": [0.1, 0.3, 0.2], "LIFT值": [0.8, 1.2, 1.0], "坏账改善": values})
+    data.columns = pd.MultiIndex.from_product([["MOB3@30"], data.columns])
+    styles = style_bin_table(data)._compute().ctx
+    colors = ["6979DE", "CD778E", "B86991"]
+    for i, color in enumerate(colors):
+        assert "#" + color in str(styles[1, i])
+    for i, value in enumerate(values):
+        image = dict(styles[i, 3])["background-image"]
+        assert "calc(50% - 0.5px)" in image
+        if value < 0:
+            assert "#CACFF9 0.0000%, #CACFF9 50.0000%" in image
+        elif value > 0:
+            assert "#D58B9F 50.0000%, #D58B9F 100.0000%" in image
+        else:
+            assert image.count("linear-gradient") == 1
+
+    dest = tmp_path / "指标配色.xlsx"
+    dataframe2excel(data, str(dest), sheet_name="分箱", condition_cols=["样本占比", "坏样本率", "LIFT值", "坏账改善"])
+    book = load_workbook(dest)
+    try:
+        rules = list(book["分箱"].conditional_formatting._cf_rules.values())
+        assert [items[0].dataBar.color.rgb[-6:] for items in rules[:3]] == colors
+        from zipfile import ZipFile
+        from xml.etree import ElementTree as ET
+        from hscredit.excel._data_bars import X14, XM
+
+        with ZipFile(dest) as package:
+            root = ET.fromstring(package.read("xl/worksheets/sheet1.xml"))
+        bars = [cf.find(f"{{{X14}}}cfRule/{{{X14}}}dataBar") for cf in root.iter(f"{{{X14}}}conditionalFormatting")]
+        assert len(bars) == 4 and all(bar.get("gradient") == "0" for bar in bars)
+        centered = bars[-1]
+        assert centered.get("axisPosition") == "middle"
+        assert centered.find(f"{{{X14}}}negativeFillColor").get("rgb") == "FFCACFF9"
+        bounds = [v.findtext(f"{{{XM}}}f") for v in centered.findall(f"{{{X14}}}cfvo")]
+        assert bounds[0] == "-" + bounds[1] and "$E$4:$E$6" in bounds[1]
+    finally:
+        book.close()
+
+
 @pytest.mark.parametrize("multi_level", [False, True])
 def test_show_color_blocks_override_bars_and_resolve_column_colors(multi_level):
     table = pd.DataFrame({"坏样本率": [0.0, 0.2, 1.0], "得分": [0.0, 1.0, 2.0]})
@@ -333,7 +377,7 @@ def test_show_two_color_scale_and_default_color_fallback():
     styles = styler._compute().ctx
     assert dict(styles[0, 0])["background-color"] == "#ff0000"
     assert dict(styles[2, 0])["background-color"] == "#0000ff"
-    assert "#F76E6C" in html
+    assert "#A3ABF5" in html
 
 
 @pytest.mark.parametrize("kwargs", [{"theme_color": "invalid"}, {"condition_cols": ["得分"], "condition_color": "red"}])

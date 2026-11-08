@@ -186,6 +186,9 @@ zip-safe = false
 [tool.setuptools.package-data]
 hscredit = ["py.typed", "resources/**/*"]
 
+[tool.setuptools.exclude-package-data]
+"*" = ["hscredit.parquet", "resources/datasets/hscredit.parquet"]
+
 [tool.black]
 line-length = 512
 target-version = ['py39']
