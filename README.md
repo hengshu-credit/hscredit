@@ -125,7 +125,7 @@ pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
 
 ### 数据集
 
-现金贷订单可按需读取授信特征、放款信息和逐月逾期表现。通过 PyPI 安装后，首次加载会从 GitHub Release 下载 357.89 MiB 的 Parquet 并校验 SHA-256，后续可离线使用缓存。用 `split=True` 分开取数，再按业务表现期定义标签，即可跟踪同一变量在不同月份和客群中的风险变化。库中也提供 German Credit、Titanic 和 Iris 数据集，用于比较建模方法。
+现金贷订单可按需读取授信特征、放款信息和逐月逾期表现。通过 PyPI 安装后，首次加载优先从 GitHub Release 下载 357.89 MiB 的 Parquet。GitHub 连接失败或 5 秒内平均下载速度低于 100 KiB/s 时，会尝试 Gitee 镜像。文件通过 SHA-256 校验后即可离线使用。用 `split=True` 分开取数，再按业务表现期定义标签，即可跟踪同一变量在不同月份和客群中的风险变化。库中也提供 German Credit、Titanic 和 Iris 数据集，用于比较建模方法。
 
 <div style="max-width:100%; overflow-x:auto;">
 <table style="white-space:nowrap; border-collapse:collapse; font-size:13px;">
@@ -185,7 +185,7 @@ field_map = {
     "DK_X1948": "现用贷款本月应还款最大",
 }
 data = hscredit_dataset(
-    columns=["用户编码", "授信时间", "loan_amt", "MOB1", "MOB6", "GROUP", *field_map]
+    columns=["用户编码", "授信时间", "loan_amt", "MOB1", "MOB6", "GROUP", "BASE_X257", "BASE_X304", *field_map]
 )
 df = data.rename(columns=field_map).copy()
 df["授信时间"] = pd.to_datetime(df["授信时间"])
@@ -232,23 +232,26 @@ labels = {"overdue": ["MOB1", "MOB6"], "dpds": [0, 30], "overdue_operator": ">"}
 from hscredit.report import feature_bin_stats
 
 bin_options = dict(
-    feature="最近12个月多头查询次数", method="quantile", max_n_bins=4,
-    margins=True, long_format=True, n_jobs=1,
+    feature="BASE_X257", method="quantile", max_n_bins=4,
+    margins=True, long_format=True, missing_separate=True, n_jobs=1,
 )
-bins = feature_bin_stats(df, target="坏样本", **bin_options)
-multi_bins = feature_bin_stats(df, **bin_options, **labels)
-bin_cols = ["逾期标签", "分箱标签", "样本总数", "样本占比", "坏样本率", "LIFT值", "坏账改善", "分档IV值"]
-bins[bin_cols].show()
-multi_bins[bin_cols].show()
+bin_targets = {
+    "欺诈风险FPD@30": df["MOB1"].gt(30).where(df["MOB1"].notna()),
+    "信用风险MOB6@60": df["MOB6"].gt(60).where(df["MOB6"].notna()),
+}
+bins = feature_bin_stats(df, target=bin_targets, **bin_options)
+bins.show()
 ```
 
 样本占比、坏样本率和 Lift 分别用实心蓝紫、灰玫瑰和莓红色数据条。坏账改善的零轴固定在单元格中央，负值向左绘制淡蓝紫条，正值向右绘制玫瑰色条。
 
-<a href="docs/assets/readme/showcase/binning-multi.png"><img src="docs/assets/readme/showcase/binning-multi.png" alt="多头查询次数分箱，按 MOB1、MOB6 的 0 天和 30 天标签逐组展示，含各组合计"></a>
+**单变量分箱表** · `BASE_X257`
+
+<a href="docs/assets/readme/showcase/binning.png"><img src="docs/assets/readme/showcase/binning.png" alt="BASE_X257 单变量分箱完整长表，含欺诈风险FPD@30和信用风险MOB6@60"></a>
 
 **比较方法与客群。** `feature_binning_summary` 对比不同分箱方法；`feature_group_binning_summary` 按授信月份或原始字段 `GROUP`（客群划分）汇总。
 
-下方两表均分析“最近 12 个月多头查询次数”，坏样本定义为 MOB6 > 30。KS 和 Lift 取各分箱的最大值，坏样本数与坏样本率按整组订单统计。
+下方两表均分析 `BASE_X257`，坏样本定义为 MOB6 > 30。KS 和 Lift 取各分箱的最大值，坏样本数与坏样本率按整组订单统计。
 
 <details>
 <summary>分箱摘要、客群比较与二维分箱表</summary>
@@ -262,7 +265,7 @@ from hscredit.report import (
 
 bin_tables, summary = feature_binning_summary(
     df,
-    feature="最近12个月多头查询次数",
+    feature="BASE_X257",
     methods=["quantile", "tree", "chi"],
     target="坏样本",
     long_format=True,
@@ -273,7 +276,7 @@ bin_tables, summary = feature_binning_summary(
 summary.show()
 
 month_tables, month_summary = feature_group_binning_summary(
-    df, feature="最近12个月多头查询次数", methods=["quantile", "tree", "chi"],
+    df, feature="BASE_X257", methods=["quantile", "tree", "chi"],
     target="坏样本", date="授信时间", freq="M", max_n_bins=4,
     margins=True, long_format=True, n_jobs=1,
 )
@@ -281,7 +284,7 @@ month_summary.show()
 
 cohort_tables, cohort_summary = feature_group_binning_summary(
     df,
-    feature="最近12个月多头查询次数",
+    feature="BASE_X257",
     group="GROUP",
     dropna=False,
     methods="quantile",
@@ -293,16 +296,16 @@ cohort_tables, cohort_summary = feature_group_binning_summary(
 )
 cohort_summary.show()
 
-bins_2d = feature_bin_stats_2d(
+bins_2d, binner_2d = feature_bin_stats_2d(
     df,
-    features=["最近12个月多头查询次数", "非银机构借款总金额"],
-    target="坏样本",
-    max_n_bins=3,
+    features=["BASE_X257", "BASE_X304"],
+    target=bin_targets,
+    max_n_bins=3, max_n_bins_2d=7, missing_separate=True, return_binner=True,
     margins=True,
     long_format=True,
     n_jobs=1,
 )
-bins_2d[bin_cols].show()
+bins_2d.show()
 ```
 
 </details>
@@ -315,28 +318,68 @@ bins_2d[bin_cols].show()
 
 <a href="docs/assets/readme/showcase/binning-groups.png"><img src="docs/assets/readme/showcase/binning-groups.png" alt="等频、决策树和卡方分箱在各授信月份的特征效果"></a>
 
-**单标签分箱表** · 最近 12 个月多头查询次数，坏样本为 MOB6 > 30。
+**二维分箱表** · 将 `BASE_X257` 与 `BASE_X304` 交叉分箱，比较各组合的坏样本率和 Lift。
 
-<a href="docs/assets/readme/showcase/binning.png"><img src="docs/assets/readme/showcase/binning.png" alt="最近12个月多头查询次数单标签分箱表"></a>
-
-**二维分箱表** · 将多头查询次数与非银机构借款总金额交叉分箱，比较各组合的坏样本率和 Lift。
-
-<a href="docs/assets/readme/showcase/binning-2d.png"><img src="docs/assets/readme/showcase/binning-2d.png" alt="多头查询次数与非银机构借款总金额的二维分箱表"></a>
+<a href="docs/assets/readme/showcase/binning-2d.png"><img src="docs/assets/readme/showcase/binning-2d.png" alt="BASE_X257 与 BASE_X304 二维分箱完整长表，含欺诈风险FPD@30和信用风险MOB6@60"></a>
 
 <a href="https://hscredit.hengshucredit.com/showcase.html#gallery-bin-tables" style="color:#c02dd4;">在文档中查看分箱统计表</a>
 
 <details>
 <summary>自定义分箱优化目标</summary>
 
+两个分箱方案的总 IV 可能很接近，但最高风险箱的坏样本率相差很大。制定拦截规则时，可以给最高风险箱的 Lift 加权，让切点更贴合拦截目标。如果策略需要尽量少的档位，也可以给每个额外分箱设置代价，在区分度相近时优先选择切点较少的方案。
+
+`OptimalBinning` 的 `or_tools`、`cp_sat` 和 `genetic` 三种方法都支持下表的复合目标。每个目标都最大化 **总 IV × `iv_weight` + 附加指标 × 对应权重**。`iv_weight` 默认为 1.0。Lift 是箱内坏样本率与总体坏样本率之比，下表的“偏离”指 Lift 与 1 的绝对差。
+
+| `objective` | 附加指标 | 选切点时侧重什么 |
+| --- | --- | --- |
+| `max_lift_iv` | 各箱 Lift 的最大值 | 提高最高风险箱的坏样本率，便于设置拦截档 |
+| `min_lift_iv` | 各箱 Lift 的最小值 | 抬高最低风险箱的相对坏样本率 |
+| `max_min_lift_sum_iv` | 最高 Lift + 最低 Lift | 同时对最高和最低 Lift 的上升给予加分 |
+| `max_lift_distance_iv` | 各箱偏离的最大值 | 找出坏样本率明显高于或低于总体的箱 |
+| `min_lift_distance_iv` | 各箱偏离的最小值 | 让最接近总体坏样本率的箱也有区分度 |
+| `lift_distance_sum_iv` | 最大偏离 + 最小偏离 | 同时考虑区分度最强和最弱的箱 |
+| `max_ks_iv` | 按分箱顺序累积的好、坏样本分布之差的最大绝对值 | 兼顾整体 IV 和切点上的 KS |
+| `woe_variance_iv` | 各箱 WOE 的方差 | 拉开不同风险档位的 WOE |
+
+前六项的附加权重为 `lift_weight`（默认 0.1），后两项分别为 `ks_weight`（默认 0.5）和 `variance_weight`（默认 0.1）。
+
+| 使用或扩展目标 | 写法 |
+| --- | --- |
+| 查看可选目标 | `CustomObjectives.names()` 列出上表八项。`OptimalBinning.available_objectives("or_tools")` 同时列出该方法的原生目标。 |
+| 调整预置目标的权重 | `ORBinning(objective="max_lift_iv", objective_params={"lift_weight": 0.2})` |
+| 复用配好权重的目标 | `score = CustomObjectives.get("max_lift_iv", lift_weight=0.2)`，再将 `objective=score` 传给分箱器。 |
+| 定义新的评分函数 | 将函数直接传给 `objective`，额外参数通过 `objective_params` 传入。函数返回一个有限实数，分数越高，方案越优。 |
+
+下面用同一字段演示两种目标。自定义函数接收按箱排序的统计字典列表 `bin_stats` 和参与评分的好、坏样本总数 `total_good`、`total_bad`。每箱可读取 `count`、`good`、`bad`、`bad_rate`、`lift`、`woe` 和 `iv` 等字段。
+
 ```python
 from hscredit.core.binning import ORBinning, CustomObjectives
 
+feature = "最近12个月多头查询次数"
+X_query = X_train[[feature]]
 binner = ORBinning(
     max_n_bins=4,
-    objective=CustomObjectives.max_lift_iv(lift_weight=0.1),
+    objective=CustomObjectives.max_lift_iv(lift_weight=0.2),
     n_jobs=1,
 )
-binner.fit(X_train[["最近12个月多头查询次数"]], y_train)
+binner.fit(X_query, y_train)
+
+# 总 IV 扣除额外分箱的代价，每多一箱扣 0.01。
+def iv_with_bin_cost(bin_stats, total_good, total_bad, *, cost):
+    total_iv = sum(row["iv"] for row in bin_stats)
+    return total_iv - cost * max(0, len(bin_stats) - 1)
+
+
+compact_binner = ORBinning(
+    max_n_bins=4,
+    objective=iv_with_bin_cost,
+    objective_params={"cost": 0.01},
+    n_jobs=1,
+)
+compact_binner.fit(X_query, y_train)
+print("侧重高风险箱的切点", binner.splits_[feature])
+print("计入分箱代价的切点", compact_binner.splits_[feature])
 ```
 
 </details>
@@ -347,21 +390,23 @@ binner.fit(X_train[["最近12个月多头查询次数"]], y_train)
 ```python
 from hscredit.core.viz import bin_plot, bin_overdues_plot, bin_trend_plot
 
-bin_plot(bins)
-bin_overdues_plot(bin_table=multi_bins, max_cols=2, n_jobs=1)
+credit_bins = bins.loc[bins["逾期标签"].eq("信用风险MOB6@60")]
+trend_data = df.assign(**bin_targets)
+bin_plot(credit_bins)
+bin_overdues_plot(bin_table=bins, max_cols=2, n_jobs=1)
 bin_trend_plot(
-    df,
-    feature="最近12个月多头查询次数",
-    target="坏样本",
+    trend_data,
+    feature="BASE_X257",
+    target="信用风险MOB6@60",
     date="授信时间",
     freq="M",
     max_n_bins=4,
     n_jobs=1,
 )
 bin_trend_plot(
-    df,
-    feature="最近12个月多头查询次数",
-    target="坏样本",
+    trend_data,
+    feature="BASE_X257",
+    target="信用风险MOB6@60",
     group="GROUP",
     max_n_bins=4,
     n_jobs=1,
@@ -372,15 +417,15 @@ bin_trend_plot(
 
 <table>
 <tr>
-  <td width="50%" align="center" valign="top"><strong>单变量分箱</strong><br>
+  <td width="44%" align="center" valign="top"><strong>单变量分箱</strong><br>
     <a href="docs/assets/readme/showcase/binning-plot.png"><img src="docs/assets/readme/showcase/binning-plot.png" alt="单变量分箱" width="100%"></a></td>
-  <td width="50%" align="center" valign="top"><strong>多标签分箱</strong><br>
+  <td width="56%" align="center" valign="top"><strong>多标签分箱</strong><br>
     <a href="docs/assets/readme/showcase/binning-multi-plot.png"><img src="docs/assets/readme/showcase/binning-multi-plot.png" alt="多标签分箱" width="100%"></a></td>
 </tr>
 <tr>
-  <td width="50%" align="center" valign="top"><strong>授信月份趋势</strong><br>
-    <a href="docs/assets/readme/showcase/binning-trend.png"><img src="docs/assets/readme/showcase/binning-trend.png" alt="授信月份趋势" width="100%"></a></td>
-  <td width="50%" align="center" valign="top"><strong>客群分箱趋势</strong><br>
+  <td width="44%" align="center" valign="top"><strong>授信月份趋势</strong><br>
+    <a href="docs/assets/readme/showcase/binning-trend.png"><img src="docs/assets/readme/showcase/binning-trend.png" alt="授信月份趋势" width="89%"></a></td>
+  <td width="56%" align="center" valign="top"><strong>客群分箱趋势</strong><br>
     <a href="docs/assets/readme/showcase/binning-cohort-plot.png"><img src="docs/assets/readme/showcase/binning-cohort-plot.png" alt="客群分箱趋势" width="100%"></a></td>
 </tr>
 </table>
@@ -393,12 +438,7 @@ bin_trend_plot(
 ```python
 from hscredit.core.viz import bin_2d_plot
 
-bin_2d_plot(
-    df,
-    features=["最近12个月多头查询次数", "非银机构借款总金额"],
-    target="坏样本",
-    max_n_bins=3,
-)
+bin_2d_plot(binner_2d, title="BASE_X257 × BASE_X304 · 欺诈风险FPD@30")
 ```
 
 </details>
@@ -1077,15 +1117,16 @@ auto_feature_analysis(
 from hscredit.excel import ExcelWriter, dataframe2excel
 from hscredit.core.viz import bin_plot, bin_trend_plot
 
-bin_plot(bins, save="分箱.png")
+bin_plot(credit_bins, save="分箱.png")
 bin_trend_plot(
-    df, feature="最近12个月多头查询次数", target="坏样本", date="授信时间", n_jobs=1, save="月份.png"
+    trend_data, feature="BASE_X257", target="信用风险MOB6@60", date="授信时间", n_jobs=1, save="月份.png"
 )
 writer = ExcelWriter()
 dataframe2excel(
-    bins[bin_cols],
+    bins,
     writer,
     sheet_name="分箱分析",
+    title="BASE_X257 · 双标签分箱报告",
     figures=["分箱.png", "月份.png"],
     image_bottom_padding_rows=4,
     percent_cols=["样本占比", "坏样本率", "坏账改善"],
@@ -1097,6 +1138,7 @@ sheet = writer.get_sheet_by_name("分箱分析")
 writer.set_freeze_panes(sheet, "D5")
 writer.set_column_width(sheet, "B", 26)
 writer.set_row_height(sheet, 2, 30)
+writer.insert_value2sheet(sheet, "B1", "查看透视分析", bold=True, font_color="2639E9")
 writer.insert_hyperlink2sheet(sheet, "B1", sheet="透视分析", target_space="B2")
 writer.insert_pivot_table2sheet(
     worksheet="透视分析",

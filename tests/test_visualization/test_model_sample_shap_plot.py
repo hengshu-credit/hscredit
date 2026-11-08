@@ -142,6 +142,29 @@ def test_native_force_labels_do_not_overlap_figure_title(sample_shap_inputs):
     plt.close(fig)
 
 
+@pytest.mark.parametrize("figsize,dpi", [((9, 6), 100), ((18, 12), 160)])
+def test_force_direction_labels_are_spaced_above_output(sample_shap_inputs, figsize, dpi):
+    """大小画布上，两组方向标注均应同行显示，与彼此和预测值标签留有间距。"""
+    model, sample, background = sample_shap_inputs
+    fig = plot_model_sample_shap(model, sample, background, figsize=figsize, show=False)
+    try:
+        fig.set_dpi(dpi)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        force_ax = next(ax for ax in fig.axes if ax.get_label() == "SHAP力图")
+        boxes = {text.get_text(): text.get_window_extent(renderer) for text in force_ax.texts}
+        row = [boxes[key] for key in ("higher", r"$\rightarrow$", r"$\leftarrow$", "lower")]
+        gap = renderer.points_to_pixels(3)
+        for left, right in zip(row, row[1:]):
+            assert right.x0 - left.x1 >= gap
+            assert (left.y0 + left.y1) / 2 == pytest.approx((right.y0 + right.y1) / 2, abs=1)
+        output = boxes["output value"]
+        assert min(box.y0 for box in row) - output.y1 >= gap
+        assert (row[1].x1 + row[2].x0) / 2 == pytest.approx((output.x0 + output.x1) / 2, abs=1)
+    finally:
+        plt.close(fig)
+
+
 def test_native_force_labels_keep_padding_above_axis_ticks(monkeypatch):
     """预测值等原生顶部标注与横轴刻度文本之间应保留清晰留白。"""
     shap = pytest.importorskip("shap")

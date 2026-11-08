@@ -642,19 +642,20 @@ def _table_hex_color(color):
     return "#" + color.lstrip("#").upper()
 
 
-def _apply_table_color_blocks(styler, df, columns, condition_color, theme_color="2639E9"):
+def _apply_table_color_blocks(styler, df, columns, condition_color, theme_color="2639E9", totals=None):
     """按数值生成颜色块；缺失、无穷和复杂类型不着色。"""
     if not columns:
         return styler
     prepare_dependency("matplotlib")
     from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm, to_hex
 
-    from ..excel.writer import _metric_color_role, _metric_colors
+    from ..excel.writer import _is_bin_share, _metric_color_role, _metric_colors
 
     for col in columns:
         if not _is_numeric_table_column(df[col]):
             continue
-        values = df[col].dropna().astype(float)
+        detail = totals is not None and _is_bin_share(col)
+        values = (df[col].iloc[~totals] if detail else df[col]).dropna().astype(float)
         values = values[np.isfinite(values)]
         if values.empty:
             continue
@@ -682,8 +683,17 @@ def _apply_table_color_blocks(styler, df, columns, condition_color, theme_color=
             text_color = "#000000" if luminance > 0.5 else "#ffffff"
             return f"background-color: {to_hex(rgba)}; color: {text_color}"
 
-        styler = map_styler(styler, color_cell, subset=[col])
+        styler = map_styler(styler, color_cell, subset=(~totals, [col]) if detail else [col])
     return styler
+
+
+def _apply_detail_share_bar(styler, df, col, totals, color):
+    """按明细最大占比缩放数据条，合计保留原值。"""
+    detail = df[col].iloc[~totals].dropna()
+    finite = detail[np.isfinite(detail)]
+    if finite.empty or finite.max() <= 0:
+        return styler
+    return styler.bar(subset=(~totals, [col]), color=color, vmin=0, vmax=finite.max(), axis=0)
 
 
 def _apply_centered_bars(styler, df, columns, condition_color, theme_color):
@@ -1115,9 +1125,14 @@ def _style_bin_table(
         # 重新检查是否为多级表头（因为可能改变了列结构）
         is_multi_level = isinstance(df_display.columns, pd.MultiIndex)
 
+    from ..excel.writer import _bin_total_mask, _is_bin_share, _metric_color_role, _metric_colors
+
+    totals = _bin_total_mask(df_display)
     # 限制行数
     if max_rows is not None and len(df_display) > max_rows:
         df_display = df_display.head(max_rows)
+        if totals is not None:
+            totals = totals[:max_rows]
 
     explicit_columns = set()
     for selection in (percent_cols, condition_cols, color_cols, centered_bar_cols):
@@ -1239,8 +1254,6 @@ def _style_bin_table(
     styler = styler.format(format_dict)
     styler = styler.format_index(escape="html", na_rep="", axis=0).format_index(escape="html", na_rep="", axis=1)
 
-    from ..excel.writer import _metric_color_role, _metric_colors
-
     centered_columns = set(_select_table_columns(df_display, centered_bar_cols))
     block_columns = set(_select_table_columns(df_display, color_cols)) - centered_columns
     selected_bars = _select_table_columns(df_display, condition_cols) if condition_cols is not None else df_display.columns
@@ -1270,8 +1283,11 @@ def _style_bin_table(
                     continue
                 vmin, vmax = 0, min(max(values.quantile(0.95), floor) * 1.2, ceiling)
         color = _table_hex_color(_metric_colors(col, theme_color, condition_color)[-1])
-        styler = styler.bar(subset=[col], color=color, vmin=vmin, vmax=vmax, axis=0)
-    styler = _apply_table_color_blocks(styler, df_display, block_columns, condition_color, theme_color)
+        if totals is not None and _is_bin_share(col):
+            styler = _apply_detail_share_bar(styler, df_display, col, totals, color)
+        else:
+            styler = styler.bar(subset=[col], color=color, vmin=vmin, vmax=vmax, axis=0)
+    styler = _apply_table_color_blocks(styler, df_display, block_columns, condition_color, theme_color, totals)
     styler = _apply_centered_bars(styler, df_display, centered_columns, condition_color, theme_color)
     styler = _apply_table_layout(styler, theme_color=theme_color, fill=fill, index=index)
 
@@ -1413,7 +1429,7 @@ def style_rule_table(
     prepare_dependency("matplotlib")
     df_d = df.copy()
 
-    from ..excel.writer import _metric_colors
+    from ..excel.writer import _bin_total_mask, _metric_colors
 
     # 多标签复用分箱表的数值格式和指标配色。
     if isinstance(df_d.columns, pd.MultiIndex):
@@ -1497,13 +1513,12 @@ def style_rule_table(
 
     # --- 样本占比进度条 ---
     if "样本占比" in df_d.columns:
-        styler = styler.bar(
-            subset=["样本占比"],
-            color="#" + _metric_colors("样本占比", "2639E9")[-1],
-            vmin=0,
-            vmax=1,
-            align="left",
-        )
+        color = "#" + _metric_colors("样本占比", "2639E9")[-1]
+        totals = _bin_total_mask(df_d)
+        if totals is not None:
+            styler = _apply_detail_share_bar(styler, df_d, "样本占比", totals, color)
+        else:
+            styler = styler.bar(subset=["样本占比"], color=color, vmin=0, vmax=1, align="left")
 
     styler = _apply_centered_bars(styler, df_d, [c for c in ("坏账改善", "累积坏账改善", "风险改善") if c in df_d], None, "2639E9")
 

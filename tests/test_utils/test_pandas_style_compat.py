@@ -254,6 +254,43 @@ def test_show_empty_lists_disable_automatic_formats():
     assert "10.00%" not in html and "linear-gradient" not in html
 
 
+@pytest.mark.parametrize("wide", [False, True])
+def test_sample_share_bars_use_only_detail_bins(tmp_path, wide):
+    from openpyxl import load_workbook
+    from hscredit.excel import dataframe2excel
+
+    frame = pd.DataFrame({"分箱标签": ["A", "B", "合计", "A", "B", "合计"], "样本占比": [0.4, 0.6, 1, 0.7, 0.3, 1]})
+    if wide:
+        frame.columns = pd.MultiIndex.from_tuples([("分箱详情", "分箱标签"), ("分箱详情", "样本占比")])
+    original = frame.copy()
+    styler = style_bin_table(frame)
+    styles = styler._compute().ctx
+    assert "100.0%" in str(styles[3, 1]) and "57.1%" in str(styles[0, 1])
+    assert all("linear-gradient" not in str(styles[i, 1]) for i in (2, 5))
+    assert "100.00%" in styler.to_html()
+    dest = tmp_path / "分箱.xlsx"
+    dataframe2excel(frame, str(dest), condition_cols=["样本占比"], sheet_name="分箱")
+    book = load_workbook(dest)
+    try:
+        ws = book["分箱"]
+        (fmt,) = list(ws.conditional_formatting)
+        first = 2 + frame.columns.nlevels
+        assert str(fmt.sqref) == f"C{first}:C{first + 1} C{first + 3}:C{first + 4}"
+        assert [(v.type, v.val) for v in fmt.rules[0].dataBar.cfvo] == [("num", 0), ("max", None)]
+        assert ws.cell(first + 2, 3).value == ws.cell(first + 5, 3).value == 1
+    finally:
+        book.close()
+    pd.testing.assert_frame_equal(frame, original)
+
+
+def test_true_full_share_bin_remains_styled_with_total_in_index():
+    frame = pd.DataFrame({"分箱标签": ["全部普通样本", "缺失值", "合计"], "样本占比": [1.0, 0.0, 1.0]}).set_index("分箱标签")
+    styles = style_bin_table(frame, condition_cols=["样本占比"])._compute().ctx
+    assert "100.0%" in str(styles[0, 0]) and "linear-gradient" not in str(styles[2, 0])
+    colors = style_bin_table(frame, color_cols=["样本占比"])._compute().ctx
+    assert "background-color" in dict(colors[0, 0]) and "background-color" not in dict(colors[2, 0])
+
+
 @pytest.mark.parametrize("values", [[-1, 0, 1], [-1, 0, 0], [0, 0, 1], [0, 0, 0]])
 def test_metric_palette_and_zero_center_in_html_and_excel(tmp_path, values):
     from openpyxl import load_workbook

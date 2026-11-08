@@ -3859,12 +3859,31 @@ def _build_color_scale_rule(values: pd.Series, color_value: Union[str, List[str]
     )
 
 
+def _bin_total_mask(data):
+    """按分箱标签识别合计，保留占比恰好为 100% 的真实分箱。"""
+    bin_names = ("分箱标签", "分箱")
+    totals = ("合计", "总计")
+    mask = np.zeros(len(data), dtype=bool)
+    for i, column in enumerate(data.columns):
+        if (column[-1] if isinstance(column, tuple) else column) in bin_names:
+            mask |= data.iloc[:, i].isin(totals).to_numpy()
+    for i, name in enumerate(data.index.names):
+        if (name[-1] if isinstance(name, tuple) else name) in bin_names:
+            mask |= data.index.get_level_values(i).isin(totals)
+    return mask if mask.any() else None
+
+
+def _is_bin_share(column):
+    levels = column if isinstance(column, tuple) else (column,)
+    return any(name in ("样本占比", "好样本占比", "坏样本占比", "金额占比") for name in levels)
+
+
 def _write_metric_formats(writer, sheet, data, top, left, condition_cols, color_cols, condition_rows, color_rows, condition_color, centered_bar_cols=None, centered_bar_rows=None):
     """按实际写入的数值区域添加条件格式，显式色阶优先于数据条。"""
-    if data.empty:
+    if data.empty or not any((condition_cols, color_cols, condition_rows, color_rows, centered_bar_cols, centered_bar_rows)):
         return
 
-    def apply(metric, values, start, end, kind):
+    def apply(metric, values, start, end, kind, detail_range=None):
         colors = writer._colors_for_metric(metric, condition_color)
         if kind == "centered":
             custom = _resolve_condition_value(condition_color, metric, writer._condition_color)
@@ -3875,7 +3894,9 @@ def _write_metric_formats(writer, sheet, data, top, left, condition_cols, color_
             numbers = numbers[np.isfinite(numbers)]
             if not numbers.empty:
                 rule = _build_color_scale_rule(numbers, colors, center_zero=_metric_color_role(metric) == "improvement")
-                sheet.conditional_formatting.add(f"{start}:{end}", rule)
+                sheet.conditional_formatting.add(detail_range or f"{start}:{end}", rule)
+        elif detail_range is not None:
+            sheet.conditional_formatting.add(detail_range, _data_bars.solid_bar(detail_range, colors[-1], start_zero=True))
         else:
             writer.add_conditional_formatting(sheet, start, end, condition_color=colors[-1])
 
@@ -3892,9 +3913,18 @@ def _write_metric_formats(writer, sheet, data, top, left, condition_cols, color_
                         kind = "centered"
                     yield i, metric, kind
 
+    totals = _bin_total_mask(data)
+    spans = writer._collapse_contiguous_indexes(np.flatnonzero(~totals).tolist()) if totals is not None else None
     for i, metric, kind in selected(data.columns, condition_cols, color_cols, centered_bar_cols):
         col = get_column_letter(left + i)
-        apply(metric, data.iloc[:, i], f"{col}{top}", f"{col}{top + len(data) - 1}", kind)
+        values = data.iloc[:, i]
+        detail_range = None
+        if spans is not None and _is_bin_share(metric) and kind != "centered":
+            if not spans:
+                continue
+            detail_range = " ".join(f"{col}{top + lo}:{col}{top + hi}" for lo, hi in spans)
+            values = values.iloc[~totals]
+        apply(metric, values, f"{col}{top}", f"{col}{top + len(data) - 1}", kind, detail_range)
     for i, metric, kind in selected(data.index, condition_rows, color_rows, centered_bar_rows):
         row = top + i
         apply(metric, data.iloc[i], f"{get_column_letter(left)}{row}", f"{get_column_letter(left + len(data.columns) - 1)}{row}", kind)

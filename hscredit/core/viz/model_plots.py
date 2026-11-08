@@ -14,7 +14,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, Normalize, to_hex
 from matplotlib.ticker import FormatStrFormatter
-from matplotlib.transforms import ScaledTranslation
+from matplotlib.transforms import ScaledTranslation, offset_copy
 
 from .utils import DEFAULT_COLORS, setup_axis_style, save_figure, _create_subplots, _tight_layout
 from .style import EXTENDED_COLORS, GRADIENT_PALETTES, PRIMARY_COLORS
@@ -853,10 +853,23 @@ def plot_model_sample_shap(
             patch.set_facecolor(force_artist_color_map[facecolor])
         if edgecolor in force_artist_color_map:
             patch.set_edgecolor(force_artist_color_map[edgecolor])
+    # 以输出值为中心，按印刷点给同排的文字和箭头留白，使间距独立于预测值的量纲。
+    output_label = next(text for text in native_force_ax.texts if text.get_text() == "output value")
+    direction_layout = {
+        "higher": (-24, "right"),
+        r"$\rightarrow$": (-4, "right"),
+        r"$\leftarrow$": (4, "left"),
+        "lower": (24, "left"),
+    }
     for text_artist in native_force_ax.texts:
         text_color = to_hex(text_artist.get_color(), keep_alpha=False).lower()
         if text_color in force_artist_color_map:
             text_artist.set_color(force_artist_color_map[text_color])
+        if text_artist.get_text() in direction_layout:
+            offset_x, align = direction_layout[text_artist.get_text()]
+            text_artist.set_position(output_label.get_position())
+            text_artist.set(horizontalalignment=align, verticalalignment="center")
+            text_artist.set_transform(offset_copy(output_label.get_transform(), fig=force_figure, x=offset_x, y=24, units="points"))
         if " = " in text_artist.get_text():
             text_artist.set_verticalalignment("top")
         if re.fullmatch(r"-?\d+(?:\.\d+)?", text_artist.get_text()):

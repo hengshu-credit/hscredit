@@ -37,7 +37,7 @@ def test_release_download_verified_before_caching_and_reused_offline(tmp_path, m
     monkeypatch.setattr(datasets, "urlopen", lambda *a, **kw: io.BytesIO(b"x" * len(payload)))
     with pytest.raises(ValueError, match="校验失败"):
         hscredit_dataset()
-    assert not cached.exists() and not list(cached.parent.glob("*.part"))
+    assert not list(cached.parent.iterdir())
     monkeypatch.setattr(datasets, "urlopen", lambda *a, **kw: io.BytesIO(payload))
     assert hscredit_dataset(columns=["MOB3"]).MOB3.tolist() == [0, 31]
     cached.write_bytes(b"z" * len(payload))
@@ -45,6 +45,67 @@ def test_release_download_verified_before_caching_and_reused_offline(tmp_path, m
     assert cached.read_bytes() == payload
     monkeypatch.setattr(datasets, "urlopen", lambda *a, **kw: pytest.fail("有效缓存应离线加载"))
     assert hscredit_dataset(columns=[]).shape == (2, 0)
+
+
+@pytest.mark.parametrize("route", ["github", "github_error", "github_interrupted", "slow", "mirror_offline", "mirror_pointer"])
+def test_first_download_mirrors_and_speed_windows(tmp_path, monkeypatch, route):
+    from hscredit.utils import datasets
+
+    source = io.BytesIO()
+    pd.DataFrame({"MOB3": [0, 31]}).to_parquet(source, index=False)
+    payload = source.getvalue()
+    digest = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(datasets, "files", lambda _: tmp_path / "wheel")
+    monkeypatch.setattr(datasets, "_DATASET_SHA256", digest)
+    monkeypatch.setattr(datasets, "_DATASET_BYTES", len(payload))
+    monkeypatch.setenv("HSCREDIT_DATA_HOME", str(tmp_path / "cache"))
+
+    # 两个 5 秒窗口：第一个恰好达到阈值，第二个可单独降速。
+    threshold = 50
+    now = 0
+    monkeypatch.setattr(datasets, "_MIN_DOWNLOAD_SPEED", threshold)
+    monkeypatch.setattr(datasets, "monotonic", lambda: now)
+    github_positions = []
+    calls = []
+    slow = route in ("slow", "mirror_offline", "mirror_pointer")
+
+    class GithubResponse(io.BytesIO):
+        def read1(self, size):
+            nonlocal now
+            github_positions.append(self.tell())
+            if self.tell() and route == "github_interrupted":
+                raise ConnectionResetError("连接中断")
+            now += 5
+            limit = 1 if self.tell() == threshold * 5 and slow else threshold * 5
+            return super().read1(min(size, limit))
+
+    def open_url(request, timeout):
+        url = request.full_url
+        calls.append(url)
+        if url == datasets._DATASET_URL:
+            if route == "github_error":
+                raise TimeoutError("连接超时")
+            return GithubResponse(payload)
+        assert url == datasets._GITEE_RAW_URL
+        if route == "mirror_offline":
+            raise ConnectionError("镜像离线")
+        if route == "mirror_pointer":
+            return io.BytesIO(f"version https://git-lfs.github.com/spec/v1\noid sha256:{digest}\nsize {len(payload)}\n".encode())
+        return io.BytesIO(payload)
+
+    monkeypatch.setattr(datasets, "urlopen", open_url)
+    assert hscredit_dataset(columns=["MOB3"]).MOB3.tolist() == [0, 31]
+    expected = [datasets._DATASET_URL]
+    if route != "github":
+        expected.append(datasets._GITEE_RAW_URL)
+    assert calls == expected
+    if route == "slow":
+        assert github_positions == [0, threshold * 5]
+    if route in ("mirror_offline", "mirror_pointer"):
+        assert github_positions[:3] == [0, threshold * 5, threshold * 5 + 1]
+    cache = tmp_path / "cache" / "datasets" / digest
+    assert list(cache.iterdir()) == [cache / "hscredit.parquet"]
+    assert (cache / "hscredit.parquet").read_bytes() == payload
 
 
 def test_dataset_population_and_observation_window():

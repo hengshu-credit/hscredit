@@ -20,7 +20,7 @@ RULE_EXT = "{B025F937-C7B1-47D3-B67F-A62EFF666E3E}"
 SHEET_EXT = "{78C0D931-6437-407d-A8EE-F0AAD7539E65}"
 
 
-def solid_bar(cell_range, color, negative_color=None):
+def solid_bar(cell_range, color, negative_color=None, *, start_zero=False):
     """生成兼容数据条，并为 Excel 登记实心颜色及可选的居中零轴。"""
 
     def opaque(value):
@@ -32,7 +32,7 @@ def solid_bar(cell_range, color, negative_color=None):
     attrs = {"minLength": "0", "maxLength": "100", "gradient": "0", "direction": "leftToRight"}
     if negative_color is None:
         attrs.update(axisPosition="none", negativeBarColorSameAsPositive="1")
-        bounds = [("min", None), ("max", None)]
+        bounds = [("num", "0") if start_zero else ("min", None), ("max", None)]
     else:
         attrs["axisPosition"] = "middle"
         ref = absolute_coordinate(cell_range)

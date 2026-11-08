@@ -7,15 +7,20 @@ import hashlib
 import os
 import re
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
+from http.client import HTTPException
 from importlib.resources import as_file, files
 from pathlib import Path
+from time import monotonic
 from typing import Optional, Sequence, Tuple, Union
 from urllib.request import Request, urlopen
 import pandas as pd
 from pandas.api.types import CategoricalDtype
 
 _DATASET_URL = "https://github.com/hengshu-credit/hscredit/releases/download/v0.1.3/hscredit.parquet"
+_GITEE_RAW_URL = "https://gitee.com/itlubber/hscredit/raw/v0.1.3/hscredit/resources/datasets/hscredit.parquet"
+_MIN_DOWNLOAD_SPEED = 100 * 1024
+_SPEED_WINDOW = 5
 _DATASET_SHA256 = "6c4e4790f3a56472d36e58517df349aeb18d3ca709d6b424f51a6556fa8d14f9"
 _DATASET_BYTES = 375272455
 
@@ -28,6 +33,73 @@ def _verified_dataset(path):
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest() == _DATASET_SHA256
+
+
+def _dataset_blocks(url):
+    """按网络实际到达的数据块读取，低速连接也能及时测速。"""
+    request = Request(url, headers={"User-Agent": "hscredit-dataset"})
+    try:
+        with urlopen(request, timeout=15) as response:
+            while block := response.read1(256 * 1024):
+                yield block
+    except (OSError, HTTPException) as exc:
+        raise ConnectionError(f"下载 {url} 失败：{exc}") from exc
+
+
+def _write_dataset(blocks, path, *, monitor_speed=False, append=False):
+    """写入并校验数据；GitHub 的测速窗口低于阈值时暂停并保留迭代位置。"""
+    with path.open("ab" if append else "wb") as output:
+        total = output.tell()
+        bytes_at_window_start = total
+        started = monotonic()
+        for block in blocks:
+            total += len(block)
+            if total > _DATASET_BYTES:
+                raise ValueError("下载的 hscredit 数据集超出预期大小")
+            output.write(block)
+            if monitor_speed and total < _DATASET_BYTES:
+                now = monotonic()
+                elapsed = now - started
+                if elapsed >= _SPEED_WINDOW:
+                    if total - bytes_at_window_start < _MIN_DOWNLOAD_SPEED * elapsed:
+                        return False
+                    started = now
+                    bytes_at_window_start = total
+    if not _verified_dataset(path):
+        raise ValueError("下载的 hscredit 数据集大小或 SHA-256 校验失败")
+    return True
+
+
+def _download_dataset(directory):
+    """优先下载 GitHub，镜像不可用时可继续尚未完成的低速连接。"""
+    primary = directory / "github.part"
+    mirror = directory / "gitee.part"
+    github_error = None
+    with closing(_dataset_blocks(_DATASET_URL)) as github:
+        try:
+            if _write_dataset(github, primary, monitor_speed=True):
+                return primary
+        except (ConnectionError, ValueError) as exc:
+            github_error = exc
+
+        try:
+            with closing(_dataset_blocks(_GITEE_RAW_URL)) as blocks:
+                _write_dataset(blocks, mirror)
+            return mirror
+        except (ConnectionError, ValueError) as exc:
+            mirror_error = exc
+
+        if github_error is None:
+            try:
+                _write_dataset(github, primary, append=True)
+                return primary
+            except (ConnectionError, ValueError) as exc:
+                github_error = exc
+
+    message = f"GitHub 下载失败：{github_error}。Gitee LFS 下载失败：{mirror_error}"
+    if isinstance(github_error, ValueError) and isinstance(mirror_error, ValueError):
+        raise ValueError(message) from mirror_error
+    raise ConnectionError(message) from mirror_error
 
 
 @contextmanager
@@ -46,29 +118,17 @@ def _hscredit_dataset_path():
     target = root / "datasets" / _DATASET_SHA256 / "hscredit.parquet"
     if not _verified_dataset(target):
         target.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".part", delete=False) as temp:
-            partial = Path(temp.name)
         try:
-            request = Request(_DATASET_URL, headers={"User-Agent": "hscredit-dataset"})
-            with urlopen(request, timeout=60) as response, partial.open("wb") as output:
-                total = 0
-                for block in iter(lambda: response.read(1024 * 1024), b""):
-                    total += len(block)
-                    if total > _DATASET_BYTES:
-                        raise ValueError("下载的 hscredit 数据集超出预期大小")
-                    output.write(block)
-            if not _verified_dataset(partial):
-                raise ValueError("下载的 hscredit 数据集大小或 SHA-256 校验失败")
-            try:
-                os.replace(partial, target)
-            except PermissionError:
-                # Windows 上另一进程可能已完成下载，并打开了经过校验的文件。
-                if not _verified_dataset(target):
-                    raise
+            with tempfile.TemporaryDirectory(dir=target.parent) as directory:
+                verified = _download_dataset(Path(directory))
+                try:
+                    os.replace(verified, target)
+                except PermissionError:
+                    # Windows 上另一进程可能已完成下载，并打开了经过校验的文件。
+                    if not _verified_dataset(target):
+                        raise
         except OSError as exc:
-            raise OSError(f"无法缓存 hscredit 数据集。可从 {_DATASET_URL} 下载至 {target}") from exc
-        finally:
-            partial.unlink(missing_ok=True)
+            raise OSError(f"无法缓存 hscredit 数据集：{exc}。也可手动从 {_DATASET_URL} 下载至 {target}") from exc
     yield target
 
 
