@@ -1152,11 +1152,29 @@ class ExcelWriter:
         image.width, image.height = image.width * scale, image.height * scale
         worksheet.add_image(image, f"{start_col}{start_row}")
 
-        # 计算占用的行数
-        row_height = 16.0 if self.system != "mac" else 17.5
-        occupied_rows = max(1, math.ceil(figsize[1] / row_height))
+        # Excel 行高使用磅，图片尺寸使用像素。保留原来的最小预留区域，
+        # 对模板中的矮行和隐藏行按实际物理高度继续向下寻找边界。
+        row_px = 17.5 if self.system == "mac" else 16.0
+        default_px = min(row_px, (worksheet.sheet_format.defaultRowHeight or 15.0) * 96 / 72)
+        end_row = start_row
+        remaining = image.height
+        while remaining > 0:
+            if end_row > 1048576:
+                raise ValueError("工作表剩余的可见行高不足以容纳图片")
+            dimension = worksheet.row_dimensions.get(end_row)
+            if dimension is None or not dimension.hidden:
+                remaining -= default_px if dimension is None or dimension.height is None else dimension.height * 96 / 72
+            end_row += 1
+        return max(end_row, start_row + max(1, math.ceil(figsize[1] / row_px))), column_index_from_string(start_col) + 8
 
-        return start_row + occupied_rows, column_index_from_string(start_col) + 8
+    def _insert_figure_row(self, worksheet, figures, row, col, figsize, padding):
+        """并排插图后，从最下方的图片边界开始预留表头间距。"""
+        bottom = row
+        for figure in figures:
+            end_row, end_col = self.insert_pic2sheet(worksheet, figure, (row, col), figsize=figsize)
+            bottom = max(bottom, end_row)
+            col = end_col - 1
+        return bottom + max(0, int(padding or 0))
 
     def _styled_chart_title(self, text: str):
         """构建带 hscredit 字体/主题色样式的图表标题对象。
@@ -4072,14 +4090,7 @@ def dataframe2excel(
         figures = [pic for pic in figures if pic]
 
         if figures:
-            pic_row = start_row
-            for i, pic in enumerate(figures):
-                if i == 0:
-                    start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, start_col), figsize=figsize)
-                else:
-                    start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
-
-            start_row += image_bottom_padding_rows
+            start_row = writer._insert_figure_row(worksheet, figures, start_row, start_col, figsize, image_bottom_padding_rows)
 
     # 处理merge_column参数
     if kwargs.get("merge_column") is not None:

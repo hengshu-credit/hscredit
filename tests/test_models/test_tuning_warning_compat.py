@@ -16,7 +16,9 @@ from hscredit.core.models.tuning import ModelTuner
 
 def _tuner(**kwargs):
     return ModelTuner(
-        LogisticRegression(max_iter=200),
+        # 这里验证 Optuna 和用户回调的警告；避免旧版 sklearn 的 L-BFGS
+        # 向新版 SciPy 传入已移除的 iprint 参数，混入与该契约无关的警告。
+        LogisticRegression(solver="liblinear", max_iter=200),
         search_space={},
         metric="auc",
         cv=2,

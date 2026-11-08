@@ -1319,6 +1319,30 @@ class TestDataframe2Excel:
         assert ws["B12"].value is None
         assert ws["B13"].value == "A"
 
+    @pytest.mark.parametrize("entry", ["dataframe2excel", "save"])
+    def test_tall_first_picture_clears_short_rows_before_header(self, tmp_path, entry):
+        from PIL import Image
+
+        pictures = []
+        for name, size in [("tall", (180, 250)), ("short", (600, 100))]:
+            path = tmp_path / f"{name}.png"
+            Image.new("RGB", size).save(path)
+            pictures.append(str(path))
+        writer = ExcelWriter(system="windows")
+        ws = writer.get_sheet_by_name("图片")
+        for row in range(2, 70):
+            ws.row_dimensions[row].height = 5
+        ws.row_dimensions[4].hidden = True
+        df = pd.DataFrame({"表头": [1]})
+        options = dict(figures=pictures, figsize=(600, 250), image_bottom_padding_rows=3)
+        if entry == "save":
+            df.save(writer, worksheet=ws, **options)
+        else:
+            dataframe2excel(df, writer, sheet_name=ws, **options)
+        header = next(cell.row for cell in ws["B"] if cell.value == "表头")
+        height = sum(ws.row_dimensions[r].height for r in range(2, header) if not ws.row_dimensions[r].hidden)
+        assert height >= 250 * 72 / 96 + 3 * 5
+
 
 class TestUtilityFunctions:
     """测试工具函数"""

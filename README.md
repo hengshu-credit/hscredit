@@ -1087,6 +1087,7 @@ dataframe2excel(
     writer,
     sheet_name="分箱分析",
     figures=["分箱.png", "月份.png"],
+    image_bottom_padding_rows=4,
     percent_cols=["样本占比", "坏样本率", "坏账改善"],
     condition_cols=["样本占比", "坏样本率", "LIFT值"],
     centered_bar_cols=["坏账改善"],

@@ -404,14 +404,7 @@ def _dataframe_save(
                 figures = [figures]
             figures = [pic for pic in figures if pic]
             if figures:
-                pic_row = start_row
-                for i, pic in enumerate(figures):
-                    if i == 0:
-                        start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, start_col), figsize=figsize)
-                    else:
-                        start_row, end_col = writer.insert_pic2sheet(worksheet, pic, (pic_row, end_col - 1), figsize=figsize)
-
-                start_row += 0 if image_bottom_padding_rows is None else max(int(image_bottom_padding_rows), 0)
+                start_row = writer._insert_figure_row(worksheet, figures, start_row, start_col, figsize, image_bottom_padding_rows)
 
         # 处理merge_column参数
         if "merge_column" in kwargs and kwargs["merge_column"]:

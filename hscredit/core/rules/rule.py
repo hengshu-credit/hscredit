@@ -164,8 +164,6 @@ class Rule(ParallelizableMixin):
     支持使用 pandas eval 语法的规则定义和评估，支持 ``&`` （与）、 ``|`` （或）、
     ``~`` （非）、 ``^`` （异或）等运算符组合多个规则为复合规则。
 
-    **属性**
-
     **参数**
 
     :param expr: 规则表达式字符串
@@ -192,9 +190,31 @@ class Rule(ParallelizableMixin):
         ``backend_kwargs`` ；并行数和后端应分别通过对应公共参数传入。
 
     :type parallel_config: Optional[Dict[str, Any]]
+
+    **属性**
+
     :ivar feature_names_in_: 从表达式中解析出的特征名列表
     :ivar result_: 最近一次 predict 的结果 Series
     :ivar _state: 当前规则状态（initialized/applied）
+
+    **空值与非空值**
+
+    数值、字符串、布尔、分类和 ``object`` 列均可用 ``.isna()`` 和 ``.notna()``
+    判断缺失，支持 ``None``、``np.nan``、``pd.NA`` 和 ``NaT``。
+    空字符串 ``''`` 是非缺失值。以下表达式可直接作为 ``Rule(expr)`` 的参数。
+
+    - 评分为空用 ``评分.isna()``，评分非空用 ``评分.notna()``。
+    - 评分大于 600 用 ``评分 > 600``，同时接纳缺失用 ``(评分 > 600) | 评分.isna()``。
+    - 渠道在名单内用 ``渠道 in ['线上', '门店']``。名单外且非空用
+      ``渠道.notna() & (渠道 not in ['线上', '门店'])``，因为 ``not in`` 也可能命中缺失。
+    - 两列都为空用 ``评分.isna() & 渠道.isna()``，至少一列为空用 ``评分.isna() | 渠道.isna()``。
+    - 业务上将空字符串也视为缺失时，用 ``渠道.isna() | (渠道 == '')``。
+    - 评分非空且不等于 100 用 ``评分.notna() & (评分 != 100)``，同时接纳缺失用
+      ``(评分 != 100) | 评分.isna()``。
+
+    单写 ``评分 != 100`` 时，普通 ``float64`` 列的 ``NaN`` 会命中。可空
+    ``Int64``、``Float64`` 列中的 ``pd.NA`` 参与该比较后仍为 ``pd.NA``，
+    ``predict`` 将最终结果中的缺失值记为未命中。因此用 ``评分 != 评分`` 判空会漏掉可空列的缺失值。
 
     **参考样例**
 
@@ -207,7 +227,15 @@ class Rule(ParallelizableMixin):
     >>> combined = rule1 & rule2
     >>> # 应用规则
     >>> result = combined.predict(df)
-    >>> print(result)
+    >>> result.tolist()
+    [False, True, True]
+
+    >>> df = pd.DataFrame({"评分": [100.0, 99.0, float("nan")]})
+    >>> rule = Rule("评分 != 100")
+    >>> rule.predict(df).tolist()
+    [False, True, True]
+    >>> rule.predict(df.astype({"评分": "Int64"})).tolist()
+    [False, True, False]
     """
 
     def __init__(

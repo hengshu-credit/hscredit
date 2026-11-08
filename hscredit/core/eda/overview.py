@@ -253,7 +253,7 @@ def feature_summary(
     :type features: List[str]
     :param y: 默认值为 ``None`` 。目标变量，支持列名、数组、列表、元组或Series，不传则不计算IV/KS/特征重要性
     :type y: Optional[Union[str, pd.Series, np.ndarray, List, Tuple]]
-    :param target: 标签列名、列名列表、一维标签、callable 或 {名称: 标签向量或 callable}。
+    :param target: 标签列名、列名列表、一维 Series、ndarray 或 list、callable，或 {名称: 标签向量或 callable}。
         Series 按索引对齐，旧参数 y 仍按位置绑定。y、target、overdue + dpds 三者互斥。
     :param overdue: 一个或多个逾期天数字段，与 dpds 配合使用。外部逾期 Series 或 DataFrame 按索引对齐。
     :param dpds: 单个阈值或阈值序列，按字段和阈值的组合分别计算指标。
