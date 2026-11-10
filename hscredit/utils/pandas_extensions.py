@@ -1287,7 +1287,11 @@ def _style_bin_table(
         if totals is not None and _is_bin_share(col):
             styler = _apply_detail_share_bar(styler, df_display, col, totals, color)
         else:
-            styler = styler.bar(subset=[col], color=color, axis=0)
+            # pandas 2.0 的 Styler.bar 自动取界会把 pd.NA 放进 NumPy object 数组。
+            # 显式给出与默认 mid 对齐一致的边界，保持原列的值、精度和可空 dtype。
+            values = df_display[col].dropna()
+            if not values.empty:
+                styler = styler.bar(subset=[col], color=color, vmin=min(0, values.min()), vmax=max(0, values.max()), axis=0)
     styler = _apply_table_color_blocks(styler, df_display, block_columns, condition_color, theme_color, totals)
     styler = _apply_centered_bars(styler, df_display, centered_columns, condition_color, theme_color)
     styler = _apply_table_layout(styler, theme_color=theme_color, fill=fill, index=index)

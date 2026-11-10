@@ -100,7 +100,7 @@ async function main() {
         await page.goto(base + "/showcase.html");
         await ready();
         const introMenu = page.locator(nav + " p.caption").filter({ hasText: /^入门$/ }).locator("xpath=following-sibling::ul[1]");
-        assert.deepEqual(await introMenu.locator(":scope > li > a").allTextContents(), ["安装指南", "功能与示例", "功能总览"]);
+        assert.deepEqual(await introMenu.locator(":scope > li > a").allTextContents(), ["安装指南", "功能与示例", "功能总览", "独立 Notebook 教程"]);
         for (const name of ["installation", "analysis_parameters", "database", "skills", "multiway_tree"]) {
             assert(await page.locator(`${nav} a[href^="${name}.html#"]`).count() > 0, `${name} 缺少小标题`);
         }
@@ -256,7 +256,7 @@ async function main() {
         await ready();
         assert.equal(await reloadSection.getAttribute("aria-current"), "location", "页尾锚点被末节抢占");
 
-        // 两份数据集文档各有一个同级入口，从说明页进入报告后再次核对侧栏。
+        // 数据集说明、摘要与演示字段集各有一个同级入口。
         await page.goto(base + "/datasets.html");
         for (const filename of ["datasets.html", "dataset-summary.html"]) {
             if (filename === "dataset-summary.html") {
@@ -266,7 +266,7 @@ async function main() {
             const menu = page.locator(nav + " p.caption").filter({ hasText: /^数据集$/ })
                 .locator("xpath=following-sibling::ul[1]");
             assert.deepEqual(await menu.locator(":scope > li > a").allTextContents(),
-                ["现金贷数据集", "特征摘要报告"], "数据集侧栏入口重复或父级错误");
+                ["现金贷数据集", "特征摘要报告", "Notebook 演示字段集"], "数据集侧栏入口重复或父级错误");
         }
         // 在真实报告上验证两层表头和数据列，覆盖翻页及虚拟滚动创建的新行。
         const grid = page.locator("#feature-report .report-grid");
