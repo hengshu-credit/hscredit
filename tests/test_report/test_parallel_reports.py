@@ -427,7 +427,12 @@ def test_single_and_empty_report_tasks_do_not_create_backend(report_data, monkey
         n_jobs=8,
     )
     build_sample_stats_table([], [], ["target"], n_jobs=8)
-    OverduePredictor("score", target="target", rules=[560, 620], n_jobs=8,).fit(
+    OverduePredictor(
+        "score",
+        target="target",
+        rules=[560, 620],
+        n_jobs=8,
+    ).fit(
         report_data
     ).transform(report_data[["score"]])
 

@@ -986,8 +986,7 @@ class BinTableDisplay:
 
         html = self._styler.to_html()
         with open(filename, "w", encoding="utf-8") as f:
-            f.write(
-                f"""
+            f.write(f"""
             <!DOCTYPE html>
             <html>
             <head>
@@ -1003,8 +1002,7 @@ class BinTableDisplay:
                 {html}
             </body>
             </html>
-            """
-            )
+            """)
         logger.info("已导出到: %s", filename)
         return self
 

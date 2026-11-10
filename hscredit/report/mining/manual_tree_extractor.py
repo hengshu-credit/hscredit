@@ -2371,7 +2371,16 @@ class ManualTreeExtractor(ParallelizableMixin):
         missing_go_to_left_new = [0, 0, 0]
 
         # 插入到指定节点
-        (self._tree_info.children_left, self._tree_info.children_right, self._tree_info.feature, self._tree_info.threshold, self._tree_info.n_node_samples, self._tree_info.value, self._tree_info.impurity, self._tree_info.missing_go_to_left,) = _add_nodes_to_tree(
+        (
+            self._tree_info.children_left,
+            self._tree_info.children_right,
+            self._tree_info.feature,
+            self._tree_info.threshold,
+            self._tree_info.n_node_samples,
+            self._tree_info.value,
+            self._tree_info.impurity,
+            self._tree_info.missing_go_to_left,
+        ) = _add_nodes_to_tree(
             node=node,
             split_list_left=self._tree_info.children_left,
             split_list_right=self._tree_info.children_right,
@@ -2445,7 +2454,16 @@ class ManualTreeExtractor(ParallelizableMixin):
         removed = set(_find_subtree_node_ids(self._tree_info, node)) - {node}
         adjusted_nodes = {old - sum(removed_node < old for removed_node in removed) for old in self._manual_split_nodes | {node} if old not in removed}
 
-        (self._tree_info.children_left, self._tree_info.children_right, self._tree_info.feature, self._tree_info.threshold, self._tree_info.n_node_samples, self._tree_info.value, self._tree_info.impurity, self._tree_info.missing_go_to_left,) = _delete_nodes(
+        (
+            self._tree_info.children_left,
+            self._tree_info.children_right,
+            self._tree_info.feature,
+            self._tree_info.threshold,
+            self._tree_info.n_node_samples,
+            self._tree_info.value,
+            self._tree_info.impurity,
+            self._tree_info.missing_go_to_left,
+        ) = _delete_nodes(
             node=node,
             split_list_left=self._tree_info.children_left,
             split_list_right=self._tree_info.children_right,

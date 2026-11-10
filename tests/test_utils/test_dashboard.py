@@ -102,13 +102,7 @@ def test_installed_optuna_frontend_and_study_api():
 @pytest.mark.skipif(shutil.which("node") is None, reason="图表主题脚本校验需要 Node.js")
 def test_plotly_theme_preserves_values_and_reapplies_on_react():
     theme = Path(__file__).resolve().parents[2] / "hscredit/resources/dashboard/theme.js"
-    javascript = (
-        "const config="
-        + json.dumps(_theme_config())
-        + ";const source="
-        + json.dumps(str(theme))
-        + ";"
-        + r"""
+    javascript = "const config=" + json.dumps(_theme_config()) + ";const source=" + json.dumps(str(theme)) + ";" + r"""
 const assert = require('node:assert/strict');
 global.window = {__hscreditDashboardConfig: config};
 global.document = {querySelector:()=>null, documentElement:{dataset:{}}, addEventListener:()=>{}};
@@ -150,5 +144,4 @@ assert.equal(format('{}'),'{}');
 const literal={pattern:String.raw`\u6307`,html:'<img src=x onerror=alert(1)>'};
 assert.deepEqual(JSON.parse(format(JSON.stringify(literal))),literal);
 """
-    )
     subprocess.run([shutil.which("node"), "-e", javascript], check=True, capture_output=True, text=True, encoding="utf-8")

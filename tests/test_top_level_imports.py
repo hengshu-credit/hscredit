@@ -4,8 +4,7 @@ import textwrap
 
 
 def test_star_import_exposes_key_top_level_apis():
-    code = textwrap.dedent(
-        """
+    code = textwrap.dedent("""
         namespace = {}
         exec('from hscredit import *', namespace)
 
@@ -48,8 +47,7 @@ def test_star_import_exposes_key_top_level_apis():
         assert namespace['Rule'].__module__ == 'hscredit.core.rules.rule'
         assert namespace['feature_summary'].__module__.startswith('hscredit.core.eda')
         assert namespace['Database'].__module__ == 'hscredit.database.client'
-        """
-    )
+        """)
 
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -61,13 +59,11 @@ def test_star_import_exposes_key_top_level_apis():
 
 
 def test_info_does_not_list_implemented_metrics_as_pending():
-    code = textwrap.dedent(
-        """
+    code = textwrap.dedent("""
         import hscredit
 
         hscredit.info()
-        """
-    )
+        """)
 
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -82,8 +78,7 @@ def test_info_does_not_list_implemented_metrics_as_pending():
 
 
 def test_core_aggregates_public_subpackage_apis():
-    code = textwrap.dedent(
-        """
+    code = textwrap.dedent("""
         import hscredit.core as core
         from hscredit.core import binning, metrics, selectors
 
@@ -103,8 +98,7 @@ def test_core_aggregates_public_subpackage_apis():
         assert core.StabilityAwareSelector is selectors.StabilityAwareSelector
         assert core.selection_report is selectors.selection_report
         assert core.compute_bin_stats is metrics.compute_bin_stats
-        """
-    )
+        """)
 
     result = subprocess.run(
         [sys.executable, "-c", code],

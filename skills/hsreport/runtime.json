@@ -4,7 +4,7 @@
   "hscredit": {
     "package": "hscredit",
     "repository": "https://github.com/hengshu-credit/hscredit.git",
-    "ref": "v0.1.5"
+    "ref": "v0.1.5.post1"
   },
   "extras": [
     "skills"

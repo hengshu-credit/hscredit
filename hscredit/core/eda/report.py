@@ -312,8 +312,7 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
     html_parts = []
 
     # HTML头部
-    html_parts.append(
-        f"""
+    html_parts.append(f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -332,8 +331,7 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
     </head>
     <body>
         <h1>{title}</h1>
-    """
-    )
+    """)
 
     # 各章节
     for section_name, df in report.items():
@@ -344,13 +342,11 @@ def generate_html_report(report: Dict[str, pd.DataFrame], filepath: str, title: 
             html_parts.append("<p>无数据</p>")
 
     # HTML尾部
-    html_parts.append(
-        f"""
+    html_parts.append(f"""
         <p class="timestamp">生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
     </body>
     </html>
-    """
-    )
+    """)
 
     # 写入文件
     with open(filepath, "w", encoding="utf-8") as f:

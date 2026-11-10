@@ -18,7 +18,7 @@ Skill 负责校验请求、调用真实 hscredit API，并交付 Excel、图片�
 
 其他尚未拆分为独立 Skill 的方向见 `skills/ROADMAP.md`。
 
-0.1.5 已同步报告 `save`/`sheet` 接口、公共语义配色和 SHAP 绘图使用说明。独立 Skill 的运行来源固定到 `v0.1.5`，更新后的安装要求会生成对应的隔离环境缓存；Parquet 使用基础依赖 `pyarrow`，不再请求独立的 `parquet` extra。
+0.1.5 已同步报告 `save`/`sheet` 接口、公共语义配色和 SHAP 绘图使用说明。当前独立 Skill 的运行来源固定到 `v0.1.5.post1`，包含 Pandas 2.0 可空数值列的数据条兼容修复；更新后的安装要求会生成对应的隔离环境缓存。Parquet 使用基础依赖 `pyarrow`，不再请求独立的 `parquet` extra。
 
 Skill 文件与 Python 包需要分别更新。`environment.mode="current"` 使用当前解释器中的 hscredit，请先升级到匹配版本；安装器仍保留不覆盖已有 Skill 目录的行为。新主题看板通过 `hscredit dashboard` 启动，原生透视表通过 `ExcelWriter` Python API 创建，两者不属于当前 Skill JSON 操作。
 

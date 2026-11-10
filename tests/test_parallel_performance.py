@@ -313,7 +313,12 @@ def test_three_label_rule_report_parallel_overhead_gate(benchmark_data):
         )
 
     def parallel_call():
-        return Rule("n0 > 0", n_jobs=3, parallel_backend="threading", parallel_config=config,).report(
+        return Rule(
+            "n0 > 0",
+            n_jobs=3,
+            parallel_backend="threading",
+            parallel_config=config,
+        ).report(
             label_data,
             overdue=["label0", "label1", "label2"],
             dpds=[0],
