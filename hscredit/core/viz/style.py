@@ -28,30 +28,13 @@ import platform
 import matplotlib as mpl
 from typing import Dict, List, Optional
 
+from ...utils.colors import PRIMARY_COLORS, SECONDARY_COLORS, ORDINARY_COLORS, EXTENDED_COLORS
+
 # ============================================================
 # 配色方案
 # ============================================================
 
-# 主色板（主题色 + 2 个副主题色）
-PRIMARY_COLORS = ["#2639E9", "#F76E6C", "#FE7715"]
-
-# 扩展色板：保留主色板顺序，其余颜色全部由两大主题色派生——
-#   · 蓝系 = 主题色 #2639E9 叠不同透明度白（浅→深），非通用 blue；
-#   · 红系 = 副主题色 #F76E6C 融合粉色 #E0249A 或主题蓝（→玫紫/粉红/危险红），非通用 red。
-# 蓝、紫、粉、红渐变排布，同时相邻系列色差差距拉大，全程无黄/绿/棕分散色相。
-EXTENDED_COLORS = PRIMARY_COLORS + [
-    "#8892F3",
-    "#9956A4",
-    "#EA4585",
-    "#5665EE",
-    "#F0587A",
-    "#B729AB",
-    "#3C4DEB",
-    "#E73B72",
-    "#832EC2",
-    "#BC5F8F",
-    "#E0249A",
-]
+# 默认、辅助、普通强调及十色扩展色板共用品牌色系卡；保留下方显式渐变方案的兼容入口。
 
 # 语义色：蓝系基于主题色 #2639E9，红系基于副主题色 #F76E6C 融合粉/蓝
 SEMANTIC_COLORS = {
@@ -103,6 +86,8 @@ GRADIENT_PALETTES = {
 _PALETTES = {
     "default": PRIMARY_COLORS,
     "primary": PRIMARY_COLORS,
+    "secondary": SECONDARY_COLORS,
+    "ordinary": ORDINARY_COLORS,
     "extended": EXTENDED_COLORS,
     "pink_purple": GRADIENT_PALETTES["pink_purple"],
     "semantic": SEMANTIC_COLORS,
@@ -112,7 +97,7 @@ _PALETTES = {
 def get_palette(name: str = "default"):
     """获取配色方案.
 
-    :param name: 默认值为 ``'default'`` 。方案名称，可选 'default'/'primary'(3色), 'extended', 'pink_purple', 'semantic'(语义色字典)
+    :param name: 默认值为 ``'default'`` 。方案名称，可选 'default'/'primary'(3色), 'secondary'(副主题色), 'ordinary'(普通强调色), 'extended'(十色), 'pink_purple', 'semantic'(语义色字典)
     :type name: str
     :return: 颜色列表或字典
     """

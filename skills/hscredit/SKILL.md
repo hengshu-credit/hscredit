@@ -16,3 +16,5 @@ description: Inspect the currently implemented hscredit Agent Skills and route a
 - Excel 表格和多 Sheet 工作簿：`hsexcel`
 
 每个领域 Skill 使用同一版本化请求信封、文件/object_ref 输入和原子制品 manifest。需要具体参数时读取目标 Skill 的 `references/operations.md`。
+
+以 `capabilities` 返回的操作为执行边界。`hscredit dashboard` 是独立的主题看板命令，Excel 原生透视表是 Python API；不要把它们误报为 Skill JSON operation。

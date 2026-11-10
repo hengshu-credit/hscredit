@@ -85,9 +85,17 @@ def test_report_integrates_top32_without_reexplaining_or_truncating_table(tmp_pa
 
 
 def test_cached_plot_supports_unlabelled_categorical_data_and_rejects_bad_shapes(monkeypatch):
-    X = pd.DataFrame({"金额": [1.0, 2.0, np.nan], "类别": pd.Categorical(["甲", "乙", "甲"])})
+    X = pd.DataFrame({"金额": [1.0, 2.0, np.nan], "类别": pd.Categorical(["甲", "乙", None])})
     values = np.array([[0.2, 0.4], [0.1, -0.2], [0.0, 0.1]])
     fig = viz.plot_model_feature_importance(object(), X, shap_values=values, importance_source="shap", show=False)
+    # 旧版 Matplotlib 在首次绘制时才填充分类刻度文本，检查实际渲染结果。
+    fig.canvas.draw()
+    numeric_axis = next(ax for ax in fig.axes if ax.get_xlabel() == "金额")
+    offsets = numeric_axis.collections[0].get_offsets()
+    np.testing.assert_allclose(offsets[:2, 0], [1.0, 2.0])
+    assert np.ma.getmaskarray(offsets)[2, 0]
+    category_axis = next(ax for ax in fig.axes if ax.get_xlabel() == "类别")
+    assert "缺失值" in {tick.get_text() for tick in category_axis.get_xticklabels()}
     assert len(next(a for a in fig.axes if a.get_label() == "SHAP分布").get_yticklabels()) == 2
     assert sum(a.get_label() == "SHAP依赖" for a in fig.axes) == 2
     assert not any(a.get_ylabel() == "真实标签" for a in fig.axes)

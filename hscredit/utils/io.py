@@ -6,7 +6,7 @@
 import gzip
 import pickle
 from contextlib import nullcontext
-from io import BytesIO
+from io import BufferedReader, BytesIO
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -43,7 +43,11 @@ def _open_file(file: Union[str, Path], mode: str = "rb", compression: Optional[s
 
             return zstandard.open(file, mode)
         except ImportError:
-            raise DependencyError("缺少可选依赖 zstandard，请先安装: pip install zstandard")
+            try:
+                from compression import zstd
+            except ImportError as exc:
+                raise DependencyError("缺少可选依赖 zstandard，请先安装: pip install zstandard") from exc
+            return zstd.open(file, mode)
     else:
         return nullcontext(file) if hasattr(file, "read") else open(file, mode)
 
@@ -137,7 +141,12 @@ def load_pickle(
         if comp:
             # 直接读取解压流，避免再分配一份完整解压字节缓冲。
             with _open_file(file, "rb", comp) as f:
-                return joblib.load(f)
+                if hasattr(f, "peek"):
+                    return joblib.load(f)
+                # joblib 检测文件头时会回退 seek(0)，第三方 zstd 流只支持向前读取。
+                # 小块缓冲提供 peek，不需要把整个解压文件复制到内存。
+                with BufferedReader(f) as buffered:
+                    return joblib.load(buffered)
         return joblib.load(file)
 
     elif eng == "dill":

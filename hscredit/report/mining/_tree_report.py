@@ -8,6 +8,8 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import pandas as pd
 
+from ...excel.writer import _report_color_styles
+
 from ...utils.targets import bind_targets
 from ...utils.dates import date_groups
 from .._sample_stats import build_sample_stats_table
@@ -16,7 +18,8 @@ from .._sample_stats import build_sample_stats_table
 def reject_legacy_tree_keywords(kwargs):
     """旧名称不作别名，也不透传到 Rule.report 后静默忽略。"""
     renamed = {
-        "sheet": "sheet_name",
+        "sheet_name": "sheet",
+        "excel_writer": "save",
         "data": "datasets",
         "excel_path": "save",
         "max_branches": "max_n_bins",
@@ -40,8 +43,7 @@ def reject_legacy_tree_keywords(kwargs):
         "filter_cols",
         "round_digits",
         "save",
-        "sheet_name",
-        "excel_writer",
+        "sheet",
         "date",
         "freq",
         "group",
@@ -69,7 +71,7 @@ def _write_report_table(data, excel_writer, *, amount_basis=False, merge_columns
     from openpyxl.utils import get_column_letter
 
     # 传入完整列键，避免宽表按最后一层标签误匹配指标。
-    for option in ("percent_cols", "custom_cols", "condition_cols", "color_cols", "left_cols", "right_cols"):
+    for option in ("percent_cols", "custom_cols", "condition_cols", "color_cols", "centered_bar_cols", "left_cols", "right_cols"):
         requested = kwargs.get(option)
         if requested:
             kwargs[option] = [c for c in data if c in requested or _report_metric_name(data, c) in requested]
@@ -225,8 +227,7 @@ def tree_report_excel(
     feature_map=None,
     overdue_operator=">",
     save=None,
-    sheet_name="组合策略汇总",
-    excel_writer=None,
+    sheet="组合策略汇总",
     date=None,
     freq="M",
     project_desc=None,
@@ -255,8 +256,7 @@ def tree_report_excel(
     :param feature_map: 默认 None；特征名称到中文含义的映射。
     :param overdue_operator: 默认 '>'；逾期比较符，支持 '>'、'>='、'<'、'<='。
     :param save: 默认 None；导出 Excel 路径。
-    :param sheet_name: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
-    :param excel_writer: 默认 None；可复用的 hscredit ExcelWriter。
+    :param sheet: 默认 '组合策略汇总'；完整挖掘报告的单页名称。
     :param date: 默认 None；用于样本时间分布的日期字段。
     :param freq: 默认 'M'；日期统计频率。
     :param project_desc: 默认 None；项目目标和取样逻辑说明。
@@ -274,13 +274,11 @@ def tree_report_excel(
     from .base import _mining_workload
     from ._rule_filter import filter_rule_tables
 
-    dataframe2excel = _write_report_table
-    sheet = sheet_name
+    from .._parameters import resolve_report_output, save_report_workbook
 
-    if excel_writer is not None and not isinstance(excel_writer, ExcelWriter):
-        raise TypeError("excel_writer 必须是 hscredit.excel.ExcelWriter 实例")
-    if not isinstance(sheet, str) or not sheet or len(sheet) > 24 or any(c in sheet for c in "[]:*?/\\"):
-        raise ValueError("sheet_name 必须是 1 至 24 字符的有效 Excel 工作表名称")
+    writer, worksheet, save_path, owned = resolve_report_output(save, sheet, default="组合策略汇总", max_length=24)
+    dataframe2excel = _write_report_table
+    sheet = worksheet.title
     frames = datasets if isinstance(datasets, dict) else {f"数据集{i + 1}": frame for i, frame in enumerate(datasets if isinstance(datasets, (list, tuple)) else [datasets])}
     if not frames:
         raise ValueError("导出挖掘报告至少需要一个数据集")
@@ -343,13 +341,8 @@ def tree_report_excel(
     for name, table in full_reports.items():
         leaf_column = ("分箱详情", "是否叶子") if isinstance(table.columns, pd.MultiIndex) else "是否叶子"
         results[name] = table.loc[table[leaf_column].eq("是")].reset_index(drop=True) if leaf_only else table
-    writer = excel_writer if excel_writer is not None else ExcelWriter()
     basic = sheet
     names = [sheet]
-    for name in names:
-        if name in writer.workbook.sheetnames:
-            del writer.workbook[name]
-        writer.get_sheet_by_name(name)
     percent = [
         "好样本占比",
         "坏样本占比",
@@ -484,17 +477,10 @@ def tree_report_excel(
             handle_missing_target=handle_missing_target,
         )
         _fit_report_layout(writer, names + [feature_sheet])
-        if save is not None:
-            images = [(image, image._data()) for ws in writer.workbook for image in ws._images]
-            for image, payload in images:
-                image.ref = BytesIO(payload)
-            try:
-                writer.save(str(save), close=excel_writer is None)
-            finally:
-                for image, payload in images:
-                    image.ref = BytesIO(payload)
+        if save_path is not None:
+            save_report_workbook(writer, save_path, close=owned)
     finally:
-        if excel_writer is None:
+        if owned:
             writer.workbook.close()
     if isinstance(datasets, dict):
         return format_rule_tables(results, long_format)
@@ -876,7 +862,7 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
                 start_col=col,
                 amount_basis=basis == "金额维度",
                 percent_cols=percent,
-                condition_cols=["命中率", "样本占比", "坏样本率", "金额坏率", "LIFT值", "坏账改善"],
+                **_report_color_styles(["命中率", "样本占比", "坏样本率", "金额坏率", "LIFT值", "坏账改善"]),
                 decimal=None,
                 left_cols=["指标含义", "组合策略"],
                 merge_columns=merge_columns,
@@ -1011,7 +997,7 @@ def _write_feature_binning(
             start_col=col,
             title=title,
             percent_cols=["坏样本率", "样本占比", "好样本占比", "坏样本占比", "坏账改善"],
-            condition_cols=["LIFT值", "指标IV值"],
+            **_report_color_styles(["LIFT值", "指标IV值"]),
             decimal=None,
             merge_columns=metadata_names if wide else None,
         )

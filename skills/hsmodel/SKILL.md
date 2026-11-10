@@ -10,3 +10,5 @@ description: Train and serialize allowlisted hscredit models, run AutoTuner, ins
 `model_fit` 使用 `parameters.model` 和 `model_params` 选择当前公开模型；训练数据来自 `inputs.data`，目标字段由 `target` 指定。`model_tune` 使用 `AutoTuner.create`，需要 `n_trials`，缺少 Optuna 时使用隔离 `tune` extra。`model_calibrate` 和 `model_explain` 使用 `inputs.model` 的可信制品或同进程对象。
 
 模型制品只在用户明确确认来源后用 `trusted=true` 载入。大表结果保存为 Excel，模型和 tuner 保存为 hscredit artifact。
+
+参数、资源保留和主题 Dashboard 的边界见 [操作参考](references/operations.md)。需要 SHAP 图片时使用 `hsviz` 的绘图操作；`model_explain` 返回解释表。

@@ -903,15 +903,15 @@ _SWAP_PERCENT_NAMES = [
 # Excel 中按千分位整数格式展示的列
 _SWAP_COUNT_NAMES = ["样本总数", "好样本数", "坏样本数", "金额总数", "累积好样本数", "累积坏样本数"]
 
-# 各表条件格式：仅对关键列着色（数据条/色阶），保持与模板一致的克制风格，避免满屏色块。
+# 各表只对关键列着色。保留 *_BAR 选列名称，常规列使用色阶，改善指标使用居中双向条。
 # 业务/规则口径同时列出样本与金额两种列名，便于订单/金额口径表各自匹配到对应列。
-_CF_IMPACT_BAR = ["样本占比", "金额占比", "拒绝LIFT", "风险拒绝比"]  # 业务影响：占比/拒绝LIFT/风险拒绝比 → 数据条
-_CF_EFFECT_BAR = ["样本占比", "金额占比", "坏样本率", "LIFT值", "坏账改善"]  # 规则效果：占比/坏样本率/LIFT → 数据条
-_CF_STABILITY_BAR = ["坏样本率", "样本占比", "LIFT指标"]  # 稳定性：坏样本率/样本占比/LIFT → 数据条
-_CF_BIN_BAR = ["样本占比", "LIFT值", "坏账改善"]  # 分箱详情：LIFT → 数据条
+_CF_IMPACT_BAR = ["样本占比", "金额占比", "拒绝LIFT", "风险拒绝比"]  # 业务影响
+_CF_EFFECT_BAR = ["样本占比", "金额占比", "坏样本率", "LIFT值", "坏账改善"]  # 规则效果
+_CF_STABILITY_BAR = ["坏样本率", "样本占比", "LIFT指标"]  # 稳定性，共享跨期色阶
+_CF_BIN_BAR = ["样本占比", "LIFT值", "坏账改善"]  # 分箱详情
 _CF_BIN_SCALE = ["分档KS值"]  # 分箱详情：KS → 色阶
-_CF_VARBIN_BAR = ["样本占比", "坏样本率", "LIFT值", "坏账改善"]  # 变量分箱明细：坏样本率/LIFT → 数据条
-_CF_OVERVIEW_BAR = ["坏样本率"]  # 样本情况：坏样本率 → 实心数据条
+_CF_VARBIN_BAR = ["样本占比", "坏样本率", "LIFT值", "坏账改善"]  # 变量分箱明细
+_CF_OVERVIEW_BAR = ["坏样本率"]  # 样本情况
 
 _SWAP_TITLE_COLOR = "FE7715"
 _SWAP_FIXED_COLUMN_WIDTH = 11
@@ -921,6 +921,9 @@ _SWAP_HIT_LABELS = {"合计": "原始", "未命中": "通过", "命中": "拒绝
 
 # 分箱方法 → 中文展示名（用于「变量分箱」明细 sheet 的区块标题）
 _METHOD_DISPLAY_NAMES = {
+    "custom": "自定义分箱",
+    "or_tools": "运筹优化分箱",
+    "target_bad_rate": "目标坏率分箱",
     "quantile": "等频分箱",
     "uniform": "等距分箱",
     "mdlp": "最优分箱(MDLP)",
@@ -1240,12 +1243,14 @@ def _write_swap_table(
     scale_names: Optional[Sequence[str]] = None,
     **kwargs,
 ):
-    """通过 dataframe2excel 写入单张表格：自动套用百分比/整数格式，并仅对 ``bar_names`` /
-    ``scale_names`` 指定的关键列分别加数据条 / 色阶条件格式（按指标取不同颜色，匹配模板风格）.
+    """通过 dataframe2excel 写表，关键列优先使用色阶，改善指标保留双向条。
+
+    ``bar_names`` 与 ``scale_names`` 保留原来的选列接口，合并为色阶候选列。
 
     ``title`` 作为模块内子标题，仅占一列（不随表宽合并），写于表格上方一行。
     """
     from ..excel import dataframe2excel
+    from ..excel.writer import _report_color_styles
 
     if title is not None:
         _write_subtitle(writer, worksheet, row, title, start_col)
@@ -1256,13 +1261,15 @@ def _write_swap_table(
     params.setdefault("fill", False)
     params.setdefault("percent_cols", percent_cols or None)
     params.setdefault("custom_cols", count_cols or None)
+    label_cols = _cf_columns(table, ["分箱方法", "指标名称", "指标含义", "分箱标签"])
+    if label_cols:
+        params.setdefault("left_cols", label_cols)
     bar_cols = _cf_columns(table, bar_names)
     scale_cols = _cf_columns(table, scale_names)
-    if bar_cols:
-        params.setdefault("condition_cols", bar_cols)
-    if scale_cols:
-        params.setdefault("color_cols", scale_cols)
-    return dataframe2excel(
+    for key, selected in _report_color_styles([*bar_cols, *scale_cols]).items():
+        if selected:
+            params.setdefault(key, selected)
+    result = dataframe2excel(
         table,
         excel_writer=writer,
         sheet_name=worksheet,
@@ -1271,11 +1278,20 @@ def _write_swap_table(
         start_col=start_col,
         **params,
     )
+    # 纵向合并会恢复默认对齐；在合并完成后统一设置文本列，不改变列宽与行高。
+    for column in label_cols:
+        col = start_col + table.columns.get_loc(column) + (table.index.nlevels if params.get("index") else 0)
+        for row_idx in range(result[0] - len(table), result[0]):
+            cell = worksheet.cell(row_idx, col)
+            if cell.value is not None:
+                cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
+    return result
 
 
-def _add_group_databars(writer, worksheet, table: pd.DataFrame, end_row: int, start_col: int, group_names: Sequence[str]) -> None:
-    """对多层列下的指标分组（如稳定性的坏样本率/样本占比跨多期）整组添加一条数据条，避免逐列重复着色."""
+def _add_group_color_scales(writer, worksheet, table: pd.DataFrame, end_row: int, start_col: int, group_names: Sequence[str]) -> None:
+    """同一指标跨期共享色阶标尺，避免逐月分别缩放导致颜色不可比较。"""
     from openpyxl.utils import get_column_letter
+    from ..excel.writer import _build_color_scale_rule, _metric_scale_colors
 
     n_rows = len(table)
     if n_rows == 0:
@@ -1287,12 +1303,12 @@ def _add_group_databars(writer, worksheet, table: pd.DataFrame, end_row: int, st
             continue
         first_letter = get_column_letter(start_col + idxs[0])
         last_letter = get_column_letter(start_col + idxs[-1])
-        writer.add_conditional_formatting(
-            worksheet,
-            f"{first_letter}{data_first}",
-            f"{last_letter}{data_last}",
-            condition_color=writer._colors_for_metric(group)[-1],
-        )
+        values = pd.to_numeric(pd.Series(table.iloc[:, idxs].to_numpy().ravel()), errors="coerce").dropna()
+        values = values[np.isfinite(values)]
+        if values.nunique() < 2:
+            continue
+        colors = _metric_scale_colors(group, writer.theme_color)
+        worksheet.conditional_formatting.add(f"{first_letter}{data_first}:{last_letter}{data_last}", _build_color_scale_rule(values, colors))
 
 
 def _rename_hit_labels(table: pd.DataFrame) -> pd.DataFrame:
@@ -1413,7 +1429,7 @@ def swap_out_report(
     target: Optional[TargetInput] = None,
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
-    save: Optional[str] = None,
+    save=None,
     verbose: bool = False,
     methods: Union[str, List[str]] = "quantile",
     bin_params: Optional[Union[Dict[str, Any], Dict[str, Dict[str, Any]]]] = None,
@@ -1427,12 +1443,13 @@ def swap_out_report(
     del_grey: bool = False,
     target_names: Optional[Mapping[str, str]] = None,
     theme_color: str = "2639E9",
-    sheet_name: str = "策略迭代",
+    sheet="策略迭代",
     n_jobs: Union[int, float] = -1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
     *,
     overdue_operator: str = ">",
+    margins: bool = False,
     handle_missing_target="drop",
     **kwargs: Any,
 ):
@@ -1498,11 +1515,11 @@ def swap_out_report(
     :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
         必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
     :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-    :param save: 默认值为 ``None`` 。报告保存路径（ ``.xlsx`` ）；为 None 时不落盘，仅返回 ExcelWriter
-    :type save: Optional[str]
+    :param save: 默认值为 ``None`` 。文件路径或 hscredit ExcelWriter；传入 writer 时仅写入，不保存或关闭；None 时返回新建 writer
+    :type save: str or PathLike or ExcelWriter or None
     :param verbose: 是否打印计算进度，默认 False
     :type verbose: bool
-    :param methods: 分箱详情所用分箱方法， ``str`` 或 ``list[str]`` ，默认 ``"quantile"``
+    :param methods: 分箱详情所用分箱方法， ``str`` 或 ``list[str]`` ，默认 ``"quantile"``。支持 ``"custom"``，需通过该方法的 ``bin_params`` 提供各字段的 ``rules`` 或 ``binner``。
     :type methods: Union[str, List[str]]
     :param bin_params: 默认值为 ``None`` 。分箱参数， ``dict`` （所有方法统一）或 ``dict[method: dict]`` （按方法名映射）
     :type bin_params: Optional[Union[Dict[str, Any], Dict[str, Dict[str, Any]]]]
@@ -1529,9 +1546,11 @@ def swap_out_report(
     :type target_names: Optional[Mapping[str, str]]
     :param theme_color: Excel 主题色（不含 #），默认 ``"2639E9"``
     :type theme_color: str
-    :param sheet_name: 报告工作表名称，默认 ``"策略迭代"``
-    :type sheet_name: str
-    :param kwargs: 透传给 ``Rule.report`` 的其他参数（如 ``desc`` 、 ``margins`` 等）
+    :param sheet: 报告工作表名称，默认 ``"策略迭代"``
+    :type sheet: str
+    :param margins: 是否为规则报告和变量分箱表添加合计行，默认 False。变量分箱按特征、方法和标签分别合计，分箱部分可由 ``bin_params`` 覆盖。
+    :type margins: bool
+    :param kwargs: 透传给 ``Rule.report`` 的其他参数（如 ``desc`` 等）
     :return:  :class:`~hscredit.excel.ExcelWriter`  实例（已写入全部内容）
 
     **参考样例**
@@ -1556,6 +1575,10 @@ def swap_out_report(
 
     :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
+    from ._parameters import reject_legacy_report_keywords, resolve_report_output, save_report_workbook
+
+    reject_legacy_report_keywords(kwargs)
+    writer, worksheet, save_path, owned = resolve_report_output(save, sheet, default="策略迭代", writer_params={"theme_color": theme_color})
     validate_overdue_operator(overdue_operator)
     reject_legacy_target_keywords(kwargs)
     data, target = bind_targets(
@@ -1599,6 +1622,7 @@ def swap_out_report(
         overdue_operator=overdue_operator,
         del_grey=del_grey,
         prior_rules=prior_rules,
+        margins=margins,
         n_jobs=n_jobs,
         parallel_backend=parallel_backend,
         parallel_config=parallel_config,
@@ -1630,6 +1654,7 @@ def swap_out_report(
             dpds=dpds,
             overdue_operator=overdue_operator,
             del_grey=del_grey,
+            margins=margins,
             long_format=True,
             verbose=0,
             n_jobs=n_jobs,
@@ -1764,8 +1789,6 @@ def swap_out_report(
             stability_blocks.append((prefix, stability))
 
     start_col = 2
-    writer = ExcelWriter(theme_color=theme_color)
-    worksheet = writer.get_sheet_by_name(sheet_name)
     row = 2
 
     # 各模块的内容宽度：保证标题横幅与文本宽度同模块内最宽表格一致
@@ -1904,8 +1927,8 @@ def swap_out_report(
                     merge_column=[("规则详情", "规则名称"), ("规则详情", "逾期指标")],
                     merge=True,
                 )
-                # 坏样本率 / 样本占比 各按「指标分组」整体加一条数据条（跨各时间周期共享标尺）
-                _add_group_databars(writer, worksheet, stability, end_r, start_col, _CF_STABILITY_BAR)
+                # 各指标跨时间周期共享色阶标尺。
+                _add_group_color_scales(writer, worksheet, stability, end_r, start_col, _CF_STABILITY_BAR)
                 row = end_r + _GAP_INNER
 
     _set_uniform_columns_width(writer, worksheet)
@@ -1914,10 +1937,10 @@ def swap_out_report(
     if binning_tables and features:
         _write_binning_detail_sheet(writer, binning_tables, features, methods_list, target_names=target_names)
 
-    if save:
-        writer.save(save)
+    if save_path is not None:
+        save_report_workbook(writer, save_path, close=owned)
         if verbose:
-            print(f"[swap_out_report] 报告已保存至: {save}")
+            print(f"[swap_out_report] 报告已保存至: {save_path}")
     return writer
 
 

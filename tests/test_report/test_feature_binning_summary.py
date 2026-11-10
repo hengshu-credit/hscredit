@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from hscredit.core.binning import OptimalBinning
+from hscredit.exceptions import ParallelExecutionError
 from hscredit.report import feature_bin_stats, feature_binning_summary, feature_group_binning_summary
 from hscredit.report import feature_analyzer
 
@@ -150,6 +151,51 @@ def test_direct_target_has_flat_metric_columns(sample_data, grouped, form):
 def test_feature_binning_summary_rejects_invalid_method(sample_data):
     with pytest.raises(ValueError, match="不支持的methods"):
         feature_binning_summary(sample_data, "特征1", methods="not-exists", target="MOB1")
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_custom_quantile_rules_keep_boundaries_counts_and_each_label_total(sample_data, grouped):
+    quantiles = [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99, np.nan]
+    cuts = sorted(sample_data["特征1"].iloc[:200].quantile([q for q in quantiles if pd.notna(q)]).unique().tolist())
+    data = sample_data.assign(客群=np.where(np.arange(len(sample_data)) % 2, "甲", "乙"))
+    data.loc[::29, "特征1"] = np.nan
+    function = feature_group_binning_summary if grouped else feature_binning_summary
+    tables, summary = function(
+        data,
+        "特征1",
+        methods=["quantile", "custom"],
+        bin_params={"quantile": {"max_n_bins": 3}, "custom": {"rules": {"特征1": [*cuts, np.nan]}}},
+        overdue="MOB1",
+        dpds=[0, 3],
+        margins=True,
+        long_format=True,
+        n_jobs=1,
+        **({"group": "客群"} if grouped else {}),
+    )
+    assert set(summary[("分箱详情", "分箱方法")]) == {"quantile", "custom"}
+    groups = tables["特征1"]["custom"] if grouped else {"全部": tables["特征1"]["custom"]}
+    for group, table in groups.items():
+        population = data.loc[data["客群"].eq(group)] if grouped else data
+        expected = np.bincount(np.searchsorted(cuts, population["特征1"].dropna(), side="right"), minlength=len(cuts) + 1)
+        for label, dpd in [("MOB1_0+", 0), ("MOB1_3+", 3)]:
+            part = table.loc[table["逾期标签"].eq(label)]
+            bins = part.loc[part["分箱标签"].ne("合计")]
+            totals = part.loc[part["分箱标签"].eq("合计")]
+            missing = bins.loc[bins["分箱标签"].isin(["missing", "缺失值"])]
+            numerical = bins.drop(index=missing.index)
+            assert len(numerical) == len(cuts) + 1
+            np.testing.assert_array_equal(numerical["样本总数"], expected)
+            assert len(missing) == 1
+            assert missing.iloc[0]["样本总数"] == population["特征1"].isna().sum()
+            assert len(totals) == 1
+            assert totals.iloc[0]["样本总数"] == len(population)
+            assert totals.iloc[0]["坏样本数"] == population["MOB1"].gt(dpd).sum()
+
+
+@pytest.mark.parametrize("params", [None, {"custom": {"rules": {"其他字段": [0]}}}])
+def test_custom_method_requires_rules_for_every_feature(sample_data, params):
+    with pytest.raises(ParallelExecutionError, match="custom.*特征1"):
+        feature_binning_summary(sample_data, "特征1", methods="custom", bin_params=params, overdue="MOB1", dpds=3, n_jobs=1)
 
 
 def test_feature_binning_summary_parameter_priority(monkeypatch, sample_data):

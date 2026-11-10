@@ -210,7 +210,7 @@ def test_tree_rule_string_normalizes_numpy_scalar_threshold():
     extractor = TreeRuleExtractor(n_jobs=1)
     expression = extractor._rule_to_string({"conditions": [{"feature": "score", "operator": ">", "threshold": np.float64(0.5)}]})
 
-    assert expression == "(score > 0.5)"
+    assert expression == "score > 0.5"
     assert Rule(expression).predict(pd.DataFrame({"score": [0.25, 0.75]})).tolist() == [False, True]
 
 

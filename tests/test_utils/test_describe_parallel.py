@@ -1,8 +1,22 @@
 """分组描述统计的统一并行与混合类型回归测试。"""
 
 import pandas as pd
+import pytest
 
-from hscredit.utils.describe import groupby_feature_describe
+from hscredit.utils.describe import feature_describe, groupby_feature_describe
+
+
+@pytest.mark.parametrize("categories", [["低", "中"], ["低", "中", "缺失值"]])
+def test_feature_describe_keeps_unused_categories_and_missing_share(categories):
+    series = pd.Series(pd.Categorical(["低", None, "低"], categories=categories, ordered=True))
+    original = series.copy()
+    result = feature_describe(series)
+    assert result["非空数"] == 2
+    assert result["查得率"] == pytest.approx(2 / 3)
+    assert result["低"] == pytest.approx(2 / 3)
+    assert result["中"] == 0
+    assert result["缺失值"] == pytest.approx(1 / 3)
+    pd.testing.assert_series_equal(series, original)
 
 
 def test_groupby_feature_describe_mixed_types_matches_serial():

@@ -317,7 +317,7 @@ Notebook 不再自行组装工作簿；金额口径可通过同一接口的 ``am
    * - ``methods`` / ``bin_params``
      - quantile、uniform、tree / None
      - 特征分箱页的方法及配置；支持公共参数或按方法分组的参数字典，不改变最终树。
-   * - ``save`` / ``sheet_name`` / ``excel_writer``
+   * - ``save`` / ``sheet`` / ``save``
      - None / 组合策略汇总 / None
      - 文件路径、主报告页名称和已有 ExcelWriter；页名最长 24 字符，自动附加“_特征分箱”页。
    * - ``project_desc`` / ``data_source``
@@ -345,9 +345,9 @@ Series 按索引对齐，数组按位置对应。完整 Excel 报告的 date、g
 min_samples/max_samples 是训练订单命中量约束，不是分箱器的 min_bin_size/max_bin_size。
 整数表示个数，[0, 1] 内浮点数表示比例，所有条件联合生效。
 
-报告不再接受 ``sheet``、``data``、``max_branches`` 等旧名称；错误参数会明确报错。
+报告使用 ``save`` 和 ``sheet``；不再接受 ``sheet_name``、``excel_writer``、``excel_path``、``data``、``max_branches`` 等旧名称。
 ``get_rule_table`` 可通过关键字转交 report 的导出选项，例如
-``tree.get_rule_table(datasets, amount="放款金额", sheet_name="策略", save="策略.xlsx")``。
+``tree.get_rule_table(datasets, amount="放款金额", sheet="策略", save="策略.xlsx")``。
 其他额外参数仅限 Rule.report 的 ``prior_rules``、``margins``、``filter_cols`` 及原始精度设置。
 
 数据集传参沿用 ``auto_model_report`` 的常用约定：每个 DataFrame 自带目标列，
@@ -390,8 +390,9 @@ min_samples/max_samples 是训练订单命中量约束，不是分箱器的 min_
 ``target='FPD'`` 是单标签；``overdue=['MOB1'], dpds=[7]`` 也是单标签，二者不混用。
 数据集数量与标签数量独立，单标签可以同时分析多个数据集。
 
-``auto_model_report`` 返回 ``ModelReport`` 对象，并使用 ``excel_path`` 保存；
-树报告返回表格容器，并使用 ``save`` 保存。数据集命名和目标列的传参约定一致。
+``auto_model_report`` 返回 ``ModelReport`` 对象，树报告返回表格容器；
+两者均使用 ``save`` 传入文件路径或 writer，``sheet`` 传入工作表名称或 Worksheet。
+数据集命名和目标列的传参约定一致。
 
 2026-10-30 验证：Python 3.11.5，三种树的 dict/list、单标签、1/2/5 个数据集共 48 项测试通过。
 使用 ``examples/hscredit_yyp.xlsx`` 实跑字典单集、列表单集、字典五集、列表五集，
@@ -403,7 +404,7 @@ min_samples/max_samples 是训练订单命中量约束，不是分箱器的 min_
 ``get_rules()`` 返回叶节点 ``Rule``，``get_rules(leaf_only=False)`` 返回含根节点的全部路径。
 三个入口统一使用 ``datasets``，不再接受 ``data`` 别名。
 
-``report`` 参考 scorecardpipeline ``DecisionTreeRuleExtractor.report`` 的 ``sheet_name`` / ``save``
+``report`` 参考 scorecardpipeline ``DecisionTreeRuleExtractor.report`` 的 ``sheet`` / ``save``
 调用方式，新增直接导出能力；保存前后返回的 DataFrame、列表或字典结构保持一致：
 
 .. code-block:: python
@@ -412,7 +413,7 @@ min_samples/max_samples 是训练订单命中量约束，不是分箱器的 min_
    reports = tree.report(
        datasets, overdue=["MOB1"], dpds=[7, 3, 0], leaf_only=False,
        round_digits=False, date="放款时间", freq="M", data_source="真实放款数据",
-       sheet_name="组合策略汇总", save="多叉树挖掘报告.xlsx",
+       sheet="组合策略汇总", save="多叉树挖掘报告.xlsx",
    )
 
 工作簿使用单张连续报告页，按“基本信息与模型性能、挖掘摘要、策略详情、最终树在各数据集上的应用”排列。
@@ -440,7 +441,8 @@ min_samples/max_samples 是训练订单命中量约束，不是分箱器的 min_
 ``get_node_table()`` 返回完整结构，二分类增加坏率、LIFT 等规则指标，多分类保留各类别计数和占比。
 叶子自身没有分裂特征，所属客群由“指标含义”和“分支条件”描述；父节点编号使用可空整数。
 
-可以用已有 ``ExcelWriter`` 汇总不同口径，使用不同的 ``sheet_name`` 避免覆盖同名报告：
+可以用已有 ``ExcelWriter`` 汇总不同口径。``save=writer`` 只写入，下面通过上下文退出时统一保存。
+``sheet`` 可传名称或该 writer 工作簿内的 openpyxl Worksheet；使用不同工作表承载不同报告：
 
 .. code-block:: python
 
@@ -448,11 +450,13 @@ min_samples/max_samples 是训练订单命中量约束，不是分箱器的 min_
 
    with ExcelWriter() as writer:
        writer.set_filename("多口径树报告.xlsx")
-       tree.report(datasets, target="FPD", sheet_name="FPD件数", excel_writer=writer)
+       worksheet = writer.get_sheet_by_name("FPD件数")
+       tree.report(datasets, target="FPD", sheet=worksheet, save=writer)
        tree.report(datasets, overdue=["MOB1"], dpds=[7, 3, 0], amount="放款金额",
-                   sheet_name="MOB1金额", excel_writer=writer)
+                   sheet="MOB1金额", save=writer)
 
-同名报告页重建，其他工作表保留。金额策略表中的命中数、好坏样本数表示金额，
+指定工作表原位写入，其他工作表保留。不同报告使用不同页名，避免写入同一区域。
+金额策略表中的命中数、好坏样本数表示金额，
 坏样本率为金额坏率；准确率、精确率、召回率和 F1 仍按件数计算。
 规则清单包括重叠的父子路径，不能对所有节点的样本数直接求和。
 

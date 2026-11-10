@@ -23,6 +23,7 @@ SECTION_ANCHORS = {
     "手工拆分与多数据集策略报告": "gallery-trees",
     "常用图表": "gallery-diagnostics",
     "公共方法": "public-utils",
+    "品牌色与语义配色": "brand-colors",
 }
 
 
@@ -33,6 +34,8 @@ def _doc_link(match, root):
         return match.group()
     if target.startswith("docs/assets/readme/"):
         target = target.replace("docs/assets/readme/", "_static/", 1)
+    elif target.startswith("docs/assets/brand/"):
+        target = target.replace("docs/assets/brand/", "_static/", 1)
     elif target.startswith("docs/"):
         target = target[5:].replace(".rst", ".html").replace(".md", ".html")
     else:

@@ -187,3 +187,67 @@ def test_random_nested_rules_are_consistent():
         rule, truth = rand_tree(random.randint(1, 5))
         pred = np.asarray(rule.predict(data))
         assert (pred == np.asarray(truth)).all(), f"不一致: {rule.expr!r}"
+
+
+@pytest.mark.parametrize(
+    "expression, expected",
+    [
+        ("(x > -10) & (x > -2) & (x <= 3)", "x > -2 & x <= 3"),
+        ("(x >= -2) & (x > -2) & (x <= 3) & (x < 3)", "x > -2 & x < 3"),
+        ("(x <= 3) & (x >= -2) & (x < 3)", "x >= -2 & x < 3"),
+        ("(-2 <= x <= 3) & (x > -1)", "x > -1 & x <= 3"),
+        ("-2 < x <= 3", "x > -2 & x <= 3"),
+        ("-2 < x", "x > -2"),
+        ("(x > 3) & (x <= -2)", "x > 3 & x <= -2"),
+        ("((x > -2) | x.isna()) & ((x <= 3) | x.isna())", "x > -2 & x <= 3 | x.isna()"),
+        ("((x > -2) | x.isna()) & (x <= 3)", "x > -2 & x <= 3"),
+        ("(x > -2) & ((x <= 3) | x.isna())", "x > -2 & x <= 3"),
+        ("(x > -1e999) & (x <= 1e999)", "x > -1e309 & x <= 1e309"),
+    ],
+)
+@pytest.mark.parametrize("dtype", ["float64", "Float64"])
+def test_numeric_intersections_keep_boundaries_and_missing(expression, expected, dtype):
+    values = [-np.inf, -10, -2, np.nextafter(-2.0, -np.inf), np.nextafter(-2.0, np.inf), -1, 0, 3, np.nextafter(3.0, -np.inf), np.nextafter(3.0, np.inf), np.inf, np.nan]
+    data = pd.DataFrame({"x": pd.Series(values, dtype=dtype)})
+    optimized = optimize_expr(expression)
+    assert optimized == expected
+    assert optimize_expr(optimized) == optimized
+    # 同时比较取反结果，防止把可空布尔值错误折叠成 False。
+    for negate in (False, True):
+        before = f"~({expression})" if negate else expression
+        after = f"~({optimized})" if negate else optimized
+        pd.testing.assert_series_equal(Rule(before).predict(data), Rule(after).predict(data))
+
+
+def test_rule_combination_merges_interleaved_quoted_fields():
+    data = pd.DataFrame({"信用 评分": [-2, 0, 3, 4, np.nan], "y": [1, 0, 2, 3, 4]})
+    rule = Rule("`信用 评分` > -2") & Rule("y > 0") & Rule("`信用 评分` <= 3")
+    assert rule.expr == "`信用 评分` > -2 & `信用 评分` <= 3 & y > 0"
+    np.testing.assert_array_equal(rule.predict(data), data["信用 评分"].gt(-2) & data["信用 评分"].le(3) & data.y.gt(0))
+
+
+@pytest.mark.parametrize("expression", ["(x > -2) | (x < 3)", "((x > -2) | y.isna()) & (x <= 3)", "((x + 1) * 2 > -2) & (x <= 3)", "(类别 in [\"a'b&c\", '双  空格']) & (x > -2)", "(类别 == '双  空格') | (类别 == '双 空格')"])
+def test_unrelated_branches_arithmetic_and_literals_keep_semantics(expression):
+    data = pd.DataFrame({"x": [-3, -2, -1, 0, 3, 4, np.nan], "y": [0, np.nan, 0, 0, np.nan, 0, 0], "类别": ["a'b&c", "双  空格", "双 空格", "其他", None, "其他", "其他"]})
+    pd.testing.assert_series_equal(Rule(expression).predict(data), Rule(optimize_expr(expression)).predict(data))
+
+
+def test_escaped_quote_keeps_literal_operators():
+    expression = r"(类别 == 'a\'b&c') & (x > -2)"
+    data = pd.DataFrame({"类别": ["a'b&c", "其他"], "x": [0, 0]})
+    assert Rule(optimize_expr(expression)).predict(data).tolist() == [True, False]
+
+
+@pytest.mark.parametrize(
+    "expression, dtype, values",
+    [
+        ("x > 1.0 & x >= 1.0000000000000002", "float32", [1, 2, np.nan]),
+        ("x < 1.0 & x <= 0.9999999999999999", "float32", [0, 1, np.nan]),
+        ("(x > 1.0 | x.isna()) & (x >= 1.0000000000000002 | x.isna())", "float32", [1, 2, np.nan]),
+        ("x > 9007199254740992 & x >= 9007199254740993", "float64", [2**53, 2**53 + 2, np.nan]),
+    ],
+)
+def test_precision_sensitive_bounds_are_not_discarded(expression, dtype, values):
+    data = pd.DataFrame({"x": pd.Series(values, dtype=dtype)})
+    optimized = optimize_expr(expression)
+    pd.testing.assert_series_equal(Rule(expression).predict(data), Rule(optimized).predict(data))

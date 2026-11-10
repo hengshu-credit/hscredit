@@ -1,0 +1,33 @@
+/* hscredit 公共字体与 MUI 控件主题；颜色由 Python 入口注入。 */
+@font-face {
+  font-family: "__FONT__";
+  src: url("/_hscredit_dashboard/font.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root { --hscredit-primary: __PRIMARY__; --hscredit-action: __PRIMARY__; --hscredit-secondary: __SECONDARY__; }
+html[data-hscredit-dark="true"] { --hscredit-action: __LIGHT_BLUE__; }
+body, button, input, textarea, select, [class*="MuiTypography"], [class*="MuiInput"], [class*="MuiButton"], [class*="MuiTable"], .js-plotly-plot .plotly, .js-plotly-plot .plotly text {
+  font-family: "__FONT__", "Microsoft YaHei", sans-serif !important;
+}
+.MuiAppBar-root { background-color: var(--hscredit-primary) !important; color: #fff !important; }
+.MuiButton-containedPrimary { background-color: var(--hscredit-primary) !important; color: #fff !important; }
+.MuiButton-textPrimary, .MuiButton-outlinedPrimary, .MuiLink-root, .MuiSlider-root, .MuiRadio-root.Mui-checked, .MuiCheckbox-root.Mui-checked, .MuiSwitch-switchBase.Mui-checked, .MuiTab-root.Mui-selected {
+  color: var(--hscredit-action) !important;
+}
+.MuiButton-outlinedPrimary { border-color: var(--hscredit-action) !important; }
+.MuiTabs-indicator, .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track { background-color: var(--hscredit-action) !important; }
+.MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline { border-color: var(--hscredit-action) !important; }
+.MuiInputLabel-root.Mui-focused { color: var(--hscredit-action) !important; }
+.MuiListItemButton-root.Mui-selected { background-color: color-mix(in srgb, var(--hscredit-action) 12%, transparent) !important; }
+.hscredit-attributes-table { width: 100%; table-layout: fixed; }
+.hscredit-attributes-table th:first-child { width: 26%; }
+.hscredit-attributes-table td { vertical-align: top; overflow-wrap: anywhere; }
+.hscredit-attributes-table .hscredit-attribute-json {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  tab-size: 2;
+}

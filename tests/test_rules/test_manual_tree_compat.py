@@ -42,7 +42,7 @@ def test_binary_missing_only_split():
     data = pd.DataFrame({"评分": [1.0, 2.0, np.nan] * 10, "逾期": [0, 0, 1] * 10})
     tree = DecisionTreeAnalyzer(target="逾期", max_depth=1, min_samples_leaf=1, min_samples_split=2, n_jobs=1).fit(data)
     observed, missing = tree.get_rules()
-    assert observed.expr == "(评分.notna())" and missing.expr == "(评分.isna())"
+    assert observed.expr == "评分.notna()" and missing.expr == "评分.isna()"
     for node, rule in zip(tree.get_leaf_node_ids(), (observed, missing)):
         np.testing.assert_array_equal(rule.predict(data), tree.apply(data) == node)
 

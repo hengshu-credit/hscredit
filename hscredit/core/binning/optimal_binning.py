@@ -42,7 +42,7 @@ from .chi_merge_binning import ChiMergeBinning
 from .best_ks_binning import BestKSBinning
 from .best_iv_binning import BestIVBinning
 from .mdlp_binning import MDLPBinning
-from .or_binning import ORBinning, ORTOOLS_AVAILABLE
+from .or_binning import ORBinning
 from .cp_sat_binning import CPSATBinning
 from .cart_binning import CartBinning
 from .kmeans_binning import KMeansBinning
@@ -1671,15 +1671,11 @@ class OptimalBinning(BaseBinning):
         elif self.method == "mdlp":
             self._binner = MDLPBinning(**target_params)
         elif self.method == "or_tools":
-            if not ORTOOLS_AVAILABLE:
-                raise ImportError("OR-Tools 未安装，无法使用 or_tools 方法。" "请使用 pip install ortools 安装。")
             or_params = full_params.copy()
             or_params.setdefault("objective", "iv")
             or_params.setdefault("time_limit", 30)
             self._binner = ORBinning(**or_params)
         elif self.method == "cp_sat":
-            if not ORTOOLS_AVAILABLE:
-                raise ImportError("OR-Tools 未安装，无法使用 cp_sat 方法。" "请使用 pip install ortools 安装。")
             cp_sat_params = full_params.copy()
             cp_sat_params.setdefault("objective", "iv")
             cp_sat_params.setdefault("time_limit", 30)

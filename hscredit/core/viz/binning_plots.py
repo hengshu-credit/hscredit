@@ -99,8 +99,8 @@ def _compute_bin_stats_from_raw_data(
                     'target_bad_rate'(目标坏样本率), 'monotonic'(单调性),
                     'genetic'(遗传算法), 'smooth'(平滑)
 
-        - 运筹规划方法: 'or_tools'(OR-Tools整数规划，需安装 ortools),
-                    'cp_sat'(CP-SAT约束规划，需安装 ortools)
+        - 运筹规划方法: 'or_tools'、'cp_sat'，可使用 OR-Tools 原生求解器，
+                    缺少 OR-Tools 时使用候选搜索后端
 
         默认: 'quantile'
 
@@ -1426,12 +1426,9 @@ def hist_plot(
     target_unique = 1 if y_true is None else len(np.unique(y_true))
 
     if y_true is not None:
-        if isinstance(labels, dict):
-            y_true = y_true.map(labels)
-            hue_order = list(labels.values())
-        else:
-            y_true = y_true.map({i: v for i, v in enumerate(labels)})
-            hue_order = labels
+        label_mapping = labels if isinstance(labels, dict) else dict(enumerate(labels))
+        y_true = y_true.map(label_mapping)
+        hue_order = list(label_mapping.values())
     else:
         y_true = None
         hue_order = None
@@ -1444,7 +1441,10 @@ def hist_plot(
         return_ax = False
         fig, ax = plt.subplots(1, 1, figsize=figsize)
 
-    palette = get_series_colors(target_unique)
+    if y_true is not None:
+        series_colors = get_series_colors(len(label_mapping))
+        # 绘制顺序可以反转，标签 0/1 的好坏样本颜色不能随之反转。
+        palette = {label: DEFAULT_COLORS[int(value)] if value in (0, 1) else series_colors[position] for position, (value, label) in enumerate(label_mapping.items())}
 
     # 处理 hue_order 参数
     if hue_order is not None:
@@ -1486,11 +1486,21 @@ def hist_plot(
 
     if y_true is not None:
         legend_anchor = 1.15 if anchor is None else anchor
-        handles, legend_labels = ax.get_legend_handles_labels()
+        native_legend = ax.get_legend()
+        if native_legend is not None:
+            handles = getattr(native_legend, "legend_handles", None)
+            if handles is None:
+                handles = native_legend.legendHandles
+            legend_labels = [text.get_text() for text in native_legend.get_texts()]
+            by_label = dict(zip(legend_labels, handles))
+            legend_labels = [label for label in hue_order if label in by_label]
+            handles = [by_label[label] for label in legend_labels]
+        else:
+            handles, legend_labels = ax.get_legend_handles_labels()
         if handles:
             ax.legend(
                 handles,
-                hue_order_final[: len(handles)] if hue_order_final else legend_labels,
+                legend_labels,
                 loc="upper center",
                 ncol=len(handles),
                 bbox_to_anchor=(0.5, legend_anchor),

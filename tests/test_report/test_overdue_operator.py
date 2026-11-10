@@ -326,7 +326,7 @@ def test_auto_feature_report_operator_precedence(data, explicit, configured, exp
         dpds=[3, 0],
         overdue_operator=explicit,
         del_grey=True,
-        excel_writer=writer,
+        save=writer,
         sheet="标签验证",
         pictures=[],
         show_progress=False,
@@ -656,7 +656,7 @@ def test_auto_feature_summary_excludes_primary_grey_samples(data, op, monkeypatc
         show_progress=False,
         bin_params={"method": "quantile", "max_n_bins": 2},
         n_jobs=1,
-        excel_writer=str(tmp_path / "报告.xlsx"),
+        save=str(tmp_path / "报告.xlsx"),
         output_dir=str(tmp_path),
     )
     frame, target, summary = observed[0]
@@ -703,8 +703,8 @@ def test_auto_feature_analysis_normalizes_and_deduplicates_thresholds(data, cont
             bin_params={"method": "quantile", "max_n_bins": 2},
             output_dir=str(tmp_path),
         )
-        auto_feature_analysis(data, dpds=container(["3.0", "0", "3"]), excel_writer=writer, **params)
-        auto_feature_analysis(data, dpds=[3, 0], excel_writer=expected_writer, **params)
+        auto_feature_analysis(data, dpds=container(["3.0", "0", "3"]), save=writer, **params)
+        auto_feature_analysis(data, dpds=[3, 0], save=expected_writer, **params)
         rows = list(writer.get_sheet_by_name("分析报告").values)
         assert rows == list(expected_writer.get_sheet_by_name("分析报告").values)
         assert any("MOB 1>=3" in row for row in rows)

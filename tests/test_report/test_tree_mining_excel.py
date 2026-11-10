@@ -118,8 +118,8 @@ def test_report_containers_and_external_writer(tree, data, tmp_path):
     with ExcelWriter() as writer:
         writer.set_filename(str(path))
         writer.get_sheet_by_name("业务原表")["A1"] = "保留"
-        tree.report(data, sheet_name="FPD", excel_writer=writer, save=path)
-        tree.report(data, overdue=["MOB1"], dpds=[7, 3, 0], sheet_name="MOB", excel_writer=writer)
+        tree.report(data, sheet="FPD", save=writer)
+        tree.report(data, overdue=["MOB1"], dpds=[7, 3, 0], sheet="MOB", save=writer)
     book = load_workbook(path)
     assert book["业务原表"]["A1"].value == "保留"
     assert len(book["FPD"]._images) == len(book["MOB"]._images) == 2

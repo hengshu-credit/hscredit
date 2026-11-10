@@ -37,7 +37,7 @@ def test_report_and_rule_table_have_same_public_parameters():
         for signature in signatures:
             assert [(name, p.kind, p.default) for name, p in signature.parameters.items()] == expected
             assert "amount" in signature.parameters and "feature_map" in signature.parameters
-            assert not {"data", "sheet", "max_branches"}.intersection(signature.parameters)
+            assert not {"data", "sheet_name", "excel_writer", "max_branches"}.intersection(signature.parameters)
     assert inspect.signature(MultiwayTreeExtractor).parameters["max_n_bins"].default == 4
     assert inspect.signature(MultiwayTreeExtractor).parameters["n_prebins"].default == 12
     assert "max_branches" not in inspect.signature(MultiwayTreeExtractor).parameters
@@ -61,7 +61,7 @@ def test_feature_containers_and_explicit_fit_precedence(tree_class, sample, fact
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"sheet": "旧页"},
+        {"sheet_name": "旧页"},
         {"data": None},
         {"max_branches": 3},
         {"excel_path": "旧.xlsx"},
@@ -98,7 +98,7 @@ def test_canonical_report_uses_amount_feature_map_and_training_filter(tree_class
         datasets,
         target="FPD",
         amount="金额",
-        sheet_name="规则挖掘报告",
+        sheet="规则挖掘报告",
         save=path,
         methods=["quantile"],
         feature_map={"评分": "本次说明"},
@@ -108,7 +108,7 @@ def test_canonical_report_uses_amount_feature_map_and_training_filter(tree_class
         amount="金额",
         feature_map={"评分": "本次说明"},
         methods=["quantile"],
-        sheet_name="规则挖掘报告",
+        sheet="规则挖掘报告",
         save=tmp_path / "规则表导出.xlsx",
     )
     for name in datasets:

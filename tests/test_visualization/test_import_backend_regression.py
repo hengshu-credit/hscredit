@@ -6,7 +6,8 @@ from hscredit.core.viz import utils as viz_utils
 
 
 def test_import_hscredit_does_not_change_matplotlib_backend():
-    code = textwrap.dedent("""
+    code = textwrap.dedent(
+        """
         import matplotlib
         matplotlib.use('svg')
         import matplotlib.pyplot as plt
@@ -19,7 +20,8 @@ def test_import_hscredit_does_not_change_matplotlib_backend():
         print(before)
         print(after)
         assert after == before, (before, after)
-        """)
+        """
+    )
 
     result = subprocess.run(
         [sys.executable, "-c", code],

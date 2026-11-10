@@ -80,7 +80,15 @@ def feature_describe(
             "非空数": len(series) - series.isnull().sum(),
             "查得率": 1 - series.isnull().mean(),
         }
-        value_counts = series.replace(np.nan, "缺失值").value_counts(dropna=False)
+        values = series
+        if isinstance(values.dtype, pd.CategoricalDtype):
+            if values.isna().any() and "缺失值" not in values.cat.categories:
+                values = values.cat.add_categories(["缺失值"])
+        else:
+            values = values.astype(object)
+        if values.isna().any():
+            values = values.fillna("缺失值")
+        value_counts = values.value_counts(dropna=False)
         describe.update((value_counts / len(series)).to_dict())
         return pd.Series(describe, name=feature)
     else:

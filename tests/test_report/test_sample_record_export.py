@@ -33,7 +33,7 @@ def test_disabling_sample_records_removes_row_level_table_and_marks_not_applicab
             model,
             X_train=data[["x", "订单标识"]],
             y_train=data.y,
-            excel_path=str(output),
+            save=str(output),
             n_jobs=1,
             verbose=False,
             **kwargs,

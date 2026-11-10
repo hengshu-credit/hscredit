@@ -285,12 +285,12 @@ class ModelWorkflowMixin(TrainingProcessMixin):
         :param sample_weight: 报告评估权重，可为列名、{数据集名: 权重}，或单数据集的权重数组。
             金额分析列 amount 与该参数作用不同，均不自动继承训练或搜索权重。
 
-        :param kwargs: auto_model_report 的参数，如 excel_path、features、verbose、amount、date、
+        :param kwargs: auto_model_report 的参数，如 save、features、verbose、amount、date、
             prediction_method、prediction_kwargs、mode、return_result、with_plots、include_sample_records。
             默认返回 ModelReport；显式 return_result=True 改为 ReportResult 执行状态。
 
         :return: 默认 ModelReport，可调用 get_metrics()/get_training_process()/to_excel()；
-            提供 excel_path 会同时导出。完整报告绑定模型状态，模型重训后需新建报告。
+            提供 save 会同时导出。完整报告绑定模型状态，模型重训后需新建报告。
 
         **参考样例**
 
@@ -349,7 +349,7 @@ class ModelWorkflowMixin(TrainingProcessMixin):
             逾期模式下 ``>`` 剔除 ``(0, DPD]``，``>=`` 剔除 ``(0, DPD)``，
             ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
             默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
-        :param kwargs: model_report 的参数，如 metrics、target、excel_path、verbose。
+        :param kwargs: model_report 的参数，如 metrics、target、save、verbose。
         :return: 默认 ModelReport；return_result=True 返回执行状态。
 
         ProbabilityScoreCard 和 ProbabilityCalibrator 的 report 专用表保持原义；

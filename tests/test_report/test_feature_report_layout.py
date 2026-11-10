@@ -100,7 +100,7 @@ def test_long_format_bin_chart_counts_each_order_once(monkeypatch, tmp_path, lay
         amount="amount",
         long_format=layout.get("long_format"),
         bin_params={"method": "quantile", "max_n_bins": 3, "return_cols": ["坏样本率"], **layout["bin_params"]},
-        excel_writer=writer,
+        save=writer,
         output_dir=str(tmp_path),
         pictures=["bin"],
         n_jobs=1,
@@ -135,7 +135,7 @@ def test_auto_feature_analysis_reports_progress_before_current_feature_finishes(
                     pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]}),
                     features=["x"],
                     target="target",
-                    excel_writer=ExcelWriter(system="windows"),
+                    save=ExcelWriter(system="windows"),
                     pictures=[],
                     output_dir=str(tmp_path / "images"),
                     bin_params={"method": "quantile", "max_n_bins": 2},
@@ -164,7 +164,7 @@ def test_auto_feature_analysis_can_disable_progress(capsys, monkeypatch, tmp_pat
         pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]}),
         features=["x"],
         target="target",
-        excel_writer=ExcelWriter(system="windows"),
+        save=ExcelWriter(system="windows"),
         pictures=[],
         output_dir=str(tmp_path / "images"),
         bin_params={"method": "quantile", "max_n_bins": 2},
@@ -247,7 +247,7 @@ def test_auto_feature_analysis_progress_cleanup_preserves_original_error(monkeyp
             pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]}),
             features=["x"],
             target="target",
-            excel_writer=ExcelWriter(system="windows"),
+            save=ExcelWriter(system="windows"),
             pictures=[],
             output_dir=str(tmp_path / "images"),
             bin_params={"method": "quantile", "max_n_bins": 2},
@@ -301,7 +301,7 @@ def test_auto_feature_analysis_closes_only_report_figures(monkeypatch, tmp_path)
             target="target",
             date="apply_date",
             corr=True,
-            excel_writer=writer,
+            save=writer,
             output_dir=str(tmp_path / "plots"),
             n_jobs=1,
         )
@@ -334,7 +334,7 @@ def test_auto_feature_analysis_defaults_to_non_role_columns(monkeypatch, tmp_pat
         dpds=3,
         date="apply_date",
         amount="amount",
-        excel_writer=writer,
+        save=writer,
         sheet="default_features",
         pictures=[],
         output_dir=str(tmp_path),
@@ -360,7 +360,7 @@ def test_auto_feature_analysis_can_analyze_amount_as_default_feature(tmp_path):
         features=None,
         target="target",
         amount="amount",
-        excel_writer=writer,
+        save=writer,
         sheet="amount_as_feature",
         pictures=[],
         output_dir=str(tmp_path),
@@ -391,7 +391,7 @@ def test_auto_feature_analysis_labels_order_and_amount_tables_in_existing_gap(mo
         features=["x"],
         target="target",
         amount="amount",
-        excel_writer=writer,
+        save=writer,
         sheet="metric_titles",
         pictures=[],
         output_dir=str(tmp_path),
@@ -434,7 +434,7 @@ def test_auto_feature_analysis_reserves_title_row_when_amount_gap_is_zero(monkey
         target="target",
         amount="amount",
         image_table_gap_rows=0,
-        excel_writer=writer,
+        save=writer,
         sheet="zero_metric_title_gap",
         pictures=[],
         output_dir=str(tmp_path),
@@ -461,7 +461,7 @@ def test_auto_feature_analysis_left_aligns_feature_effect_section(monkeypatch, t
         data,
         features=["x"],
         target="target",
-        excel_writer=writer,
+        save=writer,
         sheet="section_alignment",
         pictures=[],
         output_dir=str(tmp_path),
@@ -474,7 +474,7 @@ def test_auto_feature_analysis_left_aligns_feature_effect_section(monkeypatch, t
 
 
 def test_auto_feature_analysis_numbers_titles_and_formats_feature_summary(monkeypatch, tmp_path):
-    """章节应连续编号，summary 比率列显示百分数且仅 KS/IV 使用色阶。"""
+    """章节连续编号、比率显示百分数；单条摘要不因常量指标整列着色。"""
     monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
 
     def fake_summary(self, **kwargs):
@@ -503,7 +503,7 @@ def test_auto_feature_analysis_numbers_titles_and_formats_feature_summary(monkey
         features=["x"],
         target="target",
         corr=False,
-        excel_writer=writer,
+        save=writer,
         sheet="numbered_summary",
         pictures=[],
         output_dir=str(tmp_path),
@@ -536,11 +536,20 @@ def test_auto_feature_analysis_numbers_titles_and_formats_feature_summary(monkey
             continue
         for cell_range in conditional_range.sqref.ranges:
             color_scale_headers.add(ws.cell(header_row, cell_range.min_col).value)
-    assert color_scale_headers == {"KS", "IV"}
+    assert color_scale_headers == set()
 
 
 def test_auto_feature_analysis_uses_metric_colors_by_default(monkeypatch, tmp_path):
-    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", _fake_feature_bin_stats)
+    def two_bins(data, feature, **kwargs):
+        result = pd.concat([_fake_feature_bin_stats(data, feature, **kwargs)] * 2, ignore_index=True)
+        result["分箱标签"] = ["低", "高"]
+        result["样本总数"] = [2, 2]
+        result["样本占比"] = [0.5, 0.5]
+        result["坏样本率"] = [0.25, 0.75]
+        result["LIFT值"] = [0.5, 1.5]
+        return result
+
+    monkeypatch.setattr(feature_analyzer_module, "feature_bin_stats", two_bins)
 
     data = pd.DataFrame({"x": [1, 2, 3, 4], "target": [0, 1, 0, 1]})
     writer = ExcelWriter(system="windows")
@@ -549,7 +558,7 @@ def test_auto_feature_analysis_uses_metric_colors_by_default(monkeypatch, tmp_pa
         data,
         features=["x"],
         target="target",
-        excel_writer=writer,
+        save=writer,
         sheet="default_condition_color",
         pictures=[],
         output_dir=str(tmp_path),
@@ -558,7 +567,8 @@ def test_auto_feature_analysis_uses_metric_colors_by_default(monkeypatch, tmp_pa
 
     ws = writer.get_sheet_by_name("default_condition_color")
     colors = _conditional_format_colors(ws)
-    assert {"FFCD778E", "FFB86991"}.issubset(colors)
+    assert {"F76E6C", "D4145A"}.issubset({color[-6:] for color in colors})
+    assert sum(rule.type == "colorScale" for rules in ws.conditional_formatting._cf_rules.values() for rule in rules) >= 2
     assert "002639E9" not in colors
 
 
@@ -585,7 +595,7 @@ def test_auto_feature_analysis_applies_custom_condition_color_everywhere(monkeyp
         date="apply_date",
         corr=True,
         condition_color="12AB34",
-        excel_writer=writer,
+        save=writer,
         sheet="custom_condition_color",
         pictures=[],
         output_dir=str(tmp_path),
@@ -617,7 +627,7 @@ def test_auto_feature_analysis_system_gap(monkeypatch):
             data,
             features=["x"],
             target="target",
-            excel_writer=writer,
+            save=writer,
             sheet=sheet_name,
             pictures=["bin"],
             output_dir="model_report",
@@ -654,7 +664,7 @@ def test_feature_title_end_space_with_return_cols(monkeypatch):
         data,
         features=["x"],
         target="target",
-        excel_writer=writer,
+        save=writer,
         sheet="return_cols_span",
         pictures=["bin"],
         bin_params={"return_cols": ["坏样本率"]},
@@ -709,7 +719,7 @@ def test_auto_feature_analysis_title_merges_follow_actual_content_width(monkeypa
         features=["x", "y"],
         target="target",
         amount="amount",
-        excel_writer=writer,
+        save=writer,
         sheet="dynamic_titles",
         pictures=[],
         output_dir="model_report",
@@ -764,7 +774,7 @@ def test_auto_feature_analysis_keeps_overdue_binning_mode(monkeypatch):
         features=["x"],
         overdue="mob",
         dpds=3,
-        excel_writer=writer,
+        save=writer,
         sheet="overdue_mode",
         pictures=[],
         output_dir="model_report",
@@ -807,7 +817,7 @@ def test_auto_feature_analysis_resolves_top_level_del_grey_precedence(
         features=["x"],
         overdue="mob",
         dpds=[0.5],
-        excel_writer=writer,
+        save=writer,
         sheet="top_level_del_grey",
         pictures=[],
         output_dir=str(tmp_path / "images"),
@@ -841,7 +851,7 @@ def test_auto_feature_analysis_missing_rate_and_summary_links(monkeypatch):
         data,
         features=["x"],
         target="target",
-        excel_writer=writer,
+        save=writer,
         sheet="missing_and_links",
         pictures=["bin"],
         output_dir="model_report",
@@ -893,7 +903,7 @@ def test_auto_feature_analysis_sample_distribution_uses_model_report_layout(monk
         overdue="mob",
         dpds=[3, 7],
         date="apply_date",
-        excel_writer=writer,
+        save=writer,
         sheet="sample_layout",
         pictures=[],
         output_dir="model_report",
@@ -972,7 +982,7 @@ def test_auto_feature_analysis_removes_grey_samples_from_top_distributions(monke
         del_grey=True,
         date="date",
         freq="W",
-        excel_writer=writer,
+        save=writer,
         sheet="top_distributions_without_grey",
         pictures=[],
         output_dir=str(tmp_path / "images"),

@@ -205,7 +205,7 @@ feature_report = auto_feature_analysis(
     df, features=features, overdue=["MOB1"], dpds=[7, 3, 0],
     amount="放款金额", date="放款时间", margins=True,
     bin_params={"method": "quantile", "max_n_bins": 4, "n_jobs": 1},
-    excel_writer=str(ASSET_DIR / "auto-feature-report.xlsx"),
+    save=str(ASSET_DIR / "auto-feature-report.xlsx"),
     output_dir=str(ASSET_DIR / "auto-feature-plots"),
     n_jobs=1, mode="strict", return_result=True,
 )

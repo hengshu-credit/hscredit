@@ -49,19 +49,65 @@ def solve_partition(
     merge_empty_bins=True,
     info: Optional[Dict] = None,
 ):
-    """以 CP-SAT 的有向区间路径模型求解箱数、人数和风险形状约束。
+    """求解箱数、人数和风险形状约束，优先使用 CP-SAT。
 
     每条边代表完整的一个箱，流守恒保证所有预箱恰好覆盖一次。
     目标值按 1e9 比例整数化；求解状态和界限通过 info 返回。
+    未安装 OR-Tools 时，在相同候选空间上使用动态规划或有时限枚举，
+    并在 info 中记录实际后端及是否已证明最优。
     """
-    from ortools.sat.python import cp_model
-
     if not np.isfinite(time_limit) or time_limit <= 0:
         raise ValueError("time_limit 必须为有限正数")
     start_time = perf_counter()
     x, y, candidates, positions = prepare_candidates(x, y, candidates)
     if not len(x):
         return []
+    try:
+        from ortools.sat.python import cp_model
+    except ModuleNotFoundError as exc:
+        if exc.name != "ortools":
+            raise
+        from ._candidate_search import search_candidate_splits, _score_partition
+
+        started = perf_counter()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", RuntimeWarning)
+            result = search_candidate_splits(
+                x,
+                y,
+                candidates,
+                objective=objective,
+                min_n_bins=min_n_bins,
+                max_n_bins=max_n_bins,
+                min_samples=max(1, min_samples),
+                max_samples=max_samples,
+                min_bad_rate=min_bad_rate,
+                monotonic=monotonic,
+                time_limit=time_limit,
+                fixed_splits=fixed_splits,
+                target_bad_rates=target_bad_rates,
+                strict_target=strict_target,
+                merge_empty_bins=merge_empty_bins,
+            )
+        limited = any("time_limit" in str(item.message) for item in caught)
+        for item in caught:
+            warnings.warn(str(item.message), item.category, stacklevel=2)
+        if info is not None:
+            bins = np.searchsorted(result, np.asarray(x, dtype=float), side="right")
+            counts = np.bincount(bins, minlength=len(result) + 1)
+            bad = np.bincount(bins, weights=np.asarray(y, dtype=int), minlength=len(counts))
+            dynamic = objective == "iv" and monotonic in (None, False, "none") and min_bad_rate == 0 and fixed_splits is None and target_bad_rates is None
+            info.update(
+                {
+                    "后端": "dynamic_programming" if dynamic else "enumeration",
+                    "求解状态": "FEASIBLE" if limited else "OPTIMAL",
+                    "目标函数": objective,
+                    "目标值": _score_partition(bad, counts - bad, objective),
+                    "耗时秒": perf_counter() - started,
+                }
+            )
+        return result
+
     bounds = np.r_[0, positions, len(x)]
     prefix_bad = np.r_[0, np.cumsum(y == 1, dtype=int)]
     total_bad, total_good = int(prefix_bad[-1]), int(len(y) - prefix_bad[-1])

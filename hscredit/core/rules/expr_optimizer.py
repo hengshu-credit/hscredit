@@ -21,17 +21,19 @@
 
 import ast
 import re
+from dataclasses import dataclass
 from typing import Set, List, Optional, Union
+
+import numpy as np
 
 
 def _canonical(node: "ExprNode") -> str:
     """返回节点的规范化字符串（统一空白），用于等价比较。
 
-    复用节点的  :meth:`ExprNode.to_string`  输出（已将 ``and`` / ``or`` 统一为
-    ``&`` / ``|`` 符号），仅压缩多余空白，做大小写敏感的精确比较，避免误判不同列名/
-    字面量为等价。
+    复用 AST 格式化输出（已将 ``and`` / ``or`` 统一为 ``&`` / ``|`` 符号），
+    做大小写敏感的精确比较，保留列名和字符串字面量内部的空白。
     """
-    return " ".join(node.to_string().split())
+    return node.to_string().strip()
 
 
 class ExprNode:
@@ -56,9 +58,10 @@ class ExprNode:
 class VariableNode(ExprNode):
     """变量节点，如 age > 18 这样的原子表达式。"""
 
-    def __init__(self, expr: str):
+    def __init__(self, expr: str, syntax: Optional[ast.AST] = None):
         super().__init__()
         self.expr = expr
+        self.syntax = syntax
 
     def get_variables(self) -> Set[str]:
         # 使用正则提取变量名
@@ -76,7 +79,8 @@ class VariableNode(ExprNode):
         return self.expr
 
     def simplify(self):
-        return self
+        interval = _numeric_interval(self)
+        return _interval_node(interval) if interval is not None else self
 
 
 class BinaryOpNode(ExprNode):
@@ -117,8 +121,8 @@ class BinaryOpNode(ExprNode):
         # 同级运算符不需要括号（满足结合律）
         if parent_op == self.op:
             return False
-        # 不同运算符默认需要括号以避免优先级问题
-        return True
+        precedence = {"|": 1, "^": 2, "&": 3, "not": 4}
+        return precedence.get(self.op, 0) < precedence.get(parent_op, 4)
 
     def simplify(self):
         """简化二元运算表达式。
@@ -148,14 +152,16 @@ class BinaryOpNode(ExprNode):
             # 吸收律: A & (A | B) = A, A | (A & B) = A（及交换形式）。
             # 仅当内层运算符与外层相反时成立；若内外层运算符相同（如 A & (A & B)），
             # 不可吸收——否则会错误丢弃操作数导致语义改变。
-            if isinstance(self.right, BinaryOpNode) and self.right.op != self.op:
+            opposite = "|" if self.op == "&" else "&"
+            if isinstance(self.right, BinaryOpNode) and self.right.op == opposite:
                 if left_expr in self._flatten_same_op(self.right, self.right.op):
                     return self.left
-            if isinstance(self.left, BinaryOpNode) and self.left.op != self.op:
+            if isinstance(self.left, BinaryOpNode) and self.left.op == opposite:
                 if right_expr in self._flatten_same_op(self.left, self.left.op):
                     return self.right
 
-        return self
+        simplified = _merge_numeric_conjunction(self) if self.op == "&" else self
+        return _merge_category_conditions(simplified)
 
     @staticmethod
     def _flatten_same_op(node: ExprNode, op: str) -> List[str]:
@@ -182,7 +188,7 @@ class UnaryOpNode(ExprNode):
         return self.operand.get_variables()
 
     def to_string(self, parent_op: Optional[str] = None) -> str:
-        operand_str = self.operand.to_string(self.op)
+        operand_str = self.operand.to_string()
         return f"~({operand_str})"
 
     def simplify(self):
@@ -202,67 +208,281 @@ class UnaryOpNode(ExprNode):
 
 
 def _ast_unparse(node: ast.AST) -> str:
-    """Python 3.8 兼容的 AST 转字符串函数 (ast.unparse 是 Python 3.9+).
+    """保留负数、集合字面量及算术优先级，使用项目支持的 Python 3.9+ AST 格式化。"""
+    return ast.unparse(node)
 
-    手动格式化常见 AST 节点类型。
-    """
-    if isinstance(node, ast.Compare):
-        # e.g. age > 18
-        left = _ast_unparse(node.left)
-        parts = [left]
-        for op, comparator in zip(node.ops, node.comparators):
-            op_str = _get_op_symbol(op)
-            parts.append(f" {op_str} {_ast_unparse(comparator)}")
-        return "".join(parts)
-    elif isinstance(node, ast.BinOp):
-        left = _ast_unparse(node.left)
-        right = _ast_unparse(node.right)
-        op_str = _get_op_symbol(node.op)
-        return f"{left} {op_str} {right}"
-    elif isinstance(node, ast.Name):
-        return node.id
-    elif isinstance(node, ast.Constant):
-        return repr(node.value)
-    elif isinstance(node, ast.Call):
-        # 处理函数调用，如 purpose.isin(["education", "business"])
-        func = _ast_unparse(node.func)
-        args = ", ".join(_ast_unparse(arg) for arg in node.args)
-        if node.keywords:
-            kwargs = ", ".join(f"{kw.arg}={_ast_unparse(kw.value)}" for kw in node.keywords)
-            args = f"{args}, {kwargs}" if args else kwargs
-        return f"{func}({args})"
-    elif isinstance(node, ast.Attribute):
-        # 处理属性访问，如 purpose.isin
-        value = _ast_unparse(node.value)
-        return f"{value}.{node.attr}"
+
+def _flatten_nodes(node, op):
+    """按同一布尔运算符展开，保留其他子表达式的分组。"""
+    if isinstance(node, BinaryOpNode) and node.op == op:
+        return _flatten_nodes(node.left, op) + _flatten_nodes(node.right, op)
+    return [node]
+
+
+def _intersect_intervals(left, right):
+    """合并同一字段的上下界；缺失值必须满足路径上的每个条件。"""
+    feature, lower, upper, missing = left
+    _, other_lower, other_upper, other_missing = right
+    # pandas/numexpr 可能按输入列的 float32 精度比较常量。若更紧的闭区间
+    # 与较松的开区间舍入到同一阈值，开区间仍是必要条件，不能丢弃。
+    for first, second, is_lower in ((lower, other_lower, True), (upper, other_upper, False)):
+        if first is None or second is None:
+            continue
+        tighter, looser = sorted((first, second), key=lambda bound: (bound[0], not bound[1]) if is_lower else bound, reverse=is_lower)
+        if tighter[1] and not looser[1]:
+            with np.errstate(over="ignore"):
+                if np.float32(tighter[0]) == np.float32(looser[0]):
+                    return None
+    if other_lower is not None and (lower is None or (other_lower[0], not other_lower[1]) > (lower[0], not lower[1])):
+        lower = other_lower
+    if other_upper is not None and (upper is None or other_upper < upper):
+        upper = other_upper
+    return feature, lower, upper, missing and other_missing
+
+
+def _numeric_interval(node):
+    """仅识别字段与数值常量的区间，以及同字段的显式缺失分支。"""
+    if isinstance(node, BinaryOpNode) and node.op == "&":
+        left, right = _numeric_interval(node.left), _numeric_interval(node.right)
+        if left is not None and right is not None and left[0] == right[0]:
+            return _intersect_intervals(left, right)
+        return None
+    if isinstance(node, BinaryOpNode) and node.op == "|":
+        for condition, missing in ((node.left, node.right), (node.right, node.left)):
+            interval = _numeric_interval(condition)
+            syntax = getattr(missing, "syntax", None)
+            if interval is not None and isinstance(syntax, ast.Call) and not syntax.args and not syntax.keywords and isinstance(syntax.func, ast.Attribute) and syntax.func.attr == "isna" and isinstance(syntax.func.value, ast.Name) and syntax.func.value.id == interval[0]:
+                return (*interval[:3], True)
+        return None
+    syntax = getattr(node, "syntax", None)
+    if not isinstance(syntax, ast.Compare):
+        return None
+    interval = None
+    operands = [syntax.left, *syntax.comparators]
+    for left, operator, right in zip(operands, syntax.ops, operands[1:]):
+        if not isinstance(operator, (ast.Gt, ast.GtE, ast.Lt, ast.LtE)):
+            return None
+        if isinstance(left, ast.Name):
+            feature, value = left.id, right
+            lower = isinstance(operator, (ast.Gt, ast.GtE))
+        elif isinstance(right, ast.Name):
+            feature, value = right.id, left
+            lower = isinstance(operator, (ast.Lt, ast.LtE))
+        else:
+            return None
+        try:
+            value = ast.literal_eval(value)
+        except (ValueError, TypeError):
+            return None
+        if type(value) not in (int, float):
+            return None
+        # 不知道执行列的 dtype 时，大整数与浮点比较可能有不同的舍入行为。
+        if isinstance(value, int) and abs(value) > 2**53:
+            return None
+        closed = isinstance(operator, (ast.GtE, ast.LtE))
+        bound = (value, closed)
+        current = (feature, bound if lower else None, None if lower else bound, False)
+        if interval is not None and interval[0] != feature:
+            return None
+        interval = current if interval is None else _intersect_intervals(interval, current)
+        if interval is None:
+            return None
+    return interval
+
+
+def _interval_node(interval):
+    """按“特征 操作符 阈值”输出各边界，保留开闭边界与显式缺失分支。"""
+    feature, lower, upper, missing = interval
+    name = ast.Name(id=feature, ctx=ast.Load())
+    bounds = []
+    if lower is not None:
+        syntax = ast.Compare(left=name, ops=[ast.GtE() if lower[1] else ast.Gt()], comparators=[ast.Constant(lower[0])])
+        bounds.append(VariableNode(_ast_unparse(syntax), syntax))
+    if upper is not None:
+        syntax = ast.Compare(left=name, ops=[ast.LtE() if upper[1] else ast.Lt()], comparators=[ast.Constant(upper[0])])
+        bounds.append(VariableNode(_ast_unparse(syntax), syntax))
+    result = BinaryOpNode(bounds[0], bounds[1], "&") if len(bounds) == 2 else bounds[0]
+    if missing:
+        call = ast.Call(func=ast.Attribute(value=name, attr="isna", ctx=ast.Load()), args=[], keywords=[])
+        result = BinaryOpNode(result, VariableNode(_ast_unparse(call), call), "|")
+    return result
+
+
+def _merge_numeric_conjunction(node):
+    """集中简化路径交集，供 Rule 组合与树规则导出共同使用。"""
+    terms, intervals, positions, seen = [], {}, {}, set()
+    for term in _flatten_nodes(node, "&"):
+        canonical = _canonical(term)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        interval = _numeric_interval(term)
+        if interval is None:
+            terms.append(term)
+            continue
+        feature = interval[0]
+        if feature not in intervals:
+            positions[feature] = len(terms)
+            intervals[feature] = interval
+            terms.append(term)
+        else:
+            merged = _intersect_intervals(intervals[feature], interval)
+            if merged is None:
+                terms.append(term)
+            else:
+                intervals[feature] = merged
+                terms[positions[feature]] = _interval_node(merged)
+    result = terms[0]
+    for term in terms[1:]:
+        result = BinaryOpNode(result, term, "&")
+    return result
+
+
+@dataclass(frozen=True)
+class _CategoryCondition:
+    """非缺失类别的有限集合或补集；缺失值的命中状态独立保存。"""
+
+    feature: str
+    values: tuple
+    excluded: bool = False
+    include_missing: bool = False
+
+
+def _category_values(syntax):
+    """读取可安全比较的类别字面量，按原顺序去重，不猜测缺失标记。"""
+    if not isinstance(syntax, (ast.List, ast.Tuple, ast.Set)):
+        return None
+    values = []
+    for item in syntax.elts:
+        try:
+            value = ast.literal_eval(item)
+        except (ValueError, TypeError):
+            return None
+        if type(value) not in (str, bool, int, float):
+            return None
+        if isinstance(value, int) and abs(value) > 2**53:
+            return None
+        if isinstance(value, float) and not np.isfinite(value):
+            return None
+        # isin 会根据集合成员推断数组类型；混合类型的增删可能改变比较精度。
+        if values and type(value) is not type(values[0]):
+            return None
+        if value not in values:
+            values.append(value)
+    return tuple(values)
+
+
+def _combine_categories(left, right, op):
+    """对同字段的有限集合/补集做交并运算，不枚举未知类别全集。"""
+    a, b = left.values, right.values
+    if a and b and type(a[0]) is not type(b[0]):
+        return None
+
+    def difference(first, second):
+        return tuple(value for value in first if value not in second)
+
+    def intersection(first, second):
+        return tuple(value for value in first if value in second)
+
+    def union(first, second):
+        return first + difference(second, first)
+
+    if left.excluded == right.excluded:
+        excluded = left.excluded
+        operation = union if (op == "|") != excluded else intersection
+        values = operation(a, b)
     else:
-        return ""
+        included, rejected = (b, a) if left.excluded else (a, b)
+        excluded = op == "|"
+        values = difference(rejected, included) if excluded else difference(included, rejected)
+    missing = (left.include_missing and right.include_missing) if op == "&" else (left.include_missing or right.include_missing)
+    return _CategoryCondition(left.feature, values, excluded, missing)
 
 
-def _get_op_symbol(op):
-    """获取比较/二元运算符的符号."""
-    ops = {
-        ast.Gt: ">",
-        ast.Lt: "<",
-        ast.GtE: ">=",
-        ast.LtE: "<=",
-        ast.Eq: "==",
-        ast.NotEq: "!=",
-        ast.Is: "is",
-        ast.IsNot: "is not",
-        ast.In: "in",
-        ast.NotIn: "not in",
-        ast.Add: "+",
-        ast.Sub: "-",
-        ast.Mult: "*",
-        ast.Div: "/",
-        ast.BitAnd: "&",
-        ast.BitOr: "|",
-        ast.BitXor: "^",
-        ast.And: "&",
-        ast.Or: "|",
-    }
-    return ops.get(type(op), str(op))
+def _category_condition(node):
+    """识别类别集合、字符串等值条件及同字段的缺失/非缺失组合。"""
+    if isinstance(node, BinaryOpNode) and node.op in ("&", "|"):
+        left, right = _category_condition(node.left), _category_condition(node.right)
+        if left is not None and right is not None and left.feature == right.feature:
+            return _combine_categories(left, right, node.op)
+        return None
+    if isinstance(node, UnaryOpNode):
+        condition = _category_condition(node.operand)
+        if condition is not None:
+            return _CategoryCondition(condition.feature, condition.values, not condition.excluded, not condition.include_missing)
+        return None
+
+    syntax = getattr(node, "syntax", None)
+    excluded = False
+    if isinstance(syntax, ast.Compare) and len(syntax.ops) == 1 and isinstance(syntax.left, ast.Name):
+        feature = syntax.left.id
+        operator, members = syntax.ops[0], syntax.comparators[0]
+        if isinstance(operator, (ast.In, ast.NotIn)):
+            values = _category_values(members)
+            excluded = isinstance(operator, ast.NotIn)
+        elif isinstance(operator, (ast.Eq, ast.NotEq)) and isinstance(members, ast.Constant) and isinstance(members.value, str):
+            # pandas eval 将字符串等值比较按单元素 isin 执行，可与 in/not in 合并。
+            values = (members.value,)
+            excluded = isinstance(operator, ast.NotEq)
+        else:
+            return None
+    elif isinstance(syntax, ast.Call) and isinstance(syntax.func, ast.Attribute) and isinstance(syntax.func.value, ast.Name) and not syntax.keywords:
+        feature, method = syntax.func.value.id, syntax.func.attr
+        if method in ("isna", "notna") and not syntax.args:
+            return _CategoryCondition(feature, (), method == "notna", method == "isna")
+        if method != "isin" or len(syntax.args) != 1:
+            return None
+        values = _category_values(syntax.args[0])
+    else:
+        return None
+    return None if values is None else _CategoryCondition(feature, values, excluded, excluded)
+
+
+def _category_node(condition):
+    """输出字段在前的集合条件，显式表达独立的缺失路由。"""
+    name = ast.Name(id=condition.feature, ctx=ast.Load())
+
+    def missing_node(method):
+        syntax = ast.Call(func=ast.Attribute(value=name, attr=method, ctx=ast.Load()), args=[], keywords=[])
+        return VariableNode(_ast_unparse(syntax), syntax)
+
+    if not condition.values and condition.include_missing != condition.excluded:
+        return missing_node("notna" if condition.excluded else "isna")
+    syntax = ast.Compare(left=name, ops=[ast.NotIn() if condition.excluded else ast.In()], comparators=[ast.List(elts=[ast.Constant(value) for value in condition.values], ctx=ast.Load())])
+    result = VariableNode(_ast_unparse(syntax), syntax)
+    if condition.excluded and not condition.include_missing:
+        result = BinaryOpNode(result, missing_node("notna"), "&")
+    elif not condition.excluded and condition.include_missing:
+        result = BinaryOpNode(result, missing_node("isna"), "|")
+    return result
+
+
+def _merge_category_conditions(node):
+    """合并同一布尔层级的同字段类别条件，保留其他字段及必要分组。"""
+    if not isinstance(node, BinaryOpNode) or node.op not in ("&", "|"):
+        return node
+    terms, conditions, positions = [], {}, {}
+    for term in _flatten_nodes(node, node.op):
+        condition = _category_condition(term)
+        if condition is None:
+            terms.append(term)
+            continue
+        feature = condition.feature
+        if feature not in conditions:
+            positions[feature] = len(terms)
+            conditions[feature] = condition
+            terms.append(term)
+        else:
+            merged = _combine_categories(conditions[feature], condition, node.op)
+            if merged is None:
+                terms.append(term)
+            else:
+                conditions[feature] = merged
+                terms[positions[feature]] = _category_node(merged)
+    result = terms[0]
+    for term in terms[1:]:
+        result = BinaryOpNode(result, term, node.op)
+    return result
 
 
 class ExprParser:
@@ -271,6 +491,7 @@ class ExprParser:
     def __init__(self, expr: str):
         self.expr = expr
         self.variables: List[str] = []
+        self.quoted_names = {}
 
     def parse(self) -> ExprNode:
         """解析表达式字符串为 AST。"""
@@ -280,6 +501,9 @@ class ExprParser:
         # 使用 AST 解析
         try:
             tree = ast.parse(processed, mode="eval")
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and node.id in self.quoted_names:
+                    node.id = self.quoted_names[node.id]
             return self._visit(tree.body)
         except SyntaxError:
             # 如果解析失败，返回原子节点
@@ -309,12 +533,28 @@ class ExprParser:
             # 字面量内部：原样保留，直到遇到配对的定界符
             if quote is not None:
                 result.append(char)
+                if char == "\\" and i + 1 < n:
+                    result.append(expr[i + 1])
+                    i += 2
+                    continue
                 if char == quote:
                     quote = None
                 i += 1
                 continue
 
-            if char in ('"', "'", "`"):
+            if char == "`":
+                end = expr.find("`", i + 1)
+                if end == -1:
+                    return expr
+                placeholder = f"__rule_field_{len(self.quoted_names)}"
+                while placeholder in self.expr:
+                    placeholder += "_"
+                self.quoted_names[placeholder] = expr[i : end + 1]
+                result.append(placeholder)
+                i = end + 1
+                continue
+
+            if char in ('"', "'"):
                 quote = char
                 result.append(char)
                 i += 1
@@ -373,7 +613,7 @@ class ExprParser:
             elif isinstance(op, ast.BitXor):
                 op_str = "^"
             else:
-                op_str = "&"
+                return VariableNode(_ast_unparse(node), node)
 
             return BinaryOpNode(self._visit(node.left), self._visit(node.right), op_str)
 
@@ -385,7 +625,7 @@ class ExprParser:
             # 处理比较表达式 (age > 18)
             comp_expr = _ast_unparse(node)
             self.variables.extend(self._extract_variables(comp_expr))
-            return VariableNode(comp_expr)
+            return VariableNode(comp_expr, node)
 
         elif isinstance(node, ast.Name):
             # 处理变量名
@@ -399,7 +639,7 @@ class ExprParser:
             # 其他情况作为原子表达式处理
             try:
                 comp_expr = _ast_unparse(node)
-                return VariableNode(comp_expr)
+                return VariableNode(comp_expr, node)
             except Exception:
                 return VariableNode(self.expr)
 
@@ -456,9 +696,17 @@ def optimize_expr(expr: str) -> str:
 
     - **双重否定（Double negation）** ： ``~~A → A``
 
+    - **数值区间交集** ： ``age > 18 & age > 25 & age <= 60 → age > 25 & age <= 60``，
+      保留开闭边界；仅当同字段各条件均接收缺失值时保留 ``age.isna()`` 分支。
+
+    - **类别集合合并** ：同字段的 ``in`` / ``not in`` / ``isin()`` 及字符串 ``==`` / ``!=``
+      支持交集、并集、差集；缺失值单独计算，补集继续接收未列出的未知类别。
+
     .. note::
-        化简基于子表达式字符串的规范化比较，仅识别字面等价的原子条件，不做跨变量的
-        逻辑推理（如 ``age > 18`` 与 ``age >= 19`` 不会被判定为等价）。
+        数值区间仅合并同一字段与数值常量之间的比较，不做跨变量或字段类型的推断
+        （如 ``age > 18`` 与 ``age >= 19`` 不会被判定为等价）。
+        类别集合使用同类型的普通标量字面量；混合类型、包含 None、非有限数值、
+        大整数或动态变量的集合保留原条件，避免猜测缺失标记和执行时的类型转换。
 
     :param expr: 原始规则表达式字符串，支持 ``&`` / ``|`` / ``~`` / ``and`` / ``or`` / ``not``
     :type expr: str

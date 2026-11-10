@@ -151,6 +151,10 @@ def search_candidate_splits(
     time_limit: float = 30.0,
     min_bad_rate: float = 0.0,
     score_callback=None,
+    fixed_splits=None,
+    target_bad_rates=None,
+    strict_target=True,
+    merge_empty_bins=True,
 ) -> List[float]:
     """在候选边界子集中搜索满足硬约束的最优分箱。"""
     if isinstance(time_limit, (bool, np.bool_)) or not np.isfinite(time_limit) or time_limit <= 0:
@@ -163,7 +167,7 @@ def search_candidate_splits(
     # 当前形状约束直接检查候选箱坏率，不需要对单类标签计算未定义的相关系数。
     correlation = 0.0
 
-    if objective == "iv" and score_callback is None and monotonic in (None, False, "none") and min_bad_rate == 0:
+    if objective == "iv" and score_callback is None and monotonic in (None, False, "none") and min_bad_rate == 0 and fixed_splits is None and target_bad_rates is None:
         return _search_additive_iv(
             candidate_values,
             positions,
@@ -178,11 +182,18 @@ def search_candidate_splits(
 
     min_splits = max(0, min_n_bins - 1)
     max_splits = min(len(candidate_values), max(0, max_n_bins - 1))
+    fixed_positions = np.searchsorted(x_values, [] if fixed_splits is None else fixed_splits, side="left")
+    fixed_positions = set(fixed_positions[(fixed_positions > 0) & (fixed_positions < len(x_values))].tolist())
+    if not fixed_positions.issubset(set(positions)):
+        raise BinningConstraintViolation("固定切点不在候选边界中")
+    fixed_indices = tuple(index for index, position in enumerate(positions) if position in fixed_positions)
+    optional_indices = [index for index in range(len(candidate_values)) if index not in fixed_indices]
     best_key = None
     best_values: List[float] = []
 
-    for n_splits in range(min_splits, max_splits + 1):
-        for selected in combinations(range(len(candidate_values)), n_splits):
+    for n_splits in range(max(min_splits, len(fixed_indices)), max_splits + 1):
+        for optional in combinations(optional_indices, n_splits - len(fixed_indices)):
+            selected = sorted((*fixed_indices, *optional))
             if perf_counter() >= deadline:
                 if best_key is None:
                     raise TimeoutError("候选搜索达到 time_limit，尚未找到满足约束的可行解")
@@ -205,9 +216,15 @@ def search_candidate_splits(
                 continue
             if not _is_monotonic(rates, monotonic, correlation):
                 continue
+            covered_regions = 0
+            if target_bad_rates is not None:
+                regions = np.searchsorted(target_bad_rates, rates, side="left")
+                covered_regions = len(np.unique(regions))
+                if strict_target and (covered_regions != len(counts) or (not merge_empty_bins and covered_regions != len(target_bad_rates) + 1)):
+                    continue
             values = [float(candidate_values[index]) for index in selected]
             score = score_callback(values) if score_callback is not None else _score_partition(bad, good, objective)
-            key = (score, -len(values), tuple(-value for value in values))
+            key = (covered_regions if not strict_target else 0, score, -len(values), tuple(-value for value in values))
             if best_key is None or key > best_key:
                 best_key = key
                 best_values = values

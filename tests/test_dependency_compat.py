@@ -1,6 +1,8 @@
 """第三方依赖显式版本兼容测试。"""
 
 import importlib
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +18,19 @@ from hscredit._compat import (
     prepare_dependency,
     prepare_runtime_compatibility,
 )
+
+
+def test_pandas_datetime_construction_survives_in_clean_interpreter():
+    """不兼容的原生 datetime 扩展会终止进程，须在子进程验证日期语义。"""
+    code = """
+from datetime import datetime
+import pandas as pd
+frame = pd.DataFrame({"time": [datetime(2024, 2, 29, 12, 30), None]})
+assert frame.loc[0, "time"] == pd.Timestamp("2024-02-29 12:30:00")
+assert pd.isna(frame.loc[1, "time"])
+"""
+    result = subprocess.run([sys.executable, "-X", "faulthandler", "-c", code], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert result.returncode == 0, result.stderr
 
 
 def _version(value):

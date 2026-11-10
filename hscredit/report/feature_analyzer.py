@@ -19,6 +19,8 @@ from typing import Union, List, Dict, Optional, Tuple, Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from ..excel.writer import _report_color_styles
 from openpyxl.worksheet.worksheet import Worksheet
 
 from ..utils.overdue import make_overdue_target, overdue_label, validate_overdue_operator
@@ -40,6 +42,7 @@ from ..excel import ExcelWriter, dataframe2excel
 from ..utils import init_setting
 from ..utils.parallel import ParallelWorkload, parallel_execute, resolve_n_jobs, validate_parallel_config
 from ._sample_stats import build_group_distribution_table, build_sample_stats_table
+from ._parameters import resolve_report_output, validate_report_output, preserve_report_images, save_report_workbook
 from .rule_strategy import GroupOrder, _resolve_group_labels
 
 logger = logging.getLogger(__name__)
@@ -560,8 +563,8 @@ def _reorder_long_format_columns(table: pd.DataFrame) -> pd.DataFrame:
 def _normalize_binning_summary_methods(methods: Union[str, List[str]]) -> List[str]:
     """标准化分箱方法并保持传入顺序。
 
-    统一走  :meth:`OptimalBinning.validate_method`  校验（大小写/空白归一化），
-    保持原有错误消息风格。
+    内置算法走 :meth:`OptimalBinning.validate_method` 校验（大小写/空白归一化）。
+    ``custom`` 是报告层的独立展示项，使用调用者提供的切点或分箱器。
     """
     raw = [methods] if isinstance(methods, str) else list(methods)
     if not raw:
@@ -569,12 +572,15 @@ def _normalize_binning_summary_methods(methods: Union[str, List[str]]) -> List[s
 
     normalized, invalid = [], []
     for method in raw:
+        if isinstance(method, str) and method.strip().lower() == "custom":
+            normalized.append("custom")
+            continue
         try:
             normalized.append(OptimalBinning.validate_method(method))
         except ValueError:
             invalid.append(method)
     if invalid:
-        raise ValueError(f"不支持的methods: {invalid}，可选: {OptimalBinning.VALID_METHODS}")
+        raise ValueError(f"不支持的methods: {invalid}，可选: {[*OptimalBinning.VALID_METHODS, 'custom']}")
     if len(normalized) != len(set(normalized)):
         raise ValueError("methods 不能包含重复的分箱方法")
     return normalized
@@ -590,9 +596,10 @@ def _normalize_binning_summary_params(
     if not isinstance(bin_params, dict):
         raise TypeError("bin_params 必须是字典")
 
-    method_keys = set(bin_params).intersection(OptimalBinning.VALID_METHODS)
+    supported_methods = {*OptimalBinning.VALID_METHODS, "custom"}
+    method_keys = set(bin_params).intersection(supported_methods)
     if method_keys:
-        unknown = set(bin_params).difference(OptimalBinning.VALID_METHODS)
+        unknown = set(bin_params).difference(supported_methods)
         if unknown or any(not isinstance(value, dict) for value in bin_params.values()):
             raise ValueError("多层 bin_params 必须使用 method 作为 key、字典作为 value")
         return {method: dict(bin_params.get(method, {})) for method in methods}
@@ -740,6 +747,11 @@ def feature_binning_summary(
     ``bin_params`` 支持两种格式：单层参数应用于所有方法；以 method 为 key、
     参数字典为 value 的多层参数仅应用于对应方法。参数优先级为
     ``bin_params > 显式公共算法参数/kwargs`` ；标签定义和剔灰口径由顶层统一。
+
+    ``methods`` 还支持 ``"custom"``，用于独立展示自定义分箱。需在该方法的
+    ``bin_params`` 中传入覆盖全部特征的 ``rules`` 或 ``binner``；例如先用训练集
+    ``data[feature].quantile([...])`` 生成切点，再通过 ``rules={feature: 切点列表}``
+    在评估集统计。缺少某个字段的自定义规则时明确报错，不回退到自动分箱。
 
     ``long_format`` 控制 ``binning_tables`` 中每张分箱表的输出格式：默认 ``False``
     沿用原多级表头样式（多目标时按列展开）；设为 ``True`` 时每张表按 ``逾期标签``
@@ -1001,6 +1013,10 @@ def _fit_group_summary_binner(
     params: Dict[str, Any],
 ) -> BaseBinning:
     """在全量数据上拟合分组分析使用的统一分箱器。"""
+    if method == "custom":
+        custom_params = {**params, "margins": False, "return_rules": False, "return_binner": True}
+        _, binners = feature_bin_stats(data, feature, method=method, **custom_params)
+        return binners[feature]
     overdue = params.get("overdue")
     dpds = params.get("dpds")
     target = params.get("target")
@@ -1701,8 +1717,8 @@ def feature_bin_stats(
                     'target_bad_rate'(目标坏样本率), 'monotonic'(单调性),
                     'genetic'(遗传算法), 'smooth'(平滑)
 
-        - 运筹规划方法: 'or_tools'(OR-Tools整数规划，需安装 ortools),
-                    'cp_sat'(CP-SAT约束规划，需安装 ortools)
+        - 运筹规划方法: 'or_tools'、'cp_sat'，可使用 OR-Tools 原生求解器，
+                    缺少 OR-Tools 时使用候选搜索后端
 
         默认: 'mdlp'
 
@@ -2018,6 +2034,8 @@ def feature_bin_stats(
 
         # 3. 如果 binner 和 rules 都没覆盖，创建新的分箱器
         if current_binner is None and feat_rule is None:
+            if method == "custom":
+                raise ValueError(f"custom 分箱必须通过 rules 或 binner 提供字段 '{feat}' 的分箱规则")
             current_binner = OptimalBinning(**default_binner_params)
             need_fit = True
 
@@ -3257,7 +3275,7 @@ def auto_feature_analysis(
     date=None,
     data_summary_comment="",
     freq="M",
-    excel_writer=None,
+    save=None,
     sheet="分析报告",
     start_col=2,
     start_row=2,
@@ -3329,8 +3347,8 @@ def auto_feature_analysis(
     :param date: 默认值为 ``None`` 。日期列，用于时间维度分布分析
     :param freq: 日期统计粒度，默认按月 "M"
     :param data_summary_comment: 默认值为 ``''`` 。数据备注信息
-    :param excel_writer: 默认值为 ``None`` 。Excel 文件路径或 ExcelWriter 对象
-    :param sheet: 默认值为 ``'分析报告'`` 。工作表名称
+    :param save: 默认 None；Excel 文件路径或 hscredit ExcelWriter；传入 writer 时仅写入，不保存或关闭。
+    :param sheet: 工作表名称或 openpyxl Worksheet，默认“分析报告”；Worksheet 与 writer 必须属于同一工作簿。
     :param start_col: 默认值为 ``2`` 。起始列
     :param start_row: 默认值为 ``2`` 。起始行
     :param dropna: 默认值为 ``False`` 。是否剔除缺失值
@@ -3358,7 +3376,7 @@ def auto_feature_analysis(
     **参考样例**
 
     >>> from hscredit.report.feature_analyzer import auto_feature_analysis
-    >>> auto_feature_analysis(data, features=['feature1'], target='target', excel_writer='分析结果.xlsx')
+    >>> auto_feature_analysis(data, features=['feature1'], target='target', save='分析结果.xlsx')
 
     :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
@@ -3376,7 +3394,7 @@ def auto_feature_analysis(
     >>> result = auto_feature_analysis(
     ...     data, features=["衡枢鉴真分老客版", "近六个月非银多头机构数", "青云24"],
     ...     target="FPD", date="放款时间", amount="放款金额",
-    ...     excel_writer="特征分析.xlsx", pictures=["bin"], n_jobs=1,
+    ...     save="特征分析.xlsx", pictures=["bin"], n_jobs=1,
     ...     mode="strict", return_result=True,
     ... )
 
@@ -3415,7 +3433,7 @@ def _auto_feature_analysis_impl(
     date=None,
     data_summary_comment="",
     freq="M",
-    excel_writer=None,
+    save=None,
     sheet="分析报告",
     start_col=2,
     start_row=2,
@@ -3455,7 +3473,7 @@ def _auto_feature_analysis_impl(
     :param date: 日期列，用于时间维度分布分析
     :param freq: 日期统计粒度，默认按月 "M"
     :param data_summary_comment: 数据备注信息
-    :param excel_writer: Excel 文件路径或 ExcelWriter 对象
+    :param save: Excel 文件路径或 ExcelWriter 对象
     :param sheet: 工作表名称
     :param start_col: 起始列
     :param start_row: 起始行
@@ -3483,7 +3501,7 @@ def _auto_feature_analysis_impl(
     **参考样例**
 
     >>> from hscredit.report.feature_analyzer import auto_feature_analysis
-    >>> auto_feature_analysis(data, features=['feature1'], target='target', excel_writer='分析结果.xlsx')
+    >>> auto_feature_analysis(data, features=['feature1'], target='target', save='分析结果.xlsx')
 
     :param overdue_operator: 逾期标签比较符，支持 ``>`` 、 ``>=`` 、 ``<`` 、 ``<=`` ，默认 ``>`` 。
         满足比较条件记为坏样本(1)，否则为好样本(0)。
@@ -3494,6 +3512,7 @@ def _auto_feature_analysis_impl(
     :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。
     """
 
+    validate_report_output(save, sheet)
     _validate_report_parallel(n_jobs, parallel_backend, parallel_config)
     if _report_result is not None:
         for name, column in (("日期字段", date), ("金额字段", amount)):
@@ -3720,14 +3739,8 @@ def _auto_feature_analysis_impl(
                 _report_result.success(f"金额分箱：{feature_result['feature']}", feature_result["amount_table"])
         _report_result.ensure_publishable()
         _report_result.current_section = "报告渲染"
+    writer, worksheet, save_path, owned = resolve_report_output(save, sheet, writer_params=writer_params)
     os.makedirs(output_dir, exist_ok=True)
-
-    if isinstance(excel_writer, ExcelWriter):
-        writer = excel_writer
-    else:
-        writer = ExcelWriter(**writer_params)
-
-    worksheet = writer.get_sheet_by_name(sheet)
 
     if image_table_gap_rows is None:
         image_table_gap_rows = 2 if getattr(writer, "system", "windows") == "windows" else 1
@@ -3862,7 +3875,7 @@ def _auto_feature_analysis_impl(
             writer,
             worksheet,
             percent_cols=time_percent_cols,
-            condition_cols=time_percent_cols,
+            **_report_color_styles(time_percent_cols),
             condition_color=condition_color,
             start_row=table_start_row,
             index=not isinstance(time_distribution.columns, pd.MultiIndex),
@@ -4102,7 +4115,7 @@ def _auto_feature_analysis_impl(
                         "累积LIFT值",
                         "累积坏账改善",
                     ],
-                    condition_cols=["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"],
+                    **_report_color_styles(["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"]),
                     condition_color=condition_color,
                     merge_column=["指标名称", "指标含义"],
                     merge=True,
@@ -4124,7 +4137,7 @@ def _auto_feature_analysis_impl(
                         "累积LIFT值",
                         "累积坏账改善",
                     ],
-                    condition_cols=["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"],
+                    **_report_color_styles(["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"]),
                     condition_color=condition_color,
                     merge_column=["指标名称", "指标含义"],
                     merge=True,
@@ -4161,7 +4174,7 @@ def _auto_feature_analysis_impl(
                             "累积LIFT值",
                             "累积坏账改善",
                         ],
-                        condition_cols=["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"],
+                        **_report_color_styles(["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"]),
                         condition_color=condition_color,
                         merge_column=["指标名称", "指标含义"],
                         merge=True,
@@ -4184,7 +4197,7 @@ def _auto_feature_analysis_impl(
                             "累积LIFT值",
                             "累积坏账改善",
                         ],
-                        condition_cols=["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"],
+                        **_report_color_styles(["样本占比", "坏样本率", "LIFT值", "坏账改善", "累积坏账改善"]),
                         condition_color=condition_color,
                         merge_column=["指标名称", "指标含义"],
                         merge=True,
@@ -4198,11 +4211,15 @@ def _auto_feature_analysis_impl(
     if _report_result is not None:
         _report_result.success("报告渲染")
         _report_result.ensure_publishable()
-    if not isinstance(excel_writer, ExcelWriter) and not isinstance(sheet, Worksheet):
+    if save_path is not None:
         if _report_result is not None:
             _report_result.current_section = "工作簿发布"
-        writer.save(excel_writer)
+        save_report_workbook(writer, save_path, close=owned)
         if _report_result is not None:
-            _report_result.artifacts.append({"类型": "Excel", "路径": str(excel_writer), "完整": _report_result.complete})
+            _report_result.artifacts.append({"类型": "Excel", "路径": save_path, "完整": _report_result.complete})
+    elif owned:
+        writer.workbook.close()
+    else:
+        preserve_report_images(writer)
 
     return end_row, end_col

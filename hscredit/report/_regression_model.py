@@ -223,12 +223,13 @@ def export_excel(report, filepath, options):
     bins = {key: report.get_bin_table(key, method=options["method"], max_n_bins=options["max_n_bins"], amount=options["amount"]) for key in report._datasets}
     result.success("核心数据计算")
     result.current_section = "工作簿渲染"
-    writer = ExcelWriter()
+    writer = options.get("_writer") or ExcelWriter()
+    basic_sheet = options.get("_sheet") or writer.get_sheet_by_name("1-基本信息")
     from ._training_process_report import process_sheet_name
 
     training_name = process_sheet_name(report, options.get("training_sheet_index"))
     sheet_names = [
-        "1-基本信息",
+        basic_sheet.title,
         "2-模型性能",
         "3-入模变量分析",
         "4-稳定性分析",
@@ -243,8 +244,8 @@ def export_excel(report, filepath, options):
         ws = writer.get_sheet_by_name(sheet_name)
         ws.sheet_view.showGridLines = False
         row = positions.get(sheet_name, 2)
-        if "-" in sheet_name and sheet_name.split("-")[0].isdigit():
-            number, caption = sheet_name.split("-", 1)
+        if sheet_name == basic_sheet.title or ("-" in sheet_name and sheet_name.split("-")[0].isdigit()):
+            number, caption = ("1", "基本信息") if sheet_name == basic_sheet.title else sheet_name.split("-", 1)
             if row == 2:
                 writer.insert_value2sheet(ws, "B2", f"{chapter_number(number)}、{caption}", style="header_middle")
                 row = 5
@@ -277,7 +278,7 @@ def export_excel(report, filepath, options):
         "入模变量信息与连续预测样例",
         "预测口径、训练记录、曲线、参数搜索及最终重训",
     ]
-    contents = pd.DataFrame([{"序号": int(name.split("-")[0]), "内容": name, "备注": description} for name, description in zip(sheet_names, descriptions)])
+    contents = pd.DataFrame([{"序号": 1 if name == basic_sheet.title else int(name.split("-")[0]), "内容": name, "备注": description} for name, description in zip(sheet_names, descriptions)])
     write_model_contents(
         writer,
         contents,
@@ -300,9 +301,9 @@ def export_excel(report, filepath, options):
         if options["amount"]:
             row["金额合计"] = float(dataset.X[options["amount"]].sum())
         basic.append(row)
-    section("1-基本信息", "样本与目标", pd.DataFrame(basic))
+    section(basic_sheet.title, "样本与目标", pd.DataFrame(basic))
     section(
-        "1-基本信息",
+        basic_sheet.title,
         "评估口径",
         pd.DataFrame(
             {
@@ -468,17 +469,19 @@ def export_excel(report, filepath, options):
 
     write_process(report, writer, filepath, options["with_plots"], training_name)
     for name in ("5-模型参数", "6-模型部署需求", training_name):
-        fit_metadata_sheet(writer.get_sheet_by_name(name), writer.style_sheet.column_dimensions["C"].width)
+        fit_metadata_sheet(writer.get_sheet_by_name(name), writer.style_sheet.column_dimensions["C"].width if writer.style_sheet is not None else 13)
     for name in sheet_names:
         writer.insert_hyperlink2sheet(writer.get_sheet_by_name(name), "B2", hyperlink="#'目录'!B2")
         result.success(f"工作表：{name}")
     from ._model_layout import fit_report_titles
 
     for sheet in writer.workbook:
-        if sheet.title not in {"初始化", "目录"}:
+        if sheet.title in sheet_names:
             fit_report_titles(sheet)
     result.success("工作表：目录")
     result.current_section = "工作簿发布"
     result.ensure_publishable()
-    writer.save(filepath)
-    return filepath
+    if options.get("_writer") is None:
+        writer.save(filepath)
+        return filepath
+    return writer

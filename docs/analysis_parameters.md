@@ -16,8 +16,28 @@
 | 绘图尺寸、字号、方向、保存路径 | `figsize`、`fontsize`、`orientation`、`save` |
 | 图片保存分辨率 | `dpi` |
 | 绘图入口返回统计数据 | `result` |
-| 树/策略报告工作表名 | `sheet_name` |
-| 树/策略报告保存路径 | `save`；模型一键报告仍按该入口签名使用 `excel_path`，二者不互作别名 |
+| 自动报告工作表 | `sheet`，接受名称或 openpyxl `Worksheet` |
+| 自动报告输出 | `save`，接受文件路径或 `hscredit.excel.ExcelWriter` |
+
+## 自动报告输出
+
+`swap_out_report`、`auto_model_report`、树的 `report/get_rule_table`、`auto_feature_analysis` 和 `compare_models` 统一使用 `save`、`sheet`。
+
+| 用法 | 行为 |
+| --- | --- |
+| `save="报告.xlsx"` 或 `save=Path("报告.xlsx")` | 生成并保存 Excel 文件 |
+| `save=writer, sheet="分析"` | 写入已有的 hscredit `ExcelWriter`，由调用方最后 `writer.save(...)` |
+| `save=writer, sheet=worksheet` | 写入指定 openpyxl 工作表，必须属于该 writer 的工作簿 |
+| `save="报告.xlsx", sheet=worksheet` | 写入并保存该 Worksheet 所属的整个工作簿，其他工作表保留 |
+| `save=None` | 不保存文件；显式传入 Worksheet 时仍写入该内存工作表 |
+
+`sheet` 的默认名称按报告类型设置：策略报告为“策略迭代”，树报告为“组合策略汇总”，特征报告为“分析报告”，模型报告为“1-基本信息”，模型对比为“Sheet1”。模型报告的 `sheet` 仅指定基本信息页，其余章节仍生成独立页面；不能使用“目录”“2-模型性能”等保留名称。树报告主表名称最长 24 字符，其他报告遵循 Excel 的 31 字符限制。
+
+返回值保持各接口原有含义：策略报告返回 writer，模型报告返回 `ModelReport`，树报告返回规则表或表格容器，特征报告默认返回结束行列，模型对比返回 DataFrame。传入 writer 不会自动保存或关闭它。
+
+旧的 `excel_path`、`excel_writer` 一律改为 `save`，旧的 `sheet_name` 改为 `sheet`，不保留别名。此规则针对上述报告入口；`dataframe2excel(..., sheet_name=...)`、`pd.read_excel(..., sheet_name=...)` 等其他接口仍遵循自身签名。
+
+完整写法见[自动报告 API](api/report.rst)，可执行演示见 [29_api_reference.ipynb](../examples/29_api_reference.ipynb)。
 
 ## 字段选择
 
@@ -29,9 +49,9 @@
 
 手工二叉树、多叉树及 DecisionTreeAnalyzer 的 `features` 同样支持字符串或一维 list、tuple、ndarray、Index，树规则中的字段名须为字符串。`fit` 显式字段优先于构造配置。`report` 和 `get_rule_table` 使用 `datasets`，支持自带标签列的单表、表格列表/元组或名称到 DataFrame 的字典。
 
-树报告显式提供 `amount`、`feature_map`、`apply_rule_filter`；导出使用 `save`、`sheet_name`、`excel_writer`。完整 Excel 报告的日期、分组和金额从业务字段读取；单表规则效果评估也支持外部金额向量。分裂与筛选配置在初始化时声明，并行使用 `n_jobs`、`parallel_backend`、`parallel_config`。规范参数与优先级见[多叉树与统一树报告](multiway_tree.rst)。
+树报告显式提供 `amount`、`feature_map`、`apply_rule_filter`；导出使用 `save` 和 `sheet`。完整 Excel 报告的日期、分组和金额从业务字段读取；单表规则效果评估也支持外部金额向量。分裂与筛选配置在初始化时声明，并行使用 `n_jobs`、`parallel_backend`、`parallel_config`。规范参数与优先级见[多叉树与统一树报告](multiway_tree.rst)。
 
-多叉树最大普通分支数为 `max_n_bins`，独立缺失分支不计入；不再接受 `max_branches`。树报告不接受 `sheet`、`data` 等旧参数别名。规则筛选的指标值统一为 `lift`、`badrate`，不使用中文列名或大写别名作为入参；报告输出仍使用中文指标名称。
+多叉树最大普通分支数为 `max_n_bins`，独立缺失分支不计入；不再接受 `max_branches`。树报告不接受 `sheet_name`、`excel_writer`、`excel_path`、`data` 等旧参数别名。规则筛选的指标值统一为 `lift`、`badrate`，不使用中文列名或大写别名作为入参；报告输出仍使用中文指标名称。
 
 `rule_filter.metric="badrate"` 时，`threshold <= 1` 表示坏样本率，`threshold > 1` 表示坏样本个数；1 仍表示 100% 坏率。比较继续使用 `operator`（默认 `>=`），例如 `threshold=2` 默认筛选至少 2 个坏样本的规则。筛选只使用训练集订单计数，不使用验证集或金额口径；`lift` 的阈值不切换为个数。
 

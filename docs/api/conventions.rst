@@ -20,6 +20,8 @@ API 页面和 ``help(对象)`` 使用源码中同一份中文 docstring。参数
   callable 或标签字典，两种标签模式互斥。标签方向、逐标签剔灰及索引对齐见 :doc:`../overdue_labels`。
 - 参数中的比例、绝对数量和利率按各接口说明使用。金融函数的利率是每期利率，
   例如月度还款使用 ``年利率 / 12``，现金流流入和流出使用相反符号。
+- 自动报告统一使用 ``save`` （文件路径或 hscredit ExcelWriter）及 ``sheet`` （名称或 openpyxl Worksheet）。
+  传入 writer 时仅写入，调用方统一保存；完整约定见 :doc:`../analysis_parameters`。
 - ``**kwargs`` 不是任意配置入口；应按方法说明传给对应下游组件，优先使用有明确说明的命名参数。
 
 枚举取值
@@ -80,7 +82,7 @@ API 页面和 ``help(对象)`` 使用源码中同一份中文 docstring。参数
 :download:`下载按步骤运行的公开 API Notebook <../../examples/29_api_reference.ipynb>`。
 它使用本地 ``examples/hscredit_yyp.xlsx``，涵盖数值与类别特征、MOB1 多标签、金额、
 日期、建模评估、绘图及 Excel 导出。业务数据需由使用者自行准备，不随下载的 Notebook 提供。
-示例输出默认位于项目的 ``outputs/api_reference``。
+示例输出默认位于系统临时目录；可通过 ``HSCREDIT_EXAMPLE_OUTPUT`` 指定保留位置。
 
 维护规范
 --------------

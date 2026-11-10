@@ -1,19 +1,26 @@
 # 安装
 
-`hscredit` 需要 **Python 3.9+**。基础安装包含常用风控分析、SHAP 解释和运筹分箱依赖；
-Boosting、深度学习、调参、PMML 与数据库驱动按需安装。
+`hscredit` 当前源码支持 **Python 3.9–3.15**。基础安装包含常用风控分析和 SHAP 解释；
+Boosting、深度学习、调参、PMML 与数据库驱动按需安装。已发布的
+[PyPI 0.1.4 主包](https://pypi.org/project/hscredit/0.1.4/)要求 Python `<3.15`，
+Python 3.15 请按下文专节从当前适配源码安装。
 
 ## 基础安装
 
+Python 3.9–3.14 可直接从 PyPI 安装：
+
 ```bash
-pip install hscredit
+python -m pip install hscredit
 ```
 
 基础依赖包含 `numpy`、`pandas`、`scipy`、`scikit-learn`、`statsmodels`、`matplotlib`、
-`seaborn`、`openpyxl`、`shap`、`ortools`、`pyarrow` 等，覆盖数据探索、分箱、编码、
+`seaborn`、`openpyxl`、`shap`、`pyarrow` 等，Python 3.15 之前还包含 `ortools`，覆盖数据探索、分箱、编码、
 特征筛选、评分卡建模、指标计算、可视化与 Excel 报告。懒加载减少导入时开销，不代表减少安装体积。
 
 ## 可选能力
+
+以下命令适用于 PyPI 安装。Python 3.15 在当前适配源码目录中使用
+`python -m pip install ".[扩展名]"`；`boost` 和 `pmml` 的兼容依赖准备见下文。
 
 | 安装命令 | 适用场景 |
 |:---|:---|
@@ -44,12 +51,95 @@ PMML 导出（`hscredit[pmml]`）依赖 `sklearn2pmml`，运行时需要 **Java 
 注册接口；只有创建对应数据库连接时才检查驱动。完整指南见 {doc}`database`。
 ```
 
+<a id="python-315"></a>
+
+## Python 3.15
+
+### 安装当前源码
+
+在已激活的 Python 3.15 虚拟环境中，进入包含 3.15 适配的当前源码目录执行：
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install .
+```
+
+Python 3.15 使用 pandas 3.0.6 及以上、SHAP 0.54 系列和标准库 `compression.zstd`。历史 Zstandard
+文件仍可读取，`save_pickle`、`load_pickle` 的调用方式相同。
+
+`or_tools`、`cp_sat` 分箱及约束修复优先使用 OR-Tools。环境中缺少 OR-Tools 时，
+在相同候选边界上执行动态规划或有时限枚举，继续检查箱数、样本量、坏率、单调性及固定切点。
+`solver_info_` 中的“后端”和“求解状态”反映实际使用的方法。达到时间限制时返回已经验证的
+可行分区并发出提示，尚未找到可行分区时抛出 `TimeoutError`。
+
+NumExpr、Bottleneck、LZ4 等原生扩展在缺少对应 wheel 时需要从源码编译。
+Windows 需安装 Visual Studio C++ 构建工具及 Windows SDK，CatBoost 构建还需要 C++ Clang tools for Windows。
+也可设置 `LLVM_ROOT`，指向包含 `bin` 和 `lib` 的独立 LLVM 根目录。Linux 需提供 C/C++ 编译器和
+Python 开发头文件。PMML 的 JPype 源码构建需要 JDK 11+ 和 Apache Ant，并将 Ant 的 `bin` 目录加入 `PATH`。
+
+### 使用 Windows x64 兼容包
+
+[0.1.4 Release Assets](https://github.com/hengshu-credit/hscredit/releases/tag/v0.1.4) 提供以下已验证的依赖 wheel。
+它们是 hscredit 基于上游源码构建的兼容包；该 Release 原有的 hscredit 主包仍要求 Python `<3.15`。
+
+| 依赖包 | 下载 | 构建范围 |
+|:---|:---|:---|
+| CatBoost 1.2.10 | [wheel](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.4/catboost-1.2.10-cp315-cp315-win_amd64.whl) | CPython 3.15、Windows x64；CPU 训练与预测，不含 Jupyter 交互式训练组件 |
+| NGBoost 0.6.0 | [wheel](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.4/ngboost-0.6.0-py3-none-any.whl) | 纯 Python 包，放宽 Python 版本约束以支持 3.15 |
+| lifelines 0.30.3 | [wheel](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.4/lifelines-0.30.3-py3-none-any.whl) | NGBoost 间接依赖，适配 Python 3.15 下的 pandas 3 |
+| scikit-learn 1.8.0 | [wheel](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.4/scikit_learn-1.8.0-cp315-cp315-win_amd64.whl) | CPython 3.15、Windows x64；兼容 PMML 所需的 `<1.9` 版本范围 |
+
+将四个文件下载至源码目录下的 `native-wheels/`，在上述虚拟环境中安装 Boosting 能力。
+先安装兼容 wheel，再由源码安装补齐其余依赖；不要省略第二步。
+
+```bash
+python -m pip install --no-index --no-deps --force-reinstall --find-links=./native-wheels catboost==1.2.10 ngboost==0.6.0 lifelines==0.30.3 scikit-learn==1.8.0
+python -m pip install ".[boost]"
+python -m pip check
+```
+
+需要 PMML 时，准备好 JDK 和 Apache Ant 后执行 `python -m pip install ".[pmml]"`。
+这两个 Windows 原生 wheel 不适用于 Linux、macOS、Windows ARM64 或自由线程版 CPython；其他环境需自行构建。
+
+### 从上游源码构建依赖
+
+CatBoost 1.2.10 的构建依赖锁定了旧版 Cython。仓库提供下列构建入口，对官方源码包执行
+SHA-256 校验，再将构建用的 Cython 调整至 3.3 系列，生成用于 CPU 训练和预测的 wheel。
+构建使用 `--no-widget`，Jupyter 交互式训练组件需要单独适配。
+NGBoost 0.6 的 Python 版本声明上限为 3.15，构建入口将这一上限调整为 3.16，
+并保留其余依赖要求和算法源码。
+其间接依赖 lifelines 需要同步调整 pandas 版本约束，避免安装程序降级至在 Python 3.15 上
+存在日期数组崩溃问题的 pandas 2.3。
+以下命令在仓库根目录和 Python 3.15 虚拟环境中运行。
+
+```bash
+python -m pip install "setuptools>=77,<83" wheel "cython>=3.3,<3.4" "cmake>=3.24,<4" "conan>=2.4.1,<3" "numpy<3" scipy ninja meson-python
+python scripts/build_python315_wheels.py --package catboost --wheel-dir native-wheels --parallel 2
+python scripts/build_python315_wheels.py --package ngboost --wheel-dir native-wheels
+python scripts/build_python315_wheels.py --package lifelines --wheel-dir native-wheels
+python -m pip install --no-index --no-deps --force-reinstall --find-links=native-wheels catboost==1.2.10 ngboost==0.6.0 lifelines==0.30.3
+python -m pip install -e ".[boost]"
+```
+
+安装 PMML 可选能力时，准备 JDK 11+ 和 Apache Ant，并将 Ant 的 `bin` 目录加入当前终端的
+`PATH`，以便构建 JPype 的 Java 组件。先使用支持 Python 3.15 的构建依赖生成 scikit-learn 1.8 的 wheel。
+构建入口会使用独立的短路径目录，兼容 Windows 编译器的输出路径限制。
+
+```bash
+python scripts/build_python315_wheels.py --package scikit-learn --wheel-dir native-wheels --parallel 2
+python -m pip install --no-index --no-deps --find-links=native-wheels scikit-learn==1.8.0
+python -m pip install -e ".[pmml]"
+```
+
+以上兼容构建已在 Windows x64、CPython 3.15.2 上验证。构建时可通过
+`--work-dir` 指定独立目录，保留源码和中间产物以便增量构建。
+
 ## 开发模式安装
 
 参与开发或本地验证：
 
 ```bash
-git clone https://github.com/hscredit/hscredit.git
+git clone https://github.com/hengshu-credit/hscredit.git
 cd hscredit
 pip install -e ".[dev]"
 pytest tests/ -v

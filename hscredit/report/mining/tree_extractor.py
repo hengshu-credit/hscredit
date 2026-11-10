@@ -28,6 +28,7 @@ from .base import (
     resolve_feature_map,
 )
 from ...core.rules.rule import Rule
+from ...core.rules.expr_optimizer import optimize_expr
 from ...core.encoders._category_protocol import MISSING, pack
 from ...core.rules.artifact import RuleArtifact
 from ...core.binning.spec import BinSpec, field_expression, value_expression
@@ -1056,7 +1057,7 @@ class TreeRuleExtractor(BaseRuleMiner):
                     expression = f"({expression} | ({feature_expr}.isna()))"
             parts.append(f"({expression})" if categories is not None else expression)
 
-        return " & ".join(parts)
+        return optimize_expr(" & ".join(parts))
 
     def get_feature_importance(self) -> pd.DataFrame:
         """获取特征重要性.

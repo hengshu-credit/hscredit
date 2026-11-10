@@ -12,6 +12,53 @@
 
 完整可运行演示：[tuning_workflow.ipynb](../../examples/tuning_workflow.ipynb)。所有代码格使用仓库真实放款数据；模型数量和训练轮数控制在演示规模。损失选择与框架回调详见 [损失指南](losses-guide.md) 和 [losses_workflow.ipynb](../../examples/losses_workflow.ipynb)。
 
+## hscredit 主题看板
+
+先安装调参依赖，再用同一环境中的 hscredit 命令启动：
+
+```bash
+pip install "hscredit[tune]"
+hscredit dashboard sqlite:///hscredit.db --port 8080
+```
+
+浏览器访问 `http://127.0.0.1:8080/dashboard/`。在源码仓库首次增加命令入口后运行 `pip install -e ".[tune]"`；也可使用等价的模块入口：
+
+```bash
+python -m hscredit dashboard sqlite:///hscredit.db --port 8080
+```
+
+| 参数 | 作用 |
+| --- | --- |
+| `storage` | 必填，Optuna 存储地址，例如 `sqlite:///hscredit.db` |
+| `--host` | 默认 `127.0.0.1`，监听地址 |
+| `--port` | 默认 `8080`，监听端口 |
+| `--artifact-dir` | 可选，已有 Optuna 产物存储目录 |
+| `--quiet` | 隐藏 HTTP 请求日志 |
+
+主题从 `hscredit.utils.colors` 读取公共颜色：主控件和普通 Trial 使用主题蓝，最佳 Trial 使用珊瑚红；具名的 AUC、KS、IV、PSI、Lift 使用各自指标色，其他系列沿用扩展色板。连续色阶保留原始数值。页面和图表使用包内置的 `Alimama FangYuanTi VF` 字体，由同一服务提供，无需浏览器访问外部字体网站。
+
+主题在 Plotly 绘制入口应用，页面切换、实时刷新和原生 PNG 下载使用相同的配色与字体。保留原生的 Study、Trial、筛选、图表交互、产物和明暗模式功能。修改公共配色后需重启看板服务。
+
+用户属性区域会将完整的 JSON 对象和数组展开为带缩进的中文文本，长字段自动换行。格式化仅影响显示，保留原始数字精度、字符串转义语义及数据库中的调参契约；刷新和切换页面后自动重新应用。
+
+原生 `optuna-dashboard` 命令仍使用上游主题。官方 CLI/TOML 没有品牌字体或任意色板配置；设置页仅提供预置 Plotly 色阶。参考 [Optuna Dashboard 配置文档](https://optuna-dashboard.readthedocs.io/en/latest/configuration.html)和[公开 WSGI 接口](https://optuna-dashboard.readthedocs.io/en/latest/api.html)。
+
+hscredit 使用公开 WSGI 接口创建应用，对本次服务返回的页面与前端资源安装主题适配器。已在 `optuna-dashboard 0.20.0` 上验证；由于图表适配涉及上游打包结构，启动时会检查兼容性，无法识别时明确报错。第三方安装目录不需要打补丁。
+
+已有 WSGI 部署或自定义产物存储、LLM Provider 时，可在应用配置中调用 `hscredit.dashboard.create_dashboard_app(storage, artifact_store=..., llm_provider=...)`。CLI 使用本地线程化 WSGI 服务，按 `Ctrl+C` 结束。
+
+### 更新 README 看板截图
+
+在仓库根目录使用 Playwright CLI 打开 Study 概览后，调用统一截图脚本：
+
+```bash
+npx --yes --package @playwright/cli playwright-cli -s=readme-dashboard open http://127.0.0.1:8080/dashboard/studies/1
+npx --yes --package @playwright/cli playwright-cli -s=readme-dashboard run-code --filename scripts/readme_examples/capture_dashboard.js
+npx --yes --package @playwright/cli playwright-cli -s=readme-dashboard close
+```
+
+将 URL 中的 Study ID 改为实际值。脚本等待图表和字体加载后回到页面顶部，检查导航栏与首个图表标题的位置，再更新 `docs/assets/readme/showcase/tuning-dashboard.png`。元素截图会自动滚动页面，路由切换也可能保留滚动位置，因此不应在检查页尾元素后直接截取全页长图。
+
 ## 先选对入口
 
 | 需求 | 推荐入口 | 返回内容 |

@@ -18,6 +18,7 @@ from hscredit.core.binning import (
     TargetBadRateBinning,
 )
 from hscredit.core.metrics import compute_bin_stats
+from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
 from hscredit.core.metrics._binning import iv_for_splits, ks_for_splits
 from hscredit.exceptions import ParallelExecutionError
 
@@ -206,23 +207,35 @@ def test_prebin_cp_solution_matches_independent_exhaustive_partitions():
     actual = compute_bin_stats(model.transform(X)["变量"], y, round_digits=False)["分档IV值"].sum()
     assert actual == pytest.approx(best, abs=1e-8)
     assert np.isin(model.splits_["变量"], candidates).all()
-    assert model.solver_info_["变量"]["后端"] == "cp_sat"
+    assert model.solver_info_["变量"]["后端"] == ("cp_sat" if ORTOOLS_AVAILABLE else "dynamic_programming")
 
 
-def test_cp_sat_really_calls_solver_and_honors_worker_budget(monkeypatch):
-    from ortools.sat.python import cp_model
-
+def test_partition_solver_calls_available_backend_and_honors_worker_budget(monkeypatch):
     calls = []
-    original = cp_model.CpSolver.Solve
 
-    def tracked(self, *args, **kwargs):
-        calls.append(self.parameters.num_search_workers)
-        return original(self, *args, **kwargs)
+    if ORTOOLS_AVAILABLE:
+        from ortools.sat.python import cp_model
 
-    monkeypatch.setattr(cp_model.CpSolver, "Solve", tracked)
+        original = cp_model.CpSolver.Solve
+
+        def tracked(self, *args, **kwargs):
+            calls.append(self.parameters.num_search_workers)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(cp_model.CpSolver, "Solve", tracked)
+    else:
+        from hscredit.core.binning import _candidate_search
+
+        original = _candidate_search.search_candidate_splits
+
+        def tracked(*args, **kwargs):
+            calls.append(kwargs["objective"])
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(_candidate_search, "search_candidate_splits", tracked)
     X, y = population([2, 4, 8, 16, 18, 19])
     model = CPSATBinning(monotonic=False, num_workers=1, n_jobs=1).fit(X, y)
-    assert calls == [1]
+    assert calls == ([1] if ORTOOLS_AVAILABLE else ["iv"])
     assert model.solver_info_["变量"]["求解状态"] in {"OPTIMAL", "FEASIBLE"}
     actual_iv = compute_bin_stats(model.transform(X)["变量"], y, round_digits=False)["分档IV值"].sum()
     assert model.solver_info_["变量"]["目标值"] == pytest.approx(actual_iv)
@@ -321,18 +334,27 @@ def test_force_numeric_preserves_existing_non_numeric_coercion_contract():
     assert model.transform(X).shape == X.shape
 
 
-def test_cp_timeout_returns_only_verified_feasible_seed(monkeypatch):
-    from ortools.sat.python import cp_model
-
+def test_partition_timeout_returns_only_verified_feasible_solution(monkeypatch):
     X, y = population([2, 4, 8, 16, 18, 19])
-    monkeypatch.setattr(cp_model.CpSolver, "Solve", lambda *args: cp_model.UNKNOWN)
+    if ORTOOLS_AVAILABLE:
+        from ortools.sat.python import cp_model
+
+        monkeypatch.setattr(cp_model.CpSolver, "Solve", lambda *args: cp_model.UNKNOWN)
+    else:
+        from hscredit.core.binning import _candidate_search
+
+        clock = iter([0.0, 0.0, 100.0])
+        monkeypatch.setattr(_candidate_search, "perf_counter", lambda: next(clock))
     with pytest.warns(RuntimeWarning, match="可行解"):
         model = CPSATBinning(monotonic="ascending", min_bin_size=0.1, n_jobs=1).fit(X, y)
     groups = raw_groups(model, X, y)
     assert groups["size"].min() >= 12
     assert np.all(np.diff(groups["mean"]) >= 0)
     assert model.solver_info_["变量"]["求解状态"] == "FEASIBLE"
-    assert model.solver_info_["变量"]["求解器返回状态"] == "UNKNOWN"
+    if ORTOOLS_AVAILABLE:
+        assert model.solver_info_["变量"]["求解器返回状态"] == "UNKNOWN"
+    else:
+        assert model.solver_info_["变量"]["后端"] == "enumeration"
 
 
 @pytest.mark.parametrize("minimum", [None, 1])

@@ -37,22 +37,10 @@ def _contains_object_ref(value):
 
 
 def _extras(request):
+    # Parquet 由基础依赖 pyarrow 提供，不再请求已移除的 parquet extra。
     extras = {"skills"}
     if request.get("operation") == "model_tune":
         extras.add("tune")
-
-    def inspect(value):
-        if isinstance(value, dict):
-            path = value.get("path")
-            if value.get("kind") == "file" and isinstance(path, str) and path.lower().endswith(".parquet"):
-                extras.add("parquet")
-            for item in value.values():
-                inspect(item)
-        elif isinstance(value, list):
-            for item in value:
-                inspect(item)
-
-    inspect(request.get("inputs", {}))
     return tuple(sorted(extras))
 
 

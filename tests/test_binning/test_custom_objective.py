@@ -5,14 +5,9 @@ import numpy as np
 import pandas as pd
 import warnings
 
-try:
-    from hscredit.core.binning import ORBinning, CustomObjectives
-    from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
-except ImportError:
-    ORTOOLS_AVAILABLE = False
+from hscredit.core.binning import ORBinning, CustomObjectives
 
 
-@unittest.skipUnless(ORTOOLS_AVAILABLE, "OR-Tools not installed")
 class TestCustomObjective(unittest.TestCase):
     """测试自定义目标函数."""
 

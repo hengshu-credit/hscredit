@@ -12,8 +12,8 @@ from __future__ import annotations
 4. 目标函数：最大化 IV、KS 或自定义指标
 5. 求解：使用 CP-SAT 求解器找到全局最优解
 
-依赖：
-    pip install ortools
+原生求解器可通过 pip install ortools 安装。
+未安装时，约束求解使用动态规划或有时限的候选枚举。
 """
 
 from typing import Callable, Union, List, Dict, Optional, Any, Tuple
@@ -180,7 +180,7 @@ class ORBinning(BaseBinning):
         - 超过此时间将返回当前找到的最优解
 
     :type time_limit: int
-    :param use_cp_sat: 是否使用真正的 CP-SAT 求解器，默认为False
+    :param use_cp_sat: 是否优先使用 CP-SAT 求解器，默认为False；缺少 OR-Tools 时使用候选搜索后端
 
         - False: 使用启发式+DP组合算法，速度快，结果接近最优
 
@@ -297,6 +297,8 @@ class ORBinning(BaseBinning):
     https://arxiv.org/abs/2001.08025 ；求解器为 Google OR-Tools
     https://developers.google.com/optimization 。与  :class:`CPSATBinning`  相比，
     本类额外支持自定义目标函数与启发式+DP 快速模式（ ``use_cp_sat=False`` ）。
+    启用 ``use_cp_sat=True`` 且未安装 OR-Tools 时，使用相同候选空间上的动态规划
+    或有时限枚举，实际后端和求解状态记录在 ``solver_info_`` 中。
     """
 
     def __init__(
@@ -330,9 +332,6 @@ class ORBinning(BaseBinning):
         constraint_policy: str = "raise",
         **kwargs,
     ):
-        if not ORTOOLS_AVAILABLE:
-            raise ImportError("OR-Tools 未安装，无法使用 ORBinning。" "请使用 pip install ortools 安装。")
-
         super().__init__(
             target=target,
             max_n_bins=max_n_bins,

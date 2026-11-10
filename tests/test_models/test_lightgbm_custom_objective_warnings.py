@@ -65,6 +65,32 @@ def test_custom_loss_fit_predict_and_cross_validation_do_not_warn(loans, use_ada
     assert np.isfinite(scores).all()
 
 
+def test_validation_api_preserves_multiple_datasets_names_and_weights(loans):
+    """新旧验证集参数入口都应保留各组名称、权重及损失数值。"""
+    X, X_valid, y, y_valid = loans
+    loss = FocalLoss(alpha=0.7)
+    model = _model(loss)
+    train_weights = np.linspace(1.0, 2.0, len(y))
+    valid_weights = np.linspace(4.0, 8.0, len(y_valid))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model.fit(
+            X,
+            y,
+            sample_weight=train_weights,
+            eval_set=[(X, y), (X_valid, y_valid)],
+            eval_names=["训练", "验证"],
+            eval_sample_weight=[train_weights, valid_weights],
+            eval_metric=loss.metric(),
+        )
+    assert not caught, [str(item.message) for item in caught]
+    for name, features, target, weight in [("训练", X, y, train_weights), ("验证", X_valid, y_valid, valid_weights)]:
+        probability = model.predict_proba(features)[:, 1]
+        expected = loss.evaluate(target, probability, sample_weight=weight)
+        actual = model._model.evals_result_[name][loss.metric().name][-1]
+        assert actual == pytest.approx(expected, rel=1e-6)
+
+
 @pytest.mark.parametrize("objective", ["binary", FocalLoss(alpha=0.7)])
 @pytest.mark.parametrize("flag", ["raw_score", "pred_leaf", "pred_contrib"])
 def test_original_prediction_flags_and_iteration_parameters_are_preserved(loans, objective, flag):

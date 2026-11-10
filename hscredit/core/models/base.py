@@ -685,7 +685,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         target: Optional[TargetInput] = None,
         overdue: Optional[Union[str, List[str]]] = None,
         dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
-        excel_path: Optional[str] = None,
+        save=None,
         verbose: bool = True,
         max_n_bins: int = 10,
         amount: Optional[str] = None,
@@ -738,8 +738,8 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
         :type dpds: Optional[Union[int, float, List[Union[int, float]]]]
-        :param excel_path: 默认值为 ``None`` 。Excel 报告输出路径
-        :type excel_path: Optional[str]
+        :param save: 默认值为 ``None`` 。Excel 文件路径或 hscredit ExcelWriter；传入 writer 时仅写入，不保存或关闭
+        :type save: str or PathLike or ExcelWriter or None
         :param verbose: 默认值为 ``True`` 。是否打印控制台报告
         :type verbose: bool
         :param max_n_bins: 默认值为 ``10`` 。分箱数
@@ -792,7 +792,7 @@ class BaseRiskModel(_ProbabilityScoreCardMixin, InferenceExportMixin, ArtifactSe
             dpds=dpds,
             overdue_operator=overdue_operator,
             del_grey=del_grey,
-            excel_path=excel_path,
+            save=save,
             verbose=verbose,
             max_n_bins=max_n_bins,
             amount=amount,

@@ -112,6 +112,22 @@ def test_force_plot_remains_native_artists_without_full_canvas_raster(sample_sha
     plt.close(fig)
 
 
+@pytest.mark.parametrize("background_value,base_text,output_text", [(6.12345, "0.6123", "0.8123"), (-6.12345, "-0.6123", "-0.4123")])
+def test_force_and_waterfall_annotations_keep_original_value_precision(sample_shap_inputs, background_value, base_text, output_text):
+    """不能将上游显示为 0.81/0.612 的文本补零后冒充四位小数。"""
+    model, sample, background = sample_shap_inputs
+    background.iloc[0, 0] = background_value
+    fig = plot_model_sample_shap(model, sample, background, background_size=None, value_precision=4, show=False)
+    try:
+        force = next(ax for ax in fig.axes if ax.get_label() == "SHAP力图")
+        assert output_text in {text.get_text() for text in force.texts}
+        tick_labels = [tick.get_text() for ax in fig.axes if ax.get_label() not in {"SHAP力图", "SHAP瀑布图"} for tick in ax.get_xticklabels()]
+        assert any(base_text in text for text in tick_labels)
+        assert any(output_text in text for text in tick_labels)
+    finally:
+        plt.close(fig)
+
+
 def test_force_and_waterfall_bars_have_similar_physical_height(sample_shap_inputs):
     """上方力图条带不能明显细于或粗于下方单条瀑布柱。"""
     model, sample, background = sample_shap_inputs

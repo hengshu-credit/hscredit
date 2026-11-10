@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from openpyxl.worksheet.worksheet import Worksheet
 import sklearn
 from packaging.version import Version
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
@@ -38,6 +39,7 @@ from sklearn.tree import DecisionTreeClassifier, export_graphviz
 from ...core.binning.spec import field_expression, value_expression
 from ...utils.overdue import validate_overdue_operator
 from ...core.rules.rule import Rule
+from ...core.rules.expr_optimizer import optimize_expr
 from ...exceptions import InputValidationError
 from ...utils.pandas_extensions import style_rule_table
 from ...utils.parallel import (
@@ -306,7 +308,7 @@ def _binary_rule_expression(rule_list: List) -> str:
             if include_missing:
                 condition = f"({condition} | ({name}.isna()))"
         parts.append(condition)
-    return " & ".join(parts) or "True"
+    return optimize_expr(" & ".join(parts) or "True")
 
 
 def _rule_generator(clf, feature_name_list: List[str], missing: Optional[float] = None) -> pd.DataFrame:
@@ -1375,9 +1377,8 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         *,
         overdue_operator: str = ">",
         save=None,
-        sheet_name="组合策略汇总",
+        sheet="组合策略汇总",
         amount=None,
-        excel_writer=None,
         date=None,
         freq="M",
         project_desc=None,
@@ -1407,11 +1408,10 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         :param freq: 默认 'M'；日期统计频率。
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
         :param data_source: 默认 None；数据来源说明。
-        :param save: 默认 None；Excel 路径，在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
-        :param sheet_name: 默认“组合策略汇总”；与策略报告一致的工作表名，最长 24 字符。
+        :param save: 默认 None；文件路径或 hscredit ExcelWriter；传入 writer 时仅写入，不保存或关闭。在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
+        :param sheet: 默认“组合策略汇总”；工作表名称或 openpyxl Worksheet，名称最长 24 字符。
         :param amount: 默认 None；金额列名。Excel 报告要求训练数据及各评估数据集均包含该列；
             同时展示订单/金额口径，返回值为金额口径规则表。仅返回规则表时也支持 Rule.report 的一维金额数据。
-        :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
         :param datasets: 默认 None 使用训练数据； 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
 
@@ -1466,7 +1466,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
         kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
         datasets = self._data if datasets is None else datasets
-        if save is not None or excel_writer is not None:
+        if save is not None or isinstance(sheet, Worksheet):
             from ._tree_report import tree_report_excel
 
             kwargs.pop("overdue_operator", None)
@@ -1481,8 +1481,7 @@ class DecisionTreeAnalyzer(ParallelizableMixin):
                 feature_map=feature_map,
                 overdue_operator=overdue_operator,
                 save=save,
-                sheet_name=sheet_name,
-                excel_writer=excel_writer,
+                sheet=sheet,
                 date=date,
                 freq=freq,
                 project_desc=project_desc,
@@ -2372,16 +2371,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         missing_go_to_left_new = [0, 0, 0]
 
         # 插入到指定节点
-        (
-            self._tree_info.children_left,
-            self._tree_info.children_right,
-            self._tree_info.feature,
-            self._tree_info.threshold,
-            self._tree_info.n_node_samples,
-            self._tree_info.value,
-            self._tree_info.impurity,
-            self._tree_info.missing_go_to_left,
-        ) = _add_nodes_to_tree(
+        (self._tree_info.children_left, self._tree_info.children_right, self._tree_info.feature, self._tree_info.threshold, self._tree_info.n_node_samples, self._tree_info.value, self._tree_info.impurity, self._tree_info.missing_go_to_left,) = _add_nodes_to_tree(
             node=node,
             split_list_left=self._tree_info.children_left,
             split_list_right=self._tree_info.children_right,
@@ -2455,16 +2445,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         removed = set(_find_subtree_node_ids(self._tree_info, node)) - {node}
         adjusted_nodes = {old - sum(removed_node < old for removed_node in removed) for old in self._manual_split_nodes | {node} if old not in removed}
 
-        (
-            self._tree_info.children_left,
-            self._tree_info.children_right,
-            self._tree_info.feature,
-            self._tree_info.threshold,
-            self._tree_info.n_node_samples,
-            self._tree_info.value,
-            self._tree_info.impurity,
-            self._tree_info.missing_go_to_left,
-        ) = _delete_nodes(
+        (self._tree_info.children_left, self._tree_info.children_right, self._tree_info.feature, self._tree_info.threshold, self._tree_info.n_node_samples, self._tree_info.value, self._tree_info.impurity, self._tree_info.missing_go_to_left,) = _delete_nodes(
             node=node,
             split_list_left=self._tree_info.children_left,
             split_list_right=self._tree_info.children_right,
@@ -2781,9 +2762,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         *,
         overdue_operator: str = ">",
         save=None,
-        sheet_name="组合策略汇总",
+        sheet="组合策略汇总",
         amount=None,
-        excel_writer=None,
         date=None,
         freq="M",
         project_desc=None,
@@ -2813,11 +2793,10 @@ class ManualTreeExtractor(ParallelizableMixin):
         :param freq: 默认 'M'；日期统计频率。
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
         :param data_source: 默认 None；数据来源说明。
-        :param save: 默认 None；Excel 路径，在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
-        :param sheet_name: 默认“组合策略汇总”；与策略报告一致的工作表名，最长 24 字符。
+        :param save: 默认 None；文件路径或 hscredit ExcelWriter；传入 writer 时仅写入，不保存或关闭。在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
+        :param sheet: 默认“组合策略汇总”；工作表名称或 openpyxl Worksheet，名称最长 24 字符。
         :param amount: 默认 None；金额列名。Excel 报告要求训练数据及各评估数据集均包含该列；
             同时展示订单/金额口径，返回值为金额口径规则表。仅返回规则表时也支持 Rule.report 的一维金额数据。
-        :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
         :param datasets: 默认 None 使用训练数据； 待评估数据集，支持单个 DataFrame、DataFrame 列表、
             或 ``{名称: DataFrame}`` 字典；返回结果类型与输入保持一致
 
@@ -2872,7 +2851,7 @@ class ManualTreeExtractor(ParallelizableMixin):
         kwargs["overdue_operator"] = overdue_operator
         self._check_fitted()
         datasets = self._data if datasets is None else datasets
-        if save is not None or excel_writer is not None:
+        if save is not None or isinstance(sheet, Worksheet):
             from ._tree_report import tree_report_excel
 
             kwargs.pop("overdue_operator", None)
@@ -2887,8 +2866,7 @@ class ManualTreeExtractor(ParallelizableMixin):
                 feature_map=feature_map,
                 overdue_operator=overdue_operator,
                 save=save,
-                sheet_name=sheet_name,
-                excel_writer=excel_writer,
+                sheet=sheet,
                 date=date,
                 freq=freq,
                 project_desc=project_desc,

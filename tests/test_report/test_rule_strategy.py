@@ -269,6 +269,80 @@ def test_rule_strategy_supports_single_target_report():
     assert result.loc[result["命中情况"] == "合计", "样本总数"].iloc[0] == 4
 
 
+@pytest.mark.parametrize("margins", [False, True])
+def test_swap_out_report_bins_all_rule_fields_and_each_target_total(tmp_path, margins):
+    """规则字段不能遗漏，分箱合计必须使用每个标签剔灰后的有效样本。"""
+    data = pd.DataFrame(
+        {
+            "查询次数": range(12),
+            "月应还额": list(range(12))[::-1],
+            "MOB1": [0, 2, 5, 8, None, 0, 0, 2, 5, 8, 0, 0],
+            "MOB6": [0, 3, 7, 10, 0, None, 0, 3, 7, 10, 0, 0],
+        }
+    )
+    output = tmp_path / "多标签策略.xlsx"
+    swap_out_report(
+        data,
+        rules=[Rule("查询次数 < 4"), Rule("月应还额 > 9")],
+        overdue=["MOB1", "MOB6"],
+        dpds=[0, 3],
+        del_grey=True,
+        margins=margins,
+        bin_params={"max_n_bins": 3},
+        n_jobs=1,
+        save=str(output),
+    )
+    workbook = load_workbook(output, read_only=True)
+    try:
+        rows = list(workbook["变量分箱"].values)
+        table = pd.DataFrame(rows[4:], columns=rows[3])
+        table = table.loc[:, table.columns.notna()]
+        table["指标名称"] = table["指标名称"].ffill()
+        assert set(table["指标名称"]) == {"查询次数", "月应还额"}
+        for feature in ["查询次数", "月应还额"]:
+            for overdue in ["MOB1", "MOB6"]:
+                for dpd in [0, 3]:
+                    values = data[overdue]
+                    valid = values.notna() & (values.eq(0) | values.gt(dpd))
+                    part = table.loc[table["指标名称"].eq(feature) & table["逾期标签"].eq(f"{overdue} {dpd}+")]
+                    bins = part.loc[part["分箱标签"].ne("合计")]
+                    total = part.loc[part["分箱标签"].eq("合计")]
+                    assert bins["样本总数"].sum() == valid.sum()
+                    assert bins["坏样本数"].sum() == values[valid].gt(dpd).sum()
+                    assert len(total) == int(margins)
+                    if margins:
+                        assert total.iloc[0]["样本总数"] == valid.sum()
+                        assert total.iloc[0]["坏样本数"] == values[valid].gt(dpd).sum()
+                        assert total.iloc[0]["样本占比"] == 1
+                        assert total.iloc[0]["坏样本率"] == pytest.approx(values[valid].gt(dpd).mean(), abs=5e-5)
+    finally:
+        workbook.close()
+
+
+def test_swap_out_report_left_aligns_binning_labels_without_wrapping_or_resizing():
+    feature = "最近12个月多头查询次数"
+    data = pd.DataFrame({feature: range(20), "坏样本": [0, 0, 0, 1] * 5})
+    writer = swap_out_report(
+        data,
+        rules=Rule(f"{feature} < 5"),
+        target="坏样本",
+        methods=["quantile", "custom"],
+        bin_params={"custom": {"rules": {feature: [1.1234, 3.5678, 10.9876]}}},
+        margins=True,
+        n_jobs=1,
+    )
+    for name in ["策略迭代", "变量分箱"]:
+        sheet = writer.get_sheet_by_name(name)
+        cells = [cell for row in sheet for cell in row if cell.value in [feature, "quantile", "custom"]]
+        assert cells
+        for cell in cells:
+            assert not cell.alignment.wrap_text
+            assert cell.alignment.horizontal == "left"
+            assert sheet.column_dimensions[cell.column_letter].width == 11
+    sheet = writer.get_sheet_by_name("变量分箱")
+    assert sheet.column_dimensions["F"].width == 11
+
+
 def test_swap_out_report_auto_width_preserves_template_column_fill(tmp_path):
     data = pd.DataFrame(
         {

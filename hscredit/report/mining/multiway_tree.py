@@ -8,6 +8,7 @@ from numbers import Integral
 
 import numpy as np
 import pandas as pd
+from openpyxl.worksheet.worksheet import Worksheet
 from scipy.stats import chi2
 from scipy.special import gammaln
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -19,7 +20,7 @@ from ...core.binning._categorical import normalize_user_groups
 from ...core.binning.spec import BinSpec, field_expression, value_expression
 from ...core.metrics import ks
 from ...core.models._contracts import extract_target
-from ...core.rules import Rule
+from ...core.rules import Rule, optimize_expr
 from ...exceptions import InputValidationError, NotFittedError
 from ...utils.parallel import ParallelizableMixin
 from ...utils.serialization import ArtifactSerializableMixin
@@ -1026,7 +1027,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
     def _format_rule(path):
         expression = " & ".join(f"({spec.to_expression()})" for spec in path) or "True"
         description = " 且 ".join(f"{spec.feature}: {spec.label(8)}" + (" 或缺失" if spec.include_missing else "") + (" 或未知类别" if spec.unknown else "") for spec in path) or "全部样本"
-        return Rule(expression, description=description)
+        return Rule(optimize_expr(expression), description=description)
 
     def get_rules(self, leaf_only=True):
         """将根到节点的路径导出为可执行的 ``Rule`` 对象。
@@ -1098,9 +1099,8 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         *,
         overdue_operator=">",
         save=None,
-        sheet_name="组合策略汇总",
+        sheet="组合策略汇总",
         amount=None,
-        excel_writer=None,
         date=None,
         freq="M",
         project_desc=None,
@@ -1127,11 +1127,10 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         :param freq: 默认 'M'；日期统计频率。
         :param project_desc: 默认 None；项目目标和取样逻辑说明。
         :param data_source: 默认 None；数据来源说明。
-        :param save: 默认 None；Excel 路径，在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
-        :param sheet_name: 默认“组合策略汇总”；与策略报告一致的工作表名，最长 24 字符。
+        :param save: 默认 None；文件路径或 hscredit ExcelWriter；传入 writer 时仅写入，不保存或关闭。在单页输出基本信息、预测性能、挖掘摘要及各数据集的树图与规则表；传入 amount 时同时输出订单和金额口径。
+        :param sheet: 默认“组合策略汇总”；工作表名称或 openpyxl Worksheet，名称最长 24 字符。
         :param amount: 默认 None；金额列名。Excel 报告要求训练数据及各评估数据集均包含该列；
             同时展示订单/金额口径，返回值为金额口径规则表。仅返回规则表时也支持 Rule.report 的一维金额数据。
-        :param excel_writer: 默认 None；已有 hscredit ExcelWriter，用于多口径报告合并写入。
         :param feature_map: 默认 None 沿用构造参数；字段含义映射，与手工二叉树一致。
         :param datasets: 默认 None 使用训练数据； 待评估 DataFrame、DataFrame 列表/元组，或名称到 DataFrame 的字典。
             需包含路径规则使用的特征，以及目标、逾期、金额等本次报告所需字段。
@@ -1182,7 +1181,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         kwargs["amount"] = amount
         self._check_fitted()
         datasets = self._data if datasets is None else datasets
-        if save is not None or excel_writer is not None:
+        if save is not None or isinstance(sheet, Worksheet):
             from ._tree_report import tree_report_excel
 
             kwargs.pop("overdue_operator", None)
@@ -1197,8 +1196,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
                 feature_map=feature_map,
                 overdue_operator=overdue_operator,
                 save=save,
-                sheet_name=sheet_name,
-                excel_writer=excel_writer,
+                sheet=sheet,
                 date=date,
                 freq=freq,
                 project_desc=project_desc,
@@ -1314,7 +1312,7 @@ class MultiwayTreeExtractor(ClassifierMixin, ParallelizableMixin, ArtifactSerial
         :param del_grey: 默认 False；是否逐标签剔除灰样本。
         :param leaf_only: 默认 False 包含全部节点；True 仅返回叶子。
         :param overdue_operator: 默认 '>'；逾期比较符。
-        :param kwargs: 传给 report 的参数，如 amount、round_digits、save、sheet_name 和 excel_writer。
+        :param kwargs: 传给 report 的参数，如 amount、round_digits、save 和 sheet。
         :return: 与 report 相同的中文效果表或表格容器，指标来自 Rule.report。
 
         :param handle_missing_target: 缺失标签策略，默认 drop 剔除；positive 归为正样本，negative 归为负样本，raise 报错。与 del_grey 独立。

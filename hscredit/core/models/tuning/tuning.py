@@ -356,7 +356,7 @@ class ModelTuner(ArtifactSerializableMixin):
     :param sampler_kwargs: 默认值为 ``None`` 。透传给采样器构造函数的额外参数，如 {'n_startup_trials': 10}
     :type sampler_kwargs: Optional[Dict[str, Any]]
     :param storage: 默认值为 ``None`` 。optuna 存储 URL，如 ``'sqlite:///hscredit_tuning.db'``
-        指定后可配合 ``optuna-dashboard sqlite:///hscredit_tuning.db`` 实时查看
+        指定后可配合 ``hscredit dashboard sqlite:///hscredit_tuning.db`` 实时查看
         调优进度；不指定则使用内存存储（进程结束即丢失）。
 
     :type storage: Optional[str]
@@ -602,7 +602,7 @@ class ModelTuner(ArtifactSerializableMixin):
 
         :param sampler_kwargs: 透传给采样器构造函数的额外参数，如 {'n_startup_trials': 10}
         :param storage: optuna 存储 URL，如 ``'sqlite:///hscredit_tuning.db'`` 。
-            指定后可配合 ``optuna-dashboard sqlite:///hscredit_tuning.db`` 实时查看
+            指定后可配合 ``hscredit dashboard sqlite:///hscredit_tuning.db`` 实时查看
             调优进度；不指定则使用内存存储（进程结束即丢失）。
 
         :param study_name: study 名称，配合 storage 持久化时用于标识/复用同一 study。
@@ -798,6 +798,26 @@ class ModelTuner(ArtifactSerializableMixin):
             raise ValueError("loss 与 fixed_params 中的 objective/loss_function 不能同时设置")
         self._explicit_fixed_params["objective"] = self.loss
 
+    @staticmethod
+    def _estimator_kind(estimator):
+        """兼容新版 sklearn 移除 _estimator_type 后的分类/回归 mixin。"""
+        from sklearn.base import ClassifierMixin, RegressorMixin, is_classifier, is_regressor
+
+        kind = getattr(estimator, "_estimator_type", None)
+        if kind is not None:
+            return kind
+        cls = estimator if inspect.isclass(estimator) else type(estimator)
+        if issubclass(cls, RegressorMixin):
+            return "regressor"
+        if issubclass(cls, ClassifierMixin):
+            return "classifier"
+        if not inspect.isclass(estimator) and callable(getattr(estimator, "__sklearn_tags__", None)):
+            if is_regressor(estimator):
+                return "regressor"
+            if is_classifier(estimator):
+                return "classifier"
+        return None
+
     def _infer_task(self):
         """按固定模型配置识别任务，不依据标签取值猜测回归/分类。"""
         params = {**self.model_params, **self._explicit_fixed_params}
@@ -809,10 +829,13 @@ class ModelTuner(ArtifactSerializableMixin):
                 prefix += name + "__"
                 steps = getattr(estimator, "steps", None)
             objective = params.get(prefix + "objective", getattr(estimator, "objective", None))
-            kind = getattr(estimator, "_estimator_type", None)
+            kind = self._estimator_kind(estimator)
         else:
             objective = params.get("objective")
-            kind = getattr(self.model_class, "_estimator_type", None)
+            kind = self._estimator_kind(self.model_class)
+            if kind is None and callable(getattr(self.model_class, "__sklearn_tags__", None)):
+                direct = {name: value for name, value in params.items() if "__" not in name}
+                kind = self._estimator_kind(self.model_class(**copy.deepcopy(direct)))
         return "regression" if objective == "regression" or kind == "regressor" else "binary"
 
     @staticmethod
@@ -1483,7 +1506,7 @@ class ModelTuner(ArtifactSerializableMixin):
         if nested:
             model.set_params(**nested)
         terminal = self._final_estimator(model)
-        kind = getattr(terminal, "_estimator_type", None)
+        kind = self._estimator_kind(terminal)
         if kind in ("classifier", "regressor") and (kind == "regressor") != (self._task == "regression"):
             raise ValueError("一次调参只能处理同一种任务，不能在搜索空间中切换二分类和回归")
         from ..scorecard.model_scorecard import ProbabilityScoreCard

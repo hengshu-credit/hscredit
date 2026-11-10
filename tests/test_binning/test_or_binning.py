@@ -6,14 +6,7 @@
 import unittest
 import numpy as np
 import pandas as pd
-import warnings
-
-try:
-    from hscredit.core.binning import ORBinning
-    from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
-except ImportError:
-    ORTOOLS_AVAILABLE = False
-    warnings.warn("OR-Tools 未安装，跳过 ORBinning 测试")
+from hscredit.core.binning import ORBinning
 
 
 class TestDataGenerator:
@@ -40,7 +33,6 @@ class TestDataGenerator:
         return X, y
 
 
-@unittest.skipUnless(ORTOOLS_AVAILABLE, "OR-Tools 未安装")
 class TestORBinning(unittest.TestCase):
     """测试 OR-Tools 运筹规划分箱."""
 
@@ -106,7 +98,6 @@ class TestORBinning(unittest.TestCase):
             ORBinning(objective="invalid")
 
 
-@unittest.skipUnless(ORTOOLS_AVAILABLE, "OR-Tools 未安装")
 class TestORBinningComparison(unittest.TestCase):
     """测试 ORBinning 与其他分箱方法的对比."""
 

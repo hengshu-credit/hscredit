@@ -1054,7 +1054,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
         y_test=None,
         overdue=None,
         dpds=None,
-        excel_path=None,
+        save=None,
         verbose=True,
         *,
         target: Optional[TargetInput] = None,
@@ -1081,7 +1081,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
             与 ``target`` 互斥，标签方向由 ``overdue_operator`` 控制。
         :param dpds: 默认值为 ``None`` 。逾期阈值标量或非空序列，支持整数或小数；
             必须与 ``overdue`` 同时传入。按 ``overdue × dpds`` 组合生成标签。
-        :param excel_path: 默认值为 ``None`` 。报告导出的 Excel 路径，提供则落盘，可选
+        :param save: 默认值为 ``None`` 。Excel 文件路径或 hscredit ExcelWriter；传入 writer 时仅写入，不保存或关闭
         :param verbose: 是否打印进度，默认 ``True``
         :param kwargs: 透传给报告生成器的其他参数
         :param target: 默认值为 ``None`` 。支持列名、一维 Series/ndarray/list、callable，
@@ -1130,7 +1130,7 @@ class LogisticRegression(_ProbabilityScoreCardMixin, InferenceExportMixin, Artif
             dpds=dpds,
             overdue_operator=overdue_operator,
             del_grey=del_grey,
-            excel_path=excel_path,
+            save=save,
             verbose=verbose,
             metrics=metrics,
             sample_weight=sample_weight,

@@ -125,14 +125,7 @@ def test_rejects_nested_or_reordered_model_menu(tmp_path):
     """模型菜单必须按顺序直接生成九个带模块路径的 API 入口。"""
     _write(
         tmp_path / "api" / "modeling.html",
-        '<li class="toctree-l3 current"><a href="#">模型 hscredit.core.models</a><ul>'
-        '<li class="toctree-l4"><a href="models.html">模型 hscredit.core.models</a><ul>'
-        '<li class="toctree-l4"><a href="models.html#classical">经典模型</a></li>'
-        '<li class="toctree-l4"><a href="models.html#rules">规则器</a></li>'
-        "</ul></li>"
-        '<li class="toctree-l4"><a href="boosting.html">提升模型 hscredit.core.models.boosting</a></li>'
-        '<li class="toctree-l4"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>'
-        "</ul></li>",
+        '<li class="toctree-l3 current"><a href="#">模型 hscredit.core.models</a><ul>' '<li class="toctree-l4"><a href="models.html">模型 hscredit.core.models</a><ul>' '<li class="toctree-l4"><a href="models.html#classical">经典模型</a></li>' '<li class="toctree-l4"><a href="models.html#rules">规则器</a></li>' "</ul></li>" '<li class="toctree-l4"><a href="boosting.html">提升模型 hscredit.core.models.boosting</a></li>' '<li class="toctree-l4"><a href="tuning.html">参数搜索 hscredit.core.models.tuning</a></li>' "</ul></li>",
     )
 
     errors = collect_validation_errors(tmp_path)

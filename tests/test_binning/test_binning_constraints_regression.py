@@ -15,7 +15,6 @@ import pandas as pd
 
 from hscredit.core.binning import OptimalBinning
 from hscredit.core.metrics import quadratic_curve_coefficient
-from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
 from hscredit.report.feature_analyzer import benchmark_binning_methods
 
 
@@ -139,7 +138,6 @@ if TARGET_DATA_PATH is None:
 class TestORBinningConstraintRegression(unittest.TestCase):
     """验证 OR-Tools 方法在可用环境下也遵守单调性约束。"""
 
-    @unittest.skipUnless(ORTOOLS_AVAILABLE, "OR-Tools 未安装")
     def test_or_tools_monotonic_constraint(self):
         rng = np.random.default_rng(7)
         x = pd.Series(rng.normal(size=300), name="x")
@@ -166,7 +164,6 @@ class TestORBinningConstraintRegression(unittest.TestCase):
         self.assertLessEqual(len(valid), 5)
         self.assertTrue(np.all(np.diff(bad_rates) <= 1e-10), msg=bad_rates.tolist())
 
-    @unittest.skipUnless(ORTOOLS_AVAILABLE, "OR-Tools 未安装")
     @unittest.skipUnless(TARGET_DATA_PATH.exists(), "缺少 examples/hscredit_yyp.xlsx")
     def test_or_tools_uses_more_than_three_bins_on_target_field(self):
         df = pd.read_excel(TARGET_DATA_PATH)
@@ -374,9 +371,7 @@ class TestNotebookTargetFieldRegression(unittest.TestCase):
         X = df[["中智小牛分C3"]].copy()
         y = (df["MOB1"] > 3).astype(int)
 
-        methods = ["kernel_density", "chi", "best_lift", "cart", "target_bad_rate", "best_iv"]
-        if ORTOOLS_AVAILABLE:
-            methods.append("or_tools")
+        methods = ["kernel_density", "chi", "best_lift", "cart", "target_bad_rate", "best_iv", "or_tools"]
 
         for method in methods:
             with self.subTest(method=method):

@@ -194,9 +194,11 @@ Excel ``hscredit.excel``
 
 .. rubric:: 指标条件格式
 
-分箱和规则表使用主题蓝紫色标记样本占比、金额占比，使用灰玫瑰色标记坏样本率，使用偏紫的莓红色标记 Lift。
-样本占比、坏样本率和 Lift 均使用实心填充。坏账改善和累积坏账改善以单元格中央为零轴，负值向左绘制淡主题色条，正值向右绘制玫瑰色条，零仅显示轴线。
-同一列仅有正值或仅有负值时，中心仍为零。
+分箱和规则表优先使用 ``color_cols`` 色阶：低值接近白色，高值接近指标色，常量列不整列染色。
+样本占比、金额占比与通过率使用黄绿 ``#BADC58``，规则命中率和坏样本率使用正样本强调色珊瑚红 ``#F76E6C``，
+Lift 使用莓红 ``#D4145A``。合计行不参与样本占比的色阶缩放。
+坏账改善和累积坏账改善保留居中双向数据条，负值向左使用浅蓝 ``#A3ABF5``，正值向右使用珊瑚红。
+零仅显示轴线；同一列仅有正值或仅有负值时，中心仍为零。
 
 .. code-block:: python
 
@@ -204,10 +206,12 @@ Excel ``hscredit.excel``
 
    table.show()
    dataframe2excel(table, "规则效果.xlsx", sheet_name="效果",
-                   condition_cols=["样本占比", "坏样本率", "LIFT值"],
+                   color_cols=["样本占比", "坏样本率", "LIFT值"],
                    centered_bar_cols=["坏账改善"])
 
-两种入口均支持通过 ``condition_color`` 按指标覆盖颜色。双向数据条使用颜色列表的首色、末色作为负值、正值颜色。单个区域可用 ``writer.add_conditional_formatting(ws, "B2", "B20", bar_type="centered")``。
+两种入口均支持通过 ``condition_color`` 按指标覆盖颜色。需要普通数据条时，显式使用 ``condition_cols``。
+``table.show(color_cols=[])`` 可关闭自动高亮。双向数据条使用颜色列表的首色、末色作为负值、正值颜色。
+单个区域可用 ``writer.add_conditional_formatting(ws, "B2", "B20", bar_type="centered")``。
 
 .. automodule:: hscredit.excel
    :members:

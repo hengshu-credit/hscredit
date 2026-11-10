@@ -18,6 +18,7 @@ pip install lightgbm
 """
 
 from importlib import util
+import inspect
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .._lifecycle import record_training
@@ -455,8 +456,6 @@ class LightGBM(BaseRiskModel):
         # 解析自定义损失（BaseLoss 实例 -> sklearn 包装器可用的目标函数）
         params["objective"] = resolve_custom_objective(objective if objective is not original_objective else params.get("objective"))
         if LIGHTGBM_VERSION < Version("4.0") and callable(params["objective"]):
-            import inspect
-
             custom_objective = params["objective"]
             if "sample_weight" in inspect.signature(custom_objective).parameters:
                 # 3.x 将第三个参数解释为 group，并在回调后再乘权重；
@@ -493,7 +492,12 @@ class LightGBM(BaseRiskModel):
             if sw_val is not None:
                 fit_kwargs.setdefault("eval_sample_weight", [sw_val])
         if eval_set:
-            fit_kwargs["eval_set"] = eval_set
+            if "eval_X" in inspect.signature(self._model.fit).parameters:
+                if fit_kwargs.get("eval_X") is not None or fit_kwargs.get("eval_y") is not None:
+                    raise ValueError("eval_set 与 eval_X、eval_y 不能同时传入")
+                fit_kwargs["eval_X"], fit_kwargs["eval_y"] = zip(*eval_set)
+            else:
+                fit_kwargs["eval_set"] = eval_set
         if sample_weight is not None:
             fit_kwargs["sample_weight"] = sample_weight
 

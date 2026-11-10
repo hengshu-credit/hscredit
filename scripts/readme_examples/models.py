@@ -170,7 +170,7 @@ def run_ensemble(X_train, X_test, y_train, y_test):
         y_train=y_train,
         X_test=X_test,
         y_test=y_test,
-        excel_path=str(ASSETS / "ensemble-model-report.xlsx"),
+        save=str(ASSETS / "ensemble-model-report.xlsx"),
         n_jobs=1,
         verbose=False,
     )

@@ -642,14 +642,14 @@ def _table_hex_color(color):
     return "#" + color.lstrip("#").upper()
 
 
-def _apply_table_color_blocks(styler, df, columns, condition_color, theme_color="2639E9", totals=None):
+def _apply_table_color_blocks(styler, df, columns, condition_color, theme_color="2639E9", totals=None, limits=None):
     """按数值生成颜色块；缺失、无穷和复杂类型不着色。"""
     if not columns:
         return styler
     prepare_dependency("matplotlib")
     from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm, to_hex
 
-    from ..excel.writer import _is_bin_share, _metric_color_role, _metric_colors
+    from ..excel.writer import _is_bin_share, _metric_color_role, _metric_scale_colors, _resolve_condition_value
 
     for col in columns:
         if not _is_numeric_table_column(df[col]):
@@ -659,9 +659,14 @@ def _apply_table_color_blocks(styler, df, columns, condition_color, theme_color=
         values = values[np.isfinite(values)]
         if values.empty:
             continue
-        anchors = [_table_hex_color(c) for c in _metric_colors(col, theme_color, condition_color)]
         low, high = float(values.min()), float(values.max())
-        if _metric_color_role(col) == "improvement":
+        custom = _resolve_condition_value(condition_color, col, None)
+        if low == high and not custom and _metric_color_role(col) is not None:
+            continue
+        anchors = [_table_hex_color(c) for c in _metric_scale_colors(col, theme_color, condition_color)]
+        if limits and col in limits:
+            low, high = limits[col]
+        if _metric_color_role(col) in {"improvement", "woe"}:
             bound = max(abs(low), abs(high)) or 1.0
             norm = Normalize(-bound, bound)
         elif len(anchors) == 1:
@@ -896,12 +901,12 @@ class BinTableDisplay:
         :type high_tech_style: bool
         :param kwargs: 其他参数
         :param percent_cols: 百分比列；None 按指标名自动识别，[] 关闭自动百分比，显式名单优先于 percent_format。
-        :param condition_cols: 数据条列；None 按指标自动选色，坏样本率、Lift 和 KS 遵循 ``highlight_*``；[] 关闭自动着色。坏账改善使用居中双向数据条。
+        :param condition_cols: 显式选择数据条列；与 color_cols 均为 None 时自动使用指标色阶，坏账改善使用居中双向数据条。[] 关闭自动高亮；数量类指标需显式指定。
         :param centered_bar_cols: 选择居中双向数据条列，优先于 color_cols。
-        :param color_cols: 颜色块渐变列，默认不启用；与数据条重叠时颜色块优先。
+        :param color_cols: 色阶列；与 condition_cols 均为 None 时按指标自动选择，[] 关闭自动高亮；与数据条重叠时色阶优先。
         :param condition_color: 与 dataframe2excel 同名配置：六位十六进制单色（可带 #）、2/3 色列表，
             或按列配置的字典。完整 tuple 优先，其次从内向外匹配层级名；未匹配沿用默认配色。
-            色阶超过三色取首/中/尾，数据条取末色；单色色块以零为白色基准，普通三色色块以中位数为中值，坏账改善始终以零为中心。
+            默认指标色阶从白色到指标色，常量列不着色；显式色阶超过三色取首/中/尾，显式单色以零为白色基准。坏账改善始终以零为中心。
         :param theme_color: 表头主题色，默认 "2639E9"，同时影响隔行底色和 hover 配色。
         :param fill: 是否启用隔行底色，默认 True；不影响表头、hover 和显式条件格式。
         :param index: None 自动隐藏未命名整数行序号，保留命名、文本、日期和多级索引；True/False 强制显示/隐藏，不修改原始数据。
@@ -981,7 +986,8 @@ class BinTableDisplay:
 
         html = self._styler.to_html()
         with open(filename, "w", encoding="utf-8") as f:
-            f.write(f"""
+            f.write(
+                f"""
             <!DOCTYPE html>
             <html>
             <head>
@@ -997,7 +1003,8 @@ class BinTableDisplay:
                 {html}
             </body>
             </html>
-            """)
+            """
+            )
         logger.info("已导出到: %s", filename)
         return self
 
@@ -1056,12 +1063,12 @@ def _style_bin_table(
     :param percent_format: 是否将百分比相关列显示为百分比格式（默认True）
     :param high_tech_style: 是否使用高科技/AI风格样式
     :param percent_cols: 百分比列；None 按指标名自动识别，[] 关闭自动百分比，显式名单优先于 percent_format。
-    :param condition_cols: 数据条列；None 按指标自动选色，坏样本率、Lift 和 KS 遵循 ``highlight_*``；[] 关闭自动着色。坏账改善使用居中双向数据条。
+    :param condition_cols: 显式选择数据条列；与 color_cols 均为 None 时自动使用指标色阶，坏账改善使用居中双向数据条。[] 关闭自动高亮；数量类指标需显式指定。
     :param centered_bar_cols: 选择居中双向数据条列，优先于 color_cols。
-    :param color_cols: 颜色块渐变列，默认不启用；与数据条重叠时颜色块优先。
+    :param color_cols: 色阶列；与 condition_cols 均为 None 时按指标自动选择，[] 关闭自动高亮；与数据条重叠时色阶优先。
     :param condition_color: 与 dataframe2excel 同名配置：六位十六进制单色（可带 #）、2/3 色列表，
         或按列配置的字典。完整 tuple 优先，其次从内向外匹配层级名；未匹配沿用默认配色。
-        色阶超过三色取首/中/尾，数据条取末色；单色色块以零为白色基准，普通三色色块以中位数为中值，坏账改善始终以零为中心。
+        默认指标色阶从白色到指标色，常量列不着色；显式色阶超过三色取首/中/尾，显式单色以零为白色基准。坏账改善始终以零为中心。
     :param theme_color: 表头主题色，默认 "2639E9"，同时影响隔行底色和 hover 配色。
     :param fill: 是否启用隔行底色，默认 True；不影响表头、hover 和显式条件格式。
     :param index: None 自动隐藏未命名整数行序号；True/False 强制显示/隐藏索引。
@@ -1256,37 +1263,31 @@ def _style_bin_table(
 
     centered_columns = set(_select_table_columns(df_display, centered_bar_cols))
     block_columns = set(_select_table_columns(df_display, color_cols)) - centered_columns
-    selected_bars = _select_table_columns(df_display, condition_cols) if condition_cols is not None else df_display.columns
+    automatic = condition_cols is None and color_cols is None
+    if automatic:
+        auto_roles = {"share", "hit_rate", "good_share", "bad_share", "good_rate", "auc", "psi", "missing"}
+        auto_roles.update(role for role, enabled in [("risk", highlight_bad_rate), ("lift", highlight_lift), ("ks", highlight_ks), ("iv", highlight_iv)] if enabled)
+        for col in df_display.columns:
+            if not _is_numeric_table_column(df_display[col]):
+                continue
+            role = _metric_color_role(col)
+            if role == "improvement":
+                centered_columns.add(col)
+            elif role in auto_roles and col not in centered_columns:
+                block_columns.add(col)
+    selected_bars = _select_table_columns(df_display, condition_cols)
     for col in selected_bars:
         role = _metric_color_role(col)
         if col in block_columns or col in centered_columns or not _is_numeric_table_column(df_display[col]):
             continue
-        if role == "improvement":
+        if role == "improvement" or (role == "woe" and condition_cols is not None):
             centered_columns.add(col)
             continue
-        vmin = vmax = None
-        if condition_cols is None:
-            if role == "share":
-                vmin, vmax = 0, 1
-            else:
-                if role == "risk" and highlight_bad_rate:
-                    floor, ceiling = 0.1, 1
-                elif role == "lift" and highlight_lift:
-                    floor, ceiling = 1.5, 5
-                elif metric_name(col) == "分档KS值" and highlight_ks:
-                    floor, ceiling = 0.1, 1
-                else:
-                    continue
-                values = df_display[col].dropna()
-                values = values[np.isfinite(values)]
-                if values.empty:
-                    continue
-                vmin, vmax = 0, min(max(values.quantile(0.95), floor) * 1.2, ceiling)
         color = _table_hex_color(_metric_colors(col, theme_color, condition_color)[-1])
         if totals is not None and _is_bin_share(col):
             styler = _apply_detail_share_bar(styler, df_display, col, totals, color)
         else:
-            styler = styler.bar(subset=[col], color=color, vmin=vmin, vmax=vmax, axis=0)
+            styler = styler.bar(subset=[col], color=color, axis=0)
     styler = _apply_table_color_blocks(styler, df_display, block_columns, condition_color, theme_color, totals)
     styler = _apply_centered_bars(styler, df_display, centered_columns, condition_color, theme_color)
     styler = _apply_table_layout(styler, theme_color=theme_color, fill=fill, index=index)
@@ -1343,12 +1344,12 @@ def style_bin_table(
     :param high_tech_style: 默认值为 ``False`` 。是否使用高科技/AI风格样式
     :type high_tech_style: bool
     :param percent_cols: 百分比列；None 按指标名自动识别，[] 关闭自动百分比，显式名单优先于 percent_format。
-    :param condition_cols: 数据条列；None 按指标自动选色，坏样本率、Lift 和 KS 遵循 ``highlight_*``；[] 关闭自动着色。坏账改善使用居中双向数据条。
+    :param condition_cols: 显式选择数据条列；与 color_cols 均为 None 时自动使用指标色阶，坏账改善使用居中双向数据条。[] 关闭自动高亮；数量类指标需显式指定。
     :param centered_bar_cols: 选择居中双向数据条列，优先于 color_cols。
-    :param color_cols: 颜色块渐变列，默认不启用；与数据条重叠时颜色块优先。
+    :param color_cols: 色阶列；与 condition_cols 均为 None 时按指标自动选择，[] 关闭自动高亮；与数据条重叠时色阶优先。
     :param condition_color: 与 dataframe2excel 同名配置：六位十六进制单色（可带 #）、2/3 色列表，
         或按列配置的字典。完整 tuple 优先，其次从内向外匹配层级名；未匹配沿用默认配色。
-        色阶超过三色取首/中/尾，数据条取末色；单色色块以零为白色基准，普通三色色块以中位数为中值，坏账改善始终以零为中心。
+        默认指标色阶从白色到指标色，常量列不着色；显式色阶超过三色取首/中/尾，显式单色以零为白色基准。坏账改善始终以零为中心。
     :param theme_color: 表头主题色，默认 "2639E9"，同时影响隔行底色和 hover 配色。
     :param fill: 是否启用隔行底色，默认 True；不影响表头、hover 和显式条件格式。
     :param index: None 自动隐藏未命名整数行序号，保留命名、文本、日期和多级索引；True/False 强制显示/隐藏。
@@ -1364,7 +1365,7 @@ def style_bin_table(
     >>> style_bin_table(table, percent_cols=["坏样本率"], color_cols=["LIFT值"])
     >>> table.show(
     ...     percent_cols=["坏样本率"], condition_cols=["样本占比"], color_cols=["LIFT值"],
-    ...     condition_color={"样本占比": "A3ABF5", "LIFT值": ["FFFFFF", "C58CA9"]},
+    ...     condition_color={"样本占比": "2639E9", "LIFT值": ["FFFFFF", "D4145A"]},
     ... )
     """
     return _style_bin_table(
@@ -1429,7 +1430,7 @@ def style_rule_table(
     prepare_dependency("matplotlib")
     df_d = df.copy()
 
-    from ..excel.writer import _bin_total_mask, _metric_colors
+    from ..excel.writer import _bin_total_mask
 
     # 多标签复用分箱表的数值格式和指标配色。
     if isinstance(df_d.columns, pd.MultiIndex):
@@ -1489,36 +1490,14 @@ def style_rule_table(
                 format_dict[col] = f"{{:.{prec}f}}"
     styler = styler.format(format_dict, na_rep="")
 
-    # 坏样本率和 Lift 使用同一色系的两个强调色。
+    # 规则表默认使用色阶，保留 overall_badrate 对坏样本率展示范围的设置。
+    scale_columns = [col for col in (badrate_col, "LIFT值", "样本占比") if col in df_d.columns]
+    scale_limits = {}
     if badrate_col in df_d.columns:
         bad_vals = df_d[badrate_col].fillna(0)
         vmin, vmax = 0.0, max(bad_vals.max() * 1.2, max(overall_badrate * 1.5, 0.3), 0.01)
-        styler = styler.bar(
-            subset=[badrate_col],
-            color="#" + _metric_colors(badrate_col, "2639E9")[-1],
-            vmin=vmin,
-            vmax=vmax,
-        )
-
-    # --- LIFT值颜色梯度：高=深色，低=浅色 ---
-    if "LIFT值" in df_d.columns:
-        lift_vals = df_d["LIFT值"].fillna(1)
-        vmin_l, vmax_l = max(0, lift_vals.min() * 0.8), lift_vals.max() * 1.2
-        styler = styler.bar(
-            subset=["LIFT值"],
-            color="#" + _metric_colors("LIFT值", "2639E9")[-1],
-            vmin=vmin_l,
-            vmax=vmax_l,
-        )
-
-    # --- 样本占比进度条 ---
-    if "样本占比" in df_d.columns:
-        color = "#" + _metric_colors("样本占比", "2639E9")[-1]
-        totals = _bin_total_mask(df_d)
-        if totals is not None:
-            styler = _apply_detail_share_bar(styler, df_d, "样本占比", totals, color)
-        else:
-            styler = styler.bar(subset=["样本占比"], color=color, vmin=0, vmax=1, align="left")
+        scale_limits[badrate_col] = (vmin, vmax)
+    styler = _apply_table_color_blocks(styler, df_d, scale_columns, None, "2639E9", _bin_total_mask(df_d), limits=scale_limits)
 
     styler = _apply_centered_bars(styler, df_d, [c for c in ("坏账改善", "累积坏账改善", "风险改善") if c in df_d], None, "2639E9")
 
@@ -1527,9 +1506,9 @@ def style_rule_table(
 
         def _leaf_color(val):
             if val == "是":
-                return "background-color: #e8f5e9; color: #2e7d32; font-weight: bold"
+                return "background-color: #A3ABF5; color: #23213D; font-weight: bold"
             elif val == "否":
-                return "background-color: #fff8e1; color: #f57f17; font-weight: bold"
+                return "background-color: #FF8BCE; color: #23213D; font-weight: bold"
             return ""
 
         styler = map_styler(styler, _leaf_color, subset=["是否叶子"])

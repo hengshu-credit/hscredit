@@ -427,12 +427,7 @@ def test_single_and_empty_report_tasks_do_not_create_backend(report_data, monkey
         n_jobs=8,
     )
     build_sample_stats_table([], [], ["target"], n_jobs=8)
-    OverduePredictor(
-        "score",
-        target="target",
-        rules=[560, 620],
-        n_jobs=8,
-    ).fit(
+    OverduePredictor("score", target="target", rules=[560, 620], n_jobs=8,).fit(
         report_data
     ).transform(report_data[["score"]])
 
@@ -528,7 +523,7 @@ def test_auto_feature_analysis_uses_ordered_shared_feature_executor(report_data,
         target="target",
         pictures=[],
         output_dir=str(tmp_path / "images"),
-        excel_writer=writer,
+        save=writer,
         n_jobs=2,
         parallel_backend="threading",
     )
@@ -557,7 +552,7 @@ def test_auto_feature_analysis_compute_failure_has_zero_external_side_effects(re
             target="target",
             pictures=[],
             output_dir=str(image_dir),
-            excel_writer=writer,
+            save=writer,
             n_jobs=2,
             parallel_backend="threading",
         )
@@ -579,9 +574,9 @@ def test_auto_feature_analysis_excel_layout_matches_serial(report_data, tmp_path
         output_dir=str(tmp_path / backend),
         bin_params={"method": "quantile", "max_n_bins": 4},
     )
-    auto_feature_analysis(excel_writer=serial_writer, n_jobs=1, **common)
+    auto_feature_analysis(save=serial_writer, n_jobs=1, **common)
     auto_feature_analysis(
-        excel_writer=parallel_writer,
+        save=parallel_writer,
         n_jobs=2,
         parallel_backend=backend,
         **common,
@@ -620,7 +615,7 @@ def test_auto_feature_analysis_propagates_sample_stats_parallel_config(report_da
         date="date",
         pictures=[],
         output_dir=str(tmp_path / "images"),
-        excel_writer=writer,
+        save=writer,
         n_jobs=2,
         parallel_backend="threading",
         parallel_config=config,
@@ -645,7 +640,7 @@ def test_auto_feature_analysis_n_jobs_one_never_creates_backend(report_data, tmp
         target="target",
         pictures=[],
         output_dir=str(tmp_path / "images"),
-        excel_writer=ExcelWriter(system="windows"),
+        save=ExcelWriter(system="windows"),
         n_jobs=1,
     )
 

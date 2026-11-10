@@ -335,7 +335,7 @@ def validate(args, run_dir):
             train,
             features=[*FEATURES, CATEGORY],
             target=TARGET,
-            excel_writer=str(run_dir / "strict_feature_report.xlsx"),
+            save=str(run_dir / "strict_feature_report.xlsx"),
             pictures=[],
             output_dir=str(run_dir / "feature_assets"),
             bin_params={"method": "quantile", "n_jobs": 1},

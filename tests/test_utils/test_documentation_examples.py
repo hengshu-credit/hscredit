@@ -68,6 +68,19 @@ def test_showcase_feature_description_example_executes():
     assert namespace["channel_profile"].loc[("loan_amt", "50%"), "A"] == 150
 
 
+def test_readme_overdue_band_keeps_missing_and_unobserved_samples_separate():
+    import ast
+
+    text = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    section = text.split("### DataFrame 与 Series 的并行 apply\n", 1)[1].split("\n### ", 1)[0]
+    (block,) = re.findall(r"```python\n(.*?)```", section, flags=re.S)
+    functions = [node for node in ast.parse(block).body if isinstance(node, ast.FunctionDef)]
+    namespace = {"pd": pd}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "README.md:逾期档位", "exec"), namespace)
+    classify = namespace["overdue_band"]
+    assert [classify(value) for value in [None, np.nan, -1, 0, 1, 30, 31]] == ["缺失或未观测", "缺失或未观测", "缺失或未观测", "0天", "1至30天", "1至30天", "超过30天"]
+
+
 def test_executable_quickstart_notebook(tmp_path, monkeypatch):
     monkeypatch.chdir(PROJECT_ROOT)
     monkeypatch.setenv("HSCREDIT_EXAMPLE_OUTPUT", str(tmp_path))
@@ -131,9 +144,11 @@ def test_model_interpretability_notebook_uses_new_explainability_api():
 
 def test_selectors_notebook_psi_example_compares_unequal_train_and_oot_splits():
     """PSI 教程应能直接比较样本量不同的训练集与 OOT 集。"""
+    import matplotlib.pyplot as plt
+
     notebook_path = PROJECT_ROOT / "examples" / "03_selectors.ipynb"
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
-    psi_cells = ["".join(cell.get("source", [])) for cell in notebook["cells"] if cell.get("cell_type") == "code" and "psi_selector.fit" in "".join(cell.get("source", []))]
+    psi_cells = ["".join(cell.get("source", [])) for cell in notebook["cells"] if cell.get("cell_type") == "code" and "selector = PSISelector(" in "".join(cell.get("source", []))]
     numeric_features = ["数值特征", "稳定特征"]
     df_model = pd.DataFrame(
         {
@@ -145,22 +160,26 @@ def test_selectors_notebook_psi_example_compares_unequal_train_and_oot_splits():
     validation = df_model.iloc[158:]
     namespace = {
         "PSISelector": PSISelector,
-        "X_after_effect": train,
-        "X_valid_after_effect": validation,
-        "y_train": {"MOB6@30": (train["数值特征"] % 3 == 0).astype(int)},
-        "LABELS": ["MOB6@30"],
-        "LIMITS": {"PSI": 0.25},
-        "N_JOBS": 1,
+        "train": train.assign(标签=(train["数值特征"] % 3 == 0).astype(int)),
+        "validation": validation,
+        "features": numeric_features,
+        "target": "标签",
+        "np": np,
+        "pd": pd,
+        "plt": plt,
         "display": lambda value: None,
+        "init_setting": lambda: None,
+        "metric_comparison_plot": lambda *args, **kwargs: None,
     }
 
     assert len(psi_cells) == 1
-    exec(compile(psi_cells[0], str(notebook_path), "exec"), namespace)
+    source = "selector = PSISelector(" + psi_cells[0].split("selector = PSISelector(", 1)[1]
+    exec(compile(source, str(notebook_path), "exec"), namespace)
 
-    selector = namespace["psi_selector"]
+    selector = namespace["selector"]
     assert selector.n_features_in_ == 2
     assert selector.scores_.index.tolist() == numeric_features
     assert selector.oot_df.equals(validation)
     assert np.isfinite(selector.scores_.to_numpy()).all()
-    assert namespace["stable_features"] == ["稳定特征"]
-    pd.testing.assert_frame_equal(namespace["X_valid_after_psi"], validation[["稳定特征"]])
+    assert selector.selected_features_ == ["稳定特征"]
+    pd.testing.assert_frame_equal(selector.transform(validation), validation[["稳定特征"]])

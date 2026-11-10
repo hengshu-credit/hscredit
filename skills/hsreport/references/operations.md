@@ -1,5 +1,11 @@
 # hsreport 操作参考
 
+## 0.1.5 输出接口
+
+报告保存位置统一由 `output.directory` 与 `output.name` 管理，运行时通过公开 API 的 `save` 参数写入暂存文件。不要在 `parameters` 中传入 `save`、`excel_path`、`excel_writer` 或 `output_dir`。报告工作表使用 `sheet`；文件输入的 Excel 页选择仍使用 `inputs.*.sheet_name`。
+
+默认条件格式按指标取色：样本占比、金额占比、通过率使用黄绿，规则命中率与坏样本率使用珊瑚红。显式 `condition_color` 优先。将所有逾期字段、阈值和数据集放入同一次请求，保留各标签独立有效样本口径。
+
 ## auto_feature_analysis
 
 需要 `inputs.data`。常用参数包括 `features`、`target`、`overdue`、`dpds`、`date`、`amount`、`feature_map`、`pictures`、`bin_params` 和并行配置。

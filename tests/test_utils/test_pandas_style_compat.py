@@ -114,7 +114,7 @@ def test_style_rule_table_renders_colors_formats_and_missing_values():
         warnings.simplefilter("error", FutureWarning)
         html = style_rule_table(table, overall_badrate=0.2).to_html()
     pd.testing.assert_frame_equal(table, original)
-    assert "#e8f5e9" in html and "#fff8e1" in html
+    assert "#2639E9" in html and "#FF8BCE" in html
     assert "20.00%" in html and "1.25" in html
     assert ">分箱<" not in html
     assert "></td>" in html
@@ -167,7 +167,7 @@ def test_show_keeps_numeric_bars_formats_and_precision(multi_level):
     )
     if multi_level:
         table.columns = pd.MultiIndex.from_product([["MOB1>3"], table.columns])
-    html = style_bin_table(table, precision={"坏样本率": 3}).to_html()
+    html = style_bin_table(table, precision={"坏样本率": 3}, condition_cols=["坏样本率", "LIFT值", "分档KS值"]).to_html()
     assert "12.500%" in html and "12.34%" in html
     assert ">1.25<" in html and "125.00%" not in html
     assert ">10<" in html and "></td>" in html
@@ -263,7 +263,7 @@ def test_sample_share_bars_use_only_detail_bins(tmp_path, wide):
     if wide:
         frame.columns = pd.MultiIndex.from_tuples([("分箱详情", "分箱标签"), ("分箱详情", "样本占比")])
     original = frame.copy()
-    styler = style_bin_table(frame)
+    styler = style_bin_table(frame, condition_cols=["样本占比"])
     styles = styler._compute().ctx
     assert "100.0%" in str(styles[3, 1]) and "57.1%" in str(styles[0, 1])
     assert all("linear-gradient" not in str(styles[i, 1]) for i in (2, 5))
@@ -291,6 +291,121 @@ def test_true_full_share_bin_remains_styled_with_total_in_index():
     assert "background-color" in dict(colors[0, 0]) and "background-color" not in dict(colors[2, 0])
 
 
+@pytest.mark.parametrize("layout", ["flat", "target_first", "metric_first"])
+def test_approved_metric_colors_match_in_html_and_saved_excel(tmp_path, layout):
+    from openpyxl import load_workbook
+    from hscredit.excel import dataframe2excel
+
+    expected = {
+        "样本占比": "BADC58",
+        "金额占比": "BADC58",
+        "通过率": "BADC58",
+        "规则命中率": "F76E6C",
+        "命中率(统计范围)": "F76E6C",
+        "命中率（当前规则）": "F76E6C",
+        "好样本占比": "A3ABF5",
+        "累积坏样本占比": "F76E6C",
+        "好样本数": "A3ABF5",
+        "坏样本数": "F76E6C",
+        "坏样本率(金额)": "F76E6C",
+        "LIFT值": "D4145A",
+        "分档KS值": "E52DD0",
+        "指标IV值": "E52B88",
+        "AUC": "EF4638",
+        "PSI": "FE7715",
+        "缺失率": "EC2D59",
+        "风险拒绝比": "C00000",
+    }
+    frame = pd.DataFrame({name: [0.1, 0.4, 0.8] for name in expected})
+    if layout == "target_first":
+        frame.columns = pd.MultiIndex.from_product([["MOB6@30"], frame.columns])
+    elif layout == "metric_first":
+        frame.columns = pd.MultiIndex.from_product([frame.columns, ["MOB6@30"]])
+    original = frame.copy(deep=True)
+    styles = style_bin_table(frame, condition_cols=list(frame.columns))._compute().ctx
+    for column, color in enumerate(expected.values()):
+        assert "#" + color in str(styles[2, column])
+        assert "rgba(" not in str(styles[2, column])
+    default_styles = style_bin_table(frame, highlight_bad_rate=False)._compute().ctx
+    for column, (name, color) in enumerate(expected.items()):
+        if "命中率" in name or name in {"样本占比", "金额占比", "通过率"}:
+            assert dict(default_styles[0, column])["background-color"] == "#ffffff"
+            assert dict(default_styles[2, column])["background-color"].upper() == "#" + color
+    dest = tmp_path / f"{layout}.xlsx"
+    dataframe2excel(frame, str(dest), sheet_name="指标", condition_cols=list(frame.columns))
+    workbook = load_workbook(dest)
+    try:
+        rules = list(workbook["指标"].conditional_formatting._cf_rules.values())
+        assert [group[0].dataBar.color.rgb[-6:] for group in rules] == list(expected.values())
+    finally:
+        workbook.close()
+    pd.testing.assert_frame_equal(frame, original)
+
+
+def test_iv_and_ks_highlight_flags_control_their_own_indicators():
+    data = pd.DataFrame({"IV": [0.05, 0.3], "KS": [0.1, 0.4], "PSI": [0.02, 0.2], "缺失率": [0.1, 0.5]})
+    styles = style_bin_table(data)._compute().ctx
+    for column, color in enumerate(["#E52B88", "#E52DD0", "#FE7715", "#EC2D59"]):
+        assert color in str(styles[1, column]).upper()
+    disabled = style_bin_table(data, highlight_iv=False, highlight_ks=False)._compute().ctx
+    assert "background-color" not in dict(disabled[1, 0])
+    assert "background-color" not in dict(disabled[1, 1])
+    assert "#FE7715" in str(disabled[1, 2]).upper()
+    assert "linear-gradient" not in style_bin_table(data, condition_cols=[]).to_html()
+
+
+def test_woe_uses_signed_colors_and_neutral_share_respects_custom_theme():
+    from hscredit.excel.writer import _metric_colors
+
+    data = pd.DataFrame({"分档WOE值": [-2.0, 0.0, 1.0]})
+    styles = style_bin_table(data, condition_cols=["分档WOE值"])._compute().ctx
+    assert "#A3ABF5" in str(styles[0, 0])
+    assert "#F76E6C" in str(styles[2, 0])
+    assert "calc(50% - 0.5px)" in str(styles[1, 0])
+    assert _metric_colors("好样本占比", "112233") == ["112233"]
+    assert _metric_colors("样本占比", "112233") == ["112233"]
+    assert _metric_colors("样本占比", "2639E9", {"样本占比": "123456"}) == ["123456"]
+    assert _metric_colors("坏样本率", "112233", {"坏样本率": "ABCDEF"}) == ["ABCDEF"]
+    assert _metric_colors("规则命中率", "112233", {"规则命中率": "ABCDEF"}) == ["ABCDEF"]
+
+
+def test_show_defaults_to_scales_and_keeps_only_improvement_as_centered_bar():
+    frame = pd.DataFrame({"坏样本率": [0.1, 0.2, 0.3], "LIFT值": [1.0, 1.5, 2.0], "坏账改善": [-0.2, 0.0, 0.2], "AUC": [0.7, 0.7, 0.7]})
+    styles = style_bin_table(frame)._compute().ctx
+    for column, color in [(0, "#f76e6c"), (1, "#d4145a")]:
+        assert dict(styles[0, column])["background-color"] == "#ffffff"
+        assert dict(styles[2, column])["background-color"] == color
+        assert all("linear-gradient" not in str(styles[row, column]) for row in range(3))
+        assert all("rgba(" not in str(styles[row, column]) for row in range(3))
+    assert all("calc(50% - 0.5px)" in str(styles[row, 2]) for row in range(3))
+    assert all("background-color" not in dict(styles[row, 3]) for row in range(3))
+    disabled = style_bin_table(frame, color_cols=[])._compute().ctx
+    assert all("background" not in str(value) for value in disabled.values())
+
+
+def test_share_color_scales_exclude_totals_and_match_excel_bounds(tmp_path):
+    from hscredit.excel import dataframe2excel
+    from openpyxl import load_workbook
+
+    frame = pd.DataFrame({"分箱标签": ["A", "B", "合计", "A", "B", "合计"], "样本占比": [0.4, 0.6, 1, 0.7, 0.3, 1]})
+    styles = style_bin_table(frame)._compute().ctx
+    assert dict(styles[3, 1])["background-color"] == "#badc58"
+    assert dict(styles[4, 1])["background-color"] == "#ffffff"
+    assert all("background-color" not in dict(styles[row, 1]) for row in [2, 5])
+    path = tmp_path / "share-scales.xlsx"
+    dataframe2excel(frame, str(path), sheet_name="分箱", color_cols=["样本占比"])
+    book = load_workbook(path)
+    try:
+        (condition,) = list(book["分箱"].conditional_formatting)
+        assert str(condition.sqref) == "C3:C4 C6:C7"
+        (rule,) = condition.rules
+        assert rule.type == "colorScale"
+        assert [(value.type, value.val) for value in rule.colorScale.cfvo] == [("num", 0.3), ("num", 0.7)]
+        assert [color.rgb[-6:] for color in rule.colorScale.color] == ["FFFFFF", "BADC58"]
+    finally:
+        book.close()
+
+
 @pytest.mark.parametrize("values", [[-1, 0, 1], [-1, 0, 0], [0, 0, 1], [0, 0, 0]])
 def test_metric_palette_and_zero_center_in_html_and_excel(tmp_path, values):
     from openpyxl import load_workbook
@@ -298,17 +413,17 @@ def test_metric_palette_and_zero_center_in_html_and_excel(tmp_path, values):
 
     data = pd.DataFrame({"样本占比": [0.2, 0.5, 0.3], "坏样本率": [0.1, 0.3, 0.2], "LIFT值": [0.8, 1.2, 1.0], "坏账改善": values})
     data.columns = pd.MultiIndex.from_product([["MOB3@30"], data.columns])
-    styles = style_bin_table(data)._compute().ctx
-    colors = ["6979DE", "CD778E", "B86991"]
+    styles = style_bin_table(data, condition_cols=list(data.columns))._compute().ctx
+    colors = ["BADC58", "F76E6C", "D4145A"]
     for i, color in enumerate(colors):
         assert "#" + color in str(styles[1, i])
     for i, value in enumerate(values):
         image = dict(styles[i, 3])["background-image"]
         assert "calc(50% - 0.5px)" in image
         if value < 0:
-            assert "#CACFF9 0.0000%, #CACFF9 50.0000%" in image
+            assert "#A3ABF5 0.0000%, #A3ABF5 50.0000%" in image
         elif value > 0:
-            assert "#D58B9F 50.0000%, #D58B9F 100.0000%" in image
+            assert "#F76E6C 50.0000%, #F76E6C 100.0000%" in image
         else:
             assert image.count("linear-gradient") == 1
 
@@ -328,7 +443,7 @@ def test_metric_palette_and_zero_center_in_html_and_excel(tmp_path, values):
         assert len(bars) == 4 and all(bar.get("gradient") == "0" for bar in bars)
         centered = bars[-1]
         assert centered.get("axisPosition") == "middle"
-        assert centered.find(f"{{{X14}}}negativeFillColor").get("rgb") == "FFCACFF9"
+        assert centered.find(f"{{{X14}}}negativeFillColor").get("rgb") == "FFA3ABF5"
         bounds = [v.findtext(f"{{{XM}}}f") for v in centered.findall(f"{{{X14}}}cfvo")]
         assert bounds[0] == "-" + bounds[1] and "$E$4:$E$6" in bounds[1]
     finally:

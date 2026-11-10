@@ -39,8 +39,9 @@ hscredit 文档
 
 .. note::
 
-   当前版本 |release|。基础安装已含 SHAP、OR-Tools 与 PyArrow；Boosting、深度学习、
-   调参、PMML 与数据库驱动按需安装，详见 :doc:`installation`。
+   当前版本 |release|。基础安装包含 SHAP 与 PyArrow；Python 3.15 的约束分箱支持
+   在缺少 OR-Tools 时使用候选搜索后端。Boosting、深度学习、调参、PMML 与数据库驱动
+   按需安装，详见 :doc:`installation`。
 
 能力一览
 --------
@@ -61,6 +62,7 @@ hscredit 文档
    安装指南 <installation>
    功能与示例 <showcase>
    功能总览 <overview>
+   独立 Notebook 教程 <examples>
 
 .. toctree::
    :maxdepth: 2
@@ -68,6 +70,7 @@ hscredit 文档
 
    现金贷数据集 <datasets>
    特征摘要报告 <dataset-summary>
+   Notebook 演示字段集 <examples-dataset>
 
 .. toctree::
    :maxdepth: 1
@@ -96,6 +99,7 @@ hscredit 文档
 
    数据库接入 <database>
    并行计算 <parallelism>
+   品牌色与语义配色 <brand-colors>
    Agent Skills <skills>
 
 .. toctree::

@@ -559,12 +559,13 @@ def plot_model_feature_importance(
         dependence_scatter = None
         for rank_position, (ax, feature_index) in enumerate(zip(dependence_axes, ranking[:n_right]), start=1):
             ax.set_label("SHAP依赖")
-            raw_feature = X_values[:, feature_index]
-            numeric_feature = pd.to_numeric(pd.Series(raw_feature), errors="coerce").to_numpy(dtype=float)
-            if np.isfinite(numeric_feature).sum() == len(raw_feature):
+            raw_feature = pd.Series(X_values[:, feature_index])
+            numeric_feature = pd.to_numeric(raw_feature, errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+            is_numeric = not np.isnan(numeric_feature[raw_feature.notna().to_numpy()]).any()
+            if is_numeric:
                 x_plot = numeric_feature
             else:
-                x_plot = pd.Series(raw_feature).astype(str).to_numpy()
+                x_plot = raw_feature.astype("string").fillna("缺失值").to_numpy(dtype=str)
 
             dependence_scatter = ax.scatter(
                 x_plot,
@@ -579,7 +580,7 @@ def plot_model_feature_importance(
             )
 
             finite = np.isfinite(numeric_feature) & np.isfinite(shap_values[:, feature_index])
-            if finite.sum() > 1 and np.unique(numeric_feature[finite]).size > 1:
+            if is_numeric and finite.sum() > 1 and np.unique(numeric_feature[finite]).size > 1:
                 coefficients = np.polyfit(numeric_feature[finite], shap_values[finite, feature_index], 1)
                 line_x = np.linspace(numeric_feature[finite].min(), numeric_feature[finite].max(), 100)
                 ax.plot(line_x, np.polyval(coefficients, line_x), color="#333333", linestyle="--", linewidth=1.2)
@@ -855,6 +856,7 @@ def plot_model_sample_shap(
             patch.set_edgecolor(force_artist_color_map[edgecolor])
     # 以输出值为中心，按印刷点给同排的文字和箭头留白，使间距独立于预测值的量纲。
     output_label = next(text for text in native_force_ax.texts if text.get_text() == "output value")
+    output_value = base_value + float(np.sum(selected_values[0]))
     direction_layout = {
         "higher": (-24, "right"),
         r"$\rightarrow$": (-4, "right"),
@@ -872,8 +874,11 @@ def plot_model_sample_shap(
             text_artist.set_transform(offset_copy(output_label.get_transform(), fig=force_figure, x=offset_x, y=24, units="points"))
         if " = " in text_artist.get_text():
             text_artist.set_verticalalignment("top")
-        if re.fullmatch(r"-?\d+(?:\.\d+)?", text_artist.get_text()):
-            text_artist.set_text(f"{float(text_artist.get_text()):.{int(value_precision)}f}")
+        numeric_label = text_artist.get_text().replace("−", "-")
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", numeric_label):
+            # SHAP 原生标签已按较低精度舍入；输出值必须从归因结果恢复，不能再次格式化旧文本。
+            raw_value = output_value if np.isclose(text_artist.get_position()[0], output_label.get_position()[0]) else float(numeric_label)
+            text_artist.set_text(f"{raw_value:.{int(value_precision)}f}")
     native_force_ax.spines["top"].set_color(PRIMARY_COLORS[0])
     native_force_ax.spines["top"].set_linewidth(0.8)
     native_force_ax.tick_params(axis="x", colors=PRIMARY_COLORS[0])
@@ -931,13 +936,15 @@ def plot_model_sample_shap(
     waterfall_ax.tick_params(axis="both", colors=PRIMARY_COLORS[0])
     for auxiliary_axis in waterfall_aux_axes:
         auxiliary_ticks = auxiliary_axis.get_xticks()
+        native_labels = [tick.get_text() for tick in auxiliary_axis.get_xticklabels()]
+        raw_label_value = base_value if any("E[f(X)]" in label for label in native_labels) else output_value if any("f(x)" in label for label in native_labels) else None
         auxiliary_labels = [
             re.sub(
-                r"(?<== )-?\d+(?:\.\d+)?",
-                lambda match: f"{float(match.group()):.{int(value_precision)}f}",
-                tick.get_text(),
+                r"(?<== )[-−]?\d+(?:\.\d+)?",
+                lambda match: f"{float(match.group().replace('−', '-')) if raw_label_value is None else raw_label_value:.{int(value_precision)}f}",
+                label,
             )
-            for tick in auxiliary_axis.get_xticklabels()
+            for label in native_labels
         ]
         auxiliary_axis.set_xticks(auxiliary_ticks, labels=auxiliary_labels)
         auxiliary_axis.tick_params(axis="x", colors=PRIMARY_COLORS[0])

@@ -108,7 +108,7 @@ def test_regression_strict_excel_has_complete_continuous_sections(data, tmp_path
         model,
         datasets={"训练集": train, "独立测试": test},
         target="目标",
-        excel_path=output,
+        save=output,
         date="日期",
         group="类别",
         amount="金额",
@@ -197,7 +197,7 @@ def test_net_missing_tree_importance_is_capability_not_report_failure(name, tmp_
         model = getattr(hc, name)(d_block=16, n_blocks=1, max_epochs=1, early_stopping_rounds=None, device="cpu", **kwargs).fit(X, y)
         result = model.model_report(
             datasets={"测试": (X, y)},
-            excel_path=tmp_path / f"{name}.xlsx",
+            save=tmp_path / f"{name}.xlsx",
             with_plots=False,
             mode="strict",
             return_result=True,

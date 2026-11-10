@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.9--3.14-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.9–3.14">
+  <img src="https://img.shields.io/badge/Python-3.9--3.15-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.9–3.15">
   <a href="https://pypi.org/project/hscredit/"><img src="https://img.shields.io/pypi/v/hscredit?style=flat-square" alt="PyPI"></a>
   <a href="https://hscredit.hengshucredit.com/"><img src="https://img.shields.io/badge/Docs-GitHub%20Pages-0F766E?style=flat-square" alt="在线文档"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="MIT License"></a>
@@ -52,26 +52,55 @@
 
 **四套标准 SOP，一行代码出一份 Excel 报告。** 准备好样本和待评估的变量、规则或模型，即可按统一口径比较不同客群、不同逾期标签的表现。下次评审，换一批样本就能复评。
 
+下面使用已准备好的 `df`、`datasets`、`features`、`rules`、`model` 和 `multiway_tree`；数据与模型的准备步骤见后文示例。
+
 ```python
-swap_out_report(df, rules, date="授信时间", save="策略.xlsx", **labels)
-auto_model_report(model, datasets, features=features, amount="loan_amt", long_format=True, excel_path="模型.xlsx", **labels)
+from hscredit.report import swap_out_report, auto_model_report, auto_feature_analysis
+
+labels = {"overdue": ["MOB1", "MOB6"], "dpds": [0, 30], "overdue_operator": ">"}
+swap_out_report(df, rules, date="授信时间", margins=True, save="策略.xlsx", **labels)
+auto_model_report(model, datasets, features=features, amount="loan_amt", long_format=True, save="模型.xlsx", **labels)
 multiway_tree.report(datasets, amount="loan_amt", group="GROUP", save="规则.xlsx", **labels)
-auto_feature_analysis(df, features, amount="loan_amt", long_format=True, excel_writer="三方数据.xlsx", **labels)
+auto_feature_analysis(df, features, amount="loan_amt", long_format=True, save="三方数据.xlsx", **labels)
 ```
+
+`save` 统一接收文件路径或 `ExcelWriter`，`sheet` 接收工作表名称或 openpyxl `Worksheet`。传入 writer 时仅写入，最后统一调用 `writer.save(...)`。
+
+```python
+from hscredit.excel import ExcelWriter
+
+writer = ExcelWriter()
+feature_sheet = writer.get_sheet_by_name("三方数据")
+auto_feature_analysis(df, features, save=writer, sheet=feature_sheet, amount="loan_amt", long_format=True, **labels)
+swap_out_report(df, rules, save=writer, sheet="策略分析", date="授信时间", margins=True, **labels)
+writer.save("综合报告.xlsx")
+```
+
+模型报告的 `sheet` 指定基本信息页，其他章节仍独立生成。`excel_path`、`excel_writer`、`sheet_name` 已从这些报告入口移除；底层 `dataframe2excel` 仍使用自己的 `sheet_name` 参数。完整可运行示例见 <a href="examples/29_api_reference.ipynb">公开 API Notebook</a>，参数与迁移说明见 <a href="docs/analysis_parameters.md">分析参数约定</a>。
 
 </details>
 
 <a href="https://hscredit.hengshucredit.com/showcase.html#gallery-reports" style="color:#c02dd4;">在文档中查看报告示例</a>
 
-## 交流关注
+## 交流与关注
 
 <div align="center">
 
-<p><img src="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/wechat.svg" alt="微信 itlubber 二维码" width="200">　<img src="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/wechat-official-account.svg" alt="微信公众号 衡枢风控 二维码" width="200"></p>
+<table align="center" width="100%">
+<tr>
+  <td align="center" valign="top" width="50%">
+    <img src="docs/assets/readme/wechat.svg" alt="微信 itlubber 二维码" width="200"><br>
+    微信 · itlubber
+  </td>
+  <td align="center" valign="top" width="50%">
+    <img src="docs/assets/readme/wechat-official-account.svg" alt="微信公众号 衡枢风控实验室 hscreditlab 二维码" width="200"><br>
+    微信公众号 · 衡枢风控实验室<br>
+    hscreditlab · 回复「入群」
+  </td>
+</tr>
+</table>
 
-微信 · itlubber　｜　微信公众号 · 衡枢风控（回复「入群」）
-
-邮箱：<a href="mailto:hscredit@hengshucredit.com" style="color:#c02dd4;">hscredit@hengshucredit.com</a>
+<p>邮箱：<a href="mailto:hscredit@hengshucredit.com" style="color:#c02dd4;">hscredit@hengshucredit.com</a></p>
 
 </div>
 
@@ -99,23 +128,54 @@ auto_feature_analysis(df, features, amount="loan_amt", long_format=True, excel_w
 
 ## 安装
 
-支持 Python **3.9–3.14**。
+当前源码支持 Python **3.9–3.15**，Python 3.15 已在 **Windows x64、CPython 3.15.2** 上验证。基础安装包含分箱、编码、筛选、经典模型、评分卡、SHAP、可视化、Excel 和内置数据集。
+
+### Python 3.9–3.14
 
 ```bash
-pip install hscredit
+python -m pip install hscredit
 ```
 
-基础安装包含分箱、编码、筛选、经典模型、评分卡、SHAP、可视化、Excel 和内置数据集。扩展按需安装：
+扩展按需安装，也可组合为 `"hscredit[boost,tune]"`：
 
 ```bash
-pip install "hscredit[boost]"         # Boosting 模型
-pip install "hscredit[tune]"          # 调参与搜索看板
-pip install "hscredit[net]"           # TabPFN 等表格神经网络
-pip install "hscredit[pmml]"          # PMML 导出与加载
-pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
+python -m pip install "hscredit[boost]"         # Boosting 模型
+python -m pip install "hscredit[tune]"          # 调参与搜索看板
+python -m pip install "hscredit[net]"           # TabPFN 等表格神经网络
+python -m pip install "hscredit[pmml]"          # PMML 导出与加载，需要 Java 11+
+python -m pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
+python -m pip install "hscredit[all]"           # 安装全部依赖
 ```
 
-<a href="docs/installation.md" style="color:#c02dd4;">安装指南</a>
+### Python 3.15
+
+已发布的 [PyPI 0.1.4 主包](https://pypi.org/project/hscredit/0.1.4/)仍限制 Python `<3.15`。请在已激活的 Python 3.15 虚拟环境中，进入包含 3.15 适配的当前源码目录安装：
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install .
+```
+
+**Windows x64 兼容依赖包**已提供在 [0.1.4 Release Assets](https://github.com/hengshu-credit/hscredit/releases/tag/v0.1.4)，可直接下载，省去这些依赖的本机编译或适配：
+
+| 依赖包 | 下载 | 适用范围 |
+|:---|:---|:---|
+| CatBoost 1.2.10 | [wheel](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.4/catboost-1.2.10-cp315-cp315-win_amd64.whl) | CPython 3.15、Windows x64；CPU 训练与预测，不含 Jupyter 交互式训练组件 |
+| NGBoost 0.6.0 | [wheel](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.4/ngboost-0.6.0-py3-none-any.whl) | 纯 Python 包，放宽 Python 版本约束以支持 3.15 |
+| lifelines 0.30.3 | [wheel](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.4/lifelines-0.30.3-py3-none-any.whl) | NGBoost 间接依赖，适配 Python 3.15 下的 pandas 3 |
+| scikit-learn 1.8.0 | [wheel](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.4/scikit_learn-1.8.0-cp315-cp315-win_amd64.whl) | CPython 3.15、Windows x64；兼容 PMML 所需的 `<1.9` 版本范围 |
+
+需要 Boosting 模型时，将以上四个文件下载至源码目录下的 `native-wheels/`，依次执行；第一步仅安装兼容包，第二步由 pip 补齐依赖：
+
+```bash
+python -m pip install --no-index --no-deps --force-reinstall --find-links=./native-wheels catboost==1.2.10 ngboost==0.6.0 lifelines==0.30.3 scikit-learn==1.8.0
+python -m pip install ".[boost]"
+python -m pip check
+```
+
+其他扩展使用 `".[tune]"`、`".[net]"` 或 `".[pmml]"` 从当前源码安装。NumExpr、Bottleneck、LZ4 等依赖在缺少 3.15 wheel 时仍需 C++ 构建工具；PMML 的 JPype 源码构建还需 JDK 和 Apache Ant。其他平台的构建步骤及详细环境要求见 <a href="docs/installation.md#python-315">Python 3.15 安装指南</a>。
+
+<a href="docs/installation.md" style="color:#c02dd4;">完整安装指南</a>
 
 ## 功能展示
 
@@ -242,8 +302,6 @@ bin_targets = {
 bins = feature_bin_stats(df, target=bin_targets, **bin_options)
 bins.show()
 ```
-
-样本占比、坏样本率和 Lift 分别用实心蓝紫、灰玫瑰和莓红色数据条。坏账改善的零轴固定在单元格中央，负值向左绘制淡蓝紫条，正值向右绘制玫瑰色条。
 
 **单变量分箱表** · `BASE_X257`
 
@@ -417,16 +475,16 @@ bin_trend_plot(
 
 <table>
 <tr>
-  <td width="44%" align="center" valign="top"><strong>单变量分箱</strong><br>
-    <a href="docs/assets/readme/showcase/binning-plot.png"><img src="docs/assets/readme/showcase/binning-plot.png" alt="单变量分箱" width="100%"></a></td>
-  <td width="56%" align="center" valign="top"><strong>多标签分箱</strong><br>
-    <a href="docs/assets/readme/showcase/binning-multi-plot.png"><img src="docs/assets/readme/showcase/binning-multi-plot.png" alt="多标签分箱" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>单变量分箱</strong><br>
+    <a href="docs/assets/readme/showcase/binning-plot.png"><img src="docs/assets/readme/showcase/binning-plot-preview.png" alt="单变量分箱" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>多标签分箱</strong><br>
+    <a href="docs/assets/readme/showcase/binning-multi-plot.png"><img src="docs/assets/readme/showcase/binning-multi-plot-preview.png" alt="多标签分箱" width="100%"></a></td>
 </tr>
 <tr>
-  <td width="44%" align="center" valign="top"><strong>授信月份趋势</strong><br>
-    <a href="docs/assets/readme/showcase/binning-trend.png"><img src="docs/assets/readme/showcase/binning-trend.png" alt="授信月份趋势" width="89%"></a></td>
-  <td width="56%" align="center" valign="top"><strong>客群分箱趋势</strong><br>
-    <a href="docs/assets/readme/showcase/binning-cohort-plot.png"><img src="docs/assets/readme/showcase/binning-cohort-plot.png" alt="客群分箱趋势" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>授信月份趋势</strong><br>
+    <a href="docs/assets/readme/showcase/binning-trend.png"><img src="docs/assets/readme/showcase/binning-trend-preview.png" alt="授信月份趋势" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><strong>客群分箱趋势</strong><br>
+    <a href="docs/assets/readme/showcase/binning-cohort-plot.png"><img src="docs/assets/readme/showcase/binning-cohort-plot-preview.png" alt="客群分箱趋势" width="100%"></a></td>
 </tr>
 </table>
 
@@ -497,8 +555,8 @@ pipeline.transform(X_test).show()
 </tr>
 <tr>
   <td colspan="2" align="center">
-    <a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="TargetEncoder" width="8%"></a>
-    <a href="docs/assets/readme/showcase/encoder-woe.png"><img src="docs/assets/readme/showcase/encoder-woe.png" alt="WOEEncoder" width="89%"></a>
+    <a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="TargetEncoder" width="8.00%"></a>
+    <a href="docs/assets/readme/showcase/encoder-woe.png"><img src="docs/assets/readme/showcase/encoder-woe.png" alt="WOEEncoder" width="89.00%"></a>
   </td>
 </tr>
 </table>
@@ -510,8 +568,8 @@ pipeline.transform(X_test).show()
 </tr>
 <tr>
   <td colspan="2" align="center">
-    <a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="CatBoostEncoder" width="8%"></a>
-    <a href="docs/assets/readme/showcase/encoder-pipeline.png"><img src="docs/assets/readme/showcase/encoder-pipeline.png" alt="Pipeline · 分箱与 WOE" width="89%"></a>
+    <a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="CatBoostEncoder" width="8.00%"></a>
+    <a href="docs/assets/readme/showcase/encoder-pipeline.png"><img src="docs/assets/readme/showcase/encoder-pipeline.png" alt="Pipeline · 分箱与 WOE" width="89.00%"></a>
   </td>
 </tr>
 </table>
@@ -561,15 +619,15 @@ for selector in selectors:
 <table>
 <tr>
   <td width="50%" align="center" valign="top"><strong>Lift 筛选</strong><br>
-    <a href="docs/assets/readme/showcase/selector-lift.png"><img src="docs/assets/readme/showcase/selector-lift.png" alt="LiftSelector" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/selector-lift.png"><img src="docs/assets/readme/showcase/selector-lift-preview.png" alt="LiftSelector" width="100%"></a></td>
   <td width="50%" align="center" valign="top"><strong>Null Importance 筛选</strong><br>
-    <a href="docs/assets/readme/showcase/selector-null-importance.png"><img src="docs/assets/readme/showcase/selector-null-importance.png" alt="NullImportanceSelector" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/selector-null-importance.png"><img src="docs/assets/readme/showcase/selector-null-importance-preview.png" alt="NullImportanceSelector" width="100%"></a></td>
 </tr>
 <tr>
   <td width="50%" align="center" valign="top"><strong>递归特征消除（RFE）</strong><br>
-    <a href="docs/assets/readme/showcase/selector-rfe.png"><img src="docs/assets/readme/showcase/selector-rfe.png" alt="RFESelector" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/selector-rfe.png"><img src="docs/assets/readme/showcase/selector-rfe-preview.png" alt="RFESelector" width="100%"></a></td>
   <td width="50%" align="center" valign="top"><strong>评分卡组合筛选</strong><br>
-    <a href="docs/assets/readme/showcase/selector-scorecard.png"><img src="docs/assets/readme/showcase/selector-scorecard.png" alt="ScorecardFeatureSelection" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/selector-scorecard.png"><img src="docs/assets/readme/showcase/selector-scorecard-preview.png" alt="ScorecardFeatureSelection" width="100%"></a></td>
 </tr>
 </table>
 
@@ -658,10 +716,10 @@ best = model.tune(
     X_num,
     y_train,
     metric="auc",
-    cv=3,
-    n_trials=20,
+    cv=2,
+    n_trials=2,
     n_jobs=1,
-    search_space={"max_depth": [2, 3, 4], "learning_rate": [0.03, 0.1]},
+    search_space={"max_depth": [2, 3], "learning_rate": [0.05, 0.1]},
 )
 
 pareto_tuner = AutoTuner.create(
@@ -679,13 +737,15 @@ pareto_tuner.fit(X_num, y_train, n_trials=8)
 pareto_tuner.plot_pareto_front().show()
 ```
 
-![Optuna 搜索过程看板](docs/assets/readme/showcase/tuning-dashboard.png)
+![hscredit 主题的 Optuna 搜索过程看板](docs/assets/readme/showcase/tuning-dashboard.png)
 
 ![plot_pareto_front 多目标搜索前沿及试验点悬浮信息](docs/assets/readme/showcase/tuning-pareto.png)
 
 ```bash
-optuna-dashboard sqlite:///hscredit.db
+hscredit dashboard sqlite:///hscredit.db
 ```
+
+该入口自动使用 hscredit 配色和内置字体，页面控件与 Plotly 图表一起应用主题；也可运行 `python -m hscredit dashboard sqlite:///hscredit.db`。支持 `--host`、`--port`、`--artifact-dir` 和 `--quiet`。安装依赖及主题兼容说明见<a href="docs/articles/tuning-guide.md">调参看板指南</a>。
 
 **评估与损失。** 选择区分度、稳定性、成本或利润指标，并为支持的模型配置自定义损失。
 
@@ -722,9 +782,12 @@ risk_model.fit(X_num, y_train)
 from hscredit.core.viz import plot_model_feature_importance, plot_model_sample_shap
 
 plot_model_feature_importance(
-    model, X_test_num.iloc[:150], y_test.iloc[:150], right_top_n=4
+    model, X_test_num.iloc[:150], y_test.iloc[:150], background_size=30, right_top_n=4
 )
-plot_model_sample_shap(model, X_test_num.iloc[[0]], background_data=X_num.iloc[:40])
+plot_model_sample_shap(
+    model, X_test_num.iloc[[0]], background_data=X_num.iloc[:40],
+    background_size=30, figsize=(18, 12),
+)
 ```
 
 ![全局重要性与 SHAP](docs/assets/readme/showcase/model-importance.png)
@@ -745,17 +808,21 @@ rule_model.predict(X_test_num)
 
 **TabPFN 预训练与微调。** 可以直接用预训练模型做上下文推理，也可以先用无标签授信特征预训练，再用逾期标签微调。
 
+安装 `hscredit[net]` 并准备模型权重后运行。下例固定抽取 2,000 条训练样本演示，预测取测试集前 256 条。
+
 ```python
 from hscredit import TabPFN
 
+pfn_index = X_num.sample(n=min(2000, len(X_num)), random_state=42).index
+X_pfn, y_pfn = X_num.loc[pfn_index], y_train.loc[pfn_index]
 pfn = TabPFN(objective="binary", n_estimators=1, device="auto")
-pfn.fit(X_num, y_train)
-pfn.predict_proba(X_test_num)
+pfn.fit(X_pfn, y_pfn)
+pfn.predict_proba(X_test_num.iloc[:256])
 
 pfn_train = TabPFN(objective="binary", n_estimators=1, device="auto")
-pfn_train.pretrain(X_num, pretraining_ratio=0.5, max_epochs=1, batch_size=128)
+pfn_train.pretrain(X_pfn, pretraining_ratio=0.5, max_epochs=1, batch_size=128)
 pfn_train.fit(
-    X_num, y_train, finetune=True, finetune_params={"max_epochs": 1, "batch_size": 128}
+    X_pfn, y_pfn, finetune=True, finetune_params={"max_epochs": 1, "batch_size": 128}
 )
 ```
 
@@ -782,7 +849,7 @@ report = auto_model_report(
     date="授信时间",
     group="GROUP",
     long_format=True,
-    excel_path="模型评估.xlsx",
+    save="模型评估.xlsx",
     n_jobs=1,
     **labels,
 )
@@ -808,7 +875,7 @@ amount_report = auto_model_report(
     datasets={"训练集": report_train, "测试集": report_test},
     features=features,
     target="loan_amt",
-    excel_path="回归模型报告.xlsx",
+    save="回归模型报告.xlsx",
     n_jobs=1,
 )
 amount_report.get_metrics().show()
@@ -895,6 +962,8 @@ ruleset_analysis(
 
 **置换与多规则报告。** `swap_analysis` 量化新旧策略的置入置出；`swap_out_report` 汇总组合效果、业务影响、时间或客群稳定性及分箱明细。
 
+策略迭代示例用训练集分位点定义两条拒绝规则，再在独立测试集比较执行前后的坏样本率。报告纳入全部规则字段，对比等频、运筹优化、目标坏率和自定义分位点分箱，各标签分箱表均保留合计行。
+
 <details>
 <summary>Swap 与多规则报告</summary>
 
@@ -916,10 +985,32 @@ swap = swap_analysis(
 )
 swap.get_summary_report(target=overdue_label("MOB6", 30, ">")).show()
 
+# 阈值取自训练集，规则效果在独立测试集验证。
+query_cut = train["最近12个月多头查询次数"].quantile(0.25)
+payment_cut = train["贷款本月应还金额"].quantile(0.20)
+strategy_rules = [
+    Rule(f"最近12个月多头查询次数 < {query_cut:g}", name="低查询次数"),
+    Rule(f"贷款本月应还金额 < {payment_cut:g}", name="低月应还额"),
+]
+strategy_features = ["最近12个月多头查询次数", "贷款本月应还金额"]
+quantiles = [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99, np.nan]
+custom_splits = {
+    feature: [*sorted(train[feature].quantile([q for q in quantiles if pd.notna(q)]).dropna().unique().tolist()), np.nan]
+    for feature in strategy_features
+}
+strategy_methods = ["quantile", "or_tools", "target_bad_rate", "custom"]
+strategy_bin_params = {
+    "quantile": {"max_n_bins": 5},
+    "or_tools": {"max_n_bins": 5, "min_bin_size": 0.05},
+    "target_bad_rate": {"max_n_bins": 5, "min_bin_size": 0.05},
+    "custom": {"rules": custom_splits},
+}
 swap_out_report(
     test,
-    rules=[query_rule, payment_rule],
-    features=["最近12个月多头查询次数"],
+    rules=strategy_rules,
+    methods=strategy_methods,
+    bin_params=strategy_bin_params,
+    margins=True,
     date="授信时间",
     save="策略迭代.xlsx",
     n_jobs=1,
@@ -928,8 +1019,9 @@ swap_out_report(
 
 # 按客群比较同一组规则的命中率和坏样本率
 swap_out_report(
-    test, rules=[query_rule, payment_rule], group="GROUP",
-    features=["最近12个月多头查询次数"], save="客群策略.xlsx", n_jobs=1, **labels,
+    test, rules=strategy_rules, group="GROUP", margins=True,
+    methods=strategy_methods, bin_params=strategy_bin_params,
+    save="客群策略.xlsx", n_jobs=1, **labels,
 )
 ```
 
@@ -985,8 +1077,8 @@ for name, tree in [("二叉树", binary_tree), ("多叉树", multiway_tree)]:
   <th scope="col" width="50%">多叉树</th>
 </tr>
 <tr>
-  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/tree-binary.png"><img src="docs/assets/readme/showcase/tree-binary.png" alt="二叉树" width="72.27%"></a></td>
-  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/tree-multiway.png"><img src="docs/assets/readme/showcase/tree-multiway.png" alt="多叉树" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/tree-binary.png"><img src="docs/assets/readme/showcase/tree-binary-preview.png" alt="二叉树" width="100%"></a></td>
+  <td width="50%" align="center" valign="top"><a href="docs/assets/readme/showcase/tree-multiway.png"><img src="docs/assets/readme/showcase/tree-multiway-preview.png" alt="多叉树" width="100%"></a></td>
 </tr>
 <tr>
   <th colspan="2">训练集节点效果</th>
@@ -1046,7 +1138,9 @@ from hscredit.core.viz import (
 ks_plot(probability, y_test)
 corr_plot(X_all)
 hist_plot(probability, y_test)
-confusion_matrix_plot(y_test, probability >= 0.5)
+# 以训练集预测风险最高的 10% 为阈值，在测试集展示分类结果。
+decision_threshold = np.quantile(model.predict_proba(X_num)[:, 1], 0.90)
+confusion_matrix_plot(y_test, probability >= decision_threshold)
 psi_plot(X_train["最近12个月多头查询次数"], X_test["最近12个月多头查询次数"])
 bad_rate_trend_plot(df, date="授信时间", **labels)
 ```
@@ -1056,19 +1150,19 @@ bad_rate_trend_plot(df, date="授信时间", **labels)
 <table>
 <tr>
   <td width="33.33%" align="center" valign="top"><strong>KS 与 ROC</strong><br>
-    <a href="docs/assets/readme/showcase/eda-ks.png"><img src="docs/assets/readme/showcase/eda-ks.png" alt="KS 与 ROC" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/eda-ks.png"><img src="docs/assets/readme/showcase/eda-ks-preview.png" alt="KS 与 ROC" width="100%"></a></td>
   <td width="33.33%" align="center" valign="top"><strong>特征相关性</strong><br>
-    <a href="docs/assets/readme/showcase/eda-corr.png"><img src="docs/assets/readme/showcase/eda-corr.png" alt="特征相关性" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/eda-corr.png"><img src="docs/assets/readme/showcase/eda-corr-preview.png" alt="特征相关性" width="100%"></a></td>
   <td width="33.33%" align="center" valign="top"><strong>预测概率分布</strong><br>
-    <a href="docs/assets/readme/showcase/eda-hist.png"><img src="docs/assets/readme/showcase/eda-hist.png" alt="预测概率分布" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/eda-hist.png"><img src="docs/assets/readme/showcase/eda-hist-preview.png" alt="预测概率分布" width="100%"></a></td>
 </tr>
 <tr>
   <td width="33.33%" align="center" valign="top"><strong>混淆矩阵</strong><br>
-    <a href="docs/assets/readme/showcase/eda-confusion.png"><img src="docs/assets/readme/showcase/eda-confusion.png" alt="混淆矩阵" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/eda-confusion.png"><img src="docs/assets/readme/showcase/eda-confusion-preview.png" alt="混淆矩阵" width="100%"></a></td>
   <td width="33.33%" align="center" valign="top"><strong>PSI 稳定性</strong><br>
-    <a href="docs/assets/readme/showcase/eda-psi.png"><img src="docs/assets/readme/showcase/eda-psi.png" alt="PSI 稳定性" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/eda-psi.png"><img src="docs/assets/readme/showcase/eda-psi-preview.png" alt="PSI 稳定性" width="100%"></a></td>
   <td width="33.33%" align="center" valign="top"><strong>坏样本率趋势</strong><br>
-    <a href="docs/assets/readme/showcase/eda-trend.png"><img src="docs/assets/readme/showcase/eda-trend.png" alt="坏样本率趋势" width="100%"></a></td>
+    <a href="docs/assets/readme/showcase/eda-trend.png"><img src="docs/assets/readme/showcase/eda-trend-preview.png" alt="坏样本率趋势" width="100%"></a></td>
 </tr>
 </table>
 
@@ -1087,7 +1181,7 @@ auto_feature_analysis(
     long_format=True,
     bin_params={"method": "quantile", "max_n_bins": 4},
     margins=True,
-    excel_writer="特征分析.xlsx",
+    save="特征分析.xlsx",
     n_jobs=1,
     **labels,
 )
@@ -1103,7 +1197,7 @@ auto_feature_analysis(
 
 | 能力 | 入口 / 配置 |
 | --- | --- |
-| 条件格式 | `condition_cols` 实心数据条、`centered_bar_cols` 居中双向数据条、`color_cols` 色阶 |
+| 条件格式 | `color_cols` 色阶（推荐）、`centered_bar_cols` 居中双向数据条、`condition_cols` 实心数据条 |
 | 内容格式 | `percent_cols`、`custom_format`、`set_number_format`、字体、对齐、填充、边框 |
 | 数据 + 多图 | `dataframe2excel(..., figures=[...])`、`insert_pic2sheet` |
 | 导航与阅读 | `insert_hyperlink2sheet`、`set_freeze_panes`、自动筛选 |
@@ -1130,7 +1224,7 @@ dataframe2excel(
     figures=["分箱.png", "月份.png"],
     image_bottom_padding_rows=4,
     percent_cols=["样本占比", "坏样本率", "坏账改善"],
-    condition_cols=["样本占比", "坏样本率", "LIFT值"],
+    color_cols=["样本占比", "坏样本率", "LIFT值"],
     centered_bar_cols=["坏账改善"],
     auto_width=True,
 )
@@ -1239,11 +1333,11 @@ python skills/install.py --suite hscredit
 | <a href="skills/hscredit/SKILL.md" style="color:#c02dd4;">hscredit</a> | 发现能力、选择操作与规划流程 | “我上传了现金贷数据，请帮我规划变量分析和建模流程，并选择合适的 hscredit 能力。” | 识别字段与目标，选择分箱、筛选、建模和报告入口 |
 | <a href="skills/hsbin/SKILL.md" style="color:#c02dd4;">hsbin</a> | 比较分箱方法，评估变量分档风险与稳定性 | “请调用 hsbin，分析 BASE_X187 在 MOB1、MOB6 的 0 天和 30 天口径下的表现，比较分箱方法。” | 多标签分箱表、方法摘要和分箱图 |
 | <a href="skills/hsselect/SKILL.md" style="color:#c02dd4;">hsselect</a> | 筛选候选特征，解释保留或剔除原因 | “请用 hsselect 以 MOB6 > 30 筛选这批授信字段，告诉我保留和剔除的原因。” | 特征清单、阶段汇总与逐特征决策 |
-| <a href="skills/hsmodel/SKILL.md" style="color:#c02dd4;">hsmodel</a> | 训练、调优、解释模型并导出推理制品 | “请用 hsmodel 训练 XGBoost，以 AUC 调参，在独立测试集评估并解释高风险样本。” | 最佳模型、测试指标、重要性与单样本解释 |
+| <a href="skills/hsmodel/SKILL.md" style="color:#c02dd4;">hsmodel</a> | 训练、调优、解释模型并导出推理制品 | “请用 hsmodel 训练 XGBoost，以 AUC 调参，在独立测试集评估并解释高风险样本。” | 最佳模型、测试指标与解释表；SHAP 图通过 hsviz 生成 |
 | <a href="skills/hsrule/SKILL.md" style="color:#c02dd4;">hsrule</a> | 执行规则、评估规则集和策略置换效果 | “请调用 hsrule，比较多头查询和月应还额规则，分析置入置出及客群差异。” | 多规则效果、策略置换结果和迭代报告 |
 | <a href="skills/hsviz/SKILL.md" style="color:#c02dd4;">hsviz</a> | 绘制变量、模型、评分和稳定性图表 | “请用 hsviz 为这份模型预测结果绘制 KS、ROC、混淆矩阵和按授信月份的坏率趋势。” | hscredit 字体与配色的原生图表 |
 | <a href="skills/hsreport/SKILL.md" style="color:#c02dd4;">hsreport</a> | 汇总变量、模型或策略的完整分析报告 | “请调用 hsreport，把训练集和测试集的四种 MOB 标签整理成可下载的模型评估 Excel。” | 多数据集、多标签的最终报告工作簿 |
-| <a href="skills/hsexcel/SKILL.md" style="color:#c02dd4;">hsexcel</a> | 编排多表、图像、格式和原生透视表 | “请用 hsexcel 把分箱表和两张图写入 Excel，设置百分比、条件格式、冻结窗口和客群透视表。” | 带原生透视表和格式的最终 Excel |
+| <a href="skills/hsexcel/SKILL.md" style="color:#c02dd4;">hsexcel</a> | 编排多表、图像与单元格格式 | “请用 hsexcel 把分箱表和两张图写入 Excel，设置百分比、条件格式、冻结窗口和客群汇总表。” | 包含多表、图像与格式的最终 Excel |
 
 ## 公共方法
 
@@ -1251,6 +1345,7 @@ python skills/install.py --suite hscredit
 
 ```python
 import numpy as np
+import pandas as pd
 from hscredit import hscredit_dataset
 from hscredit.utils import seed_everything
 
@@ -1268,6 +1363,8 @@ def principal_per_period(row):
     return round(row["loan_amt"] / row["periods"], 2)
 
 def overdue_band(days):
+    if pd.isna(days) or days < 0:
+        return "缺失或未观测"
     if days > 30:
         return "超过30天"
     return "1至30天" if days > 0 else "0天"
@@ -1317,6 +1414,36 @@ save_pickle({"额度": amount_profile, "渠道": channel_profile}, "字段描述
 profiles = load_pickle("字段描述.pkl")
 profiles["渠道"].head()
 ```
+
+## 品牌色与语义配色
+
+图表、HTML 表格与 Excel 报告使用 hscredit 品牌配色。主题蓝用于品牌、好样本与基准；珊瑚红用于正样本强调和规则命中率；黄绿用于样本占比、金额占比与通过率。色卡列出了完整的颜色分配及使用示例。
+
+<a href="docs/assets/brand/hscredit-color-card.svg"><img src="docs/assets/brand/hscredit-color-card.svg" alt="hscredit 语义色系卡：15 色分配、指标用途与使用示例" width="100%"></a>
+
+常规指标采用白色到指标色的色阶，常量列不整列染色。坏账改善保留以零为中心的双向数据条。完整语义、支持色及当前接入范围见<a href="docs/brand-colors.md">品牌色与语义配色指南</a>。
+
+<details>
+<summary>常用指标配色与条件格式</summary>
+
+| 指标 | 颜色 | HEX |
+|:---|:---|:---|
+| 样本占比、金额占比、通过率 | 黄绿 | `#BADC58` |
+| 好样本相关指标 | 浅主题蓝 | `#A3ABF5` |
+| 规则命中率、坏样本率、逾期率、坏样本占比与数量 | 珊瑚红 | `#F76E6C` |
+| Lift、累积 Lift | 莓红 | `#D4145A` |
+| KS | 亮洋红 | `#E52DD0` |
+| IV | 玫红 | `#E52B88` |
+| AUC | 朱红 | `#EF4638` |
+| PSI | 活力橙 | `#FE7715` |
+| 缺失率 | 樱桃红 | `#EC2D59` |
+| 风险拒绝比 | 深红 | `#C00000` |
+
+默认以色阶高亮占比、坏样本率、Lift、KS、IV、AUC、PSI 和缺失率；数量类指标可通过 `color_cols` 指定。`highlight_iv`、`highlight_ks`、`highlight_bad_rate`、`highlight_lift` 控制相应指标的自动高亮；`color_cols=[]` 可关闭自动高亮，显式传入 `condition_cols` 可选择数据条。`condition_color` 的显式配置优先于默认配色。
+
+可通过 `viz.get_palette("secondary")`、`viz.get_palette("ordinary")` 和 `viz.get_palette("extended")` 获取副主题色、普通强调色与当前运行时的扩展色板；具体接口与色卡中的新增分配范围见配色指南。
+
+</details>
 
 ## 参考引用
 

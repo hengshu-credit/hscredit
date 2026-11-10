@@ -20,7 +20,7 @@ def test_shap_is_base_dependency_and_explain_extra_is_removed():
     assert not any('extra == "explain"' in item for item in requirements)
 
 
-@pytest.mark.parametrize("python_version", ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"])
+@pytest.mark.parametrize("python_version", ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"])
 def test_shap_and_xgboost_resolve_compatible_versions_for_supported_python(python_version):
     """旧 Python 保留可安装 SHAP，新 Python 支持向量截距且避开 0.52 类别误判。"""
     shap_requirements = _active_requirements("shap", python_version)
@@ -35,6 +35,11 @@ def test_shap_and_xgboost_resolve_compatible_versions_for_supported_python(pytho
         assert "2.1.4" in xgboost_versions
         assert "3.0.5" in xgboost_versions
         assert "3.1.0" not in xgboost_versions
+    elif python_version == "3.15":
+        assert "0.54.1" in shap_versions
+        assert "0.51.0" not in shap_versions
+        assert "0.52.0" not in shap_versions
+        assert "3.4.1" in xgboost_versions
     else:
         assert "0.51.0" in shap_versions
         assert "0.49.1" not in shap_versions
@@ -42,7 +47,7 @@ def test_shap_and_xgboost_resolve_compatible_versions_for_supported_python(pytho
         assert "3.4.1" in xgboost_versions
 
 
-@pytest.mark.parametrize("python_version", ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"])
+@pytest.mark.parametrize("python_version", ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"])
 def test_pmml_restricts_sklearn_without_restricting_core_users(python_version):
     """仅 PMML extra 排除已验证不兼容的 sklearn；基础安装仍允许新版。"""
     core_requirements = _active_requirements("scikit-learn", python_version)

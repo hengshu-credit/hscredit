@@ -73,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -84,6 +84,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+
+      - name: 构建 Python 3.15 原生依赖
+        if: matrix.python-version == '3.15'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ant
+          python -m pip install "setuptools>=77,<83" wheel "cython>=3.3,<3.4" "cmake>=3.24,<4" "conan>=2.4.1,<3" "numpy<3" scipy ninja meson-python
+          python scripts/build_python315_wheels.py --package catboost --wheel-dir /tmp/hscredit-native-wheels
+          python scripts/build_python315_wheels.py --package ngboost --wheel-dir /tmp/hscredit-native-wheels
+          python scripts/build_python315_wheels.py --package lifelines --wheel-dir /tmp/hscredit-native-wheels
+          python scripts/build_python315_wheels.py --package scikit-learn --wheel-dir /tmp/hscredit-native-wheels
+          python -m pip install --no-deps --force-reinstall /tmp/hscredit-native-wheels/*.whl
 
       - name: 安装全部依赖（含所有可选能力）
         run: |
@@ -121,6 +133,9 @@ jobs:
             setuptools-version: "latest"
             pkg_resources: "absent"
           - python-version: "3.14"
+            setuptools-version: "latest"
+            pkg_resources: "absent"
+          - python-version: "3.15"
             setuptools-version: "latest"
             pkg_resources: "absent"
     steps:

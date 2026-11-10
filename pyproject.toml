@@ -37,14 +37,16 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering",
     "Topic :: Office/Business :: Financial",
 ]
-requires-python = ">=3.9,<3.15"
+requires-python = ">=3.9,<3.16"
 dependencies = [
     "cython>=0.29",
     "numpy>=1.23.0",
-    "pandas>=2.0.0",
+    "pandas>=2.0.0; python_version < '3.15'",
+    "pandas>=3.0.6; python_version >= '3.15'",
     "pyarrow>=12",
     "packaging",
     "scipy>=1.5.0",
@@ -60,15 +62,19 @@ dependencies = [
     "graphviz>=0.16",
     "tqdm>=4.50.0",
     "IPython>=7.0.0",
-    "ortools>=9.0",
+    # 3.15 使用候选搜索后端，安装 OR-Tools 后自动启用原生 CP-SAT。
+    "ortools>=9.0; python_version < '3.15'",
     "dill>=0.3.4",
     "cloudpickle>=2.0.0",
     "lz4>=3.1.0",
-    "zstandard>=0.15.0",
+    # 3.15 通过 compression.zstd 读取和写入同一文件格式。
+    "zstandard>=0.15.0; python_version < '3.15'",
     # SHAP 0.50 起要求 Python 3.11；0.51 支持 XGBoost 的向量 base_score。
     # 0.52 会将启用类别支持的纯数值 XGBoost 模型误判为不支持的类别分裂。
+    # Python 3.15 使用已提供稳定 ABI wheel 的 0.54 系列。
     "shap>=0.49.1,<0.50; python_version < '3.11'",
-    "shap>=0.51,<0.52; python_version >= '3.11'",
+    "shap>=0.51,<0.52; python_version >= '3.11' and python_version < '3.15'",
+    "shap>=0.54.1,<0.55; python_version >= '3.15'",
 ]
 
 [project.optional-dependencies]
@@ -156,6 +162,9 @@ docs = [
 all = [
     "hscredit[boost,net,pmml,tune,skills,database-all,dev,docs]"
 ]
+
+[project.scripts]
+hscredit = "hscredit.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/hengshu-credit/hscredit"

@@ -102,7 +102,7 @@ def test_auto_feature_analysis_combines_overdue_labels_and_exposes_feature_summa
         features=None,
         overdue=None,
         dpds=None,
-        excel_writer=None,
+        save=None,
         output_dir=None,
         pictures=None,
         n_jobs=1,
@@ -129,7 +129,7 @@ def test_auto_feature_analysis_combines_overdue_labels_and_exposes_feature_summa
         values = ["feature_a", "数值型", 100, 0.05, 80, 0.42, 0.31, "ascending", 0.02, 12.5]
         for column, value in enumerate(values, start=1):
             worksheet.cell(row=4, column=column, value=value)
-        workbook.save(excel_writer)
+        workbook.save(save)
         workbook.close()
         return 4, len(headers)
 

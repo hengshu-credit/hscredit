@@ -47,7 +47,7 @@ def test_long_feature_names_and_parameters_do_not_clip_or_resize_unused_columns(
     output = tmp_path / "完整报告.xlsx"
     result = model.model_report(
         datasets={"验证集": (X, (X[feature] > 12).astype(int))},
-        excel_path=output,
+        save=output,
         mode="strict",
         return_result=True,
         verbose=False,

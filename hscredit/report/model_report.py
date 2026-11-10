@@ -32,6 +32,8 @@ import cloudpickle
 import numpy as np
 import pandas as pd
 
+from ..excel.writer import _report_color_styles
+
 from ..utils.overdue import overdue_label, validate_overdue_operator
 from ..core.metrics._semantics import rejection_statistics, validate_amounts
 from ..utils.input_utils import normalize_dpd_values
@@ -2988,7 +2990,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     col_raw = ds.X[feat]
                     col = col_raw.dropna()
                     # 检查是否为类别特征或低基数的数值特征
-                    is_categorical = col.dtype == "object" or (col.dtype in ["int64", "float64"] and col.nunique() <= 10)
+                    is_categorical = col.dtype == "object" or isinstance(col.dtype, (pd.StringDtype, pd.CategoricalDtype)) or (col.dtype in ["int64", "float64"] and col.nunique() <= 10)
                     if is_categorical:
                         # 类别特征跳过KS图
                         continue
@@ -3276,7 +3278,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     path = str(output_dir / f"ks_{feature}_{ds_key}.png")
                     try:
                         column = ds.X[feature].dropna()
-                        is_categorical = column.dtype == "object" or (column.dtype in ["int64", "float64"] and column.nunique() <= 10)
+                        is_categorical = column.dtype == "object" or isinstance(column.dtype, (pd.StringDtype, pd.CategoricalDtype)) or (column.dtype in ["int64", "float64"] and column.nunique() <= 10)
                         if is_categorical:
                             continue
                         target = ds.y.loc[column.index]
@@ -3632,6 +3634,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         self,
         filepath: str,
         *,
+        sheet="1-基本信息",
         max_n_bins: int = 10,
         method: str = "quantile",
         amount: Optional[str] = None,
@@ -3665,7 +3668,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
 
         **参数补充**
 
-        :param filepath: 输出 .xlsx 路径，支持相对或绝对路径。事务模式的实际路径见返回值或 result.artifacts。
+        :param filepath: 输出 .xlsx 路径或 hscredit ExcelWriter；writer 仅写入，不保存或关闭。事务模式仅支持文件路径。
+        :param sheet: 基本信息页名称或 openpyxl Worksheet，默认“1-基本信息”。
         :type filepath: str
         :param max_n_bins: 报告分箱数量，默认10；使用 hscredit 分箱器，不改变模型参数或预测。
         :type max_n_bins: int
@@ -3722,11 +3726,23 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         if not isinstance(include_sample_records, (bool, np.bool_)):
             raise ValueError("include_sample_records 必须为布尔值")
         if transactional:
+            if not isinstance(filepath, (str, Path)) or not isinstance(sheet, str):
+                raise ValueError("transactional=True 需要文件路径和工作表名称，不能传入 writer 或 Worksheet")
             options = dict(locals())
             for key in ("self", "filepath", "transactional", "process_sheet_name"):
                 options.pop(key)
             return self._to_excel_transactional(filepath, options)
         from .result import ReportGenerationError, ReportResult
+        from tempfile import TemporaryDirectory
+        from ._parameters import resolve_report_output, preserve_report_images, save_report_workbook
+
+        requested_sheet = sheet if isinstance(sheet, str) else getattr(sheet, "title", None)
+        reserved_sheets = {"目录", "2-模型性能", "3-入模变量分析", "4-稳定性分析", "5-模型参数", "6-模型部署需求", "7-模型解释", process_sheet_name(self, training_sheet_index)}
+        if requested_sheet in reserved_sheets:
+            raise ValueError("sheet 与模型报告的其他章节重名，请为基本信息页使用不同名称")
+        writer, worksheet, destination, owned = resolve_report_output(filepath, sheet, default="1-基本信息")
+        temporary = TemporaryDirectory(prefix="hscredit-model-") if destination is None else None
+        render_path = str(Path(temporary.name) / "模型.xlsx") if temporary is not None else destination
 
         result = ReportResult(mode=mode or "best_effort", metadata={"报告类型": "模型报告"})
         previous = getattr(self, "_execution_result", None)
@@ -3745,10 +3761,12 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             result.plan("生产订单测试用例")
             if not include_sample_records:
                 result.skip("生产订单测试用例", "include_sample_records=False，未导出逐行订单及模型分数")
-        try:
-            path = self._run_cache_transaction(
-                self._to_excel_impl,
-                filepath,
+
+        def render_and_publish():
+            self._to_excel_impl(
+                render_path,
+                _writer=writer,
+                _sheet=worksheet,
                 max_n_bins=max_n_bins,
                 method=method,
                 amount=amount,
@@ -3768,8 +3786,18 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 include_sample_records=include_sample_records,
                 training_sheet_index=training_sheet_index,
             )
-            if result is not None:
-                result.artifacts.append({"类型": "Excel", "路径": str(path), "完整": result.complete})
+            contents_sheet = writer.workbook["目录"]
+            if writer.workbook.index(contents_sheet) > writer.workbook.index(worksheet):
+                writer.move_sheet(contents_sheet, index=writer.workbook.index(worksheet))
+            if destination is not None:
+                save_report_workbook(writer, destination, close=owned)
+                result.artifacts.append({"类型": "Excel", "路径": destination, "完整": result.complete})
+            else:
+                result.metadata["写入工作簿"] = True
+            return destination if destination is not None else writer
+
+        try:
+            path = self._run_cache_transaction(render_and_publish)
             return result if return_result else path
         except Exception as exc:
             if result is not None:
@@ -3780,6 +3808,13 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     return result
             raise
         finally:
+            if temporary is not None:
+                try:
+                    preserve_report_images(writer)
+                finally:
+                    temporary.cleanup()
+            if owned:
+                writer.workbook.close()
             if result is not None:
                 self.last_report_result_ = result
             self._execution_result = previous
@@ -3845,6 +3880,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         self,
         filepath: str,
         *,
+        _writer=None,
+        _sheet=None,
         max_n_bins: int = 10,
         method: str = "quantile",
         amount: Optional[str] = None,
@@ -3900,7 +3937,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             """模型报告由大量小表组成，统一使用保样式快速写入。"""
             data = args[0] if args else kwargs.get("data")
             if isinstance(data, pd.DataFrame) and data.empty:
-                for option in ("percent_cols", "custom_cols", "condition_cols", "color_cols"):
+                for option in ("percent_cols", "custom_cols", "condition_cols", "color_cols", "centered_bar_cols"):
                     kwargs[option] = None
             worksheet = kwargs.get("sheet_name")
             worksheet_title = getattr(worksheet, "title", worksheet if isinstance(worksheet, str) else None)
@@ -3953,7 +3990,8 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
 
         if execution_result is not None:
             execution_result.current_section = "工作簿渲染"
-        writer = ExcelWriter()
+        writer = _writer if _writer is not None else ExcelWriter()
+        basic_sheet = _sheet if _sheet is not None else writer.get_sheet_by_name("1-基本信息")
         from ._excel_layout import adjust_report_title_merges as _adjust_report_title_merges
 
         def _insert_required_hyperlink(worksheet, cell, hyperlink: str, purpose: str) -> None:
@@ -3969,7 +4007,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         # ============================================================
         contents = pd.DataFrame(
             [
-                {"序号": 1, "内容": "1-基本信息", "备注": "项目目标、样本选取、样本坏率分布"},
+                {"序号": 1, "内容": basic_sheet.title, "备注": "项目目标、样本选取、样本坏率分布"},
                 {"序号": 2, "内容": "2-模型性能", "备注": "模型效果、区分度、稳定性等内容"},
                 {"序号": 3, "内容": "3-入模变量分析", "备注": "模型变量有效性及不同数据集分箱情况"},
                 {"序号": 4, "内容": "4-稳定性分析", "备注": "评分分布、PSI、CSI等稳定性分析"},
@@ -3995,7 +4033,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         # ============================================================
         # 1-基本信息 Sheet
         # ============================================================
-        ws = writer.get_sheet_by_name("1-基本信息")
+        ws = writer.get_sheet_by_name(basic_sheet.title)
         end_row, _ = writer.insert_value2sheet(ws, (2, 2), value="一、基本信息", style="header_middle")
         _insert_required_hyperlink(ws, (2, 2), hyperlink="#'目录'!B2", purpose="返回目录链接")
 
@@ -4509,7 +4547,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         start_row=order_start_row,
                         start_col=2,
                         percent_cols=pct_cols,
-                        condition_cols=cond_cols,
+                        **_report_color_styles(cond_cols),
                     )
                     amount_end_row, _ = dataframe2excel(
                         amount_table,
@@ -4519,7 +4557,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         start_row=order_start_row,
                         start_col=order_end_col + 1,
                         percent_cols=amt_pct,
-                        condition_cols=amt_cond,
+                        **_report_color_styles(amt_cond),
                     )
                     end_row = max(order_end_row, amount_end_row)
                 else:
@@ -4539,7 +4577,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         title=f"{tag} 评分有效性",
                         start_row=end_row + 1,
                         percent_cols=pct_cols,
-                        condition_cols=cond_cols,
+                        **_report_color_styles(cond_cols),
                     )
             elif amount:
                 # 订单口径和金额口径左右并排（参考3-入模变量分析的分箱表布局）
@@ -4555,7 +4593,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     start_row=order_start_row,
                     start_col=2,
                     percent_cols=pct_cols,
-                    condition_cols=cond_cols,
+                    **_report_color_styles(cond_cols),
                 )
                 try:
                     amount_table = self.get_bin_table(ds_key, method=method, max_n_bins=max_n_bins, amount=amount, margins=True)
@@ -4569,7 +4607,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                         start_row=order_start_row,
                         start_col=order_end_col + 1,
                         percent_cols=amt_pct,
-                        condition_cols=amt_cond,
+                        **_report_color_styles(amt_cond),
                     )
                     end_row = max(order_end_row, amount_end_row)
                 except Exception as exc:
@@ -4585,7 +4623,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     title=f"{tag} 评分有效性",
                     start_row=end_row + 1,
                     percent_cols=pct_cols,
-                    condition_cols=cond_cols,
+                    **_report_color_styles(cond_cols),
                 )
             section_idx += 1
 
@@ -4625,7 +4663,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 start_row=features_summary_start_row,
                 right_cols=[0],
                 percent_cols=["缺失率", "KS", "PSI", "众数占比", "零值率", "负值率", "重复率"],
-                condition_cols=["IV", "KS"],
+                **_report_color_styles(["IV", "KS"]),
             )
             feature_name_col = 2 + features_summary.columns.get_loc("特征名")
             features_summary_rows = {str(feat): features_summary_start_row + features_summary.columns.nlevels + position for position, feat in enumerate(features_summary["特征名"])}
@@ -4737,7 +4775,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                             start_row=table_start,
                             start_col=2,
                             percent_cols=ft_pct,
-                            condition_cols=ft_cond,
+                            **_report_color_styles(ft_cond),
                         )
                         ft_amt = self.get_feature_bin_table(
                             feat,
@@ -4758,7 +4796,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                             start_row=table_start,
                             start_col=order_end_col + 1,
                             percent_cols=amt_pct,
-                            condition_cols=amt_cond,
+                            **_report_color_styles(amt_cond),
                         )
                         end_row = max(order_end_row, amount_end_row)
                     else:
@@ -4769,7 +4807,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                             title=ds.label,
                             start_row=end_row + 1,
                             percent_cols=ft_pct,
-                            condition_cols=ft_cond,
+                            **_report_color_styles(ft_cond),
                         )
                 except Exception as exc:
                     raise RuntimeError(f"生成特征有效性分箱表失败 [特征={feat}, 数据集={ds.label}]") from exc
@@ -4798,7 +4836,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     title="PSI稳定性分析",
                     start_row=end_row + 1,
                     percent_cols=psi_percent_cols,
-                    condition_cols=psi_condition_cols,
+                    **_report_color_styles(psi_condition_cols),
                 )
 
         # ============================================================
@@ -5363,7 +5401,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         # ============================================================
         # 保存
         # ============================================================
-        basic_info_sheet = writer.workbook["1-基本信息"]
+        basic_info_sheet = writer.workbook[basic_sheet.title]
         if basic_info_sheet.max_column >= 4:
             writer.adjust_columns_width(
                 basic_info_sheet,
@@ -5372,7 +5410,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             )
         for sheet_name in [
             "目录",
-            "1-基本信息",
+            basic_sheet.title,
             "2-模型性能",
             "3-入模变量分析",
             "4-稳定性分析",
@@ -5387,7 +5425,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         write_process(self, writer, filepath, with_plots, training_name)
         for sheet_name in ("5-模型参数", "6-模型部署需求", training_name):
             if sheet_name in writer.workbook:
-                fit_metadata_sheet(writer.workbook[sheet_name], writer.style_sheet.column_dimensions["C"].width)
+                fit_metadata_sheet(writer.workbook[sheet_name], writer.style_sheet.column_dimensions["C"].width if writer.style_sheet is not None else 13)
         from ._model_layout import fit_report_titles
 
         # 表格全部写入后列宽才稳定，所有数据集和特征的同一组图采用相同排布。
@@ -5405,18 +5443,21 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     picture.anchor._from.col = column - 1
                     width = picture.anchor.ext.cx / 9525
                 column = _next_image_col(sheet, column, width)
+        report_names = {basic_sheet.title, "目录", "2-模型性能", "3-入模变量分析", "4-稳定性分析", "5-模型参数", "6-模型部署需求", "7-模型解释", training_name}
         for sheet in writer.workbook:
-            if sheet.title not in {"初始化", "目录"}:
+            if sheet.title in report_names - {"目录"}:
                 fit_report_titles(sheet)
         if execution_result is not None:
             for sheet_name in writer.workbook.sheetnames:
-                if sheet_name != "初始化":
+                if sheet_name in report_names:
                     execution_result.success(f"工作表：{sheet_name}")
             execution_result.ensure_publishable()
         if execution_result is not None:
             execution_result.current_section = "工作簿发布"
-        writer.save(filepath)
-        return filepath
+        if _writer is None:
+            writer.save(filepath)
+            return filepath
+        return writer
 
     # ---------- 12. to_dict ----------
 
@@ -5463,7 +5504,7 @@ def auto_model_report(
     overdue: Optional[Union[str, List[str]]] = None,
     dpds: Optional[Union[int, float, List[Union[int, float]]]] = None,
     del_grey: bool = False,
-    excel_path: Optional[str] = None,
+    save=None,
     verbose: bool = True,
     max_n_bins: int = 10,
     method: str = "quantile",
@@ -5487,6 +5528,7 @@ def auto_model_report(
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
     *,
+    sheet="1-基本信息",
     overdue_operator: Optional[str] = None,
     mode: Optional[str] = None,
     return_result: bool = False,
@@ -5535,10 +5577,10 @@ def auto_model_report(
     示例::
 
         # 方式1: datasets dict（DataFrame 直接传入，X 中含目标列）
-        auto_model_report(model, datasets={'train': train_df, 'test': test_df}, excel_path='report.xlsx')
+        auto_model_report(model, datasets={'train': train_df, 'test': test_df}, save='report.xlsx')
 
         # 方式1: datasets list（自动命名）
-        auto_model_report(model, datasets=[train_df, test_df], excel_path='report.xlsx')
+        auto_model_report(model, datasets=[train_df, test_df], save='report.xlsx')
 
         # 方式1: overdue/dpds 自动构建标签
         auto_model_report(
@@ -5546,7 +5588,7 @@ def auto_model_report(
             datasets={'train': df},
             overdue='dpds',
             dpds=[15, 7, 0],
-            excel_path='report.xlsx',
+            save='report.xlsx',
         )
 
         # 方式2: 兼容 sklearn API（分离 X/y）
@@ -5554,7 +5596,7 @@ def auto_model_report(
             model,
             X_train=X, y_train=y,
             X_test=X_val, y_test=y_val,
-            excel_path='report.xlsx',
+            save='report.xlsx',
         )
 
     :param model: 训练好的模型（ScoreCard / XGBoost / LightGBM / sklearn 等）
@@ -5583,8 +5625,8 @@ def auto_model_report(
         ``<``、``<=`` 不设置灰区。各标签独立计算有效样本分母。
         默认 False；显式标签中非 0/1 值按 0 计算，逾期标签按比较结果计算。
     :type del_grey: bool
-    :param excel_path: 默认值为 ``None`` 。Excel 报告输出路径
-    :type excel_path: Optional[str]
+    :param save: 默认 None；Excel 文件路径或 hscredit ExcelWriter；传入 writer 时仅写入，不保存或关闭。
+    :param sheet: 基本信息页的名称或 openpyxl Worksheet，默认“1-基本信息”；其他章节仍生成独立工作表。
     :param verbose: 默认值为 ``True`` 。是否打印控制台报告
     :type verbose: bool
     :param max_n_bins: 默认值为 ``10`` 。分箱数
@@ -5676,6 +5718,11 @@ def auto_model_report(
     :param cache_policy: 派生缓存保留策略：full（默认）保留，none 在一次公开操作结束后释放。
     :param rules: 指定分箱规则；列表用于评分，字典按特征名指定，score 或 __score__ 指定评分规则。默认 None。
     """
+    from ._parameters import reject_legacy_report_keywords, resolve_report_save
+    from openpyxl.worksheet.worksheet import Worksheet
+
+    reject_legacy_report_keywords(kwargs)
+    save = resolve_report_save(save)
     if mode is not None and mode not in {"strict", "best_effort"}:
         raise ValueError("报告 mode 必须为 'strict' 或 'best_effort'")
     if overdue_operator is not None:
@@ -5715,9 +5762,10 @@ def auto_model_report(
     if verbose:
         report.print_report(max_n_bins=max_n_bins)
 
-    if excel_path:
+    if save is not None or isinstance(sheet, Worksheet):
         execution_result = report.to_excel(
-            excel_path,
+            save,
+            sheet=sheet,
             max_n_bins=max_n_bins,
             method=method,
             amount=amount,
@@ -5741,7 +5789,7 @@ def auto_model_report(
             training_sheet_index=training_sheet_index,
         )
         if verbose:
-            logger.info(f"\nExcel 报告已保存: {excel_path}")
+            logger.info(f"\nExcel 报告已保存: {save}" if isinstance(save, str) else "模型报告已写入工作簿")
 
         if return_result:
             return execution_result
@@ -5762,10 +5810,12 @@ def compare_models(
     y_train,
     X_test=None,
     y_test=None,
-    excel_path: Optional[str] = None,
+    save: Optional[str] = None,
     n_jobs=-1,
     parallel_backend: Optional[str] = None,
     parallel_config: Optional[Dict[str, Any]] = None,
+    *,
+    sheet="Sheet1",
 ) -> pd.DataFrame:
     """横向对比多个模型的评估指标.
 
@@ -5778,8 +5828,9 @@ def compare_models(
     :param y_train: 训练集标签（0/1）
     :param X_test: 默认值为 ``None`` 。测试集特征，可选
     :param y_test: 默认值为 ``None`` 。测试集标签，可选
-    :param excel_path: 默认值为 ``None`` 。可选，若提供则将对比表导出到该 Excel 路径
-    :type excel_path: Optional[str]
+    :param save: 默认 None；文件路径或 hscredit ExcelWriter。传入 writer 时只写入，不保存或关闭。
+    :param sheet: 工作表名称或 openpyxl Worksheet，默认“Sheet1”。
+    :type save: Optional[str]
     :param n_jobs: 并行总预算，默认 ``-1`` 自动按物理核与工作量调度； ``1`` 或 ``None`` 为串行，
         正整数为 worker 上限， ``0 < n_jobs < 1`` 为物理核比例（向上取整）。
         不接受布尔值、 ``0`` 或小于 ``-1`` 的值；嵌套任务共享总预算。
@@ -5803,7 +5854,7 @@ def compare_models(
     >>> result = compare_models(
     ...     {'XGBoost': xgb_model, '逻辑回归': lr_model},
     ...     X_train, y_train, X_test, y_test,
-    ...     excel_path='模型对比.xlsx',
+    ...     save='模型对比.xlsx',
     ... )
     >>> print(result)
     """
@@ -5841,15 +5892,20 @@ def compare_models(
 
     # 以「模型名称」作为最外层行索引纵向拼接，保留 summary 的「统计指标 × 数据集」多层列
     result = pd.concat(parts, names=["模型名称"]) if parts else pd.DataFrame()
-    if excel_path and not result.empty:
+    if save is not None and not result.empty:
         from ..excel import dataframe2excel
+        from ._parameters import resolve_report_output, save_report_workbook
 
+        writer, worksheet, save_path, owned = resolve_report_output(save, sheet, default="Sheet1")
         dataframe2excel(
             result,
-            excel_path,
+            writer,
+            sheet_name=worksheet,
             index=True,
             percent_cols=_summary_percent_cols(result.columns),
         )
+        if save_path is not None:
+            save_report_workbook(writer, save_path, close=owned)
     return result
 
 

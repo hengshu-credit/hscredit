@@ -18,6 +18,12 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--force", action="store_true", help="强制覆盖已安装的内置字体")
     check_parser = subparsers.add_parser("check-environment", help="检查安装依赖和实际导入版本")
     check_parser.add_argument("--strict", action="store_true", help="环境异常时返回非零退出码")
+    dashboard_parser = subparsers.add_parser("dashboard", help="启动使用 hscredit 配色和字体的 Optuna 看板")
+    dashboard_parser.add_argument("storage", help="Optuna 存储地址，例如 sqlite:///hscredit.db")
+    dashboard_parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
+    dashboard_parser.add_argument("--port", default=8080, type=int, help="监听端口，默认 8080")
+    dashboard_parser.add_argument("--artifact-dir", help="可选的 Optuna 产物文件目录")
+    dashboard_parser.add_argument("--quiet", action="store_true", help="隐藏 HTTP 请求日志")
     return parser
 
 
@@ -48,6 +54,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = check_environment()
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return int(args.strict and not result["正常"])
+
+    if args.command == "dashboard":
+        from .dashboard import run_dashboard
+
+        if not 1 <= args.port <= 65535:
+            parser.error("端口必须在 1 到 65535 之间")
+        try:
+            run_dashboard(args.storage, host=args.host, port=args.port, artifact_dir=args.artifact_dir, quiet=args.quiet)
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            parser.exit(1, f"启动看板失败：{exc}\n")
+        return 0
 
     parser.error(f"未知命令：{args.command}")
     return 2

@@ -4,6 +4,50 @@
 报告生成与规则挖掘：特征分析、规则分析、Swap 分析、逾期预测、模型报告、模型对比，
 以及格式化 Excel 输出工具。
 
+.. rubric:: 自动报告的公共参数
+
+四类自动报告使用相同的输出参数：
+
+* ``save``：Excel 文件路径（字符串或 ``pathlib.Path``），或已有的 ``hscredit.excel.ExcelWriter``。
+  传入文件路径时保存；传入 writer 时仅写入，由调用方最后执行 ``writer.save(...)``，不自动关闭工作簿。
+* ``sheet``：工作表名称，或已有的 openpyxl ``Worksheet``。同时传入 writer 和 Worksheet 时，
+  两者必须属于同一工作簿。路径与 Worksheet 可组合使用，会保存 Worksheet 所属的工作簿。
+
+标签口径统一使用 ``target``，或 ``overdue + dpds``；可共用
+``overdue_operator``、``del_grey``、``handle_missing_target``。
+金额、日期和时间粒度分别使用 ``amount``、``date``、``freq``。
+
+.. code-block:: python
+
+   from hscredit.report import swap_out_report, auto_model_report, auto_feature_analysis
+   from hscredit.excel import ExcelWriter
+
+   labels = dict(overdue="MOB1", dpds=[3, 7], overdue_operator=">", del_grey=True)
+   swap_out_report(df, rules, date="授信时间", margins=True, save="策略.xlsx", **labels)
+   auto_model_report(model, datasets, features=features, amount="loan_amt", long_format=True, save="模型.xlsx", **labels)
+   multiway_tree.report(datasets, amount="loan_amt", group="GROUP", save="规则.xlsx", **labels)
+   auto_feature_analysis(df, features, amount="loan_amt", long_format=True, save="三方数据.xlsx", **labels)
+
+   writer = ExcelWriter()
+   worksheet = writer.get_sheet_by_name("三方分析")
+   auto_feature_analysis(df, features, save=writer, sheet=worksheet, **labels)
+   swap_out_report(df, rules, save=writer, sheet="策略分析", **labels)
+   writer.save("综合报告.xlsx")
+
+模型报告的 ``sheet`` 指定基本信息页，其余章节仍生成独立工作表，目录链接同步使用实际页名。
+省略 ``save`` 时不保存文件；显式传入 Worksheet 时仍写入内存工作表。各接口原有返回类型保持不变。
+``compare_models`` 和模型的报告便捷方法也使用 ``save``；类型、默认工作表名与迁移表见 :doc:`../analysis_parameters`。
+这些报告入口已移除 ``excel_path``、``excel_writer``、``sheet_name``，传入旧参数会报错。
+底层 ``dataframe2excel`` 的参数不受此报告接口调整影响。
+
+``long_format`` 在模型、特征和树报告中均表示按标签逐行输出。
+原默认布局保持不变：模型报告默认宽表，特征报告沿用 ``bin_params``（未设置时为宽表），
+树报告默认长表；需要统一展示时显式设置 ``long_format=True``。
+策略报告使用固定的业务影响与规则效果布局。
+
+:download:`下载完整报告与共享 writer 示例 <../../examples/29_api_reference.ipynb>`；
+该 Notebook 使用本地真实数据，包含文件路径、工作表对象及统一保存的完整调用。
+
 .. automodule:: hscredit.report
    :members:
    :imported-members:

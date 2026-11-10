@@ -75,11 +75,15 @@ def test_example_notebooks_do_not_draw_with_low_level_libraries():
 
 def test_models_notebook_compares_top_badcases_with_similar_correct_samples(monkeypatch):
     """模型教程应按坏样本率阈值选取两类 Top2，并对匹配样本成对绘制 SHAP。"""
+    import matplotlib.pyplot as plt
+
     notebook_path = Path(__file__).resolve().parents[2] / "examples" / "04_models.ipynb"
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
     section_indexes = [index for index, cell in enumerate(notebook["cells"]) if cell.get("cell_type") == "markdown" and "Badcase" in "".join(cell.get("source", []))]
     assert section_indexes, "04_models.ipynb 缺少 Badcase 分析章节"
     section_source = "\n\n".join("".join(cell.get("source", [])) for cell in notebook["cells"][section_indexes[-1] + 1 :] if cell.get("cell_type") == "code")
+    # 独立段落前半段负责加载和训练；这里用可核对的固定预测检验误判配对语义。
+    section_source = section_source.split("# 从预测结果定位 Badcase，并匹配相似的正确样本。", 1)[1]
 
     probabilities = pd.Series(
         [0.95, 0.85, 0.20, 0.10, 0.15, 0.25, 0.05, 0.12, 0.80, 0.75],
@@ -116,6 +120,7 @@ def test_models_notebook_compares_top_badcases_with_similar_correct_samples(monk
     namespace = {
         "np": np,
         "pd": pd,
+        "plt": plt,
         "display": lambda *args, **kwargs: None,
         "xgboost_model": FakeModel(),
         "X_train": X_train,

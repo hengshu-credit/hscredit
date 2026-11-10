@@ -107,7 +107,7 @@ def test_exported_workbook_does_not_append_metric_explanations(tmp_path, kind):
             data,
             features=["分数"],
             target="标签",
-            excel_writer=str(destination),
+            save=str(destination),
             output_dir=str(tmp_path),
             pictures=[],
             bin_params={"method": "quantile", "max_n_bins": 2},

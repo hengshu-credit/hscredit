@@ -58,6 +58,17 @@ def test_runtime_dependency_floors_avoid_known_pandas_warning_combinations():
     assert str(requirements["seaborn"].specifier) == ">=0.13.2"
 
 
+def test_python315_pandas_floor_excludes_incompatible_datetime_extensions():
+    """3.15 不能被间接依赖降级到日期扩展会崩溃的旧版 pandas。"""
+    requirements = [Requirement(raw) for raw in _pyproject()["project"]["dependencies"]]
+    pandas = [item for item in requirements if item.name == "pandas" and (item.marker is None or item.marker.evaluate({"python_version": "3.15"}))]
+    assert len(pandas) == 1
+    assert "2.3.3" not in pandas[0].specifier
+    assert "3.0.5" not in pandas[0].specifier
+    assert "3.0.6" in pandas[0].specifier
+    assert "3.1.1" in pandas[0].specifier
+
+
 def test_environment_validator_checks_packaging():
     namespace = runpy.run_path(str(PROJECT_ROOT / "scripts" / "validate_environment.py"))
 
@@ -86,6 +97,7 @@ def test_ci_build_compat_covers_every_supported_python():
             "3.12": 1,
             "3.13": 1,
             "3.14": 1,
+            "3.15": 1,
         }
     )
 
@@ -93,7 +105,7 @@ def test_ci_build_compat_covers_every_supported_python():
 def test_ci_runs_full_suite_with_all_extras_on_every_supported_python():
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
-    assert 'python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]' in workflow
+    assert 'python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]' in workflow
     assert workflow.count('pip install -e ".[all]"') == 2
     assert 'pip install -e ".[dev' not in workflow
     assert "test-full:" not in workflow

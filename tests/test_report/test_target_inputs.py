@@ -250,7 +250,7 @@ def test_auto_report_uses_full_data_once_and_preserves_custom_names(frame, tmp_p
         date="date",
         pictures=[],
         show_progress=False,
-        excel_writer=writer,
+        save=writer,
         output_dir=str(tmp_path),
         n_jobs=1,
         return_result=True,

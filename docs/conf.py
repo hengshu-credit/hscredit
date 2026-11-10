@@ -118,7 +118,7 @@ html_theme_options = {
     "logo_only": False,
     "prev_next_buttons_location": "bottom",
 }
-html_static_path = ["assets/readme", "_static"]
+html_static_path = ["assets/readme", "assets/brand", "_static"]
 html_show_sphinx = False
 # 原样复制到 HTML 根目录，供 GitHub Pages 识别自定义域名并关闭 Jekyll 处理。
 html_extra_path = ["CNAME", ".nojekyll"]

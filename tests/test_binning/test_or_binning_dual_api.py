@@ -5,14 +5,9 @@ import numpy as np
 import pandas as pd
 import warnings
 
-try:
-    from hscredit.core.binning import ORBinning
-    from hscredit.core.binning.or_binning import ORTOOLS_AVAILABLE
-except ImportError:
-    ORTOOLS_AVAILABLE = False
+from hscredit.core.binning import ORBinning
 
 
-@unittest.skipUnless(ORTOOLS_AVAILABLE, "OR-Tools not installed")
 class TestORBinningDualAPI(unittest.TestCase):
     """测试 ORBinning 双 API 支持."""
 

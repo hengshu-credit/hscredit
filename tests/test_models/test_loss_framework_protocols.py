@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from packaging.version import Version
 from scipy.special import expit
 from sklearn.model_selection import train_test_split
 
@@ -105,7 +106,10 @@ def test_ngboost_monitors_its_actual_custom_loss(loans):
     model = ngb.NGBClassifier(**loss.ngboost_params(), n_estimators=4, verbose=False, random_state=42)
     model.fit(x, y.astype(int))
     p = model.predict_proba(xv)[:, 1]
-    assert model.score(xv, yv.astype(int)) == pytest.approx(loss.evaluate(yv, p))
+    # NGBoost 0.6 起按 sklearn 约定返回负损失，分数越大越好。
+    expected = loss.evaluate(yv, p)
+    expected_score = -expected if Version(ngb.__version__) >= Version("0.6") else expected
+    assert model.score(xv, yv.astype(int)) == pytest.approx(expected_score)
 
 
 def test_frameworks_reject_batch_unsafe_loss():

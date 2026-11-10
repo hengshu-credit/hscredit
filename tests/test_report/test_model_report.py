@@ -773,7 +773,7 @@ class TestModelReportOverdueDpdsSeparate:
             dpds=[1, 3],
             del_grey=True,
             features=["f0"],
-            excel_path=str(output),
+            save=str(output),
             verbose=False,
             with_plots=False,
             date="放款月份",
@@ -996,7 +996,7 @@ class TestModelReportRegression:
             X_train=X,
             y_train=y,
             features=["f0", "f1"],
-            excel_path=str(output),
+            save=str(output),
             feature_map=feature_map,
             with_plots=False,
             verbose=False,
@@ -1530,7 +1530,7 @@ class TestModelReportRegression:
             y,
             X_test=X,
             y_test=y,
-            excel_path=str(output),
+            save=str(output),
         )
 
         assert result.loc[("LR", "target"), ("坏样本率", "训练集")] == 0.5
@@ -1573,7 +1573,7 @@ class TestModelReportRegression:
             dpds=[3, 7],
             amount="放款金额",
             long_format=True,
-            excel_path=str(path),
+            save=str(path),
             with_plots=False,
             n_jobs=1,
             verbose=False,
@@ -1647,7 +1647,7 @@ class TestModelReportRegression:
         assert any(cell_range.min_row == stats_group_row and cell_range.max_row == stats_group_row and cell_range.min_col == sample_total_header.column - 1 and cell_range.max_col == sample_total_header.column for cell_range in basic.merged_cells.ranges)
         assert basic.cell(sample_total_header.row, sample_total_header.column - 1).value == "数据集"
 
-    def test_feature_psi_table_uses_percent_and_condition_formats(self, tmp_path, monkeypatch):
+    def test_feature_psi_table_uses_percent_and_metric_color_scales(self, tmp_path, monkeypatch):
         X = pd.DataFrame({"f0": np.arange(20), "target": [0, 1] * 10})
         report = ModelReport(
             MockModel(["f0"]),
@@ -1693,9 +1693,12 @@ class TestModelReportRegression:
         header_cells = {cell.value: cell for row in worksheet.iter_rows() for cell in row if cell.value in percent_headers}
         assert set(header_cells) == percent_headers
         assert all(worksheet.cell(cell.row + 1, cell.column).number_format == "0.00%" for cell in header_cells.values())
-        data_bar_columns = {cell_range.min_col for key, rules in worksheet.conditional_formatting._cf_rules.items() if any(rule.type == "dataBar" for rule in rules) for cell_range in key.sqref.ranges}
-        assert header_cells["实际% - 预期%"].column in data_bar_columns
-        assert header_cells["分档PSI值"].column in data_bar_columns
+        scales = {cell_range.min_col: rule.colorScale for key, rules in worksheet.conditional_formatting._cf_rules.items() for rule in rules if rule.type == "colorScale" for cell_range in key.sqref.ranges}
+        difference = scales[header_cells["实际% - 预期%"].column]
+        assert [point.val for point in difference.cfvo] == [-0.1, 0, 0.1]
+        assert difference.color[1].rgb[-6:] == "FFFFFF"
+        psi_scale = scales[header_cells["分档PSI值"].column]
+        assert [color.rgb[-6:] for color in psi_scale.color] == ["FFFFFF", "FE7715"]
 
     def test_score_psi_reference_matches_matrix_width_and_is_left_aligned(self, tmp_path):
         X = pd.DataFrame({"f0": np.arange(20), "target": [0, 1] * 10})
@@ -1765,7 +1768,7 @@ class TestModelReportRealDataContract:
             features=self.FEATURE_NAMES,
             overdue=["MOB1"],
             dpds=[7, 3, 0],
-            excel_path=str(output),
+            save=str(output),
             amount="放款金额",
             date="放款时间",
             group="商品类别",
@@ -1964,7 +1967,7 @@ class TestModelReportRealDataContract:
             X_train=X,
             y_train=y,
             features=["f0"],
-            excel_path=str(tmp_path / "forwarding.xlsx"),
+            save=str(tmp_path / "forwarding.xlsx"),
             show_lift=False,
             show_importance=False,
             feature_contribution_label_max_features=3,

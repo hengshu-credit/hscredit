@@ -1,1 +1,13 @@
-{"protocol_version":"1","skill":"hsmodel","hscredit":{"package":"hscredit","repository":"https://github.com/hscredit/hscredit.git","ref":"main"},"extras":["skills","tune"]}
+{
+  "protocol_version": "1",
+  "skill": "hsmodel",
+  "hscredit": {
+    "package": "hscredit",
+    "repository": "https://github.com/hscredit/hscredit.git",
+    "ref": "v0.1.5"
+  },
+  "extras": [
+    "skills",
+    "tune"
+  ]
+}

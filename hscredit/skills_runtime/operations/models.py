@@ -114,7 +114,7 @@ def model_tune(context):
     ctor = resolve(context, ctor)
     # 远端存储和磁盘保留需要独立管理生命周期；本入口使用内存 Study。
     if ctor.get("storage") is not None or ctor.get("artifact_dir") is not None or ctor.get("retention") == "disk":
-        raise invalid("本操作支持内存 Study；disk/storage 请在 Python 创建 tuner 后通过 inputs.tuner 交接")
+        raise invalid("本操作只支持内存 Study；disk/storage 请使用 Python/Notebook 的 ModelTuner，持久化 Study 可通过 hscredit dashboard 查看")
     if p.get("tuner", "AutoTuner") == "ModelTuner":
         tuner = ModelTuner(component_class(p.get("model", "LogisticRegression")), **ctor)
     else:

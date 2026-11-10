@@ -1,8 +1,10 @@
 """Skills 依赖隔离和引导测试。"""
 
 import json
+import runpy
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -49,6 +51,22 @@ def test_parquet_input_uses_only_the_operation_extras():
     extras = resolve_required_extras("hsbin", "feature_bin_stats", request)
 
     assert extras == ("skills",)
+
+
+@pytest.mark.parametrize("skill", ["hscredit", "hsbin", "hsreport", "hsmodel", "hsrule", "hsselect", "hsviz", "hsexcel"])
+def test_standalone_launchers_use_base_parquet_dependency_and_release_ref(skill):
+    """独立安装的 Skill 与运行时必须使用相同依赖，并绑定对应发布版本。"""
+    from hscredit import __version__
+
+    directory = Path(__file__).parents[2] / "skills" / skill
+    launcher = runpy.run_path(str(directory / "scripts" / "run.py"))
+    request = {"operation": "capabilities", "inputs": {"data": {"kind": "file", "path": "sample.parquet"}}}
+    assert launcher["_extras"](request) == ("skills",)
+    assert launcher["_extras"]({**request, "operation": "model_tune"}) == ("skills", "tune")
+    config = json.loads((directory / "runtime.json").read_text(encoding="utf-8"))
+    requirement, editable = launcher["_requirement"](config, ("skills",), None)
+    assert requirement.endswith("@v" + __version__)
+    assert "[skills]" in requirement and not editable
 
 
 def test_environment_key_is_order_independent():

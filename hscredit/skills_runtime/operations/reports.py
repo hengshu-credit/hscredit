@@ -131,14 +131,14 @@ def _auto_feature_analysis(context) -> dict:
     params = _parameters(
         auto_feature_analysis,
         context.request.parameters,
-        reserved=("data", "excel_writer", "output_dir"),
+        reserved=("data", "save", "output_dir"),
     )
     params = _target_parameters(context, params)
     staged = _stage_workbook(context)
     image_dir = context.artifacts.stage_path("report-images/.anchor").parent
     end_row, end_col = auto_feature_analysis(
         _data(context),
-        excel_writer=str(staged),
+        save=str(staged),
         output_dir=str(image_dir),
         **params,
     )
@@ -192,7 +192,7 @@ def _auto_model_report(context) -> dict:
     params = _parameters(
         auto_model_report,
         context.request.parameters,
-        reserved=("model", "excel_path"),
+        reserved=("model", "save"),
     )
     params = _target_parameters(context, params)
     dataset_mapping = params.pop("datasets", None)
@@ -201,7 +201,7 @@ def _auto_model_report(context) -> dict:
     report = auto_model_report(
         _resolve_model(context),
         datasets=datasets,
-        excel_path=str(staged),
+        save=str(staged),
         **params,
     )
     _validate_and_publish_workbook(context, staged)

@@ -42,9 +42,10 @@ from openpyxl.utils import get_column_letter, column_index_from_string, range_bo
 from openpyxl.styles import NamedStyle, Border, Side, Alignment, PatternFill, Font
 
 from . import _data_bars, _pivot
+from ..utils.colors import CONDITIONAL_BLUE, METRIC_ACCENT_COLORS, PRIMARY_COLORS
 
 # hscredit 可视化主题配色（与 core.viz 保持一致）：主题蓝 / 坏样本红 / 提升橙
-HSCREDIT_CHART_COLORS = ["2639E9", "F76E6C", "FE7715"]
+HSCREDIT_CHART_COLORS = [color.lstrip("#") for color in PRIMARY_COLORS]
 
 
 class ExcelWriter:
@@ -243,7 +244,7 @@ class ExcelWriter:
     @property
     def condition_color(self) -> str:
         """不带指标名时使用的条件格式颜色。"""
-        return self._condition_color or self.calculate_rgba_color(self.theme_color, 0.58, prefix="")
+        return self._condition_color or _condition_theme_color(self.theme_color)
 
     @condition_color.setter
     def condition_color(self, value: Optional[str]) -> None:
@@ -3782,36 +3783,74 @@ def _coerce_color_anchors(color_value: Union[str, List[str]]) -> List[str]:
 def _metric_color_role(column):
     """从内向外识别指标层，兼容（标签，指标）及（指标，数据集）表头。"""
     for level in reversed(column if isinstance(column, tuple) else (column,)):
-        name = str(level).upper()
-        if "坏账改善" in name or name == "风险改善":
+        name = re.sub(r"[（(][^（）()]*[）)]$", "", str(level).strip().upper())
+        if any(part in name for part in ("坏账改善", "风险改善", "逾期改善")):
             return "improvement"
         if "LIFT" in name:
             return "lift"
+        if name.endswith(("坏样本占比", "坏客户占比", "正样本占比")):
+            return "bad_share"
+        if name.endswith(("好样本占比", "好客户占比", "负样本占比")):
+            return "good_share"
+        if name.endswith(("坏样本数", "坏客户数", "正样本数")):
+            return "bad_count"
+        if name.endswith(("好样本数", "好客户数", "负样本数")):
+            return "good_count"
+        if name.endswith(("好样本率", "好客户率")):
+            return "good_rate"
         if name.endswith(("坏样本率", "坏账率", "坏率", "逾期率")):
             return "risk"
-        if name.endswith(("占比", "命中率", "通过率")):
+        if name.endswith(("缺失率", "空值率", "缺失占比")):
+            return "missing"
+        if name.endswith("风险拒绝比"):
+            return "risk_ratio"
+        for role in ("ks", "iv", "auc", "psi", "woe"):
+            if name.endswith((role.upper(), role.upper() + "值")):
+                return role
+        if name.endswith("命中率"):
+            return "hit_rate"
+        if name.endswith(("占比", "通过率")):
             return "share"
     return None
+
+
+def _condition_theme_color(theme):
+    """品牌默认条件格式使用浅蓝实色，自定义主题保留用户指定颜色。"""
+    return CONDITIONAL_BLUE.lstrip("#") if _clean_hex(theme) == "2639E9" else _clean_hex(theme)
 
 
 def _metric_colors(column, theme, overrides=None, fallback=None):
     """HTML 与 Excel 共用的颜色锚点；改善指标的两端分别表示负值和正值。"""
     role = _metric_color_role(column)
     custom = _coerce_color_anchors(_resolve_condition_value(overrides, column, fallback))
-    if role == "improvement":
-        negative = ExcelWriter.calculate_rgba_color(theme, 0.76, prefix="")
+    if role in {"improvement", "woe"}:
+        negative = _condition_theme_color(theme)
         if len(custom) == 3:
             return custom
-        return [custom[0] if len(custom) == 2 else negative, "FFFFFF", custom[-1] if custom else "D58B9F"]
+        return [custom[0] if len(custom) == 2 else negative, "FFFFFF", custom[-1] if custom else METRIC_ACCENT_COLORS["improvement"].lstrip("#")]
     if custom:
         return custom
-    if role == "risk":
-        return ["CD778E"]
-    if role == "lift":
-        return ["B86991"]
-    if role == "share":
-        return ["6979DE" if _clean_hex(theme) == "2639E9" else _clean_hex(theme)]
-    return [ExcelWriter.calculate_rgba_color(theme, 0.58, prefix="")]
+    if role in {"good_share", "good_rate", "good_count"} or (role == "share" and _clean_hex(theme) != "2639E9"):
+        return [_condition_theme_color(theme)]
+    if role in METRIC_ACCENT_COLORS:
+        return [METRIC_ACCENT_COLORS[role].lstrip("#")]
+    return [_condition_theme_color(theme)]
+
+
+def _metric_scale_colors(column, theme, overrides=None, fallback=None):
+    """默认指标色阶从白到强调色；显式配色及有符号指标保留原有锚点。"""
+    colors = _metric_colors(column, theme, overrides, fallback)
+    custom = _resolve_condition_value(overrides, column, fallback)
+    if not custom and len(colors) == 1 and _metric_color_role(column) is not None:
+        return ["FFFFFF", colors[0]]
+    return colors
+
+
+def _report_color_styles(columns):
+    """报告优先使用色阶，改善与 WOE 指标保留居中双向数据条。"""
+    columns = list(dict.fromkeys(columns))
+    signed = [column for column in columns if _metric_color_role(column) in {"improvement", "woe"}]
+    return {"color_cols": [column for column in columns if column not in signed], "centered_bar_cols": signed}
 
 
 def _build_color_scale_rule(values: pd.Series, color_value: Union[str, List[str]], *, center_zero=False) -> ColorScaleRule:
@@ -3893,7 +3932,11 @@ def _write_metric_formats(writer, sheet, data, top, left, condition_cols, color_
             numbers = pd.to_numeric(values, errors="coerce").dropna()
             numbers = numbers[np.isfinite(numbers)]
             if not numbers.empty:
-                rule = _build_color_scale_rule(numbers, colors, center_zero=_metric_color_role(metric) == "improvement")
+                custom = _resolve_condition_value(condition_color, metric, writer._condition_color)
+                if not custom and numbers.nunique() < 2 and _metric_color_role(metric) is not None:
+                    return
+                colors = _metric_scale_colors(metric, writer.theme_color, condition_color, writer._condition_color)
+                rule = _build_color_scale_rule(numbers, colors, center_zero=_metric_color_role(metric) in {"improvement", "woe"})
                 sheet.conditional_formatting.add(detail_range or f"{start}:{end}", rule)
         elif detail_range is not None:
             sheet.conditional_formatting.add(detail_range, _data_bars.solid_bar(detail_range, colors[-1], start_zero=True))
@@ -3909,7 +3952,7 @@ def _write_metric_formats(writer, sheet, data, top, left, condition_cols, color_
             for i, metric in enumerate(axis):
                 kind = _resolve_condition_value(styles, metric, None)
                 if kind:
-                    if kind == "solid" and _metric_color_role(metric) == "improvement":
+                    if kind == "solid" and _metric_color_role(metric) in {"improvement", "woe"}:
                         kind = "centered"
                     yield i, metric, kind
 

@@ -10,8 +10,8 @@
 4. 目标函数：最大化 IV、KS 或自定义指标
 5. 求解：使用 CP-SAT 求解器找到全局最优解
 
-依赖：
-    pip install ortools
+原生求解器可通过 pip install ortools 安装。
+未安装时，约束求解使用动态规划或有时限的候选枚举。
 """
 
 from __future__ import annotations
@@ -200,7 +200,8 @@ class CPSATBinning(BaseBinning):
 
     4. 适合对分箱质量要求高的场景
 
-    5. 依赖可选包 ``ortools`` ，未安装时实例化会抛出 ImportError
+    5. 优先使用 ``ortools``；未安装时使用相同候选空间上的动态规划或有时限枚举，
+       通过 ``solver_info_`` 查看实际后端和求解状态。
 
     **引用**
 
@@ -240,9 +241,6 @@ class CPSATBinning(BaseBinning):
         constraint_policy: str = "raise",
         **kwargs,
     ):
-        if not ORTOOLS_AVAILABLE:
-            raise ImportError("OR-Tools 未安装，无法使用 CPSATBinning。" "请使用 pip install ortools 安装。")
-
         super().__init__(
             target=target,
             max_n_bins=max_n_bins,
