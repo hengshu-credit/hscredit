@@ -35,7 +35,7 @@ def test_accepts_complete_docs_artifacts(tmp_path):
         "index.html",
         "API 参考",
         1,
-        ["core", "report", "database", "excel", "utils", "skills_runtime", "exceptions"],
+        ["core", "report", "database", "excel", "platform", "utils", "skills_runtime", "exceptions"],
     )
     _write_package_menu(
         tmp_path,
@@ -197,6 +197,7 @@ def test_api_package_indexes_cover_source_packages():
                 "report": "report",
                 "database": "database",
                 "excel": "excel",
+                "platform": "platform",
                 "utils": "utils",
                 "skills_runtime": "skills_runtime",
             },

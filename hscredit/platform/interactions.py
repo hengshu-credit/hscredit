@@ -114,7 +114,7 @@ def interactions(data, features, target=None, bins=20, freq="M", kinds=None):
         dist["unique"] = int(series.nunique())
         if kind in {"numeric", "text"}:
             finite = encoded[feature].dropna()
-            dist["five_number"] = finite.quantile([0, .25, .5, .75, 1]).astype(float).tolist() if len(finite) else []
+            dist["five_number"] = finite.quantile([0, 0.25, 0.5, 0.75, 1]).astype(float).tolist() if len(finite) else []
         if target:
             observed = encoded[feature].where(series.notna()).groupby(groups)
             grouped = pd.DataFrame({"样本数": observed.size(), "有效数": observed.count(), "缺失数": series.isna().groupby(groups).sum()})

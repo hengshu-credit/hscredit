@@ -39,8 +39,7 @@ def result_tables(result):
     yield from result.get("tables", {}).items()
     if "exploration" in result:
         eda = result["exploration"]
-        yield "探索概况", [{"字段": eda.get("feature"), "样本数": eda.get("rows"), "有效数": eda.get("valid"),
-                          "缺失数": eda.get("missing"), "无效数": eda.get("invalid"), "分布说明": eda.get("distribution_note")}]
+        yield "探索概况", [{"字段": eda.get("feature"), "样本数": eda.get("rows"), "有效数": eda.get("valid"), "缺失数": eda.get("missing"), "无效数": eda.get("invalid"), "分布说明": eda.get("distribution_note")}]
         yield "样本分布", eda.get("distribution", [])
         if "correlation" in eda:
             matrix = eda["correlation"]
@@ -82,7 +81,7 @@ def write_result_workbook(directory, result, filename="report.xlsx"):
         while name.casefold() in titles:
             i += 1
             suffix = f" ({i})"
-            name = base[:31 - len(suffix)] + suffix
+            name = base[: 31 - len(suffix)] + suffix
         titles.add(name.casefold())
         return book.create_sheet(name)
 
@@ -174,8 +173,7 @@ def cell_text(cell):
         return ""
     if isinstance(value, datetime):
         fmt = (cell.number_format or "").lower()
-        date_formats = {"yyyy-mm-dd": "%Y-%m-%d", "yyyy/mm/dd": "%Y/%m/%d", "yyyy-mm": "%Y-%m",
-                        "yyyy-mm-dd hh:mm": "%Y-%m-%d %H:%M", "yyyy-mm-dd hh:mm:ss": "%Y-%m-%d %H:%M:%S"}
+        date_formats = {"yyyy-mm-dd": "%Y-%m-%d", "yyyy/mm/dd": "%Y/%m/%d", "yyyy-mm": "%Y-%m", "yyyy-mm-dd hh:mm": "%Y-%m-%d %H:%M", "yyyy-mm-dd hh:mm:ss": "%Y-%m-%d %H:%M:%S"}
         if fmt in date_formats:
             return value.strftime(date_formats[fmt])
     return ExcelWriter._format_value_for_width(value, cell.number_format or "General")
@@ -254,11 +252,7 @@ def _page_cells(ws, bounds, merges, links, sheets, heading_addresses):
             if r >= top and c >= left:
                 rows[r - top][c - left] = value
             y, x = max(r, top), max(c, left)
-            item = {"row": y, "col": x, "text": value,
-                    "numeric": cell.data_type == "n", "bold": bool(cell.font and cell.font.b),
-                    "heading": cell.coordinate in heading_addresses,
-                    "rowspan": min(bottom, extent[3]) - y + 1 if extent else 1,
-                    "colspan": min(right, extent[2]) - x + 1 if extent else 1}
+            item = {"row": y, "col": x, "text": value, "numeric": cell.data_type == "n", "bold": bool(cell.font and cell.font.b), "heading": cell.coordinate in heading_addresses, "rowspan": min(bottom, extent[3]) - y + 1 if extent else 1, "colspan": min(right, extent[2]) - x + 1 if extent else 1}
             horizontal = cell.alignment.horizontal
             if horizontal in {"left", "center", "right"}:
                 item["align"] = horizontal
@@ -307,6 +301,4 @@ def workbook_page(path, sheet, page, column_page=1, *, first_col=None, column_co
             top, bottom = continuations[row_start]
             _, header_cells = _page_cells(ws, (col_start, top, col_end, bottom), merges, links, book.sheetnames, set())
             context = {"first_row": top, "last_row": bottom, "cells": header_cells}
-        return {"sheets": book.sheetnames if include_catalog else [], "sheet": ws.title, "height": height, "width": width, "first_row": row_start, "first_col": col_start,
-                "image_count": len(images), "columns": [get_column_letter(i) for i in range(col_start, col_end + 1)],
-                "rows": rows, "cells": cells, "header_context": context, "outline": outline, "pictures": [p for p in pictures if row_start <= p["row"] <= row_end and col_start <= p["col"] <= col_end]}
+        return {"sheets": book.sheetnames if include_catalog else [], "sheet": ws.title, "height": height, "width": width, "first_row": row_start, "first_col": col_start, "image_count": len(images), "columns": [get_column_letter(i) for i in range(col_start, col_end + 1)], "rows": rows, "cells": cells, "header_context": context, "outline": outline, "pictures": [p for p in pictures if row_start <= p["row"] <= row_end and col_start <= p["col"] <= col_end]}

@@ -121,9 +121,9 @@ def test_external_psi_uses_native_val_df_and_cache_binds_both_revisions(setup):
     assert summary["收入"]["PSI"] is None
     assert summary["评分"]["平均值"] == pytest.approx(frame["评分"].mean())
     count = len(calls)
-    ws.replace_dataset(reference["id"], frame[["评分"]], expected_revision=1, processing={"description":"更新对照样本"})
+    ws.replace_dataset(reference["id"], frame[["评分"]], expected_revision=1, processing={"description": "更新对照样本"})
     assert client.post(url, json=config).json()["summary"] == response.json()["summary"]
     assert len(calls) == count
-    updated = client.post(url, json={"psi_dataset":{"id":reference["id"]}}).json()
+    updated = client.post(url, json={"psi_dataset": {"id": reference["id"]}}).json()
     assert next(row["PSI"] for row in updated["summary"] if row["特征名"] == "评分") == pytest.approx(0)
     assert len(calls) == count + 1

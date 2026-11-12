@@ -99,8 +99,7 @@ def test_column_alignment_with_grouped_headers_and_index(speed):
     writer = ExcelWriter()
     columns = pd.MultiIndex.from_tuples([("指标", "名称"), ("指标", "金额")])
     data = pd.DataFrame([["订单", 25]], columns=columns, index=pd.Index(["训练"], name="样本"))
-    dataframe2excel(data, writer, sheet_name="报告", index=True, title="分组结果", speed=speed,
-                    left_cols=[("指标", "名称")], right_cols=[("指标", "金额")])
+    dataframe2excel(data, writer, sheet_name="报告", index=True, title="分组结果", speed=speed, left_cols=[("指标", "名称")], right_cols=[("指标", "金额")])
     ws = writer.get_sheet_by_name("报告")
     assert ws["B2"].alignment.horizontal == "left"
     assert ws["C4"].alignment.horizontal == "center" and "C4:D4" in {str(r) for r in ws.merged_cells.ranges}

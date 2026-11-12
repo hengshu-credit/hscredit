@@ -31,6 +31,7 @@ _EXPECTED_PACKAGE_MENUS = {
             "report.html",
             "database.html",
             "excel.html",
+            "platform.html",
             "utils.html",
             "skills_runtime.html",
             "exceptions.html",

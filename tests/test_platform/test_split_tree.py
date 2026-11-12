@@ -1,7 +1,6 @@
 """组合划分的真实行归属、首次命中、嵌套条件、保存与失败回滚。"""
 
 from copy import deepcopy
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -11,6 +10,7 @@ from fastapi.testclient import TestClient
 from hscredit.platform import create_app
 from hscredit.platform.split_tree import SplitTreeRequest, condition_mask, execute_tree, validate_tree
 from hscredit.platform.storage import Workspace
+from hscredit.utils.datasets import hscredit_dataset
 
 
 def leaf(name):
@@ -355,15 +355,13 @@ def test_revision_changes_during_tree_execution(setup, monkeypatch):
 
 
 def test_real_loan_data_composition_keeps_every_original_value(tmp_path):
-    frame = pd.read_excel(Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx")
+    frame = hscredit_dataset(columns=["放款编码", "loan_amt", "授信时间", "流量渠道"]).sample(2000, random_state=42)
     workspace = Workspace(tmp_path)
     metadata = workspace.add_dataset(frame, "真实贷款样例")
     frame = workspace.read_dataset(metadata["id"])
-    amount = next(c for c in frame.select_dtypes(include="number") if frame[c].nunique() > 10)
-    date = next(c["name"] for c in metadata["columns"] if c["kind"] == "date" and not frame[c["name"]].isna().any())
     random = split("random", [leaf("训练"), leaf("测试")], random_state=42)
-    time = split("time", [random, leaf("OOT")], time_col=date)
-    tree = decision([(group(condition(amount, "le", float(frame[amount].quantile(0.2)))), leaf("条件留出"))], time)
+    time = split("time", [random, leaf("OOT")], time_col="授信时间")
+    tree = decision([(group(condition("loan_amt", "le", float(frame["loan_amt"].quantile(0.2)))), leaf("条件留出"))], time)
     request = SplitTreeRequest(expected_revision=1, tree=tree)
     parts, preview = execute_tree(frame, request, metadata["columns"])
     assert len(parts) == 4

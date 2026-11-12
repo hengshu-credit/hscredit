@@ -27,8 +27,10 @@ def test_six_dimensions_and_totals_cover_other_pages(example, method):
     ws, data, job = example
     req = PivotRequest(rows=["行1", "行2", "行3"], columns=["列1", "列2", "列3"], value="值", aggregation=method, buckets=False, page=2, column_page=2)
     out = pivot_table(ws, job, req)
+
     def expected(part):
         return len(part) if method == "rows" else getattr(part["值"], method)()
+
     assert out["row_count"] > 30 and out["column_count"] > 12
     assert out["total"] == pytest.approx(expected(data))
     for i, key in enumerate(out["row_keys"]):

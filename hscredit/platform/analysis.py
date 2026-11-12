@@ -351,7 +351,12 @@ def train(data, config, directory, progress, extra_frames=None):
             status.ensure_publishable()
             tables[f"{name} / 报告状态"] = records(status.status_table())
         visuals[key] = {"name": name, "images": [], "importance": display_table(importance), "bins": tables[f"{name} / {population}分箱"]}
-        plots = [("ROC", lambda: roc_plot(y_test, probabilities, title=f"{name} · {population} ROC", label=name, score_direction="higher_risk", **{"figsize": (8, 5), **library_options(config, "roc")})), ("KS", lambda: ks_plot(probabilities, y_test, title=f"{name} · {population} KS", score_direction="higher_risk", **{"figsize": (8, 5), "curve": "ks", **library_options(config, "ks")})), ("LIFT", lambda: lift_plot(y_test, probabilities, title=f"{name} · {population} LIFT", **{"figsize": (8, 5), **library_options(config, "lift")})), ("混淆矩阵", lambda: confusion_matrix_plot(y_test, predictions, title=f"{name} · 混淆矩阵", **{"figsize": (8, 5), **library_options(config, "confusion")}))]
+        plots = [
+            ("ROC", lambda: roc_plot(y_test, probabilities, title=f"{name} · {population} ROC", label=name, score_direction="higher_risk", **{"figsize": (8, 5), **library_options(config, "roc")})),
+            ("KS", lambda: ks_plot(probabilities, y_test, title=f"{name} · {population} KS", score_direction="higher_risk", **{"figsize": (8, 5), "curve": "ks", **library_options(config, "ks")})),
+            ("LIFT", lambda: lift_plot(y_test, probabilities, title=f"{name} · {population} LIFT", **{"figsize": (8, 5), **library_options(config, "lift")})),
+            ("混淆矩阵", lambda: confusion_matrix_plot(y_test, predictions, title=f"{name} · 混淆矩阵", **{"figsize": (8, 5), **library_options(config, "confusion")})),
+        ]
         for label, draw in plots:
             fig = draw()
             if not hasattr(fig, "savefig"):

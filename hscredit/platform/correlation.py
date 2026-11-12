@@ -46,8 +46,8 @@ def _correlation_ratio(groups, values):
     centered = values / scale
     centered -= centered.mean()
     group_sums = np.bincount(groups, weights=centered)[present]
-    between = np.sum(group_sums ** 2 / counts[present])
-    return float(np.sqrt(np.clip(between / np.sum(centered ** 2), 0, 1)))
+    between = np.sum(group_sums**2 / counts[present])
+    return float(np.sqrt(np.clip(between / np.sum(centered**2), 0, 1)))
 
 
 def dataset_correlation(workspace, identifier, revision, row_page, column_page, page_size):
@@ -58,7 +58,7 @@ def dataset_correlation(workspace, identifier, revision, row_page, column_page, 
         offset = (page - 1) * page_size
         if offset >= len(fields):
             raise ValueError("相关性矩阵页码超出字段范围")
-        return [field["name"] for field in fields[offset:offset + page_size]]
+        return [field["name"] for field in fields[offset : offset + page_size]]
 
     rows, columns = page_fields(row_page), page_fields(column_page)
     names = list(dict.fromkeys(rows + columns))
@@ -83,5 +83,4 @@ def dataset_correlation(workspace, identifier, revision, row_page, column_page, 
                 cache[key] = _correlation_ratio(categories[category], numeric[number].to_numpy())
         return cache[key]
 
-    return {"revision": version, "rows": rows, "columns": columns, "total_fields": len(fields),
-            "values": [[coefficient(a, b) for b in columns] for a in rows]}
+    return {"revision": version, "rows": rows, "columns": columns, "total_fields": len(fields), "values": [[coefficient(a, b) for b in columns] for a in rows]}

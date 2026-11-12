@@ -264,14 +264,19 @@ def test_security_validation_and_failed_job(client, frame):
     assert client.post("/api/datasets", files={"file": ("code.pkl", b"evil")}).status_code == 400
 
 
-@pytest.mark.parametrize("operator,valid,bad", [
-    (">", 3, 2), (">=", 4, 3), ("<", 5, 3), ("<=", 5, 4),
-])
+@pytest.mark.parametrize(
+    "operator,valid,bad",
+    [
+        (">", 3, 2),
+        (">=", 4, 3),
+        ("<", 5, 3),
+        ("<=", 5, 4),
+    ],
+)
 def test_target_preview_boundaries_and_independent_populations(client, operator, valid, bad):
     data = pd.DataFrame({"评分": range(5), "M1": [0, 2, 7, 8, np.nan], "M3": [None, 30, 0, 8, 7]})
     identifier = upload(client, data)["id"]
-    params = dict(label_mode="overdue", overdue=["M1", "M3"], dpds=[7, 7.0, 2.5],
-                  overdue_operator=operator, del_grey=True, handle_missing_target="positive")
+    params = dict(label_mode="overdue", overdue=["M1", "M3"], dpds=[7, 7.0, 2.5], overdue_operator=operator, del_grey=True, handle_missing_target="positive")
     response = client.post(f"/api/datasets/{identifier}/target-preview", json=params)
     assert response.status_code == 200, response.text
     first, _, third, _ = response.json()
@@ -279,7 +284,7 @@ def test_target_preview_boundaries_and_independent_populations(client, operator,
     assert first["有效样本"] == valid
     assert first["坏样本率"] == pytest.approx(bad / valid)
     assert third["有效样本"] + third["剔除样本"] == len(data)
-    assert client.post(f"/api/datasets/{identifier}/target-preview", json={**params, "handle_missing_target":"raise"}).status_code == 400
+    assert client.post(f"/api/datasets/{identifier}/target-preview", json={**params, "handle_missing_target": "raise"}).status_code == 400
 
 
 def test_overdue_summary_matches_native_multi_label_summary(client, frame):
@@ -306,7 +311,7 @@ def test_dictionary_preview_uses_native_grey_and_missing_and_preserves_order(cli
     assert response.status_code == 200, response.text
     assert [(r["标签"], r["有效样本"], r["坏样本"]) for r in response.json()] == [("近月", 5, 2), ("手工", 4, 2)]
     assert client.post(url, json={"target": {"向量": [0, 1, 0, 1, 1]}}).json()[0]["坏样本"] == 3
-    for invalid in [{"target": {}}, {"target": {"短": [1]}}, {"target": {"非向量": "MOB"}}, {"target": target, "overdue":["MOB"], "dpds":[7]}]:
+    for invalid in [{"target": {}}, {"target": {"短": [1]}}, {"target": {"非向量": "MOB"}}, {"target": target, "overdue": ["MOB"], "dpds": [7]}]:
         assert client.post(url, json=invalid).status_code in {400, 422}
 
 
@@ -318,21 +323,21 @@ def test_dictionary_summary_cache_is_order_sensitive(client, frame):
         response = client.post(url, json={"target": {k: target[k] for k in order}})
         assert response.status_code == 200, response.text
         assert [item["label"] for item in response.json()["summary_columns"]] == ["统计详情", *order, "分布详情"]
-    response = client.post(url, json={"target": target, "target_order":["7","30"]})
-    assert [item["label"] for item in response.json()["summary_columns"]][1:3] == ["7","30"]
+    response = client.post(url, json={"target": target, "target_order": ["7", "30"]})
+    assert [item["label"] for item in response.json()["summary_columns"]][1:3] == ["7", "30"]
 
 
 def test_dictionary_model_uses_first_vector_on_original_rows(client, frame):
     identifier = upload(client, frame)["id"]
     primary = frame["标签"].astype(float).mask(frame.index % 8 == 0)
-    target = {"自定义主标签": primary.astype(object).where(primary.notna(), None).tolist(), "反向标签": {"field":"标签", "operator":"==", "value":0}}
+    target = {"自定义主标签": primary.astype(object).where(primary.notna(), None).tolist(), "反向标签": {"field": "标签", "operator": "==", "value": 0}}
     job = run_job(client, identifier, "model", workflow=True, target=target, features=["评分"], models=["logistic"], cv=2)
     assert job["config"]["target_order"] == list(target)
     files = f"/api/jobs/{job['id']}/files"
-    predictions = pd.read_csv(io.BytesIO(client.get(files+"/predictions_logistic.csv").content))
+    predictions = pd.read_csv(io.BytesIO(client.get(files + "/predictions_logistic.csv").content))
     np.testing.assert_array_equal(predictions["真实标签"], primary.loc[predictions["原始行号"]])
-    assert client.get(files+"/model_metadata.json").json()["target"] == "自定义主标签"
-    assert all(any(label+" / 评估指标" in name for name in job["result"]["tables"]) for label in target)
+    assert client.get(files + "/model_metadata.json").json()["target"] == "自定义主标签"
+    assert all(any(label + " / 评估指标" in name for name in job["result"]["tables"]) for label in target)
 
 
 def test_token_access(tmp_path):

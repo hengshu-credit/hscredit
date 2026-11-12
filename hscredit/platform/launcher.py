@@ -52,9 +52,14 @@ class PlatformServer:
 def launch(host="127.0.0.1", port=8765, *, data_dir=None, background=False, open_browser=True, token=None, demo=False):
     """启动风控平台，返回带有 ``url``、``add_dataset`` 和 ``stop`` 的服务句柄。
 
-    默认只监听本机；局域网部署必须显式传入访问令牌 ``token``。
-    ``port=0`` 自动选择空闲端口；Notebook 中使用 ``background=True``。
-    数据默认保存在用户主目录的 ``.hscredit/platform``，不会写入项目目录。
+    :param host: 监听地址，默认使用本机回环地址。
+    :param port: 监听端口，设为 0 时自动选择空闲端口。
+    :param data_dir: 数据集、任务与报告的存储目录，默认使用用户主目录下的 ``.hscredit/platform``。
+    :param background: 是否在后台线程运行。在 Notebook 中设为 True 可继续执行其他单元格。
+    :param open_browser: 服务就绪后是否打开浏览器。
+    :param token: 平台访问令牌。监听非回环地址时须提供至少 16 位令牌。
+    :param demo: 是否在启动时加载 hscredit 示例数据。
+    :return: 服务句柄。后台模式在服务就绪后返回，前台模式在服务停止后返回。
     """
     try:
         import uvicorn

@@ -61,6 +61,7 @@ def job_model_path(workspace, identifier, filename):
 class ServiceRequest(BaseModel):
     class Config:
         extra = "forbid"
+
     name: str = Field(min_length=1, max_length=100)
     source_job: Optional[str] = None
     model_file: str = "model.joblib"
@@ -71,12 +72,14 @@ class ServiceRequest(BaseModel):
 class PredictRequest(BaseModel):
     class Config:
         extra = "forbid"
+
     records: List[Dict[str, Any]] = Field(min_items=1, max_items=10000)
 
 
 class ServiceState(BaseModel):
     class Config:
         extra = "forbid"
+
     enabled: bool
 
 
@@ -133,8 +136,7 @@ def install_serving(app, workspace):
         return [public(item) for item in workspace.list("services")]
 
     @app.get("/api/services/{identifier}/calls")
-    def list_calls(identifier: str, page: int = Query(1, ge=1, le=2147483647), page_size: int = Query(20, ge=1, le=100),
-                   failed_only: bool = False, call_id: str = Query("", max_length=32)):
+    def list_calls(identifier: str, page: int = Query(1, ge=1, le=2147483647), page_size: int = Query(20, ge=1, le=100), failed_only: bool = False, call_id: str = Query("", max_length=32)):
         workspace.get("services", identifier)
         return calls.page(identifier, page, page_size, failed_only, call_id)
 
@@ -197,18 +199,15 @@ def install_serving(app, workspace):
         schema = PredictRequest.model_json_schema() if hasattr(PredictRequest, "model_json_schema") else PredictRequest.schema()
         schema["properties"]["records"]["items"].update(properties={f: {} for f in metadata["features"]}, required=metadata["features"])
         operation = {
-            "summary": "批量预测", "security": [{"serviceToken": []}],
+            "summary": "批量预测",
+            "security": [{"serviceToken": []}],
             "requestBody": {"required": True, "content": {"application/json": {"schema": schema, "example": {"records": [{f: 0 for f in metadata["features"]}]}}}},
             "responses": {
-                "200": {"description": "与输入顺序相同；概率按 classes 顺序排列", "content": {"application/json": {"schema": {
-                    "type": "object", "required": ["service_id", "classes", "predictions"],
-                    "properties": {"service_id": {"type": "string"}, "classes": {"type": ["array", "null"], "items": {}},
-                                   "predictions": {"type": "array", "items": {"type": "object", "required": ["预测"], "properties": {
-                                       "预测": {}, "概率": {"type": "array", "items": {"type": "number"}}, "评分": {"type": "number"}
-                                   }}}}
-                }}}},
-                "401": {"description": "服务令牌无效"}, "422": {"description": "字段或数据类型不符合模型要求"}, "503": {"description": "服务已下线"}
-            }
+                "200": {"description": "与输入顺序相同；概率按 classes 顺序排列", "content": {"application/json": {"schema": {"type": "object", "required": ["service_id", "classes", "predictions"], "properties": {"service_id": {"type": "string"}, "classes": {"type": ["array", "null"], "items": {}}, "predictions": {"type": "array", "items": {"type": "object", "required": ["预测"], "properties": {"预测": {}, "概率": {"type": "array", "items": {"type": "number"}}, "评分": {"type": "number"}}}}}}}}},
+                "401": {"description": "服务令牌无效"},
+                "422": {"description": "字段或数据类型不符合模型要求"},
+                "503": {"description": "服务已下线"},
+            },
         }
         for response in operation["responses"].values():
             response["headers"] = {"X-Request-ID": {"description": "在平台调用记录中查询本次请求的编号", "schema": {"type": "string"}}}

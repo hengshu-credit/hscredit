@@ -1954,6 +1954,7 @@ class ExcelWriter:
         :type multi_levels: bool
 
         :param decimal: 数值展示的小数位数，影响写入单元格的格式。 默认 ``4``。
+        :param header_parents: 多级表头中每列的上级标题元组，顺序与 row 相同。仅合并同一上级路径下相邻的同名标题。
         """
         curr_col = column_index_from_string(col_index) if isinstance(col_index, str) else col_index
 

@@ -4396,12 +4396,20 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             if basis:
                 width = len(lift_table.columns) + (lift_table.index.nlevels if with_index else 0)
                 header_start, _ = writer.insert_value2sheet(
-                    ws, (table_start, start_col), value=basis, style="header",
+                    ws,
+                    (table_start, start_col),
+                    value=basis,
+                    style="header",
                     end_space=(table_start, start_col + width - 1),
                 )
             end_row, next_col = dataframe2excel(
-                lift_table, writer, sheet_name=ws, start_row=header_start, start_col=start_col,
-                index=with_index, percent_cols=["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"],
+                lift_table,
+                writer,
+                sheet_name=ws,
+                start_row=header_start,
+                start_col=start_col,
+                index=with_index,
+                percent_cols=["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"],
             )
             start_col = next_col + 1
         filter_row = end_row - len(lift_table) - 1
@@ -5208,7 +5216,11 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             if not bad_rates.empty:
                 end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分坏率对照表", style="header_middle", align={"horizontal": "left"})
                 end_row, _ = dataframe2excel(
-                    bad_rates, writer, sheet_name=ws, start_row=end_row, decimal=None,
+                    bad_rates,
+                    writer,
+                    sheet_name=ws,
+                    start_row=end_row,
+                    decimal=None,
                     percent_cols=["坏样本率", "累计好样本占比", "累计坏样本占比", "KS"],
                 )
                 param_section += 1

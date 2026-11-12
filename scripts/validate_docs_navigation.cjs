@@ -100,7 +100,7 @@ async function main() {
         await page.goto(base + "/showcase.html");
         await ready();
         const introMenu = page.locator(nav + " p.caption").filter({ hasText: /^入门$/ }).locator("xpath=following-sibling::ul[1]");
-        assert.deepEqual(await introMenu.locator(":scope > li > a").allTextContents(), ["安装指南", "功能与示例", "功能总览", "独立 Notebook 教程"]);
+        assert.deepEqual(await introMenu.locator(":scope > li > a").allTextContents(), ["安装指南", "功能与示例", "功能总览", "项目路线图", "风控平台", "独立 Notebook 教程"]);
         for (const name of ["installation", "analysis_parameters", "database", "skills", "multiway_tree"]) {
             assert(await page.locator(`${nav} a[href^="${name}.html#"]`).count() > 0, `${name} 缺少小标题`);
         }

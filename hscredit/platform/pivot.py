@@ -41,7 +41,7 @@ def _page(dimensions, levels, page, size):
     keys = dimensions.drop_duplicates().sort_values(list(dimensions))
     ids = pd.MultiIndex.from_frame(keys).get_indexer(pd.MultiIndex.from_frame(dimensions)) if len(keys) else np.empty(0, dtype=int)
     start = (page - 1) * size
-    visible = keys.iloc[start:start + size]
+    visible = keys.iloc[start : start + size]
     labels = [[levels[i][code] for i, code in enumerate(key)] for key in visible.itertuples(index=False, name=None)]
     return ids, start, labels, len(keys)
 
@@ -109,6 +109,7 @@ def pivot_table(workspace, job, request):
     # 合计始终在完整配对上重新聚合，包括非当前页的行列。
     in_rows = cells.r.between(r0, r0 + len(row_keys) - 1)
     in_cols = cells.c.between(c0, c0 + len(col_keys) - 1)
+
     def aggregate(mask, by):
         return _aggregate(cells.loc[mask].groupby(by, sort=False)["v"], request.aggregation)
 
@@ -116,9 +117,13 @@ def pivot_table(workspace, job, request):
     row_totals, col_totals = aggregate(in_rows, "r"), aggregate(in_cols, "c")
     empty = 0 if request.aggregation in {"rows", "count", "nunique"} else None
     return {
-        "row_keys": row_keys, "column_keys": col_keys, "row_count": height, "column_count": width,
-        "values": [[_number(matrix.get((r0+i, c0+j), empty)) for j in range(len(col_keys))] for i in range(len(row_keys))],
-        "row_totals": [_number(row_totals[r0+i]) for i in range(len(row_keys))],
-        "column_totals": [_number(col_totals[c0+j]) for j in range(len(col_keys))],
-        "total": _number(_aggregate(cells["v"], request.aggregation)), "samples": len(cells),
+        "row_keys": row_keys,
+        "column_keys": col_keys,
+        "row_count": height,
+        "column_count": width,
+        "values": [[_number(matrix.get((r0 + i, c0 + j), empty)) for j in range(len(col_keys))] for i in range(len(row_keys))],
+        "row_totals": [_number(row_totals[r0 + i]) for i in range(len(row_keys))],
+        "column_totals": [_number(col_totals[c0 + j]) for j in range(len(col_keys))],
+        "total": _number(_aggregate(cells["v"], request.aggregation)),
+        "samples": len(cells),
     }

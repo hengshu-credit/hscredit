@@ -56,8 +56,7 @@ def test_all_field_pairs_across_pages_and_versions(tmp_path):
 
 def test_undefined_pairs_and_independent_categories(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
-        frame = pd.DataFrame({"渠道": ["甲", "甲", "乙", "乙"], "区域": ["南", "北"] * 2,
-                              "全空": [None] * 4, "常量": ["值"] * 4, "仅一条": [4, np.nan, np.nan, np.nan]})
+        frame = pd.DataFrame({"渠道": ["甲", "甲", "乙", "乙"], "区域": ["南", "北"] * 2, "全空": [None] * 4, "常量": ["值"] * 4, "仅一条": [4, np.nan, np.nan, np.nan]})
         dataset = client.app.state.workspace.add_dataset(frame, "类别样本")
         matrix = client.get(f"/api/datasets/{dataset['id']}/correlation").json()
         assert matrix["values"][0] == [1, 0, None, None, None]

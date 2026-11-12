@@ -17,14 +17,14 @@ from hscredit.platform.interactions import interactions
 def test_legacy_preprocessing_preserves_schema_and_training_statistics(tmp_path):
     from hscredit.platform.analysis import _LegacyFramePreprocessor
 
-    train = pd.DataFrame({"分数": [1., 3., np.nan] * 22, "空数值": np.nan, "渠道": ["常用"] * 6 + [f"渠道{i}" for i in range(60)], "空类别": None})
+    train = pd.DataFrame({"分数": [1.0, 3.0, np.nan] * 22, "空数值": np.nan, "渠道": ["常用"] * 6 + [f"渠道{i}" for i in range(60)], "空类别": None})
     prepare = _LegacyFramePreprocessor(["分数", "空数值"], ["渠道", "空类别"]).fit(train)
-    sample = pd.DataFrame({"分数": [np.nan, 3.], "空数值": [7., np.nan], "渠道": [None, "新渠道"], "空类别": [None, "新值"]}, index=[8, 2])
+    sample = pd.DataFrame({"分数": [np.nan, 3.0], "空数值": [7.0, np.nan], "渠道": [None, "新渠道"], "空类别": [None, "新值"]}, index=[8, 2])
     result = prepare.transform(sample)
     assert result.index.tolist() == [8, 2]
     assert result.columns.tolist() == prepare.transform(train).columns.tolist()
-    np.testing.assert_allclose(result["numeric__分数"], [0., 1. / np.sqrt(2. / 3.)])
-    np.testing.assert_array_equal(result["numeric__空数值"], [7., 0.])
+    np.testing.assert_allclose(result["numeric__分数"], [0.0, 1.0 / np.sqrt(2.0 / 3.0)])
+    np.testing.assert_array_equal(result["numeric__空数值"], [7.0, 0.0])
     channel = result.filter(like="category__渠道_")
     assert channel.shape[1] == 50
     assert channel.loc[8, "category__渠道_常用"] == 1
@@ -141,9 +141,7 @@ def test_overdue_training_primary_is_used_in_external_predictions_and_reports(pr
 
     workspace, _, config, output = prepared
     external = config["evaluation_datasets"][0]
-    config.update(kind="model", label_mode="overdue", target=None, overdue=["金额"], dpds=[25, 70],
-                  overdue_operator=">=", primary_index=1, features=["评分"], models=["logistic"],
-                  test_dataset=external, evaluation_datasets=[], cv=2)
+    config.update(kind="model", label_mode="overdue", target=None, overdue=["金额"], dpds=[25, 70], overdue_operator=">=", primary_index=1, features=["评分"], models=["logistic"], test_dataset=external, evaluation_datasets=[], cv=2)
     result = experiment(workspace, config, output, lambda *args: None)
     predictions = pd.read_csv(output / "predictions_logistic.csv")
     amounts = workspace.read_dataset(external["id"])["金额"]
@@ -212,7 +210,7 @@ def test_composite_panels_use_full_marginal_and_pairwise_populations():
     data.loc[1, "日期"] = pd.NaT
     result = interactions(data, ["渠道", "金额", "日期"], "标签")
     marginal = result["distributions"][1]
-    assert marginal["five_number"] == data["金额"].iloc[1:].quantile([0, .25, .5, .75, 1]).tolist()
+    assert marginal["five_number"] == data["金额"].iloc[1:].quantile([0, 0.25, 0.5, 0.75, 1]).tolist()
     assert sum(r["有效数"] for r in marginal["by_group"]) == n - 1
     by_channel, _, by_month = result["pairs"]
     assert by_channel["valid"] == n - 1 and len(by_channel["points"]) == 3000
@@ -252,7 +250,7 @@ def test_uploaded_inference_file_preserves_probabilities(tmp_path):
         assert res.status_code == 201, res.text
         service = res.json()
         samples = x.iloc[[0, 19, 39]]
-        result = client.post(service["endpoint"], headers={"Authorization": "Bearer "+service["token"]}, json={"records": samples.to_dict("records")})
+        result = client.post(service["endpoint"], headers={"Authorization": "Bearer " + service["token"]}, json={"records": samples.to_dict("records")})
         assert result.status_code == 200, result.text
         np.testing.assert_allclose([row["概率"] for row in result.json()["predictions"]], model.predict_proba(samples))
 

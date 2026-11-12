@@ -70,6 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HSCREDIT_STRICT_CI_SKIPS: "1"
+      HSCREDIT_RUN_DATASET_TESTS: "1"
     strategy:
       fail-fast: false
       matrix:

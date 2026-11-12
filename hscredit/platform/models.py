@@ -44,9 +44,25 @@ def _extra_model_params(cls, name, defaults):
     if cls is None:
         return {}
     exclude = set(defaults) | {
-        "self", "target", "model", "prefit", "positive_class", "probability", "objective",
-        "model_path", "params", "pipeline", "lr_model", "binner", "encoder", "scorecard",
-        "rules", "parallel_config", "output_mode", "allow_writing_files", "callbacks",
+        "self",
+        "target",
+        "model",
+        "prefit",
+        "positive_class",
+        "probability",
+        "objective",
+        "model_path",
+        "params",
+        "pipeline",
+        "lr_model",
+        "binner",
+        "encoder",
+        "scorecard",
+        "rules",
+        "parallel_config",
+        "output_mode",
+        "allow_writing_files",
+        "callbacks",
     }
     extra = {}
     if name in {"RandomForest", "ExtraTrees", "DecisionTreeClassifier", "GradientBoosting", "SVM"}:
@@ -141,7 +157,20 @@ def model_catalog():
             if key in search:
                 search[key] = values if name != "TabPFN" else [2, 4, 8]
         category = "表格神经网络" if ".net" in module else "提升树" if ".boosting" in module else "评分卡与规则" if any(x in module for x in ("scorecard", "rules", "calibration")) else "经典模型"
-        catalog[_ALIASES.get(name, name.lower())] = {"name": _NAMES.get(name, name), "class_name": name, "module": module, "group": category, "params": params, "extra_params": _extra_model_params(cls, name, params), "fit_params": _fit_parameter_specs(cls, name), "search": search, "choices": {k: CHOICES[k] for k in params if k in CHOICES}, "available": not reason, "reason": reason, "note": "首次运行可能下载模型权重，受上游授权、样本量和设备要求限制" if name == "TabPFN" else "大样本训练可能耗时较长" if name == "SVM" else ""}
+        catalog[_ALIASES.get(name, name.lower())] = {
+            "name": _NAMES.get(name, name),
+            "class_name": name,
+            "module": module,
+            "group": category,
+            "params": params,
+            "extra_params": _extra_model_params(cls, name, params),
+            "fit_params": _fit_parameter_specs(cls, name),
+            "search": search,
+            "choices": {k: CHOICES[k] for k in params if k in CHOICES},
+            "available": not reason,
+            "reason": reason,
+            "note": "首次运行可能下载模型权重，受上游授权、样本量和设备要求限制" if name == "TabPFN" else "大样本训练可能耗时较长" if name == "SVM" else "",
+        }
     return catalog
 
 

@@ -14,7 +14,6 @@ from uuid import uuid4
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 
-
 logger = logging.getLogger(__name__)
 DAY = 86400
 _PREDICTION = re.compile(r"/([a-f0-9]{32})/predict$")
@@ -109,10 +108,21 @@ class ServiceCalls:
 
     def append(self, identifier, service, started, duration, status, target, request_headers, response_headers, request_body, response_body):
         with self.connection() as db:
-            db.execute("INSERT INTO calls VALUES (?,?,?,?,?,?,?,?,?,?)", (
-                identifier, service, started, duration, status, target, json.dumps(request_headers, ensure_ascii=False),
-                json.dumps(response_headers, ensure_ascii=False), request_body, response_body,
-            ))
+            db.execute(
+                "INSERT INTO calls VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    identifier,
+                    service,
+                    started,
+                    duration,
+                    status,
+                    target,
+                    json.dumps(request_headers, ensure_ascii=False),
+                    json.dumps(response_headers, ensure_ascii=False),
+                    request_body,
+                    response_body,
+                ),
+            )
 
     def page(self, service, page, page_size, failed_only, call_id):
         with self.connection() as db:
@@ -134,16 +144,26 @@ class ServiceCalls:
 
     def detail(self, service, call_id):
         with self.connection() as db:
-            row = db.execute("""
+            row = db.execute(
+                """
                 SELECT calls.* FROM calls LEFT JOIN retention USING(service)
                 WHERE service=? AND id=? AND (days IS NULL OR started_at>?-days*86400)
-            """, (service, call_id, time.time())).fetchone()
+            """,
+                (service, call_id, time.time()),
+            ).fetchone()
         if row is None:
             raise FileNotFoundError("调用记录不存在或已过期")
         return {
-            "id": call_id, "method": "POST", "target": row["target"], "started_at": row["started_at"], "status": row["status"], "duration_ms": row["duration_ms"],
-            "request_headers": json.loads(row["request_headers"]), "response_headers": json.loads(row["response_headers"]),
-            "request_body": _body_view(row["request_body"]), "response_body": _body_view(row["response_body"]),
+            "id": call_id,
+            "method": "POST",
+            "target": row["target"],
+            "started_at": row["started_at"],
+            "status": row["status"],
+            "duration_ms": row["duration_ms"],
+            "request_headers": json.loads(row["request_headers"]),
+            "response_headers": json.loads(row["response_headers"]),
+            "request_body": _body_view(row["request_body"]),
+            "response_body": _body_view(row["response_body"]),
         }
 
 
@@ -185,8 +205,7 @@ class RecordPrediction:
                 response_body.extend(message.get("body", b""))
                 if not message.get("more_body", False):
                     try:
-                        await run_in_threadpool(self.calls.append, identifier, match[1], started, (time.perf_counter() - clock) * 1000, status, target,
-                                                _safe_headers(scope["headers"]), response_headers, request_body, response_body)
+                        await run_in_threadpool(self.calls.append, identifier, match[1], started, (time.perf_counter() - clock) * 1000, status, target, _safe_headers(scope["headers"]), response_headers, request_body, response_body)
                     except sqlite3.Error:
                         logger.exception("保存推理调用 %s 失败", identifier)
             await send(message)

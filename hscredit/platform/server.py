@@ -722,9 +722,7 @@ def create_app(data_dir=None, *, token=None):
             from .serving import job_model_path
 
             job_model_path(workspace, config["source_job"], config["model_file"])
-        return {"id": uuid4().hex, "kind": config["kind"], "dataset_id": source["id"], "dataset_revision": config["dataset_revision"],
-                "dataset_name": source["name"], "status": "排队中", "progress": 0, "message": "等待执行",
-                "created_at": now(), "config": config, "artifacts": []}
+        return {"id": uuid4().hex, "kind": config["kind"], "dataset_id": source["id"], "dataset_revision": config["dataset_revision"], "dataset_name": source["name"], "status": "排队中", "progress": 0, "message": "等待执行", "created_at": now(), "config": config, "artifacts": []}
 
     def create_jobs(request, bindings, *, batch=False):
         with workspace.lock:
@@ -829,8 +827,7 @@ def create_app(data_dir=None, *, token=None):
         return artifact_path(identifier, filename)
 
     @app.get("/api/jobs/{identifier}/workbooks/{filename}")
-    def preview_workbook(identifier: str, filename: str, sheet: Optional[str] = None, page: int = Query(1, ge=1), column_page: int = Query(1, ge=1),
-                         first_col: Optional[int] = Query(None, ge=1, le=16384), column_count: int = Query(30, ge=1, le=64), include_catalog: bool = True):
+    def preview_workbook(identifier: str, filename: str, sheet: Optional[str] = None, page: int = Query(1, ge=1), column_page: int = Query(1, ge=1), first_col: Optional[int] = Query(None, ge=1, le=16384), column_count: int = Query(30, ge=1, le=64), include_catalog: bool = True):
         from .job_reports import workbook_page
 
         return workbook_page(workbook_path(identifier, filename), sheet, page, column_page, first_col=first_col, column_count=column_count, include_catalog=include_catalog)

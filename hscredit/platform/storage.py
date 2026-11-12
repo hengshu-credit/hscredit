@@ -180,7 +180,7 @@ class Workspace:
             number = 1
             while True:
                 suffix = "（副本）" if number == 1 else f"（副本 {number}）"
-                name = source["name"][:150 - len(suffix)] + suffix
+                name = source["name"][: 150 - len(suffix)] + suffix
                 if name not in occupied:
                     break
                 number += 1

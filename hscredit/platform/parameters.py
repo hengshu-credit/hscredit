@@ -77,13 +77,15 @@ def parameter_catalog():
             params["smoothing_method"] = parameter_specs(cls)["method"]
         methods[name] = params
     wrapper = parameter_specs(OptimalBinning, exclude=BIN_COMMON)
-    wrapper.update({
-        "lift_refine": {"description": "启用 LIFT 细化，默认随分箱方法和约束变化"},
-        "lift_focus_weight": {"default": 3.0, "description": "LIFT 细化时的尾部风险权重"},
-        "sample_stability_weight": {"default": 0.2, "description": "LIFT 细化时的样本稳定性权重"},
-        "lift_refine_max_bins": {"description": "细化搜索的分箱数上限，默认沿用最多分箱数"},
-        "monotonic_bonus_weight": {"default": 0.4, "description": "LIFT 细化时的单调性奖励权重"},
-    })
+    wrapper.update(
+        {
+            "lift_refine": {"description": "启用 LIFT 细化，默认随分箱方法和约束变化"},
+            "lift_focus_weight": {"default": 3.0, "description": "LIFT 细化时的尾部风险权重"},
+            "sample_stability_weight": {"default": 0.2, "description": "LIFT 细化时的样本稳定性权重"},
+            "lift_refine_max_bins": {"description": "细化搜索的分箱数上限，默认沿用最多分箱数"},
+            "monotonic_bonus_weight": {"default": 0.4, "description": "LIFT 细化时的单调性奖励权重"},
+        }
+    )
     groups = {
         "binning": {"label": "一维分箱", "params": {**wrapper, "n_jobs": {**wrapper["n_jobs"], "default": 1}}, "methods": methods},
         "pair_binning": {"label": "二维分箱", "params": parameter_specs(OptimalBinning2D, exclude=BIN_COMMON)},

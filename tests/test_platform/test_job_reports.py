@@ -16,6 +16,7 @@ from hscredit.platform.storage import write_json
 @pytest.fixture
 def jobs(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
+
         def record(artifacts, result=None, status="成功"):
             identifier = uuid4().hex
             directory = tmp_path / "jobs" / identifier
@@ -24,6 +25,7 @@ def jobs(tmp_path):
             if result is not None:
                 write_json(directory / "result.json", result)
             return directory, f"/api/jobs/{identifier}"
+
         yield client, record
 
 
@@ -86,7 +88,7 @@ def test_report_keeps_merged_labels_internal_navigation_and_number_formats(jobs)
     book.save(directory / "report.xlsx")
     route = url + "/workbooks/report.xlsx"
     directory_page = client.get(route).json()
-    assert directory_page["outline"] == [{"text":"模型评估报告", "col":"B", "row":2}]
+    assert directory_page["outline"] == [{"text": "模型评估报告", "col": "B", "row": 2}]
     cells = directory_page["cells"]
     assert [(c["text"], c["colspan"], c["bold"]) for c in cells[:1]] == [("模型评估报告", 4, True)]
     assert cells[1]["link"] == {"sheet": metrics.title, "col": "AE", "row": 51}
@@ -97,11 +99,11 @@ def test_report_keeps_merged_labels_internal_navigation_and_number_formats(jobs)
     assert number["text"] == "1,234.57" and number["numeric"]
     assert (merged["align"], number["align"]) == ("center", "right")
     assert page["rows"][0] == ["", "", "1,234.57"]
-    window = client.get(route, params={"sheet":metrics.title, "page":2, "first_col":32, "column_count":2, "include_catalog":"false"}).json()
-    assert window["columns"] == ["AF","AG"] and window["sheets"] == []
-    assert window["cells"][0]["merge"] == [30,49,32,53]
+    window = client.get(route, params={"sheet": metrics.title, "page": 2, "first_col": 32, "column_count": 2, "include_catalog": "false"}).json()
+    assert window["columns"] == ["AF", "AG"] and window["sheets"] == []
+    assert window["cells"][0]["merge"] == [30, 49, 32, 53]
     assert window["cells"][0]["colspan"] == 1 and window["cells"][1]["text"] == "1,234.57"
-    assert client.get(route, params={"column_count":999}).status_code == 422
+    assert client.get(route, params={"column_count": 999}).status_code == 422
 
 
 def test_historical_report_reuses_saved_result_without_dataset(jobs):
@@ -125,6 +127,7 @@ def test_partial_workbooks_stay_private(jobs, status):
     (directory / "report.xlsx").touch()
     for route in ("/files/report.xlsx", "/workbooks/report.xlsx", "/workbooks/report.xlsx/images/0?sheet=表"):
         assert client.get(url + route).status_code == 404
+
 
 def test_workbook_page_carries_only_headers_for_a_continuing_table(jobs):
     from openpyxl.styles import Font

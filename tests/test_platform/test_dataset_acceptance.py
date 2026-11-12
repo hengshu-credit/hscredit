@@ -86,7 +86,7 @@ def test_mine_evaluate_and_publish_selected_bins(assets):
     service = client.post("/api/services", json={"name": "选中二维分箱", "source_job": selected["id"]})
     assert service.status_code == 201, service.text
     service = service.json()
-    response = client.post(service["endpoint"], headers={"Authorization": "Bearer "+service["token"], "Origin": "https://risk.example"}, json={"records": evaluation[FEATURES].to_dict("records")})
+    response = client.post(service["endpoint"], headers={"Authorization": "Bearer " + service["token"], "Origin": "https://risk.example"}, json={"records": evaluation[FEATURES].to_dict("records")})
     assert response.status_code == 200, response.text
     assert response.headers["access-control-allow-origin"] == "*"
     np.testing.assert_array_equal([r["预测"] for r in response.json()["predictions"]], leaf_masks[0] | leaf_masks[1])
@@ -113,14 +113,14 @@ def test_model_comparison_report_inference_and_shap(assets):
     assert "comparison.xlsx" not in experiment["artifacts"]
     explanation = run(client, "explain", other, source_job=experiment["id"], sample_rows=[2])
     assert explanation["result"]["images"]
-    model = joblib.load(io.BytesIO(client.get("/api/jobs/"+experiment["id"]+"/files/model.joblib").content))
+    model = joblib.load(io.BytesIO(client.get("/api/jobs/" + experiment["id"] + "/files/model.joblib").content))
     service = client.post("/api/services", json={"name": "模型验收", "source_job": experiment["id"]}).json()
-    pred = client.post(service["endpoint"], headers={"Authorization": "Bearer "+service["token"]}, json={"records": evaluation[FEATURES].to_dict("records")}).json()["predictions"]
+    pred = client.post(service["endpoint"], headers={"Authorization": "Bearer " + service["token"]}, json={"records": evaluation[FEATURES].to_dict("records")}).json()["predictions"]
     np.testing.assert_allclose([r["概率"] for r in pred], model.predict_proba(evaluation[FEATURES]))
     np.testing.assert_allclose([r["评分"] for r in pred], model.predict_score(evaluation[FEATURES]))
     valid = test_data.dropna(subset=[SECOND_TARGET])
     expected = roc_auc_score(valid[SECOND_TARGET], model.predict_proba(valid[FEATURES])[:, 1])
-    table = next(v for k, v in experiment["result"]["tables"].items() if "测试集 · 测试 / "+SECOND_TARGET+" / 评估指标" in k)
+    table = next(v for k, v in experiment["result"]["tables"].items() if "测试集 · 测试 / " + SECOND_TARGET + " / 评估指标" in k)
     assert next(row["测试集 · 测试"] for row in table if row["统计项"] == "AUC") == pytest.approx(expected)
 
     comparison = run(client, "model", train, model_mode="compare", models=["logistic", "random_forest"], selector="iv", selector_threshold=0, search=True, n_iter=1, model_params={"random_forest": {"n_estimators": 10}}, **common)

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from hscredit.platform import create_app
 from hscredit.platform.splitting import SplitRequest, split_frame
 from hscredit.platform.storage import Workspace
+from hscredit.utils.datasets import hscredit_dataset
 
 
 @pytest.fixture
@@ -213,8 +214,7 @@ def test_batch_save_rolls_back_all_children(setup, monkeypatch, failure):
 
 
 def test_real_loan_data_round_trip(tmp_path):
-    source = Path(__file__).resolve().parents[2] / "examples" / "hscredit_yyp.xlsx"
-    frame = pd.read_excel(source)
+    frame = hscredit_dataset(columns=["放款编码", "loan_amt", "授信时间", "流量渠道"]).sample(2000, random_state=42)
     workspace = Workspace(tmp_path)
     metadata = workspace.add_dataset(frame, "真实贷款数据")
     frame = workspace.read_dataset(metadata["id"])

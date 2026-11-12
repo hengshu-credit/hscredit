@@ -37,8 +37,7 @@ def overdue_options(data, config):
     thresholds = normalize_dpd_values(config["dpds"])
     if any(value < 0 for value in thresholds):
         raise ValueError("逾期阈值必须为非负数")
-    return dict(overdue=columns, dpds=thresholds, overdue_operator=config.get("overdue_operator", ">"),
-                del_grey=config.get("del_grey", False), handle_missing_target=config.get("handle_missing_target", "drop"))
+    return dict(overdue=columns, dpds=thresholds, overdue_operator=config.get("overdue_operator", ">"), del_grey=config.get("del_grey", False), handle_missing_target=config.get("handle_missing_target", "drop"))
 
 
 def _dictionary_value(data, name, definition):
@@ -124,5 +123,4 @@ def preview_counts(data, config):
 
 def _counts(name, values):
     valid, bad = int(values.count()), int(values.sum())
-    return {"标签": name, "有效样本": valid, "好样本": valid - bad, "坏样本": bad,
-            "剔除样本": len(values) - valid, "坏样本率": bad / valid if valid else None}
+    return {"标签": name, "有效样本": valid, "好样本": valid - bad, "坏样本": bad, "剔除样本": len(values) - valid, "坏样本率": bad / valid if valid else None}
