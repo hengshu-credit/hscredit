@@ -39,6 +39,8 @@ def test_dimensions_run_once_after_final_formats_and_before_save(tmp_path, monke
         assert worksheet["C6"].number_format == "#,##0.00"
         assert worksheet["C6"].alignment.horizontal == "right"
         assert worksheet["D6"].alignment.horizontal == "left"
+        assert worksheet["C4"].alignment.horizontal == worksheet["C6"].alignment.horizontal
+        assert worksheet["D4"].alignment.horizontal == worksheet["D6"].alignment.horizontal
         assert worksheet["D6"].value == "c\nd\ne"
         assert worksheet.auto_filter.ref == "B4:D6"
         assert len(worksheet.conditional_formatting) == 1
@@ -90,6 +92,22 @@ def test_dimensions_run_once_after_final_formats_and_before_save(tmp_path, monke
     assert ws.row_dimensions[6].height == 38
     assert ws["B5"].value == 0.123456789
     book.close()
+
+
+@pytest.mark.parametrize("speed", ["normal", "fast"])
+def test_column_alignment_with_grouped_headers_and_index(speed):
+    writer = ExcelWriter()
+    columns = pd.MultiIndex.from_tuples([("指标", "名称"), ("指标", "金额")])
+    data = pd.DataFrame([["订单", 25]], columns=columns, index=pd.Index(["训练"], name="样本"))
+    dataframe2excel(data, writer, sheet_name="报告", index=True, title="分组结果", speed=speed,
+                    left_cols=[("指标", "名称")], right_cols=[("指标", "金额")])
+    ws = writer.get_sheet_by_name("报告")
+    assert ws["B2"].alignment.horizontal == "left"
+    assert ws["C4"].alignment.horizontal == "center" and "C4:D4" in {str(r) for r in ws.merged_cells.ranges}
+    assert ws["C5"].alignment.horizontal == ws["C6"].alignment.horizontal == "left"
+    assert ws["D5"].alignment.horizontal == ws["D6"].alignment.horizontal == "right"
+    dataframe2excel(pd.DataFrame({"样本数": [123]}), writer, sheet_name=ws, start_row=10, speed=speed)
+    assert ws["B10"].alignment.horizontal == ws["B11"].alignment.horizontal == "center"
 
 
 @pytest.mark.parametrize("auto_width,auto_height", [(False, False), (True, False), (False, True)])

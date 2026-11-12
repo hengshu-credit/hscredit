@@ -882,7 +882,7 @@ def _write_tree_pair(tree, orders, amounts, writer, sheet, row, title, temporary
             continue
         view, label = _tree_view(tree, full, bool(basis))
         path = str(Path(temporary) / f"tree-{row}-{basis}.png")
-        figure = plot_tree(view, save=path)
+        figure = plot_tree(view, backend="matplotlib", save=path)
         plt.close(figure)
         paths.append(path)
         node_col = ("分箱详情", "节点编号") if isinstance(full.columns, pd.MultiIndex) else "节点编号"

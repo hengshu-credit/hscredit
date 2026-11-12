@@ -496,7 +496,7 @@ class TestExcelWriter:
             columns=pd.MultiIndex.from_tuples(
                 [
                     ("统计详情", "样本总数"),
-                    ("好样本数", "MOB1@7"),
+                    ("统计详情", "好样本数"),
                     ("坏样本数", "MOB1@7"),
                     ("坏样本率", "MOB1@7"),
                 ]
@@ -504,6 +504,8 @@ class TestExcelWriter:
         )
 
         writer.insert_df2sheet(ws, df, "B2", index=True)
+        # 同一标签属于不同父指标时，各列保留自己的叶表头。
+        assert ws["E3"].value == ws["F3"].value == "MOB1@7"
         writer.save(self.test_file)
 
         with zipfile.ZipFile(self.test_file) as workbook_zip:

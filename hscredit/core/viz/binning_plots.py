@@ -1439,7 +1439,7 @@ def hist_plot(
         fig = ax.figure
     else:
         return_ax = False
-        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        fig, ax = _create_subplots(1, 1, figsize=figsize)
 
     if y_true is not None:
         series_colors = get_series_colors(len(label_mapping))
@@ -2027,7 +2027,7 @@ def distribution_plot(
         total_counts = df_indexed.resample(resample_freq).size()
         total_counts.index = format_time_labels(total_counts.index, freq, period=False)
 
-        fig, ax1 = plt.subplots(1, 1, figsize=figsize)
+        fig, ax1 = _create_subplots(1, 1, figsize=figsize)
         total_counts.plot(
             kind="bar",
             ax=ax1,

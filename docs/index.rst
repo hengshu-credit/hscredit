@@ -10,7 +10,7 @@ hscredit 文档
          <img src="_static/hengshucredit_logo.svg" alt="" />
        </span>
        <div>
-         <p class="hs-home-hero__motto">鉴真伪 · 斟信用 · 衡风险 · 枢定策</p>
+         <p class="hs-home-hero__motto">鉴真伪·斟信用·衡风险·枢定策</p>
          <p class="hs-home-hero__title">让信用风险建模有据可循</p>
          <p class="hs-home-hero__lead">从真实信贷数据出发，把分箱、评分卡、规则与报告交付收进同一套中文工具链。</p>
        </div>
@@ -62,6 +62,8 @@ hscredit 文档
    安装指南 <installation>
    功能与示例 <showcase>
    功能总览 <overview>
+   项目路线图 <ROADMAP>
+   风控平台 <platform>
    独立 Notebook 教程 <examples>
 
 .. toctree::

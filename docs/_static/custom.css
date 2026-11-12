@@ -102,7 +102,7 @@ samp,
     filter: none;
 }
 .wy-side-nav-search > a.icon-home::after {     /* Logo 下方中文品牌副标语 */
-    content: "鉴真伪 · 斟信用 · 衡风险 · 枢定策";
+    content: "鉴真伪·斟信用·衡风险·枢定策";
     display: block;
     margin-top: 0.7rem;
     max-width: 15rem;

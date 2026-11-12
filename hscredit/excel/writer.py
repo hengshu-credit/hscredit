@@ -30,7 +30,7 @@ from typing import Optional, Union, List, Tuple, Dict, Any, Sequence
 import numpy as np
 import pandas as pd
 
-from openpyxl.cell.cell import Cell
+from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.comments import Comment
 from openpyxl.drawing.image import Image
 from openpyxl import load_workbook, Workbook
@@ -1676,20 +1676,32 @@ class ExcelWriter:
 
         # 插入数据
         for i, row in enumerate(_iter_rows(df, header=header, index=index)):
+            if header and i < df.columns.nlevels:
+                parents = None
+                if i in merge_header_levels:
+                    corners = [tuple(df.columns.names[:i])] * df.index.nlevels if index else []
+                    parents = corners + [column[:i] for column in df.columns]
+                insert_row(
+                    worksheet,
+                    row,
+                    start_row + i,
+                    start_col,
+                    style="header",
+                    auto_width=False,
+                    multi_levels=df.columns.nlevels > 1 and i in merge_header_levels,
+                    header_parents=parents,
+                    decimal=decimal,
+                    **fast_row_kwargs,
+                )
+                if len(row) == 1:
+                    # 单列表也使用表格的居中方式；通栏章节标题仍可单独靠左。
+                    cell = worksheet.cell(start_row + i, start_col_idx)
+                    alignment = copy.copy(cell.alignment)
+                    alignment.horizontal = "center"
+                    cell.alignment = alignment
+                continue
             if fill:
-                if header and i < df.columns.nlevels:
-                    insert_row(
-                        worksheet,
-                        row,
-                        start_row + i,
-                        start_col,
-                        style="header",
-                        auto_width=False,
-                        multi_levels=df.columns.nlevels > 1 and i in merge_header_levels,
-                        decimal=decimal,
-                        **fast_row_kwargs,
-                    )
-                elif i == 0:
+                if i == 0:
                     insert_row(
                         worksheet,
                         row,
@@ -1726,19 +1738,7 @@ class ExcelWriter:
                         **fast_row_kwargs,
                     )
             else:
-                if header and i < df.columns.nlevels:
-                    insert_row(
-                        worksheet,
-                        row,
-                        start_row + i,
-                        start_col,
-                        style="header",
-                        auto_width=False,
-                        multi_levels=df.columns.nlevels > 1 and i in merge_header_levels,
-                        decimal=decimal,
-                        **fast_row_kwargs,
-                    )
-                elif i == 0:
+                if i == 0:
                     insert_row(
                         worksheet,
                         row,
@@ -1868,14 +1868,13 @@ class ExcelWriter:
         multi_levels: bool = False,
         decimal: Optional[int] = 4,
         widths: Optional[Dict[int, float]] = None,
+        header_parents: Optional[List[Tuple]] = None,
     ) -> None:
         """按现有样式规则快速写入一行，不执行逐单元格列宽调整。"""
         curr_col = column_index_from_string(col_index) if isinstance(col_index, str) else col_index
 
         if multi_levels and style == "header":
-            row = pd.Series(row).ffill().to_list()
-            item, start, length = self.calc_continuous_cnt(row)
-            while start is not None:
+            for item, start, length in self._header_runs(row, header_parents):
                 if start + length < len(row):
                     cell_style = f"{style}_left" if start == 0 else f"{style}_middle"
                 else:
@@ -1890,7 +1889,6 @@ class ExcelWriter:
                     end_col=curr_col + start + length - 1,
                     widths=widths,
                 )
-                item, start, length = self.calc_continuous_cnt(row, start + length)
             return
 
         for j, value in enumerate(row):
@@ -1932,6 +1930,7 @@ class ExcelWriter:
         style_only: bool = False,
         multi_levels: bool = False,
         decimal: Optional[int] = 4,
+        header_parents: Optional[List[Tuple]] = None,
     ) -> None:
         """向Excel插入一行数据。
 
@@ -1959,10 +1958,7 @@ class ExcelWriter:
         curr_col = column_index_from_string(col_index) if isinstance(col_index, str) else col_index
 
         if multi_levels and style == "header":
-            row = pd.Series(row).ffill().to_list()
-            item, start, length = self.calc_continuous_cnt(row)
-
-            while start is not None:
+            for item, start, length in self._header_runs(row, header_parents):
                 if start + length < len(row):
                     if start == 0:
                         self.insert_value2sheet(
@@ -1995,7 +1991,6 @@ class ExcelWriter:
                         decimal=decimal,
                     )
 
-                item, start, length = self.calc_continuous_cnt(row, start + length)
         else:
             for j, v in enumerate(row):
                 if merge_rows is not None and row_index + 1 not in merge_rows:
@@ -2251,6 +2246,17 @@ class ExcelWriter:
         if isinstance(equal, (bool, np.bool_)):
             return bool(equal)
         return False
+
+    @classmethod
+    def _header_runs(cls, row, parents):
+        """相邻标题只有在全部父层相同的情况下才能合并。"""
+        if parents is None:
+            row = pd.Series(row).ffill().tolist()
+        start = 0
+        for end in range(1, len(row) + 1):
+            if end == len(row) or (parents is not None and parents[end] != parents[start]) or not cls._merge_values_equal(row[end], row[start]):
+                yield row[start], start, end - start
+                start = end
 
     @staticmethod
     def calc_continuous_cnt(list_: List, index_: int = 0) -> Tuple[Any, Optional[int], Optional[int]]:
@@ -4061,9 +4067,9 @@ def dataframe2excel(
     :type custom_rows: Optional[List]
     :param color_rows: 需要显示颜色渐变的行，默认为None
     :type color_rows: Optional[List]
-    :param left_cols: 需要左对齐的列名或列索引列表，默认为None（数据行，非表头）
+    :param left_cols: 需要左对齐的列名或列位置列表，同时应用于数据和对应的单列表头。
     :type left_cols: Optional[List]
-    :param right_cols: 需要右对齐的列名或列索引列表，默认为None（数据行，非表头）
+    :param right_cols: 需要右对齐的列名或列位置列表，同时应用于数据和对应的单列表头。
     :type right_cols: Optional[List]
     :param start_col: 起始列，默认为2
     :type start_col: int
@@ -4244,12 +4250,10 @@ def dataframe2excel(
         centered_bar_rows,
     )
 
-    # 应用自定义列对齐（仅数据行，非表头）
+    # 数据与所属的单列表头共用对齐方式，跨列分组保留自身样式。
     if left_cols or right_cols:
-        # 计算表头行数（1行或 MultiIndex 层数）
         n_header_rows = data.columns.nlevels if header else 0
-        data_start_row = start_row + n_header_rows
-        data_end_row = end_row - 1
+        spanning_headers = writer._horizontal_merge_anchors(worksheet) if n_header_rows > 1 else set()
 
         # index 列的层数
         idx_levels = data.index.nlevels if kwargs.get("index", False) else 0
@@ -4260,18 +4264,15 @@ def dataframe2excel(
             if not items:
                 return result
             for c in items:
-                if isinstance(c, int):
+                if isinstance(c, (int, np.integer)):
                     if 0 <= c < len(df_cols):
                         result.add(c)
-                elif isinstance(c, str):
+                elif isinstance(c, (str, tuple)):
                     try:
                         loc = df_cols.get_loc(c)
-                        if isinstance(loc, int):
-                            result.add(loc)
-                        else:
-                            result.update(range(loc.start, loc.stop))
-                    except Exception:
-                        pass
+                    except KeyError:
+                        continue
+                    result.update(np.atleast_1d(np.arange(len(df_cols))[loc]))
             return result
 
         left_idx_set = _resolve_col_items(left_cols, data.columns)
@@ -4279,8 +4280,10 @@ def dataframe2excel(
         for col_idx in left_idx_set | right_idx_set:
             horiz = "left" if col_idx in left_idx_set else "right"
             excel_col = start_col + col_idx + idx_levels
-            for row in range(data_start_row, data_end_row + 1):
+            for row in range(start_row, end_row):
                 cell = worksheet.cell(row=row, column=excel_col)
+                if isinstance(cell, MergedCell) or (row, excel_col) in spanning_headers:
+                    continue
                 alignment = copy.copy(cell.alignment)
                 alignment.horizontal = horiz
                 cell.alignment = alignment

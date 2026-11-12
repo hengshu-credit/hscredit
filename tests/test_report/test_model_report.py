@@ -1596,7 +1596,8 @@ class TestModelReportRegression:
             for sheet in ["2-模型性能", "3-入模变量分析"]:
                 rows = list(workbook[sheet].values)
                 headers = [row for row in rows if "逾期标签" in row]
-                assert len(headers) == 2 and all(row.count("逾期标签") == 2 for row in headers)
+                assert len(headers) == (3 if sheet == "2-模型性能" else 2)
+                assert all(row.count("逾期标签") == 2 for row in headers)
             workbook.close()
 
     def test_multi_label_tables_use_expected_layout(self, tmp_path):
@@ -1639,8 +1640,10 @@ class TestModelReportRegression:
         assert performance["C10"].number_format == "0.00%"
         assert performance["C11"].number_format == "#,##0"
         assert isinstance(performance["C11"].value, int)
-        assert performance["B19"].value == "统计指标"
-        assert performance.auto_filter.ref == "B20:AJ26"
+        assert "模型尾部区分能力" in performance["B15"].value
+        assert performance["B16"].value == "订单口径"
+        assert performance["B17"].value == "统计指标"
+        assert performance.auto_filter.ref == "B18:AJ24"
         sample_total_header = next(cell for row in basic.iter_rows() for cell in row if cell.value == "样本总数")
         stats_group_row = sample_total_header.row - 1
         assert basic.cell(stats_group_row, sample_total_header.column - 1).value == "统计详情"

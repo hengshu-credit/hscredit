@@ -205,9 +205,8 @@ def _summary_percent_cols(columns) -> List[Any]:
     return percent_cols
 
 
-def _prepare_report_dataset(task):
-    """校验并准备单个报告数据集；worker 不执行模型方法。"""
-    model, key, label, X, y, y_dict, features = task
+def _model_input_frame(model, X, features):
+    """按拟合字段顺序选择输入，排除报告的标签、日期和金额列。"""
     required_features: Optional[List[str]] = None
     if hasattr(model, "feature_names_") and model.feature_names_ is not None:
         required_features = _normalize_feature_names(model.feature_names_)
@@ -219,15 +218,19 @@ def _prepare_report_dataset(task):
         missing = set(required_features).difference(X.columns)
         if missing:
             raise ValueError(f"数据集缺少以下模型特征: {missing}")
-        X_for_pred = X[required_features]
-    elif features:
+        return X[required_features]
+    if features:
         missing = set(features).difference(X.columns)
         if missing:
             raise ValueError(f"数据集缺少以下模型特征: {missing}")
-        X_for_pred = X[features]
-    else:
-        X_for_pred = X
+        return X[features]
+    return X
 
+
+def _prepare_report_dataset(task):
+    """校验并准备单个报告数据集；worker 不执行模型方法。"""
+    model, key, label, X, y, y_dict, features = task
+    X_for_pred = _model_input_frame(model, X, features)
     if len(X) != len(y):
         raise ValueError(f"特征与标签样本数不一致: X={len(X)}, y={len(y)}")
 
@@ -330,7 +333,8 @@ def _feature_metric_worker(task) -> Tuple[float, float, float]:
     """计算单特征 IV/KS/PSI；不读取或修改报告实例状态。"""
     from ..core.metrics import iv, ks, psi
 
-    y_true, train_values, test_values = task
+    y_true, train_values, test_values = task[:3]
+    psi_params = task[3] if len(task) > 3 else {}
 
     def optional_metric(metric, *values):
         try:
@@ -340,7 +344,7 @@ def _feature_metric_worker(task) -> Tuple[float, float, float]:
 
     iv_value = optional_metric(iv, y_true, train_values)
     ks_value = optional_metric(ks, y_true, train_values)
-    psi_value = optional_metric(psi, train_values, test_values) if test_values is not None else np.nan
+    psi_value = optional_metric(lambda a, b: psi(a, b, **psi_params), train_values, test_values) if test_values is not None else np.nan
     return iv_value, ks_value, psi_value
 
 
@@ -799,6 +803,13 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         self._reference_binners = {}
         self._reference_locks = {}
         self.kwargs = dict(kwargs)
+        # 特征的非缺失样本可能少于默认 PSI 箱占比，允许调用者显式配置，
+        # 与评分 PSI 分开，保留既有报告的默认计算口径。
+        feature_psi_params = self.kwargs.get("feature_psi_params", {})
+        if not isinstance(feature_psi_params, dict):
+            raise ValidationError("feature_psi_params 必须为字典")
+        if "feature_psi_params" in self.kwargs:
+            self.kwargs["feature_psi_params"] = copy.deepcopy(feature_psi_params)
         self.method_source_ = None
         if callable(prediction_method):
             try:
@@ -2016,7 +2027,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 for feat in importance_df.index:
                     train_values = train_ds.X[feat] if feat in train_ds.X.columns else pd.Series(dtype=float)
                     test_values = self._datasets[test_key].X[feat] if test_key is not None and feat in self._datasets[test_key].X.columns else None
-                    metric_tasks.append((y_arr, train_values, test_values))
+                    metric_tasks.append((y_arr, train_values, test_values, self.kwargs.get("feature_psi_params", {})))
                 metric_values = parallel_execute(
                     _feature_metric_worker,
                     metric_tasks,
@@ -2056,9 +2067,10 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
     def _report_model(self):
         """元信息读取最终估计器，预测始终经过完整 Pipeline。"""
         model = self.model
-        while getattr(model, "steps", None):
-            model = model.steps[-1][1]
-        return model
+        from ._model_protocol import final_estimator
+
+        model = final_estimator(model)
+        return getattr(model, "report_estimator_", model)
 
     def _is_scorecard_model(self) -> bool:
         """按评分卡能力识别 hscredit、toad 与 scorecardpipeline 对象。"""
@@ -2074,7 +2086,9 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         for attribute in ("lr_model_", "lr_model", "pretrain_lr", "model_", "model"):
             candidate = getattr(self._report_model, attribute, None)
             if candidate is not None and candidate is not self._report_model:
-                return candidate
+                from ._model_protocol import final_estimator
+
+                return final_estimator(candidate)
         return None
 
     @staticmethod
@@ -2191,7 +2205,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             try:
                 summary = lr_model.summary()
                 if isinstance(summary, pd.DataFrame):
-                    return summary
+                    return summary.rename_axis("变量").reset_index() if not isinstance(summary.index, pd.RangeIndex) else summary
                 tables = getattr(summary, "tables", None)
                 if tables and len(tables) > 1 and hasattr(tables[1], "data"):
                     rows = tables[1].data
@@ -2211,18 +2225,23 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
         except Exception as exc:
             self._report_warning("读取评分卡逻辑回归系数失败 [模型=%s]: %s", type(lr_model).__name__, exc)
             return pd.DataFrame()
-        coefficients = coefficients.mean(axis=0) if coefficients.ndim > 1 else coefficients
-        features = getattr(lr_model, "feature_names_in_", self.feature_names)
-        features = list(features) if len(features) == len(coefficients) else self.feature_names
-        rows = [{"变量": name, "系数": float(value)} for name, value in zip(features, coefficients)]
-        intercept = np.asarray(getattr(lr_model, "intercept_", []), dtype=float).reshape(-1)
-        if len(intercept):
-            rows.insert(0, {"变量": "截距", "系数": float(intercept[0])})
-        return pd.DataFrame(rows)
+        return self._lr_coefficient_table(lr_model, coefficients)
+
+    def _lr_coefficient_table(self, model, coefficients):
+        """缺少推断统计时保留二分类模型的实际系数和截距。"""
+        coefficients = np.asarray(coefficients).reshape(-1)
+        features = getattr(model, "feature_names_in_", self.feature_names)
+        if len(features) != len(coefficients):
+            features = [f"特征{i + 1}" for i in range(len(coefficients))]
+        table = pd.DataFrame({"变量": list(features), "系数": coefficients})
+        if getattr(model, "fit_intercept", True) and np.size(getattr(model, "intercept_", [])):
+            table.loc[-1] = ["截距", float(np.ravel(model.intercept_)[0])]
+            table = table.sort_index().reset_index(drop=True)
+        return table
 
     def _direct_lr_summary(self, feature_map: Optional[Dict[str, str]] = None) -> pd.DataFrame:
         """读取直接传入的 LR 统计摘要，并补充字段含义。"""
-        if self._is_scorecard_model() or not callable(getattr(self._report_model, "summary", None)):
+        if self._is_scorecard_model():
             return pd.DataFrame()
 
         class_names = {base.__name__.lower().replace("_", "") for base in type(self._report_model).__mro__}
@@ -2230,20 +2249,20 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             return pd.DataFrame()
 
         statistics = getattr(self._report_model, "statistics_status_", {})
-        if statistics.get("状态") in {"未执行", "不适用", "超出预算"}:
-            self._report_not_applicable("逻辑回归统计诊断", f"{statistics}；保留原始模型系数与概率评估")
-            return pd.DataFrame()
-
-        try:
-            summary = self._report_model.summary()
-        except Exception as exc:
-            self._report_warning("读取逻辑回归统计摘要失败 [模型=%s]: %s", type(self._report_model).__name__, exc)
-            return pd.DataFrame()
-        if not isinstance(summary, pd.DataFrame):
-            self._report_warning("逻辑回归 summary() 未返回 DataFrame [模型=%s]", type(self._report_model).__name__)
-            return pd.DataFrame()
-
-        table = summary.copy()
+        model = self._report_model
+        if statistics.get("状态") in {"未执行", "不适用", "超出预算"} or not callable(getattr(model, "summary", None)):
+            self._report_not_applicable("逻辑回归统计诊断", statistics.get("原因") or "模型未提供推断统计，展示拟合系数")
+            table = self._lr_coefficient_table(model, model.coef_)
+        else:
+            try:
+                summary = model.summary()
+            except Exception as exc:
+                self._report_warning("读取逻辑回归统计摘要失败 [模型=%s]: %s", type(model).__name__, exc)
+                return pd.DataFrame()
+            if not isinstance(summary, pd.DataFrame):
+                self._report_warning("逻辑回归 summary() 未返回 DataFrame [模型=%s]", type(model).__name__)
+                return pd.DataFrame()
+            table = summary.copy()
         feature_column = next(
             (column for column in ("入参字段", "Features", "变量", "feature", "特征") if column in table.columns),
             None,
@@ -2361,6 +2380,42 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 "理论逾期率": bad_rate,
             }
         )
+
+    def _scorecard_bad_rate_table(self, max_n_bins):
+        """按数据集和有效标签汇总评分卡实际分数对应的观察坏率。"""
+        from ._model_protocol import final_estimator
+
+        card = self._report_model
+        tabulate = getattr(card, "score_to_bad_rate_table", None)
+        if not callable(tabulate):
+            return pd.DataFrame()
+        tables = []
+        for key, ds in self._datasets.items():
+            estimator = self.model
+            if self.prediction_method == "predict_score" or (self.prediction_method == "predict" and final_estimator(self.model) is card):
+                scores = ds.prediction
+            else:
+                inputs = _model_input_frame(estimator, ds.X, self._feature_names)
+                while getattr(estimator, "steps", None):
+                    if len(estimator.steps) > 1:
+                        inputs = estimator[:-1].transform(inputs)
+                    estimator = estimator.steps[-1][1]
+                kwargs = {k: v for k, v in self.prediction_kwargs.items() if k == "input_type"}
+                score_method = getattr(estimator, "predict_score", None) or card.predict
+                scores = score_method(inputs, **kwargs)
+            for label in self._label_names or [None]:
+                valid = self._get_target_valid_mask(key, label)
+                if not valid.any():
+                    continue
+                table = tabulate(scores=np.asarray(scores)[valid], y=self._get_y(key, label)[valid], max_n_bins=max_n_bins)
+                # 评分卡接口为展示返回百分数字符串，Excel 保留可计算的数值。
+                table["坏样本率"] = table["坏样本数"] / table["样本数"].replace(0, np.nan)
+                table["KS"] = pd.to_numeric(table["KS"])
+                table.insert(0, "数据集", ds.label)
+                if label is not None:
+                    table.insert(1, "逾期标签", label)
+                tables.append(table)
+        return pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
 
     def _score_psi_matrix(self) -> pd.DataFrame:
         """计算全部数据集两两评分 PSI。"""
@@ -2614,7 +2669,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             valid = self._get_target_valid_mask(ds_key, label)
             y_arr, prediction = self._get_valid_target_arrays(ds_key, label)
             n = len(y_arr)
-            overall_bad_rate = float(y_arr.mean())
 
             from ..core.models.losses.business_metrics import _selection_fraction, _bounded_parameter
 
@@ -2630,9 +2684,16 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 )
                 for pct in percentiles
             }
-            weights = self._metric_weight(ds_key, label)
-            weights = np.ones(n) if weights is None else weights
-            overall_bad_rate = float(np.average(y_arr, weights=weights)) if n else np.nan
+            if amount:
+                if amount not in ds.X:
+                    raise ValueError(f"数据集 {tag} 缺少金额字段 {amount}")
+                weights = validate_amounts(ds.X[amount].to_numpy()[valid], n)
+            else:
+                weights = self._metric_weight(ds_key, label)
+                weights = np.ones(n) if weights is None else weights
+            total_weight = weights.sum()
+            bad_weight = np.dot(y_arr, weights)
+            overall_bad_rate = float(bad_weight / total_weight) if total_weight else np.nan
 
             bad_rates: Dict[str, float] = {}
             lifts: Dict[str, float] = {}
@@ -2642,7 +2703,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 selected = fractions[pct] * weights
                 top_bad_rate = float(np.dot(y_arr, selected) / selected.sum()) if selected.sum() else np.nan
                 lift = top_bad_rate / overall_bad_rate if overall_bad_rate > 0 else np.nan
-                _, improvement, _ = rejection_statistics(weights.sum(), np.dot(y_arr, weights), selected.sum(), np.dot(y_arr, selected))
+                _, improvement, _ = rejection_statistics(total_weight, bad_weight, selected.sum(), np.dot(y_arr, selected))
                 key = f"TOP {int(pct * 100)}%"
                 bad_rates[key] = top_bad_rate
                 lifts[key] = lift
@@ -2656,35 +2717,6 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             rows.append({"数据集": tag, "统计项": "LIFT值", **lifts})
             rows.append({"数据集": tag, "统计项": "坏账改善", **improvements})
 
-            # 金额口径替代订单口径；调用方会将两个结果并排展示。
-            if amount and amount in ds.X.columns:
-                amounts = validate_amounts(ds.X[amount].to_numpy()[valid], n)
-                overall_bad_amount = float((y_arr * amounts).sum() / amounts.sum()) if amounts.sum() > 0 else np.nan
-
-                amt_bad_rates: Dict[str, float] = {}
-                amt_lifts: Dict[str, float] = {}
-                amt_improvements: Dict[str, float] = {}
-
-                for pct in percentiles:
-                    top_amt = amounts * fractions[pct]
-                    top_bad_amt = float((y_arr * top_amt).sum() / top_amt.sum()) if top_amt.sum() > 0 else np.nan
-                    lift_amt = top_bad_amt / overall_bad_amount if overall_bad_amount > 0 else np.nan
-                    _, imp_amt, _ = rejection_statistics(amounts.sum(), np.dot(y_arr, amounts), top_amt.sum(), np.dot(y_arr, top_amt))
-                    key = f"TOP {int(pct * 100)}%"
-                    amt_bad_rates[key] = top_bad_amt
-                    amt_lifts[key] = lift_amt
-                    amt_improvements[key] = float(imp_amt)
-
-                amt_bad_rates["TOTAL"] = overall_bad_amount
-                amt_lifts["TOTAL"] = 1.0 if overall_bad_amount > 0 else np.nan
-                amt_improvements["TOTAL"] = 0.0
-
-                rows[-3:] = [
-                    {"数据集": tag, "统计项": "坏样本率", **amt_bad_rates},
-                    {"数据集": tag, "统计项": "LIFT值", **amt_lifts},
-                    {"数据集": tag, "统计项": "坏账改善", **amt_improvements},
-                ]
-
         return pd.DataFrame(rows)
 
     def _get_top_n_lift_table_multi(
@@ -2695,14 +2727,11 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
     ) -> pd.DataFrame:
         """多标签合并模式的 LIFT 表。
 
-        行索引为（数据集，统计项），列索引为（统计指标，尾部分档）。
-        每个逾期标签下包含各 TOP 分档及 TOTAL。
+        单标签使用普通列。多标签宽表以标签分组，长表用逾期标签列标识每组统计项。
         """
         if labels is None:
             labels = self._label_names
 
-        # 逐标签复用单标签 TOP n% 表，再沿列方向以「标签」为外层拼接，
-        # 形成 行=(数据集, 统计项)、列=(标签, TOP n%) 的二级表头结构。
         per_label: Dict[str, pd.DataFrame] = {}
         for lbl in labels:
             sub = self._get_top_n_lift_table(
@@ -2712,6 +2741,10 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             )
             per_label[lbl] = sub.set_index(["数据集", "统计项"])
 
+        if self.long_format:
+            return pd.concat(per_label, names=["逾期标签"]).reset_index()
+        if len(per_label) == 1:
+            return next(iter(per_label.values())).reset_index()
         return pd.concat(per_label, axis=1, names=["统计指标", "尾部分档"])
 
     def _get_features_summary(self) -> pd.DataFrame:
@@ -4351,117 +4384,29 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
             style="header_middle",
             align={"horizontal": "left"},
         )
-        pct_keys = ["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"]
-        if is_multi:
-            # 多标签合并模式：一次性生成 MultiIndex 列的 LIFT 表
-            if amount:
-                # 订单口径 + 金额口径左右并排
-                lift_table = self._get_top_n_lift_table(
-                    percentiles=(0.01, 0.03, 0.05, 0.10),
-                    labels=self._label_names,
-                )
-                lift_amt = self._get_top_n_lift_table(
-                    percentiles=(0.01, 0.03, 0.05, 0.10),
-                    amount=amount,
-                    labels=self._label_names,
-                )
-                table_start = end_row + 1
-                end_row1, end_col1 = dataframe2excel(
-                    lift_table,
-                    writer,
-                    sheet_name=ws,
-                    title="订单口径",
-                    start_row=table_start,
-                    start_col=2,
-                    percent_cols=list(lift_table.columns),
-                    index=True,
-                )
-                end_row2, _ = dataframe2excel(
-                    lift_amt,
-                    writer,
-                    sheet_name=ws,
-                    title="金额口径",
-                    start_row=table_start,
-                    start_col=end_col1 + 1,
-                    percent_cols=list(lift_amt.columns),
-                    index=True,
-                )
-                end_row = max(end_row1, end_row2)
-                from openpyxl.utils import get_column_letter
+        from openpyxl.utils import get_column_letter
 
-                # 金额口径表起始列为 end_col1 + 1，占据 索引层级 + 数据列 共 nlevels+ncols
-                # 列，故其最后一列为 (end_col1 + 1) + nlevels + ncols - 1。
-                filter_end_col = end_col1 + 1 + lift_amt.index.nlevels + len(lift_amt.columns) - 1
-                header_row = table_start + lift_table.columns.nlevels + 1
-                writer.add_auto_filter(
-                    ws,
-                    f"B{header_row}:{get_column_letter(filter_end_col)}{end_row - 1}",
+        # insert_value2sheet 返回下一空行。口径标题、各层表头和首行数据连续写入。
+        table_start = end_row
+        start_col = 2
+        for basis, weight in ([("订单口径", None), ("金额口径", amount)] if amount else [(None, None)]):
+            lift_table = self._get_top_n_lift_table(amount=weight, labels=self._label_names if is_multi else None)
+            with_index = isinstance(lift_table.columns, pd.MultiIndex)
+            header_start = table_start
+            if basis:
+                width = len(lift_table.columns) + (lift_table.index.nlevels if with_index else 0)
+                header_start, _ = writer.insert_value2sheet(
+                    ws, (table_start, start_col), value=basis, style="header",
+                    end_space=(table_start, start_col + width - 1),
                 )
-            else:
-                lift_table = self._get_top_n_lift_table(
-                    percentiles=(0.01, 0.03, 0.05, 0.10),
-                    labels=self._label_names,
-                )
-                table_start = end_row + 1
-                end_row, _ = dataframe2excel(
-                    lift_table,
-                    writer,
-                    sheet_name=ws,
-                    start_row=table_start,
-                    percent_cols=list(lift_table.columns),
-                    index=True,
-                )
-                from openpyxl.utils import get_column_letter
-
-                filter_end_col = 2 + lift_table.index.nlevels + len(lift_table.columns) - 1
-                writer.add_auto_filter(
-                    ws,
-                    f"B{table_start + lift_table.columns.nlevels - 1}:" f"{get_column_letter(filter_end_col)}{end_row - 1}",
-                )
-            section_idx += 1
-        elif amount:
-            lift_table = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount=None)
-            lift_amt = self._get_top_n_lift_table(percentiles=(0.01, 0.03, 0.05, 0.10), amount=amount)
-            table_start = end_row + 1
-            end_row1, end_col1 = dataframe2excel(
-                lift_table,
-                writer,
-                sheet_name=ws,
-                title="订单口径",
-                start_row=table_start,
-                start_col=2,
-                percent_cols=pct_keys,
+            end_row, next_col = dataframe2excel(
+                lift_table, writer, sheet_name=ws, start_row=header_start, start_col=start_col,
+                index=with_index, percent_cols=["TOP 1%", "TOP 3%", "TOP 5%", "TOP 10%", "TOTAL"],
             )
-            end_row2, _ = dataframe2excel(
-                lift_amt,
-                writer,
-                sheet_name=ws,
-                title="金额口径",
-                start_row=table_start,
-                start_col=end_col1 + 2,
-                percent_cols=pct_keys,
-            )
-            end_row = max(end_row1, end_row2)
-            n_lift_cols = len(lift_table.columns)
-            filter_end_col = end_col1 + 2 + n_lift_cols - 1
-            from openpyxl.utils import get_column_letter
-
-            writer.add_auto_filter(ws, f"B{table_start + 2}:{get_column_letter(filter_end_col)}{end_row - 1}")
-        else:
-            lift_table = self._get_top_n_lift_table()
-            table_start = end_row + 3
-            end_row, _ = dataframe2excel(
-                lift_table,
-                writer,
-                sheet_name=ws,
-                start_row=table_start,
-                percent_cols=pct_keys,
-            )
-            from openpyxl.utils import get_column_letter
-
-            writer.add_auto_filter(ws, f"B{table_start}:{get_column_letter(len(lift_table.columns) + 1)}{end_row - 1}")
-        if not is_multi:
-            section_idx += 1
+            start_col = next_col + 1
+        filter_row = end_row - len(lift_table) - 1
+        writer.add_auto_filter(ws, f"B{filter_row}:{get_column_letter(next_col - 1)}{end_row - 1}")
+        section_idx += 1
 
         # 2.4 分月PSI矩阵
         if date:
@@ -4988,7 +4933,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 for dk in other_ds_keys:
                     if dk in self._datasets and feat in self._datasets[dk].X.columns:
                         try:
-                            psi_val = _psi_feat(base_ds.X[feat], self._datasets[dk].X[feat])
+                            psi_val = _psi_feat(base_ds.X[feat], self._datasets[dk].X[feat], **self.kwargs.get("feature_psi_params", {}))
                             row[f"PSI({self._datasets[dk].label})"] = psi_val
                             has_psi = True
                         except Exception as exc:
@@ -5104,6 +5049,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                 writer,
                 sheet_name=ws,
                 start_row=end_row + 1,
+                decimal=None,
                 left_cols=[column for column in ("入参字段", "Features", "变量", "feature", "特征", "字段名称") if column in direct_lr_summary.columns],
             )
             param_section += 1
@@ -5166,6 +5112,7 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     sheet_name=ws,
                     start_row=end_row + 1,
                     title="逻辑回归系数",
+                    decimal=None,
                     left_cols=[column for column in ("变量",) if column in lr_summary.columns],
                 )
             param_section += 1
@@ -5256,6 +5203,15 @@ class ModelReport(ModelContextMixin, ReportResourceMixin):
                     percent_cols=percent_columns,
                 )
             param_section += 1
+
+            bad_rates = self._scorecard_bad_rate_table(max_n_bins)
+            if not bad_rates.empty:
+                end_row, _ = writer.insert_value2sheet(ws, (end_row + 2, 2), value=f"{param_section}、评分坏率对照表", style="header_middle", align={"horizontal": "left"})
+                end_row, _ = dataframe2excel(
+                    bad_rates, writer, sheet_name=ws, start_row=end_row, decimal=None,
+                    percent_cols=["坏样本率", "累计好样本占比", "累计坏样本占比", "KS"],
+                )
+                param_section += 1
 
             if len(self._datasets) >= 2:
                 end_row, _ = writer.insert_value2sheet(
@@ -5547,6 +5503,10 @@ def auto_model_report(
     **kwargs,
 ) -> Union[ModelReport, ReportResult]:
     """一键生成模型报告.
+
+    :param feature_psi_params: 可通过 kwargs 传入特征 PSI 参数字典，如
+        ``{"min_bin_size": 1}``；同时用于特征重要性表和逐字段稳定性表。
+        默认空字典保留 psi 的默认口径，不影响评分 PSI。
 
     数据集传入支持三种方式，内部统一规整为 ``{数据集名称: (X, y)}`` 结构：
 

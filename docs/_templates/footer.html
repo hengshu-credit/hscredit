@@ -14,10 +14,10 @@
   <span>© {{ copyright.split(',')[0] }} <a href="https://hengshucredit.com/" target="_blank" rel="noopener noreferrer">上海衡枢真信科技有限公司</a> · ALL RIGHTS RESERVED</span>
   <span>开源地址：<a href="https://github.com/hengshu-credit" target="_blank" rel="noopener noreferrer">github.com/hengshu-credit</a></span>
   <a href="https://github.com/itlubber" target="_blank" rel="noopener noreferrer">github.com/itlubber</a>
-  {% for label, asset in [('微信：itlubber', 'wechat.svg'), ('公众号：itlubber_art', 'wechat-official-account.svg')] %}
-  <a class="hs-footer-contact" href="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/{{ asset }}" target="_blank" rel="noopener noreferrer">
+  {% for label, asset in [('微信：itlubber', 'wechat.svg'), ('公众号：hscreditlab', 'wechat-official-account.svg')] %}
+  <a class="hs-footer-contact" href="{{ pathto('_static/' ~ asset, 1) }}" target="_blank" rel="noopener noreferrer">
     {{ label }}
-    <img src="https://raw.githubusercontent.com/hengshu-credit/.github/main/profile/assets/{{ asset }}" alt="{{ label }} 二维码" width="160" height="160" loading="lazy">
+    <img src="{{ pathto('_static/' ~ asset, 1) }}" alt="{{ label }} 二维码" width="160" height="160" loading="lazy">
   </a>
   {% endfor %}
 </div>

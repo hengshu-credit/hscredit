@@ -271,7 +271,7 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         :param feature: 特征名
         :return: (包含各阈值指标的DataFrame, 分箱器实例或None)
         """
-        if feature in self.numerical_features_:
+        if feature in self.numerical_features_ and not pd.api.types.is_bool_dtype(self.X_[feature]):
             return self._analyze_numerical_feature(feature)
         else:
             return self._analyze_categorical_feature(feature), None
@@ -321,6 +321,13 @@ class SingleFeatureRuleMiner(BaseRuleMiner):
         binner = self._get_binning_instance()
         X_feature = pd.DataFrame({feature: valid_values})
         y_valid = self.y_.iloc[np.flatnonzero(feature_values.notna().to_numpy())]
+        if y_valid.nunique() < 2:
+            # 高缺失字段的非缺失部分可能只有一种标签，无法拟合监督分箱。
+            # 缺失与非缺失仍是可验证的候选规则，直接用完整样本计算其命中指标。
+            candidates = [self._calculate_metrics(feature, None, "notna")]
+            if feature_values.isna().any():
+                candidates.append(self._calculate_metrics(feature, None, "isna"))
+            return pd.DataFrame(candidates), None
         binner.fit(X_feature, y_valid)
 
         if hasattr(binner, "splits_") and feature in binner.splits_:

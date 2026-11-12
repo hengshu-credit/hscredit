@@ -1,3 +1,5 @@
+import warnings
+
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.figure import Figure
@@ -22,7 +24,10 @@ def test_plot_tree_supports_sklearn_decision_tree_classifier():
     clf = DecisionTreeClassifier(max_depth=2, random_state=0)
     clf.fit(df[["score", "multi"]], df["target"])
 
-    fig = plot_tree_matplotlib(clf, feature_names=["score", "multi"])
+    with plt.rc_context({"font.family": "DejaVu Sans"}), warnings.catch_warnings():
+        warnings.filterwarnings("error", message="Glyph .* missing from .*font")
+        fig = plot_tree_matplotlib(clf, feature_names=["评分", "借款次数"], title="决策树")
+        fig.canvas.draw()
 
     assert isinstance(fig, Figure)
     assert fig.axes

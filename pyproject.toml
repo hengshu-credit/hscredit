@@ -78,6 +78,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+platform = [
+    "psutil>=5.9",
+    "optuna>=3.0.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.18",
+    "pydantic>=1.10",
+]
 boost = [
     # Python 3.9/3.10 的 SHAP 0.49 尚不支持 XGBoost 3.1 起的向量 base_score。
     "xgboost>=1.4.0,<3.1; python_version < '3.11'",
@@ -138,6 +146,7 @@ database-all = [
     "hscredit[db-mysql,db-hive,db-impala,db-oracle,db-starrocks,db-clickhouse,db-maxcompute,db-redis,db-mongodb]",
 ]
 dev = [
+    "httpx>=0.27,<1",
     "pytest>=6.0.0",
     "pytest-cov>=2.0.0",
     "psutil>=5.9",
@@ -160,7 +169,7 @@ docs = [
     "myst-parser>=2.0.0",
 ]
 all = [
-    "hscredit[boost,net,pmml,tune,skills,database-all,dev,docs]"
+    "hscredit[boost,net,pmml,tune,skills,database-all,platform,dev,docs]"
 ]
 
 [project.scripts]

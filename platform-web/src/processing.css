@@ -1,0 +1,76 @@
+.processing-dataset{display:flex;align-items:center;gap:12px;margin:0 0 18px;font-size:13px;color:var(--muted)}
+.processing-dataset strong{color:var(--text)}
+.processing-layout{display:grid;grid-template-columns:210px minmax(0,1fr);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.processing-steps{padding:16px 12px;background:var(--page);border-right:1px solid var(--border)}
+.processing-section-label{display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin:2px 4px 16px}
+.processing-section-label small{font-weight:400;color:var(--muted)}
+.processing-steps>button:not(.el-button){width:100%;display:flex;align-items:center;gap:10px;border:1px solid transparent;background:transparent;color:var(--text);padding:12px 9px;border-radius:var(--radius);text-align:left;margin-bottom:8px}
+.processing-steps>button.active{border-color:var(--el-color-primary-light-5);background:var(--el-color-primary-light-9)}
+.processing-steps>button>div{min-width:0}
+.processing-steps strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.processing-steps small{display:block;color:var(--muted);font-size:11px;margin-top:5px}
+.processing-step-number{display:grid;place-items:center;border:1px solid var(--border);border-radius:var(--radius);width:25px;height:25px;flex-shrink:0;color:var(--el-color-primary);background:var(--surface);font-size:12px}
+.processing-steps>.el-button{width:100%;margin-top:8px}
+.processing-editor{padding:20px;min-width:0;overflow:auto}
+.processing-rule-toolbar,.fx-toolbar,.processing-preview-toolbar,.processing-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.processing-rule-toolbar{margin-bottom:20px}
+.processing-rule-toolbar h3{margin:0;font-size:15px}
+.processing-editor .form-grid{grid-template-columns:1fr 2fr}
+.processing-editor .span-two{grid-column:auto}
+.fx-toolbar{justify-content:flex-start;margin-bottom:10px}
+.fx-toolbar>strong{color:var(--el-color-primary);margin-right:auto;font-size:14px}
+.fx-node{min-width:0;flex:1}
+.fx-node-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.fx-node-head>.fx-kind{width:145px;flex:none}
+.fx-node-head>.fx-literal-type{width:100px;flex:none}
+.fx-node-head>.fx-function{width:240px}
+.fx-node-head>.el-input,.fx-node-head>.el-input-number{width:200px;max-width:100%;flex:1;min-width:100px}
+/* 字段采用原生输入框，节点本身只负责布局，不叠加输入框边框。 */
+.fx-field-input .el-input__wrapper,.fx-field-input .el-input__inner{cursor:pointer}
+.fx-field-tag{font-size:11px;color:var(--muted);margin-right:4px}
+.fx-terms,.fx-arguments{--fx-remove-width:56px;--fx-row-gap:10px;margin-top:12px;padding-left:12px;border-left:2px solid var(--el-color-primary-light-7)}
+.fx-term{display:grid;grid-template-columns:170px minmax(0,1fr) var(--fx-remove-width);align-items:start;gap:var(--fx-row-gap);margin-bottom:12px}
+.fx-term>.fx-operator{width:100%;align-self:start}
+.fx-start{display:flex;align-items:center;min-height:var(--control-height);color:var(--muted);font-size:12px;padding:0 10px}
+.fx-term>.el-button,.fx-argument>.el-button{width:var(--fx-remove-width);padding-inline:0;margin:0}
+.fx-append{width:calc(100% - var(--fx-remove-width) - var(--fx-row-gap))}
+.fx-argument{display:grid;grid-template-columns:65px minmax(0,1fr) var(--fx-remove-width);align-items:start;gap:var(--fx-row-gap);margin-bottom:12px}
+.fx-argument>label{display:flex;align-items:center;min-height:var(--control-height);font-size:12px;color:var(--muted)}
+.fx-formula-preview{margin-top:18px;padding:14px;background:var(--page);border:1px solid var(--border);border-radius:var(--radius)}
+.fx-formula-preview>span{font-size:11px;color:var(--muted);display:block;margin-bottom:8px}
+.fx-formula-preview code,.fx-generated code{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--el-color-primary);line-height:1.8}
+.processing-preview-toolbar{margin-top:20px}
+.processing-preview{margin-top:20px;padding-top:20px;border-top:1px solid var(--border)}
+.processing-preview h3{font-size:14px;margin:0 0 12px}
+.processing-compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:22px}
+.processing-compare>section{min-width:0}
+.fx-generated{padding:12px 0;border-bottom:1px solid var(--border)}
+.fx-generated strong{font-size:12px;display:block;margin-bottom:5px}
+.processing-history-config{margin-top:24px}
+.processing-history-config h3{font-size:14px}
+.processing-footer{text-align:left}
+.processing-dialog .el-dialog__body{max-height:75vh;overflow:auto}
+.processing-footer>.muted{margin-right:auto}@media(max-width:950px){.processing-layout{grid-template-columns:150px minmax(0,1fr)}
+.fx-term,.fx-argument{grid-template-columns:minmax(0,1fr) var(--fx-remove-width)}
+.fx-term>.fx-operator,.fx-start,.fx-argument>label{grid-column:1;grid-row:1}
+.fx-term>.fx-operator{width:170px}
+.fx-term>.fx-node,.fx-argument>.fx-node{grid-column:1;grid-row:2}
+.fx-term>.el-button,.fx-argument>.el-button{grid-column:2;grid-row:2}
+.fx-start{padding:0}
+.processing-editor .form-grid{grid-template-columns:1fr}
+.processing-compare{grid-template-columns:1fr}}@media(max-width:600px){.processing-layout{grid-template-columns:1fr}
+.processing-steps{border-right:0;border-bottom:1px solid var(--border)}
+.processing-editor{padding:12px}
+.processing-dataset{flex-wrap:wrap}
+.processing-footer{gap:16px}}
+
+.preview-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+
+.fx-remove-group{margin-left:auto;flex-shrink:0}
+.fx-preview-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;color:var(--muted);font-size:12px}
+.fx-formula-preview>code{display:block;min-height:32px;cursor:text}
+.fx-formula-preview>code:focus-visible{outline:1px solid var(--accent-text);outline-offset:4px}
+.fx-text-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
+.fx-formula-preview .el-alert{margin-top:10px}
+
+@media(max-width:600px){.processing-rule-toolbar>div{display:flex;gap:6px;flex-wrap:wrap}.processing-rule-toolbar .el-button+.el-button{margin-left:0}.processing-footer .el-radio-group{flex-wrap:wrap;gap:8px}.processing-footer .el-radio{margin-right:0}}

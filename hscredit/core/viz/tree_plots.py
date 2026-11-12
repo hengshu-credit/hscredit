@@ -40,7 +40,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.font_manager import FontProperties
 
+from ...utils.fonts import get_bundled_font_path
 from .utils import (
     DEFAULT_COLORS,
     save_figure,
@@ -523,10 +525,8 @@ def _measure_text_width(text: str, fontsize: float, fontweight: str = "normal", 
         text = _tex_label(text)
     fig_tmp = plt.figure(figsize=(1, 1))
     ax_tmp = fig_tmp.add_axes([0, 0, 1, 1])
-    # 不指定 fontfamily，使用当前 rcParams 默认字体（与实际渲染时一致），
-    # 否则测量字体（如不含中文字形的 sans-serif）与渲染字体不一致会导致宽度严重低估，
-    # 是节点文字溢出/与徽章重叠的根本原因
-    t = ax_tmp.text(0, 0, text, fontsize=fontsize, fontweight=fontweight, ha="left", va="center")
+    # 布局测量与最终图形使用同一字体文件，后台任务无需安装系统字体。
+    t = ax_tmp.text(0, 0, text, fontproperties=FontProperties(fname=get_bundled_font_path()), fontsize=fontsize, fontweight=fontweight, ha="left", va="center")
     renderer = fig_tmp.canvas.get_renderer()
     bb = t.get_window_extent(renderer)
     fig_tmp.clf()
@@ -821,6 +821,7 @@ def plot_tree_matplotlib(
 
     :param feature_names: 按训练列顺序提供的特征名序列，用于还原 sklearn 树节点的字段名称。 默认 ``None``。
     """
+    font = FontProperties(fname=get_bundled_font_path())
     # 提取树数据（feature_names 仅对 sklearn 树有效，ManualTreeExtractor 自行读取）
     tree_data = _extract_tree_data(tree_obj, feature_names=feature_names)
     nodes = tree_data["nodes"]
@@ -828,7 +829,7 @@ def plot_tree_matplotlib(
 
     if not nodes:
         fig, ax = plt.subplots(figsize=(6, 4))
-        ax.text(0.5, 0.5, "树为空或未拟合", ha="center", va="center", fontsize=14)
+        ax.text(0.5, 0.5, "树为空或未拟合", ha="center", va="center", fontproperties=font, fontsize=14)
         ax.axis("off")
         return fig
 
@@ -911,7 +912,7 @@ def plot_tree_matplotlib(
     )
     if not coords:
         fig, ax = plt.subplots(figsize=(6, 4))
-        ax.text(0.5, 0.5, "布局计算失败", ha="center", va="center", fontsize=14)
+        ax.text(0.5, 0.5, "布局计算失败", ha="center", va="center", fontproperties=font, fontsize=14)
         ax.axis("off")
         return fig
 
@@ -981,6 +982,7 @@ def plot_tree_matplotlib(
             "\n".join(_wrap_condition_text(label_text, uniform_node_w * 0.9, label_fontsize)),
             ha="center",
             va="center",
+            fontproperties=font,
             fontsize=label_fontsize,
             fontweight="bold",
             color=edge_color,
@@ -1059,6 +1061,7 @@ def plot_tree_matplotlib(
             f"{nid}",
             ha="center",
             va="center",
+            fontproperties=font,
             fontsize=FONT_TITLE - 1,
             fontweight="bold",
             color=title_bg_color,
@@ -1084,6 +1087,7 @@ def plot_tree_matplotlib(
                 _tex_label(title_lines[0]),
                 ha="center",
                 va="center",
+                fontproperties=font,
                 fontsize=FONT_TITLE,
                 fontweight="bold",
                 color="#FFFFFF",
@@ -1101,6 +1105,7 @@ def plot_tree_matplotlib(
                     _tex_label(line_text),
                     ha="center",
                     va="center",
+                    fontproperties=font,
                     fontsize=FONT_TITLE,
                     fontweight="bold",
                     color="#FFFFFF",
@@ -1126,6 +1131,7 @@ def plot_tree_matplotlib(
                 label,
                 ha="right",
                 va="center",
+                fontproperties=font,
                 fontsize=FONT_BODY,
                 color="#1D2129",
                 zorder=4,
@@ -1136,6 +1142,7 @@ def plot_tree_matplotlib(
                 value,
                 ha="left",
                 va="center",
+                fontproperties=font,
                 fontsize=FONT_BODY,
                 color="#1D2129",
                 zorder=4,
@@ -1181,6 +1188,7 @@ def plot_tree_matplotlib(
             title,
             ha="center",
             va="center",
+            fontproperties=font,
             fontsize=18,
             fontweight="bold",
             color=_COLOR_TEXT_DARK,

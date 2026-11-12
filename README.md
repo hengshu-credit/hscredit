@@ -93,8 +93,8 @@ writer.save("综合报告.xlsx")
     微信 · itlubber
   </td>
   <td align="center" valign="top" width="50%">
-    <img src="docs/assets/readme/wechat-official-account.svg" alt="微信公众号 衡枢风控实验室 hscreditlab 二维码" width="200"><br>
-    微信公众号 · 衡枢风控实验室<br>
+    <img src="docs/assets/readme/wechat-official-account.svg" alt="公众号 衡枢风控实验室 hscreditlab 二维码" width="200"><br>
+    公众号 · 衡枢风控实验室<br>
     hscreditlab · 回复「入群」
   </td>
 </tr>
