@@ -1,6 +1,7 @@
 """两种调参入口均保留可供 Optuna 完整可视化使用的搜索过程。"""
 
 import inspect
+import json
 
 import matplotlib
 
@@ -126,7 +127,7 @@ def test_pareto_style_preserves_trial_groups_coordinates_and_hover(dimensions, i
                 values=values[:dimensions],
                 params={"深度": number + 1},
                 distributions={"深度": optuna.distributions.IntDistribution(1, 4)},
-                user_attrs={"各折指标": [0.7, 0.8]},
+                user_attrs={"各折指标": [{"验证集": 0.7}, {"验证集": 0.8}], "备注": r"结果📈 \u5404"},
                 system_attrs={"constraints": [1.0 if number == 3 else 0.0]},
             )
         )
@@ -145,7 +146,11 @@ def test_pareto_style_preserves_trial_groups_coordinates_and_hover(dimensions, i
             assert trace.x == original.x and trace.y == original.y
             if dimensions == 3:
                 assert trace.z == original.z
-            assert trace.text == original.text and trace.hovertemplate == original.hovertemplate
+            assert trace.hovertemplate == original.hovertemplate
+            assert len(trace.text) == len(original.text)
+            for text, native_text in zip(trace.text, original.text):
+                assert all(label in text for label in ("深度", "各折指标", "验证集", "结果📈"))
+                assert json.loads(text.replace("<br>", "\n")) == json.loads(native_text.replace("<br>", "\n"))
             if isinstance(original.marker.color, str):
                 assert trace.marker.color == get_palette("semantic")["neutral"]
             else:

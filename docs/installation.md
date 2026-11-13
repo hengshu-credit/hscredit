@@ -1,7 +1,7 @@
 # 安装
 
 `hscredit` 当前源码支持 **Python 3.9–3.15**。基础安装包含常用风控分析和 SHAP 解释；
-Boosting、深度学习、调参、PMML 与数据库驱动按需安装。已发布的
+Boosting、深度学习、调参、PMML、数据库驱动与风控平台按需安装。已发布的
 [PyPI 0.1.4 主包](https://pypi.org/project/hscredit/0.1.4/)要求 Python `<3.15`，
 Python 3.15 请按下文专节从当前适配源码安装。
 
@@ -27,6 +27,7 @@ python -m pip install hscredit
 | `pip install hscredit[boost]` | XGBoost、LightGBM、CatBoost、NGBoost 等 Boosting 模型 |
 | `pip install hscredit[net]` | ResNet、FTTransformer、TabM、TabPFN 全部 net 模型依赖及既有 TabNet 依赖 |
 | `pip install hscredit[tune]` | Optuna 参数调优和调参看板 |
+| `pip install "hscredit[web]"` | 用 `python -m hscredit web` 启动[风控平台](platform.md) |
 | `pip install hscredit` | 已内置 SHAP 模型解释、特征重要性和单样本分析 |
 | `pip install hscredit[pmml]` | PMML 导出相关能力 |
 | `pip install hscredit[db-mysql]` | MySQL / MariaDB 连接池与流式读写 |

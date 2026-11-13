@@ -7,9 +7,9 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
-from hscredit.platform.split_tree import SplitTreeRequest, condition_mask, execute_tree, validate_tree
-from hscredit.platform.storage import Workspace
+from hscredit.web import create_app
+from hscredit.web.split_tree import SplitTreeRequest, condition_mask, execute_tree, validate_tree
+from hscredit.web.storage import Workspace
 from hscredit.utils.datasets import hscredit_dataset
 
 
@@ -53,7 +53,7 @@ def post(setup, tree, action="preview", revision=1):
 
 
 def test_group_holdout_time_oot_random_train_test_end_to_end(setup, monkeypatch):
-    import hscredit.platform.splitting as splitting
+    import hscredit.web.splitting as splitting
 
     calls = []
     for engine in ("time_train_test_split", "train_test_split"):
@@ -94,7 +94,7 @@ def test_group_holdout_time_oot_random_train_test_end_to_end(setup, monkeypatch)
 
 
 def test_branch_statistics_analysis_and_repartition_use_bound_rows(setup):
-    from hscredit.platform.workflows import bound_frames
+    from hscredit.web.workflows import bound_frames
 
     client, ws, source, frame = setup
     frame = frame.copy()
@@ -340,7 +340,7 @@ def test_stale_conflicting_and_failed_save_leave_source_intact(setup, monkeypatc
 
 
 def test_revision_changes_during_tree_execution(setup, monkeypatch):
-    import hscredit.platform.server as server
+    import hscredit.web.server as server
 
     original = server.execute_tree
 

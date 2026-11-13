@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
+from ..._progress import create_progress_bar
 from ...utils.parallel import ParallelWorkload, parallel_execute, resolve_n_jobs
 from ...utils.overdue import validate_missing_target, validate_overdue_operator
 from ...utils.targets import bind_targets, validate_target_mode
@@ -324,11 +325,9 @@ class _FeatureProgressReporter:
         self._last_feature_refresh_at = 0.0
 
         if self.enabled:
-            from tqdm.auto import tqdm
-
             count_width = max(1, len(str(self.total)))
             bar_format = "{desc}: {percentage:3.0f}%|{bar:20}| " f"{{n_fmt:>{count_width}}}/{{total_fmt}} " f"[{{elapsed:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}" f"<{{remaining:>{self._TIME_WIDTH}.{self._TIME_WIDTH}}}, " f"{{rate_fmt:>{self._RATE_WIDTH}.{self._RATE_WIDTH}}}]{{postfix}}"
-            self._bar = tqdm(
+            self._bar = create_progress_bar(
                 total=self.total,
                 desc="特征计算",
                 unit="字段",

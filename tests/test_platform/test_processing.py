@@ -8,9 +8,9 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
-from hscredit.platform.processing import compile_expression, process_frame
-from hscredit.platform.storage import Workspace
+from hscredit.web import create_app
+from hscredit.web.processing import compile_expression, process_frame
+from hscredit.web.storage import Workspace
 
 
 def field(name):
@@ -43,7 +43,7 @@ def setup(tmp_path):
 
 def test_preview_and_apply_use_numexpr_and_full_population(setup, monkeypatch):
     client, metadata, frame, root = setup
-    import hscredit.platform.processing as processing
+    import hscredit.web.processing as processing
 
     original = processing.NumExprDerive
     calls = []
@@ -156,7 +156,7 @@ def test_save_copy_restore_and_stale_revision(setup):
 
 def test_failed_manifest_write_keeps_old_data(setup, monkeypatch):
     _, metadata, original, root = setup
-    import hscredit.platform.storage as storage
+    import hscredit.web.storage as storage
 
     real_write = storage.write_json
 
@@ -179,7 +179,7 @@ def test_active_tasks_prevent_overwrite_and_job_keeps_revision(setup, monkeypatc
 
     client, metadata, original, root = setup
     script = root / "capturing_worker.py"
-    script.write_text("import sys,time\nfrom pathlib import Path\nfrom hscredit.platform.storage import Workspace,write_json\nw=Workspace(sys.argv[1]);j=w.get('jobs',sys.argv[2]);d=w.path('jobs',j['id'])\nw.read_dataset(j['dataset_id'],j['dataset_revision']).to_parquet(d/'captured.parquet')\n(d/'started').touch()\nwhile not (w.root/'release').exists():time.sleep(.05)\nwrite_json(d/'outcome.json',{'ok':True,'result':{'artifacts':[],'tables':{}}})\n", encoding="utf-8")
+    script.write_text("import sys,time\nfrom pathlib import Path\nfrom hscredit.web.storage import Workspace,write_json\nw=Workspace(sys.argv[1]);j=w.get('jobs',sys.argv[2]);d=w.path('jobs',j['id'])\nw.read_dataset(j['dataset_id'],j['dataset_revision']).to_parquet(d/'captured.parquet')\n(d/'started').touch()\nwhile not (w.root/'release').exists():time.sleep(.05)\nwrite_json(d/'outcome.json',{'ok':True,'result':{'artifacts':[],'tables':{}}})\n", encoding="utf-8")
     monkeypatch.setattr(client.app.state.jobs, "_command", lambda job_id: [sys.executable, str(script), str(root), job_id])
     config = {"kind": "model", "dataset_id": metadata["id"], "target": "标签", "features": ["金额"]}
     first = client.post("/api/jobs", json=config).json()

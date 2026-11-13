@@ -62,6 +62,7 @@ dependencies = [
     "graphviz>=0.16",
     "tqdm>=4.50.0",
     "IPython>=7.0.0",
+    "ipywidgets>=7.6.5",
     # 3.15 使用候选搜索后端，安装 OR-Tools 后自动启用原生 CP-SAT。
     "ortools>=9.0; python_version < '3.15'",
     "dill>=0.3.4",
@@ -78,8 +79,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-platform = [
+web = [
     "psutil>=5.9",
+    "asyncssh>=2.14.2,<3",
+    "PySocks>=1.7.1,<2",
+    "sqlglot>=26,<28",
     "optuna>=3.0.0",
     "fastapi>=0.115",
     "uvicorn>=0.30",
@@ -169,7 +173,7 @@ docs = [
     "myst-parser>=2.0.0",
 ]
 all = [
-    "hscredit[boost,net,pmml,tune,skills,database-all,platform,dev,docs]"
+    "hscredit[boost,net,pmml,tune,skills,database-all,web,dev,docs]"
 ]
 
 [project.scripts]

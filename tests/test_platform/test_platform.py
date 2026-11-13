@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sklearn.metrics import roc_auc_score
 
-from hscredit.platform import create_app, launch
-from hscredit.platform.storage import Workspace
+from hscredit.web import create_app, launch
+from hscredit.web.storage import Workspace
 
 
 @pytest.fixture
@@ -147,7 +147,7 @@ def test_explore_summary_matches_public_summary_and_label_populations(client, fr
         field_key, count_key = "特征名", "样本数"
         assert [c["key"] for c in result["summary_columns"]] == list(expected.columns)
         assert ("AUC" in expected.columns) == bool(targets)
-    from hscredit.platform.storage import records
+    from hscredit.web.storage import records
 
     assert result["summary"] == records(expected)
     assert all(row[count_key] == len(frame) for row in result["summary"])
@@ -222,7 +222,7 @@ def test_model_search_holdout_and_export_prediction_semantics(client, frame, tmp
     estimator = joblib.load(directory / "model.joblib")
     actual = estimator.predict_proba(frame.loc[predictions["原始行号"], ["评分", "渠道", "空字段"]])[:, 1]
     np.testing.assert_allclose(actual, predictions["坏样本概率"], atol=1e-8)
-    from hscredit.platform.models import model_catalog
+    from hscredit.web.models import model_catalog
 
     name = model_catalog()[result["best_model"]]["name"]
     metric = next(r for r in result["tables"][f"{name} / 评估指标"] if r["统计项"] == "AUC")
@@ -299,6 +299,40 @@ def test_overdue_summary_matches_native_multi_label_summary(client, frame):
     assert list(expected.columns.get_level_values(0).unique()) == [col["label"] for col in summary["summary_columns"]]
     for label in ["逾期天数>=7", "逾期天数>=15.5", "M3>=7", "M3>=15.5"]:
         assert summary["summary"][0][f"{label} / AUC"] == pytest.approx(expected[label]["AUC"].iloc[0])
+
+
+def test_explore_filtered_results_follow_task_labels_and_revision(client, frame):
+    from hscredit.web.storage import write_json
+
+    frame["MOB1"] = np.resize([0, 10, 35, None], len(frame)).astype(float)
+    frame["MOB6"] = np.resize([None, 0, 45], len(frame)).astype(float)
+    identifier = upload(client, frame)["id"]
+    job = run_job(client, identifier, "explore", workflow=True, features=["评分", "金额", "日期"], group="渠道",
+                  target=None, label_mode="overdue", overdue=["MOB1", "MOB6"], dpds=[30], del_grey=True)
+    url = f"/api/jobs/{job['id']}"
+    counts = job["result"]["interaction"]["target_counts"]
+    assert [row["标签"] for row in counts] == ["MOB1_30+", "MOB6_30+"]
+    ws = client.app.state.workspace
+    ws.replace_dataset(identifier, frame.assign(MOB1=0, MOB6=0), expected_revision=1, processing={"description": "修改目标字段"})
+    # 旧版任务没有持久化标签概况，读取时也必须使用原版本。
+    del job["result"]["interaction"]["target_counts"]
+    write_json(ws.path("jobs", job["id"]) / "result.json", job["result"])
+    assert client.get(url + "/target-view").json() == counts
+    for row, name in zip(counts, ["MOB1", "MOB6"]):
+        good, bad = frame[name].eq(0), frame[name].gt(30)
+        assert row["坏样本率"] == pytest.approx(bad.sum() / (good | bad).sum())
+        for population, mask in [("valid", good | bad), ("good", good), ("bad", bad)]:
+            params = {"target": row["标签"], "population": population}
+            response = client.get(url + "/target-view", params=params)
+            assert response.status_code == 200, response.text
+            view = response.json()
+            assert view["total"] == view["valid"] == mask.sum()
+            assert sum(item["样本数"] for item in view["distributions"][0]["distribution"]) == mask.sum()
+            assert view["distributions"][0]["five_number"][2] == pytest.approx(frame.loc[mask, "评分"].median())
+            assert sum(item["样本数"] for item in view["pairs"][0]["density"] if item["标签"] == "线上") == (mask & frame["渠道"].eq("线上")).sum()
+            pivot = client.post(url + "/pivot", json=dict(params, rows=["日期", "评分"], columns=["金额"], group="线上")).json()
+            assert pivot["total"] == (mask & frame["渠道"].eq("线上")).sum()
+    assert client.get(url + "/target-view", params={"target": "未配置标签"}).status_code == 400
 
 
 def test_dictionary_preview_uses_native_grey_and_missing_and_preserves_order(client, frame):
@@ -446,7 +480,7 @@ def test_failed_tasks_are_visible_and_not_downloadable(client, frame, monkeypatc
 
     identifier = upload(client, frame)["id"]
     script = tmp_path / "failing_worker.py"
-    script.write_text("from hscredit.platform import _worker\nimport hscredit.platform.analysis as analysis\nimport sys\ndef fail(*args):\n    raise RuntimeError('测试计算错误')\nanalysis.train=fail\n_worker.run(*sys.argv[1:])\n", encoding="utf-8")
+    script.write_text("from hscredit.web import _worker\nimport hscredit.web.analysis as analysis\nimport sys\ndef fail(*args):\n    raise RuntimeError('测试计算错误')\nanalysis.train=fail\n_worker.run(*sys.argv[1:])\n", encoding="utf-8")
     monkeypatch.setattr(client.app.state.jobs, "_command", lambda job_id: [sys.executable, str(script), str(tmp_path), job_id])
     response = client.post("/api/jobs", json={"kind": "model", "dataset_id": identifier, "target": "标签", "features": ["评分"]})
     job_id = response.json()["id"]

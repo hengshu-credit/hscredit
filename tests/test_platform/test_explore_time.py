@@ -7,11 +7,11 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
-from hscredit.platform.analysis import explore_charts
-from hscredit.platform.explore_time import exploration_offset, time_distribution
-from hscredit.platform.exploration import explore_dataset
-from hscredit.platform.storage import Workspace
+from hscredit.web import create_app
+from hscredit.web.analysis import explore_charts
+from hscredit.web.explore_time import exploration_offset, time_distribution
+from hscredit.web.exploration import explore_dataset
+from hscredit.web.storage import Workspace
 
 
 def test_default_monthly_counts_keep_gaps_and_exclude_invalid_dates():
@@ -72,7 +72,7 @@ def test_charts_do_not_compute_a_second_statistics_table(monkeypatch):
 
 
 def test_frequency_updates_chart_without_recomputing_summary(tmp_path, monkeypatch):
-    import hscredit.platform.exploration as exploration
+    import hscredit.web.exploration as exploration
 
     workspace = Workspace(tmp_path)
     dataset = workspace.add_dataset(pd.DataFrame({"时间": pd.date_range("2025-01-01", periods=80)}), "日期数据")

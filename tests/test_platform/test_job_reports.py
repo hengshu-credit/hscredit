@@ -9,8 +9,8 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image
 from PIL import Image as PillowImage
 
-from hscredit.platform.server import create_app
-from hscredit.platform.storage import write_json
+from hscredit.web.server import create_app
+from hscredit.web.storage import write_json
 
 
 @pytest.fixture
@@ -108,14 +108,18 @@ def test_report_keeps_merged_labels_internal_navigation_and_number_formats(jobs)
 
 def test_historical_report_reuses_saved_result_without_dataset(jobs):
     client, record = jobs
-    directory, url = record([], {"tables": {"收益 / 命中": [{"名称": "=保留原值", "样本数": 23}]}})
+    directory, url = record([], {"tables": {"收益 / 命中": [{"名称": "=保留原值", "样本数": 23, "相关系数": 0.123456789}, {"名称": "#N/A", "样本数": None}]}})
     (directory / "report.xlsx").write_bytes(b"unpublished")
     assert client.get(url).json()["artifacts"] == ["report.xlsx"]
     preview = client.get(url + "/workbooks/report.xlsx").json()
-    assert preview["rows"] == [["名称", "样本数"], ["=保留原值", "23"]]
+    assert preview["rows"] == [["名称", "样本数", "相关系数"], ["=保留原值", "23", "0.123456789"], ["#N/A", "", ""]]
     book = load_workbook(BytesIO(client.get(url + "/files/report.xlsx").content))
-    assert book.active["A2"].data_type == "s"
+    assert book.sheetnames == ["收益   命中"]
+    assert book.active["A1"].style == "header_left" and book.active.freeze_panes == "A2"
+    assert book.active["A2"].data_type == book.active["A3"].data_type == "s"
     assert book.active["B2"].value == 23
+    assert book.active["B3"].value is None
+    assert book.active["C2"].value == 0.123456789
     assert book.active["B1"].alignment.horizontal == book.active["B2"].alignment.horizontal == "right"
     assert client.get(url + "/files/history-report.xlsx").status_code == 404
 
@@ -153,3 +157,23 @@ def test_workbook_page_carries_only_headers_for_a_continuing_table(jobs):
     assert (continuation["first_row"], continuation["last_row"]) == (1, 2)
     assert [c["text"] for c in continuation["cells"]] == ["订单", "金额", "分箱", "坏样本率", "分箱", "坏样本率"]
     assert client.get(route, params={"page": 3}).json()["header_context"] is None
+
+
+def test_wide_window_keeps_matrix_rows_occupied_only_in_other_columns(jobs):
+    from openpyxl.styles import Font
+
+    client, record = jobs
+    directory, url = record(["report.xlsx"])
+    book = Workbook()
+    ws = book.active
+    ws["A50"], ws["BM50"] = "字段", "相关系数"
+    ws["A50"].font = ws["BM50"].font = Font(bold=True)
+    ws["A51"], ws["BM51"] = "甲", 1
+    ws["A52"] = "乙"
+    ws["BM53"] = 0.2
+    ws["A55"] = "下一章"
+    ws["A55"].font = Font(bold=True)
+    book.save(directory / "report.xlsx")
+    page = client.get(url + "/workbooks/report.xlsx", params={"page": 2, "first_col": 65}).json()
+    assert page["data_rows"] == [51, 52, 53]
+    assert [c["row"] for c in page["cells"]] == [51, 53]

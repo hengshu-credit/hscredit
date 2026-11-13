@@ -22,7 +22,7 @@ ORDER_COLUMNS = ["放款编码", "放款银行", "流量渠道", "用户编码",
 OVERDUE_COLUMNS = ["DPD", *[f"MOB{i}" for i in range(1, 13)], "CURRENT_DPD"]
 
 
-def test_release_download_verified_before_caching_and_reused_offline(tmp_path, monkeypatch):
+def test_release_download_verified_before_caching_and_reused_offline(tmp_path, monkeypatch, capsys):
     from hscredit.utils import datasets
 
     source = io.BytesIO()
@@ -43,8 +43,10 @@ def test_release_download_verified_before_caching_and_reused_offline(tmp_path, m
     cached.write_bytes(b"z" * len(payload))
     assert hscredit_dataset(split=True)[1].MOB3.tolist() == [0, 31]
     assert cached.read_bytes() == payload
+    assert "下载 hscredit 数据集（GitHub）" in capsys.readouterr().err
     monkeypatch.setattr(datasets, "urlopen", lambda *a, **kw: pytest.fail("有效缓存应离线加载"))
     assert hscredit_dataset(columns=[]).shape == (2, 0)
+    assert capsys.readouterr().err == ""
 
 
 @pytest.mark.parametrize("route", ["github", "github_error", "github_interrupted", "slow", "mirror_offline", "mirror_pointer"])
@@ -67,6 +69,15 @@ def test_first_download_mirrors_and_speed_windows(tmp_path, monkeypatch, route):
     monkeypatch.setattr(datasets, "monotonic", lambda: now)
     github_positions = []
     calls = []
+    bars = []
+    create_progress_bar = datasets.create_progress_bar
+
+    def record_bar(**kwargs):
+        bar = create_progress_bar(**kwargs)
+        bars.append(bar)
+        return bar
+
+    monkeypatch.setattr(datasets, "create_progress_bar", record_bar)
     slow = route in ("slow", "mirror_offline", "mirror_pointer")
 
     class GithubResponse(io.BytesIO):
@@ -99,19 +110,26 @@ def test_first_download_mirrors_and_speed_windows(tmp_path, monkeypatch, route):
     if route != "github":
         expected.append(datasets._GITEE_RAW_URL)
     assert calls == expected
+    assert all(bar.total == len(payload) for bar in bars)
+    assert bars[-1].n == len(payload)
+    assert bars[0].initial == 0
+    if route != "github":
+        assert bars[1].initial == 0
     if route == "slow":
         assert github_positions == [0, threshold * 5]
     if route in ("mirror_offline", "mirror_pointer"):
         assert github_positions[:3] == [0, threshold * 5, threshold * 5 + 1]
+        assert bars[2].initial == bars[0].n == threshold * 5 + 1
     cache = tmp_path / "cache" / "datasets" / digest
     assert list(cache.iterdir()) == [cache / "hscredit.parquet"]
     assert (cache / "hscredit.parquet").read_bytes() == payload
 
 
-def test_dataset_population_and_observation_window():
+def test_dataset_population_and_observation_window(capsys):
     with pq.ParquetFile(DATA_PATH) as parquet:
         assert (parquet.metadata.num_rows, parquet.metadata.num_columns) == (111929, 8516)
     order = hscredit_dataset(columns=ORDER_COLUMNS)
+    assert capsys.readouterr().err == ""
     assert order["放款编码"].is_unique and order["放款编码"].notna().all()
     assert order["用户编码"].nunique() == 110283
     assert order["放款银行"].nunique() == 6

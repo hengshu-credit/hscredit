@@ -2,7 +2,9 @@
 
 from functools import wraps
 import inspect
+import json
 from math import ceil
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,6 +35,13 @@ _FIXED_AXES = {
     "plot_timeline": ("时间", "试验编号"),
     "plot_terminator_improvement": ("试验编号", "终止判定改进量"),
 }
+
+
+def _readable_pareto_hover(text):
+    # Optuna 用 <br> 连接 JSON 各行。只重写字符串，保留换行标记和参数中的字面反斜杠。
+    if r"\u" not in text:
+        return text
+    return re.sub(r'"(?:[^"\\]|\\.)*"', lambda match: json.dumps(json.loads(match[0]), ensure_ascii=False), text)
 
 
 def _style_pareto_marker(marker, palette):
@@ -78,7 +87,6 @@ def _style_plotly(figure, name):
         colorway=palette,
     )
     if name == "plot_pareto_front":
-        # Optuna 的多行试验详情沿用原生 text 和 hovertemplate。
         figure.update_layout(hoverlabel=dict(align="left", font=dict(family=f"Consolas, {family}", color="#29243D")))
     blue = get_palette("blue")
     axis = dict(
@@ -113,6 +121,8 @@ def _style_plotly(figure, name):
         "INFEASIBLE": semantic["neutral"],
     }
     for trace in figure.data:
+        if name == "plot_pareto_front" and trace.text:
+            trace.text = [_readable_pareto_hover(text) for text in trace.text]
         if name == "plot_timeline" and trace.type == "bar" and trace.name in state_colors:
             trace.marker.color = state_colors[trace.name]
         elif trace.type == "contour":

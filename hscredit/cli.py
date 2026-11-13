@@ -24,12 +24,13 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_parser.add_argument("--port", default=8080, type=int, help="监听端口，默认 8080")
     dashboard_parser.add_argument("--artifact-dir", help="可选的 Optuna 产物文件目录")
     dashboard_parser.add_argument("--quiet", action="store_true", help="隐藏 HTTP 请求日志")
-    platform_parser = subparsers.add_parser("platform", help="启动 hscredit 风控平台")
-    platform_parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认仅本机")
-    platform_parser.add_argument("--port", default=8765, type=int, help="端口，0 表示自动选择")
-    platform_parser.add_argument("--data-dir", help="数据集与任务存储目录")
-    platform_parser.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
-    platform_parser.add_argument("--demo", action="store_true", help="加载 hscredit_dataset 的统一样例字段（不抽样）")
+    web_parser = subparsers.add_parser("web", help="启动 hscredit 风控平台")
+    web_parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认仅本机")
+    web_parser.add_argument("--port", default=8765, type=int, help="端口，0 表示自动选择")
+    web_parser.add_argument("--data-dir", help="数据集与任务存储目录")
+    web_parser.add_argument("--max-concurrent-jobs", type=int, help="同时运行的任务数，范围 1 至 10，默认 2")
+    web_parser.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
+    web_parser.add_argument("--demo", action="store_true", help="加载 hscredit_dataset 的统一样例字段（不抽样）")
     return parser
 
 
@@ -72,12 +73,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             parser.exit(1, f"启动看板失败：{exc}\n")
         return 0
 
-    if args.command == "platform":
+    if args.command == "web":
         import os
-        from .platform import launch
+        from .web import launch
 
         try:
-            launch(host=args.host, port=args.port, data_dir=args.data_dir, open_browser=not args.no_browser, token=os.environ.get("HSCREDIT_PLATFORM_TOKEN"), demo=args.demo)
+            launch(host=args.host, port=args.port, data_dir=args.data_dir, open_browser=not args.no_browser, token=os.environ.get("HSCREDIT_PLATFORM_TOKEN"), demo=args.demo, max_concurrent_jobs=args.max_concurrent_jobs)
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
             parser.exit(1, f"启动风控平台失败：{exc}\n")
         return 0

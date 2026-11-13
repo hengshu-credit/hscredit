@@ -7,9 +7,9 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
-from hscredit.platform.splitting import SplitRequest, split_frame
-from hscredit.platform.storage import Workspace
+from hscredit.web import create_app
+from hscredit.web.splitting import SplitRequest, split_frame
+from hscredit.web.storage import Workspace
 from hscredit.utils.datasets import hscredit_dataset
 
 
@@ -33,7 +33,7 @@ def post(setup, action, payload):
 
 @pytest.mark.parametrize("method,options,engine", [("random", {"stratify": "标签"}, "train_test_split"), ("time", {"time_col": "日期"}, "time_train_test_split"), ("group", {"group_col": "客户"}, "group_train_test_split")])
 def test_multi_split_preserves_rows_and_uses_existing_engines(setup, monkeypatch, method, options, engine):
-    import hscredit.platform.splitting as splitting
+    import hscredit.web.splitting as splitting
 
     client, workspace, source, frame = setup
     calls = []
@@ -118,7 +118,7 @@ def test_time_ratios_gap_and_unsorted_duplicate_times(setup):
 
 
 def test_oot_calls_core_and_reports_exclusions(setup, monkeypatch):
-    import hscredit.platform.splitting as splitting
+    import hscredit.web.splitting as splitting
 
     original = splitting.oot_split
     calls = []
@@ -175,7 +175,7 @@ def test_stale_and_repeated_requests(setup):
 
 
 def test_revision_changed_during_calculation_is_rejected(setup, monkeypatch):
-    import hscredit.platform.server as server
+    import hscredit.web.server as server
 
     original = server.split_frame
 

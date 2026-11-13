@@ -17,6 +17,8 @@ from urllib.request import Request, urlopen
 import pandas as pd
 from pandas.api.types import CategoricalDtype
 
+from .._progress import create_progress_bar
+
 # 固定 Notebook 演示字段：README + 双标签最大 KS TOP32 + 随机 32 列 + 类别字段。
 # 选择口径与来源见 docs/examples-dataset.md；只定义投影，不改变原始加载契约。
 HSCREDIT_EXAMPLE_COLUMNS = (
@@ -139,9 +141,16 @@ def _dataset_blocks(url):
         raise ConnectionError(f"下载 {url} 失败：{exc}") from exc
 
 
-def _write_dataset(blocks, path, *, monitor_speed=False, append=False):
+def _write_dataset(blocks, path, source, *, monitor_speed=False, append=False):
     """写入并校验数据；GitHub 的测速窗口低于阈值时暂停并保留迭代位置。"""
-    with path.open("ab" if append else "wb") as output:
+    with path.open("ab" if append else "wb") as output, create_progress_bar(
+        desc=f"下载 hscredit 数据集（{source}）",
+        total=_DATASET_BYTES,
+        initial=output.tell(),
+        unit="B",
+        unit_scale=True,
+        unit_divisor=1024,
+    ) as progress:
         total = output.tell()
         bytes_at_window_start = total
         started = monotonic()
@@ -150,6 +159,7 @@ def _write_dataset(blocks, path, *, monitor_speed=False, append=False):
             if total > _DATASET_BYTES:
                 raise ValueError("下载的 hscredit 数据集超出预期大小")
             output.write(block)
+            progress.update(len(block))
             if monitor_speed and total < _DATASET_BYTES:
                 now = monotonic()
                 elapsed = now - started
@@ -170,21 +180,21 @@ def _download_dataset(directory):
     github_error = None
     with closing(_dataset_blocks(_DATASET_URL)) as github:
         try:
-            if _write_dataset(github, primary, monitor_speed=True):
+            if _write_dataset(github, primary, "GitHub", monitor_speed=True):
                 return primary
         except (ConnectionError, ValueError) as exc:
             github_error = exc
 
         try:
             with closing(_dataset_blocks(_GITEE_RAW_URL)) as blocks:
-                _write_dataset(blocks, mirror)
+                _write_dataset(blocks, mirror, "Gitee")
             return mirror
         except (ConnectionError, ValueError) as exc:
             mirror_error = exc
 
         if github_error is None:
             try:
-                _write_dataset(github, primary, append=True)
+                _write_dataset(github, primary, "GitHub", append=True)
                 return primary
             except (ConnectionError, ValueError) as exc:
                 github_error = exc
@@ -246,7 +256,7 @@ def hscredit_dataset(
     *,
     columns: Optional[Sequence[str]] = None,
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
-    """加载 hscredit 现金贷单笔单批放款数据集。PyPI 安装后首次加载会下载并校验缓存。
+    """加载 hscredit 现金贷单笔单批放款数据集。本地缺少可用文件时，显示下载进度并在校验后缓存。
 
     **参数**
 

@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from scipy.stats.contingency import association
 
-from hscredit.platform import create_app
+from hscredit.web import create_app
 
 
 def test_all_field_pairs_across_pages_and_versions(tmp_path):
@@ -52,6 +52,17 @@ def test_all_field_pairs_across_pages_and_versions(tmp_path):
         workspace.replace_dataset(dataset["id"], frame.assign(反向金额=frame["金额"]), expected_revision=1, processing={"description": "调整字段"})
         assert block(3, 3, version=2).loc["金额", "反向金额"] == pytest.approx(1)
         assert block(3, 3).loc["金额", "反向金额"] == pytest.approx(-1)
+
+        selection = {"rows": ["金额", "字段0"], "columns": ["反向金额", "编号", "渠道"]}
+        selected = client.post(url, params={"revision": 1}, json=selection).json()
+        assert selected["rows"] == selection["rows"]
+        assert selected["columns"] == selection["columns"]
+        assert selected["values"][0][0] == pytest.approx(-1)
+        assert selected["values"][0][2] == pytest.approx(eta)
+        assert selected["values"][1][1] == pytest.approx(1)
+        assert client.post(url, params={"revision": 2}, json=selection).json()["values"][0][0] == pytest.approx(1)
+        for invalid in (["不存在"], ["金额", "金额"]):
+            assert client.post(url, json={**selection, "columns": invalid}).status_code == 400
 
 
 def test_undefined_pairs_and_independent_categories(tmp_path):

@@ -18,7 +18,7 @@ API 参考
    report
    database
    excel
-   platform
+   web
    utils
    skills_runtime
    exceptions

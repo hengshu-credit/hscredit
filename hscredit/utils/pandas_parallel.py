@@ -21,6 +21,7 @@ from joblib.externals.loky.backend.reduction import get_loky_pickler_name
 from packaging.version import Version
 
 from .._compat import pandas_apply_api
+from .._progress import create_progress_bar
 from ..exceptions import ValidationError
 from .parallel import (
     ParallelWorkload,
@@ -55,9 +56,7 @@ class _ApplyProgressReporter:
         self._lock = threading.Lock() if self.enabled else None
         self._bar = None
         if self.enabled:
-            from tqdm.auto import tqdm
-
-            self._bar = tqdm(total=int(total), desc=description, unit="项", dynamic_ncols=False)
+            self._bar = create_progress_bar(total=int(total), desc=description, unit="项", dynamic_ncols=False)
 
     def advance(self, count: int = 1) -> None:
         """累计已经真实完成的逻辑任务。"""

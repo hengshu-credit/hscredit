@@ -106,11 +106,17 @@ writer.save("综合报告.xlsx")
 <tr>
   <td align="center" valign="top" width="50%">
     <img src="docs/assets/readme/wechat.svg" alt="微信 itlubber 二维码" width="200"><br>
-    微信
   </td>
   <td align="center" valign="top" width="50%">
     <img src="docs/assets/readme/wechat-official-account.svg" alt="公众号 衡枢风控实验室 hscreditlab 二维码" width="200"><br>
     <br>
+  </td>
+</tr>
+<tr>
+  <td align="center" valign="top" width="50%">
+    微信
+  </td>
+  <td align="center" valign="top" width="50%">
     公众号（加交流群私信「入群」）
   </td>
 </tr>
@@ -160,8 +166,11 @@ python -m pip install "hscredit[tune]"          # 调参与搜索看板
 python -m pip install "hscredit[net]"           # TabPFN 等表格神经网络
 python -m pip install "hscredit[pmml]"          # PMML 导出与加载，需要 Java 11+
 python -m pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
+python -m pip install "hscredit[web]"           # 风控平台
 python -m pip install "hscredit[all]"           # 安装全部依赖
 ```
+
+安装 `web` 扩展后，运行 `python -m hscredit web` 即可打开[风控平台](docs/platform.md)。
 
 ### Python 3.15
 
@@ -815,9 +824,11 @@ plot_model_sample_shap(
 ```python
 from hscredit import Rule, RuleSet, RulesClassifier
 
-query_rule = Rule("最近12个月多头查询次数 > 60", name="多头查询超过60次")
-payment_rule = Rule("贷款本月应还金额 > 20000", name="月应还额超过2万")
-rule_set = RuleSet(rules=[query_rule, payment_rule], logic="or", n_jobs=1)
+payment_cut = train["贷款本月应还金额"].quantile(0.20)
+query_cut = train["最近12个月多头查询次数"].quantile(0.25)
+payment_rule = Rule(f"贷款本月应还金额 < {payment_cut:g}", name="低月应还额")
+query_rule = Rule(f"最近12个月多头查询次数 < {query_cut:g}", name="低查询次数")
+rule_set = RuleSet(rules=[payment_rule, query_rule], logic="or", n_jobs=1)
 rule_model = RulesClassifier(rules=rule_set, n_jobs=1).fit(X_num, y_train)
 rule_model.predict(X_test_num)
 ```
@@ -933,7 +944,7 @@ risk_probability = risk_model.predict_proba(X_test_num)[:, 1]
 
 | 能力 | 入口 |
 | --- | --- |
-| 逻辑表达与执行 | `Rule` 的 `&` / `&#124;` / `~` / `^`，嵌套 `RuleSet`，串并行 `RuleFlow` |
+| 逻辑表达与执行 | `Rule` 支持与（`&`）、或（<code>&#124;</code>）、非（`~`）、异或（`^`），嵌套 `RuleSet`，串并行 `RuleFlow` |
 | 单规则与规则集分析 | `Rule.report`、`ruleset_analysis`，件数 / 金额、多标签 |
 | 策略置换 | `swap_analysis`、`rule_swap_analysis`，置入置出、风险估计、通过率变化 |
 | 多规则迭代报告 | `swap_out_report`，组合规则、客群 / 时间比较、分箱明细与 Excel |
@@ -942,14 +953,16 @@ risk_probability = risk_model.predict_proba(X_test_num)[:, 1]
 
 **单规则：`rule.report`**
 
-先用“贷款本月应还金额超过 2 万”筛出已命中客户，再在剩余客户中验证“多头查询超过 60 次”。报告按四种逾期标签分别列出先验规则和验证规则的命中、未命中与合计。传入 `amount="loan_amt"` 后，样本总数和坏样本率按授信额度统计。
+在训练集取月应还金额的第 20 百分位数、多头查询次数的第 25 百分位数作为阈值。测试时先拒绝月应还金额低于阈值的客户，再对剩余客户执行低查询次数规则。看每条规则的“命中”行：“坏账改善”表示拒绝该组后，剩余客户坏样本率相对本步执行前的降幅。传入 `amount="loan_amt"` 后，“样本总数”和“坏样本数”分别为授信额度合计和坏样本授信额度合计，“坏样本率”按后者除以前者计算。
 
 ```python
 from hscredit import Rule
 
-query_rule = Rule("最近12个月多头查询次数 > 60", name="多头查询超过60次")
-payment_rule = Rule("贷款本月应还金额 > 20000", name="月应还额超过2万")
-rule_metrics = ["样本总数", "样本占比", "坏样本率", "LIFT值", "坏账改善"]
+payment_cut = train["贷款本月应还金额"].quantile(0.20)
+query_cut = train["最近12个月多头查询次数"].quantile(0.25)
+payment_rule = Rule(f"贷款本月应还金额 < {payment_cut:g}", name="低月应还额")
+query_rule = Rule(f"最近12个月多头查询次数 < {query_cut:g}", name="低查询次数")
+rule_metrics = ["样本总数", "样本占比", "坏样本数", "坏样本率", "LIFT值", "坏账改善", "风险拒绝比"]
 query_rule.report(
     test, prior_rules=payment_rule, amount="loan_amt", margins=True,
     long_format=True, filter_cols=rule_metrics, **labels,
@@ -960,12 +973,14 @@ query_rule.report(
 
 **规则集：`ruleset_analysis`**
 
+在独立测试集上，以 MOB6 > 30 为例，原始样本的金额坏样本率为 8.76%，执行低月应还额规则后降至 8.48%，再执行低查询次数规则后降至 7.92%。两条规则合计拒绝 30.15% 的授信额度，坏样本率相对下降 9.59%。
+
 ```python
 from hscredit.report import ruleset_analysis
 
 ruleset_analysis(
     test,
-    rules=[query_rule, payment_rule],
+    rules=[payment_rule, query_rule],
     amount="loan_amt",
     long_format=True,
     filter_cols=rule_metrics,
@@ -989,10 +1004,11 @@ from hscredit.report.swap_analysis import create_swap_dataset_from_rules, swap_a
 from hscredit.utils.overdue import overdue_label
 
 reference = test.assign(模型风险概率=probability)
+# 将旧策略的月应还额门槛从 1.2 万下调到训练集第 20 百分位，同时加入低查询次数规则。
 swap_data = create_swap_dataset_from_rules(
     reference,
-    original_rule=query_rule,
-    new_rule=payment_rule,
+    original_rule=Rule("贷款本月应还金额 < 12000"),
+    new_rule=payment_rule | query_rule,
     score_col="模型风险概率",
     n_jobs=1,
 )
@@ -1001,13 +1017,8 @@ swap = swap_analysis(
 )
 swap.get_summary_report(target=overdue_label("MOB6", 30, ">")).show()
 
-# 阈值取自训练集，规则效果在独立测试集验证。
-query_cut = train["最近12个月多头查询次数"].quantile(0.25)
-payment_cut = train["贷款本月应还金额"].quantile(0.20)
-strategy_rules = [
-    Rule(f"最近12个月多头查询次数 < {query_cut:g}", name="低查询次数"),
-    Rule(f"贷款本月应还金额 < {payment_cut:g}", name="低月应还额"),
-]
+# 策略迭代报告先评估低查询次数规则，再评估低月应还额规则。
+strategy_rules = [query_rule, payment_rule]
 strategy_features = ["最近12个月多头查询次数", "贷款本月应还金额"]
 quantiles = [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.97, 0.99, np.nan]
 custom_splits = {

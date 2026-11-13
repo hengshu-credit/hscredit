@@ -6,9 +6,10 @@ import time
 
 import pandas as pd
 import psutil
+import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
+from hscredit.web import create_app
 
 
 def wait_until(check, timeout=15):
@@ -22,7 +23,7 @@ def wait_until(check, timeout=15):
 
 
 def test_stop_kills_worker_and_child_and_cancels_queue(tmp_path, monkeypatch):
-    with TestClient(create_app(tmp_path)) as client:
+    with TestClient(create_app(tmp_path, max_concurrent_jobs=1)) as client:
         workspace, manager = client.app.state.workspace, client.app.state.jobs
         dataset = workspace.add_dataset(pd.DataFrame({"x": [1, 2, 3, 4], "y": [0, 1, 0, 1]}), "停止验证")
         script = tmp_path / "slow_worker.py"
@@ -58,15 +59,59 @@ def test_stop_kills_worker_and_child_and_cancels_queue(tmp_path, monkeypatch):
         assert client.get(f"/api/jobs/{third['id']}/files/ok.txt").text == "ok"
 
 
-def test_service_shutdown_stops_active_process(tmp_path, monkeypatch):
+def test_parallel_jobs_release_one_slot_and_keep_results_separate(tmp_path, monkeypatch):
     with TestClient(create_app(tmp_path)) as client:
+        dataset = client.app.state.workspace.add_dataset(pd.DataFrame({"x": [1, 2]}), "并发验证")
+        script = tmp_path / "worker.py"
+        script.write_text(
+            "import json, sys, time\n"
+            "from pathlib import Path\n"
+            "job = sys.argv[1]\n"
+            "Path('ready').touch()\n"
+            "while not Path('finish').exists(): time.sleep(.05)\n"
+            "Path('output.txt').write_text(job)\n"
+            "Path('outcome.json').write_text(json.dumps({'ok': True, 'result': {'artifacts': ['output.txt']}}))\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(client.app.state.jobs, "_command", lambda job: [sys.executable, str(script), job])
+        body = {"kind": "explore", "dataset_id": dataset["id"], "feature": "x"}
+        first, second, third = [client.post("/api/jobs", json=body).json()["id"] for _ in range(3)]
+        jobs = tmp_path / "jobs"
+
+        def status(job):
+            return client.get(f"/api/jobs/{job}").json()["status"]
+
+        wait_until(lambda: all((jobs / job / "ready").exists() for job in (first, second)))
+        assert [status(job) for job in (first, second, third)] == ["运行中", "运行中", "排队中"]
+        assert client.post(f"/api/jobs/{first}/stop").json()["status"] == "停止中"
+        wait_until(lambda: (jobs / third / "ready").exists())
+        assert [status(job) for job in (first, second, third)] == ["已停止", "运行中", "运行中"]
+        for job in (third, second):
+            (jobs / job / "finish").touch()
+            wait_until(lambda: status(job) == "成功")
+            assert client.get(f"/api/jobs/{job}/files/output.txt").text == job
+
+
+@pytest.mark.parametrize("limit", [0, 11, 1.5, True])
+def test_invalid_concurrency_limit(tmp_path, limit):
+    with pytest.raises(ValueError, match="并发任务数"):
+        create_app(tmp_path, max_concurrent_jobs=limit)
+
+
+def test_service_shutdown_stops_parallel_and_queued_jobs(tmp_path, monkeypatch):
+    with TestClient(create_app(tmp_path, max_concurrent_jobs=3)) as client:
         dataset = client.app.state.workspace.add_dataset(pd.DataFrame({"x": [1, 2]}), "关闭验证")
         monkeypatch.setattr(client.app.state.jobs, "_command", lambda identifier: [sys.executable, "-c", "import time;time.sleep(120)"])
-        job = client.post("/api/jobs", json={"kind": "explore", "dataset_id": dataset["id"], "feature": "x"}).json()
-        pid = wait_until(lambda: client.get(f"/api/jobs/{job['id']}").json().get("worker_pid"))
-    assert not psutil.pid_exists(pid)
-    result = json.loads((tmp_path / "jobs" / job["id"] / "metadata.json").read_text("utf-8"))
-    assert result["status"] == "已停止"
+        body = {"kind": "explore", "dataset_id": dataset["id"], "feature": "x"}
+        jobs = [client.post("/api/jobs", json=body).json()["id"] for _ in range(4)]
+        pids = [wait_until(lambda: client.get(f"/api/jobs/{job}").json().get("worker_pid")) for job in jobs[:-1]]
+        assert len(set(pids)) == 3
+    assert all(not psutil.pid_exists(pid) for pid in pids)
+    for job in jobs:
+        result = json.loads((tmp_path / "jobs" / job / "metadata.json").read_text("utf-8"))
+        assert result["status"] == "已停止"
+        if job == jobs[-1]:
+            assert "worker_pid" not in result
 
 
 def test_explore_job_matches_existing_explore_api(tmp_path):

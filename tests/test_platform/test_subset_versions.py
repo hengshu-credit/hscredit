@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
-from hscredit.platform.storage import Workspace
+from hscredit.web import create_app
+from hscredit.web.storage import Workspace
 
 
 def configuration(seed, revision=1):
@@ -89,7 +89,7 @@ def test_repartition_preserves_identity_and_historical_inputs(tmp_path):
         assert all(d["revision"] == 2 and d["parent_id"] == root["id"] for d in children)
         reloaded = Workspace(tmp_path)
         pd.testing.assert_frame_equal(reloaded.read_dataset(children[0]["id"], 1), previous)
-        from hscredit.platform.workflows import bound_frames
+        from hscredit.web.workflows import bound_frames
 
         frozen = bound_frames(reloaded, {"dataset_id": initial[0]["id"], "dataset_revision": 1, "test_dataset": {"id": initial[1]["id"], "revision": 1}})
         pd.testing.assert_frame_equal(frozen["训练集 · 训练"], previous)
@@ -103,7 +103,7 @@ def test_repartition_preserves_identity_and_historical_inputs(tmp_path):
 
 
 def test_remove_output_and_failure_keep_published_plan(tmp_path, monkeypatch):
-    import hscredit.platform.subsets as subsets
+    import hscredit.web.subsets as subsets
 
     with TestClient(create_app(tmp_path)) as client:
         ws = client.app.state.workspace
@@ -138,7 +138,7 @@ def test_remove_output_and_failure_keep_published_plan(tmp_path, monkeypatch):
 
 
 def test_legacy_copies_can_be_reopened_then_converted(tmp_path):
-    from hscredit.platform.splitting import SplitRequest, split_frame
+    from hscredit.web.splitting import SplitRequest, split_frame
 
     with TestClient(create_app(tmp_path)) as client:
         ws = client.app.state.workspace

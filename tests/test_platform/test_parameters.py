@@ -6,15 +6,18 @@ import pytest
 from sklearn.base import clone
 
 from hscredit.core.binning import OptimalBinning
-from hscredit.platform.analysis import model_fit_options, model_pipeline
-from hscredit.platform.models import model_catalog
-from hscredit.platform.parameters import binning_params, parameter_catalog, validate_library_params
-from hscredit.platform.server import JobRequest, validate_job
+from hscredit.web.analysis import model_fit_options, model_pipeline
+from hscredit.web.models import model_catalog
+from hscredit.web.parameters import binning_params, parameter_catalog, validate_library_params
+from hscredit.web.server import JobRequest, validate_job
 
 
 def test_method_specific_kwargs_and_2d_options():
     catalog = parameter_catalog()
     assert catalog["methods"] == OptimalBinning.VALID_METHODS
+    help_text = catalog["groups"]["binning"]["params"]["min_bad_rate"]["description"]
+    assert "不参与该约束" in help_text
+    assert ":type" not in help_text
     cfg = JobRequest(kind="strategy", dataset_id="demo", workflow=True, strategy_mode="pair", min_n_bins=2, method="tree", library_params={"binning": {"max_depth": 1}, "pair_binning": {"max_n_bins_y": 3}}).dict()
     validate_library_params(cfg)
     binner = OptimalBinning(**binning_params(cfg), n_jobs=1)
@@ -52,8 +55,8 @@ def test_report_rejects_unbound_parameters(scope, key):
 
 
 def test_summary_parameters_change_cache_and_exported_percentiles(tmp_path):
-    from hscredit.platform.storage import Workspace
-    from hscredit.platform.exploration import explore_dataset
+    from hscredit.web.storage import Workspace
+    from hscredit.web.exploration import explore_dataset
 
     workspace = Workspace(tmp_path)
     data = pd.DataFrame({"分数": np.arange(100)})

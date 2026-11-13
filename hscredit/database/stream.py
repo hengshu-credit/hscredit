@@ -8,8 +8,8 @@ from copy import deepcopy
 from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 import pandas as pd
-from tqdm.auto import tqdm
 
+from .._progress import create_progress_bar
 from ..exceptions import StateError
 from .exceptions import DatabaseQueryError, database_error_from
 from .types import StreamState, validate_result_type
@@ -91,7 +91,7 @@ class QueryStream:
         self._columns = list(getattr(resource, "columns", ()))
         self._resource_closed = False
         self._close_callbacks: List[Callable[[], Any]] = []
-        self._progress_bar = tqdm(total=total_rows, desc="流式读取", unit="行") if progress else None
+        self._progress_bar = create_progress_bar(total=total_rows, desc="流式读取", unit="行") if progress else None
 
     def __iter__(self) -> "QueryStream":
         return self

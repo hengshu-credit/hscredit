@@ -3,6 +3,51 @@ import sys
 import textwrap
 
 
+def test_notebook_progress_updates_installed_widget(monkeypatch):
+    from types import SimpleNamespace
+
+    import IPython
+    from ipywidgets import FloatProgress
+    from hscredit._progress import create_progress_bar
+
+    monkeypatch.setattr(IPython, "get_ipython", lambda: SimpleNamespace(config={"IPKernelApp": {}}))
+    with create_progress_bar(total=3) as bar:
+        bar.update(2)
+        bar.refresh()
+        widget = next(child for child in bar.container.children if isinstance(child, FloatProgress))
+        assert (widget.value, widget.max) == (2, 3)
+
+
+def test_notebook_without_widgets_imports_and_reports_text_progress():
+    code = textwrap.dedent("""
+        import io
+        import sys
+        import warnings
+        from contextlib import redirect_stderr
+        from types import SimpleNamespace
+        import IPython
+        from tqdm import TqdmWarning
+
+        IPython.get_ipython = lambda: SimpleNamespace(config={"IPKernelApp": {}})
+        sys.modules["ipywidgets"] = None
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", TqdmWarning)
+            import hscredit
+            from hscredit.database import QueryStream
+            assert "tqdm.notebook" not in sys.modules
+
+            import pandas as pd
+            data = pd.Series([3, 7])
+            output = io.StringIO()
+            with redirect_stderr(output):
+                result = data.hscredit(n_jobs=1, bar=True).apply(lambda value: value + 1)
+            assert result.tolist() == [4, 8]
+            assert "2/2" in output.getvalue()
+        assert not any(issubclass(w.category, TqdmWarning) for w in caught), caught
+        """)
+    subprocess.run([sys.executable, "-X", "utf8", "-c", code], check=True)
+
+
 def test_star_import_exposes_key_top_level_apis():
     code = textwrap.dedent("""
         namespace = {}

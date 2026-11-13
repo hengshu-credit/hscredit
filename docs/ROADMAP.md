@@ -12,7 +12,7 @@ hscredit（衡枢真信）将自己定位为金融分析库中信贷风控功能
 | --- | --- |
 | Python API | 在 Notebook 中用 pandas 和 scikit-learn 风格的接口串联分箱、筛选、建模和回测。团队可以自定义损失函数与评估指标，将验证过的流程接入自己的批处理任务。[API 参考](api/index.rst) |
 | AI 大模型 Skills | 用自然语言描述分析目标，例如“按授信月份比较新旧规则的通过率和坏账率，并生成 Excel”。Agent 通过 Skills 调用 hscredit 的分析接口，交付结果表、图形或工作簿。[Agent Skills 指南](skills.md) |
-| 风控平台可视化界面 | 安装平台扩展后，运行 `python -m hscredit platform --demo` 即可在浏览器打开示例数据，比较变量分布、调整规则、评估模型并下载报告。[风控平台指南](platform.md) |
+| 风控平台可视化界面 | 安装平台扩展后，运行 `python -m hscredit web --demo` 即可在浏览器打开示例数据，比较变量分布、调整规则、评估模型并下载报告。[风控平台指南](platform.md) |
 
 三种入口让不同经验的团队都能开箱即用。业务人员可以从示例数据和网页操作入手，分析师可以把同一业务问题交给 Skills，开发者则可以直接组合底层 API。基础分析沿用 NumPy、pandas 和 scikit-learn 生态，Boosting、神经网络、调参和风控平台按需安装。[安装指南](installation.md)
 

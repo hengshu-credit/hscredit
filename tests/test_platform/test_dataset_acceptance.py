@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sklearn.metrics import roc_auc_score
 
-from hscredit.platform import create_app
-from hscredit.platform.demo import DEMO_TARGET
+from hscredit.web import create_app
+from hscredit.web.demo import DEMO_TARGET
 from hscredit.utils.datasets import hscredit_dataset
 
 pytestmark = [

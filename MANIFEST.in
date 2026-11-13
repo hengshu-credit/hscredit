@@ -9,11 +9,13 @@ include Makefile
 recursive-include hscredit *.py *.xlsx *.csv *.ttf py.typed
 recursive-include hscredit/resources/datasets *.parquet *.md *.svg
 recursive-include hscredit/resources/platform *.html *.js *.css *.json *.txt *.svg *.woff2 *.ttf
+include hscredit/resources/platform/favicon.ico
 include docs/_static/hengshucredit_logo.svg
 include docs/assets/readme/wechat.svg
 include docs/assets/readme/wechat-official-account.svg
-recursive-include platform-web *.json *.js *.vue *.css *.html *.txt *.woff2
-prune platform-web/node_modules
+recursive-include web *.json *.js *.vue *.css *.html *.txt *.woff2
+include web/public/favicon.ico
+prune web/node_modules
 exclude hscredit/resources/datasets/hscredit.parquet
 recursive-include docs *.md
 recursive-include examples *.ipynb

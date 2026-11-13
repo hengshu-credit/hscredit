@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from hscredit.platform.interactions import interactions
-from hscredit.platform.pivot import PivotRequest, pivot_table
-from hscredit.platform.storage import Workspace
+from hscredit.web.interactions import interactions
+from hscredit.web.pivot import PivotRequest, pivot_table
+from hscredit.web.storage import Workspace
 
 
 @pytest.fixture
@@ -16,16 +16,16 @@ def example(tmp_path):
     frame = pd.DataFrame({"行1": n % 40, "行2": n % 3, "行3": n % 2, "列1": n % 17, "列2": n % 5, "列3": n % 7, "值": (n % 11).astype(float), "组": n % 2})
     frame.loc[::13, "值"] = np.nan
     root = ws.add_dataset(frame, "组合样本")
-    result = interactions(frame, ["行1", "列1"], target="组", bins=4)
+    result = interactions(frame, ["行1", "列1", "值"], target="组", bins=4)
     job = {"dataset_id": root["id"], "dataset_revision": 1, "config": {"bins": 4}, "result": {"interaction": result}}
     ws.replace_dataset(root["id"], frame.assign(值=0), expected_revision=1, processing={"description": "更新值字段"})
     return ws, frame, job
 
 
 @pytest.mark.parametrize("method", ["sum", "mean", "median", "min", "max", "count", "nunique", "rows"])
-def test_six_dimensions_and_totals_cover_other_pages(example, method):
+def test_selected_axes_and_totals_cover_other_pages(example, method):
     ws, data, job = example
-    req = PivotRequest(rows=["行1", "行2", "行3"], columns=["列1", "列2", "列3"], value="值", aggregation=method, buckets=False, page=2, column_page=2)
+    req = PivotRequest(rows=["行1"], columns=["列1"], value="值", aggregation=method, buckets=False, page=2, column_page=2)
     out = pivot_table(ws, job, req)
 
     def expected(part):
@@ -61,8 +61,20 @@ def test_numeric_precision_and_empty_cells(tmp_path):
     ws = Workspace(tmp_path)
     data = pd.DataFrame({"行": ["甲", "甲", "乙"], "列": ["是", "是", "否"], "值": np.array([100000000, 1, np.nan], dtype="float32")})
     root = ws.add_dataset(data, "精度")
-    job = {"dataset_id": root["id"], "dataset_revision": 1, "config": {"bins": 2}, "result": {"interaction": interactions(data, ["行", "列"])}}
+    job = {"dataset_id": root["id"], "dataset_revision": 1, "config": {"bins": 2}, "result": {"interaction": interactions(data, ["行", "列", "值"])}}
     out = pivot_table(ws, job, PivotRequest(rows=["行"], columns=["列"], aggregation="mean", value="值"))
     assert out["total"] == 50000000.5
     i = out["row_keys"].index(["乙"])
     assert all(cell is None for cell in out["values"][i])
+
+
+def test_pivot_rearranges_selected_hierarchy_and_rejects_unselected_fields(example):
+    ws, frame, job = example
+    req = PivotRequest(rows=["行1", "值"], columns=["列1"], buckets=False)
+    grid = pivot_table(ws, job, req)
+    transposed = pivot_table(ws, job, req.copy(update={"rows": req.columns, "columns": req.rows}))
+    assert grid["total"] == transposed["total"] == len(frame)
+    assert (grid["row_count"], grid["column_count"]) == (transposed["column_count"], transposed["row_count"])
+    for invalid in [{"columns": ["组"]}, {"rows": ["行2"]}, {"value": "行3", "aggregation": "sum"}]:
+        with pytest.raises(ValueError, match="已选"):
+            pivot_table(ws, job, req.copy(update=invalid))

@@ -7,8 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
-from hscredit.platform.service_calls import DAY
+from hscredit.web import create_app
+from hscredit.web.service_calls import DAY
 
 ADMIN = {"Authorization": "Bearer platform-management-token"}
 
@@ -101,7 +101,7 @@ def test_retention_prunes_old_rows_per_service_and_on_restart(tmp_path):
 
 
 def test_internal_error_keeps_actual_http_response(tmp_path, monkeypatch):
-    from hscredit.platform import serving
+    from hscredit.web import serving
 
     with TestClient(create_app(tmp_path), raise_server_exceptions=False) as client:
         endpoint, token, admin = publish(client)

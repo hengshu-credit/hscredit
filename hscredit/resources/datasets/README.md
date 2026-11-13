@@ -75,6 +75,8 @@ X 包含 8,493 个授信时点特征。数据按整列判断缺失码：若数�
 
 通过 PyPI 安装后，首次调用 `hscredit_dataset()` 优先从 GitHub Release 下载。GitHub 连接失败、传输中断或一个 5 秒测速窗口的平均速度低于 100 KiB/s（102,400 字节/秒）时，会自动尝试 Gitee。若 Gitee 也不可用，仍连接的低速 GitHub 下载会从暂停位置继续。[GitHub 下载](https://github.com/hengshu-credit/hscredit/releases/download/v0.1.3/hscredit.parquet) · [Gitee 镜像](https://gitee.com/itlubber/hscredit)
 
+下载期间，进度条显示当前来源、已下载大小、总大小和传输速度。切换到 Gitee 时从零计数，恢复 GitHub 下载时从已保存的字节数继续。直接读取本地文件或有效缓存时不显示下载进度。
+
 Gitee 下载使用与本版本校验值对应的 `v0.1.3` 标签，读取仓库中 Git LFS 管理的 Parquet。维护镜像时，需将指针及其引用的 LFS 对象一并同步。
 
 文件大小为 357.89 MiB，SHA-256 为 `6c4e4790f3a56472d36e58517df349aeb18d3ca709d6b424f51a6556fa8d14f9`。校验通过后可离线复用。默认缓存于 `~/.cache/hscredit/datasets/<SHA-256>/hscredit.parquet`，可用环境变量 `HSCREDIT_DATA_HOME` 指定缓存根目录。

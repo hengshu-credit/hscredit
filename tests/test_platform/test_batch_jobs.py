@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
+from hscredit.web import create_app
 
 
 @pytest.fixture

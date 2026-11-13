@@ -5,8 +5,8 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
-from hscredit.platform.processing import parse_expression_text, process_frame
+from hscredit.web import create_app
+from hscredit.web.processing import parse_expression_text, process_frame
 
 
 @pytest.mark.parametrize(

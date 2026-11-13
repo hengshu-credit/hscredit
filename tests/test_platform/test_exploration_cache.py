@@ -1,13 +1,15 @@
 """验证字段概况按标签和数据版本复用，图表变化不重复计算。"""
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform import create_app
-from hscredit.platform.analysis import explore
-from hscredit.platform.exploration import explore_dataset
-from hscredit.platform.storage import Workspace, records
+from hscredit.web import create_app
+from hscredit.web.analysis import explore
+from hscredit.web.exploration import explore_dataset
+from hscredit.web.storage import Workspace, records
 
 
 @pytest.fixture
@@ -54,7 +56,7 @@ def test_management_summary_uses_all_fields_without_labels_and_pins_version(setu
     labeled = client.post(url + "/explore", json={"targets": ["标签"], "positive_labels": {"标签": 1}}).json()
     assert "标签" not in {row["特征名"] for row in labeled["summary"]}
     calls.clear()
-    monkeypatch.setattr("hscredit.platform.exploration.explore_charts", lambda *args, **kwargs: pytest.fail("字段概况不应生成图表"))
+    monkeypatch.setattr("hscredit.web.exploration.explore_charts", lambda *args, **kwargs: pytest.fail("字段概况不应生成图表"))
     result = client.get(url + "/summary", params={"revision": 1}).json()
     assert result["summary"] == expected
     assert {row["特征名"] for row in result["summary"]} == set(frame.columns)
@@ -64,6 +66,25 @@ def test_management_summary_uses_all_fields_without_labels_and_pins_version(setu
     assert client.get(url + "/summary", params={"revision": 2}).json()["rows"] == 8
     monkeypatch.setattr(ws, "read_dataset", lambda *args, **kwargs: pytest.fail("已缓存的版本不应读取数据文件"))
     assert client.get(url + "/summary", params={"revision": 1}).json() == result
+
+
+def test_exploration_completes_when_concurrent_cache_publication_is_locked(setup, monkeypatch):
+    client, source, frame, _ = setup
+    workspace = client.app.state.workspace
+    cache = workspace.path("datasets", source["id"]) / "summary-cache"
+    replace = Path.replace
+
+    def competing_writer(temporary, destination):
+        if destination.parent == cache and destination.suffix == ".json":
+            destination.write_bytes(temporary.read_bytes())
+            raise PermissionError("另一个进程正在读取摘要")
+        return replace(temporary, destination)
+
+    monkeypatch.setattr(Path, "replace", competing_writer)
+    result = explore_dataset(workspace, source["id"], feature="评分")
+    assert result == explore(frame, feature="评分")
+    assert [file.suffix for file in cache.iterdir()] == [".json"]
+    assert explore_dataset(workspace, source["id"], feature="收入")["summary"] == result["summary"]
 
 
 def test_label_changes_and_data_revisions_compute_matching_public_results(setup):

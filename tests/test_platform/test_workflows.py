@@ -8,14 +8,14 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from hscredit.platform.server import JobRequest, create_app
-from hscredit.platform.storage import Workspace
-from hscredit.platform.workflows import strategy_workflow, ruleset_workflow
-from hscredit.platform.interactions import interactions
+from hscredit.web.server import JobRequest, create_app
+from hscredit.web.storage import Workspace
+from hscredit.web.workflows import strategy_workflow, ruleset_workflow
+from hscredit.web.interactions import interactions
 
 
 def test_legacy_preprocessing_preserves_schema_and_training_statistics(tmp_path):
-    from hscredit.platform.analysis import _LegacyFramePreprocessor
+    from hscredit.web.analysis import _LegacyFramePreprocessor
 
     train = pd.DataFrame({"分数": [1.0, 3.0, np.nan] * 22, "空数值": np.nan, "渠道": ["常用"] * 6 + [f"渠道{i}" for i in range(60)], "空类别": None})
     prepare = _LegacyFramePreprocessor(["分数", "空数值"], ["渠道", "空类别"]).fit(train)
@@ -103,7 +103,7 @@ def test_multilabel_trends_categorical_fixed_bins(prepared):
 
 
 def test_experiment_external_evaluation_scorecard_and_export_prediction(prepared):
-    from hscredit.platform.experiments import experiment
+    from hscredit.web.experiments import experiment
 
     workspace, data, config, output = prepared
     config.update(kind="model", models=["logistic"], model_params={"logistic": {"max_iter": 100}}, test_dataset=config["evaluation_datasets"][0], evaluation_datasets=[], amount="金额", scorecard=True, cv=2)
@@ -137,7 +137,7 @@ def test_experiment_external_evaluation_scorecard_and_export_prediction(prepared
 
 
 def test_overdue_training_primary_is_used_in_external_predictions_and_reports(prepared):
-    from hscredit.platform.experiments import experiment
+    from hscredit.web.experiments import experiment
 
     workspace, _, config, output = prepared
     external = config["evaluation_datasets"][0]
@@ -258,7 +258,7 @@ def test_uploaded_inference_file_preserves_probabilities(tmp_path):
 @pytest.mark.parametrize("key", ["scorecard", "roundscorecard"])
 def test_native_scorecard_parameter_sheet_matches_fitted_card(prepared, key):
     from openpyxl import load_workbook
-    from hscredit.platform.analysis import model_pipeline
+    from hscredit.web.analysis import model_pipeline
     from hscredit.report import ModelReport
 
     _, data, _, output = prepared
