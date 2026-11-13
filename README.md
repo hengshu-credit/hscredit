@@ -1,7 +1,5 @@
-# hscredit
-
 <p align="center">
-  <img src="https://hengshucredit.com/images/hengshucredit_animated.svg" alt="衡枢真信" width="180">
+  <img src="docs/assets/brand/hscredit-loading.svg" alt="衡枢真信" width="200">
 </p>
 
 <p align="center">
@@ -47,38 +45,48 @@
 </tr>
 </table>
 
-<details>
-<summary>四种报告的调用示例</summary>
+
+### 四种报告的调用示例
 
 **四套标准 SOP，一行代码出一份 Excel 报告。** 准备好样本和待评估的变量、规则或模型，即可按统一口径比较不同客群、不同逾期标签的表现。下次评审，换一批样本就能复评。
-
-下面使用已准备好的 `df`、`datasets`、`features`、`rules`、`model` 和 `multiway_tree`；数据与模型的准备步骤见后文示例。
 
 ```python
 from hscredit.report import swap_out_report, auto_model_report, auto_feature_analysis
 
+# 分析标签定义
 labels = {"overdue": ["MOB1", "MOB6"], "dpds": [0, 30], "overdue_operator": ">"}
+
+# 策略置出分析报告，D类调优策略上线评审报告模板
 swap_out_report(df, rules, date="授信时间", margins=True, save="策略.xlsx", **labels)
+
+# 模型建模报告，新模型部署上线前评审报告模板
 auto_model_report(model, datasets, features=features, amount="loan_amt", long_format=True, save="模型.xlsx", **labels)
-multiway_tree.report(datasets, amount="loan_amt", group="GROUP", save="规则.xlsx", **labels)
+
+# 决策树规则挖掘报告输出，综合评估各个数据集各个逾期标签下规则的有效性
+tree.report(datasets, amount="loan_amt", group="GROUP", save="规则.xlsx", **labels)
+
+# 数据有效性分析报告，适用于三方数据测试报告和内部可用数据有效性分析报告
 auto_feature_analysis(df, features, amount="loan_amt", long_format=True, save="三方数据.xlsx", **labels)
 ```
 
-`save` 统一接收文件路径或 `ExcelWriter`，`sheet` 接收工作表名称或 openpyxl `Worksheet`。传入 writer 时仅写入，最后统一调用 `writer.save(...)`。
+所有报告都支持合并到其他报告上，传入 `ExcelWriter` 保存即可支持将各类报告合并其他分析报告一起输出。
 
 ```python
 from hscredit.excel import ExcelWriter
 
+# 生成 excel writer 写入器
 writer = ExcelWriter()
-feature_sheet = writer.get_sheet_by_name("三方数据")
-auto_feature_analysis(df, features, save=writer, sheet=feature_sheet, amount="loan_amt", long_format=True, **labels)
+
+# 数据有效性分析报告
+auto_feature_analysis(df, features, save=writer, sheet="三方数据", amount="loan_amt", long_format=True, **labels)
+
+# 规则置出评审报告
 swap_out_report(df, rules, save=writer, sheet="策略分析", date="授信时间", margins=True, **labels)
+
+# 合并保存
 writer.save("综合报告.xlsx")
 ```
 
-模型报告的 `sheet` 指定基本信息页，其他章节仍独立生成。`excel_path`、`excel_writer`、`sheet_name` 已从这些报告入口移除；底层 `dataframe2excel` 仍使用自己的 `sheet_name` 参数。完整可运行示例见 <a href="examples/29_api_reference.ipynb">公开 API Notebook</a>，参数与迁移说明见 <a href="docs/analysis_parameters.md">分析参数约定</a>。
-
-</details>
 
 <a href="https://hscredit.hengshucredit.com/showcase.html#gallery-reports" style="color:#c02dd4;">在文档中查看报告示例</a>
 
@@ -89,13 +97,21 @@ writer.save("综合报告.xlsx")
 <table align="center" width="100%">
 <tr>
   <td align="center" valign="top" width="50%">
+    itlubber
+  </td>
+  <td align="center" valign="top" width="50%">
+    衡枢风控实验室 hscreditlab
+  </td>
+</tr>
+<tr>
+  <td align="center" valign="top" width="50%">
     <img src="docs/assets/readme/wechat.svg" alt="微信 itlubber 二维码" width="200"><br>
-    微信 · itlubber
+    微信
   </td>
   <td align="center" valign="top" width="50%">
     <img src="docs/assets/readme/wechat-official-account.svg" alt="公众号 衡枢风控实验室 hscreditlab 二维码" width="200"><br>
-    公众号 · 衡枢风控实验室<br>
-    hscreditlab · 回复「入群」
+    <br>
+    公众号（加交流群私信「入群」）
   </td>
 </tr>
 </table>
@@ -692,9 +708,9 @@ card.scorecard_scale().show()
 
 <table>
 <tr>
-  <td width="50%" align="center" valign="top"><strong>评分卡分值</strong><br>
-    <a href="docs/assets/readme/showcase/scorecard-points.png"><img src="docs/assets/readme/showcase/scorecard-points.png" alt="评分卡分值" width="55%"></a></td>
-  <td width="50%" align="center" valign="top"><strong>逻辑回归统计摘要</strong><br>
+  <td width="45%" align="center" valign="top"><strong>评分卡分值</strong><br>
+    <a href="docs/assets/readme/showcase/scorecard-points.png"><img src="docs/assets/readme/showcase/scorecard-points.png" alt="评分卡分值" width="100%"></a></td>
+  <td width="55%" align="center" valign="top"><strong>逻辑回归统计摘要</strong><br>
     <a href="docs/assets/readme/showcase/lr-summary.png"><img src="docs/assets/readme/showcase/lr-summary.png" alt="逻辑回归统计摘要" width="100%"></a><br>
     <strong>评分刻度</strong><br>
     <a href="docs/assets/readme/showcase/scorecard-scale.png"><img src="docs/assets/readme/showcase/scorecard-scale.png" alt="评分刻度" width="100%"></a></td>
