@@ -7,8 +7,7 @@ import pandas as pd
 
 from .base import BaseCalibrator
 from .methods import PlattCalibrator
-
-DEFAULT_COLORS = ["#2639E9", "#F76E6C", "#FE7715", "#2E8B57", "#9370DB", "#FF6347"]
+from ....utils.colors import EXTENDED_COLORS as DEFAULT_COLORS
 
 
 def _validated_colors(colors: Optional[List[str]]) -> List[str]:
@@ -143,12 +142,16 @@ def plot_calibration_comparison(
     title: Optional[str] = None,
     show: bool = True,
     colors: Optional[List[str]] = None,
+    *,
+    strategy: str = "uniform",
 ):
     """绘制多个模型的可靠性曲线和 Brier/ECE 指标比较。
 
     :param y_true: 真实 0/1 标签，1 表示坏样本。
     :param y_prob_dict: 校准方法名到一维预测概率数组的映射，各数组与 y_true 等长。
     :param n_bins: 可靠性曲线分箱数。 默认 ``10``。
+    :param strategy: 可靠性曲线及 ECE 共用的分箱方式，默认 ``"uniform"`` 等宽；
+        ``"quantile"`` 对每组预测概率分别等频分箱，重复边界合并。
     :param figsize: 图宽、高，单位英寸。 默认 ``(12, 5)``。
     :param title: 图表标题。 默认 ``None``。
     :param show: 是否调用 Matplotlib 显示图形。 默认 ``True``。
@@ -159,7 +162,7 @@ def plot_calibration_comparison(
     if not isinstance(y_prob_dict, dict) or not y_prob_dict:
         raise ValueError("y_prob_dict不能为空")
     palette = _validated_colors(colors)
-    calibrator = PlattCalibrator(n_bins=n_bins)
+    calibrator = PlattCalibrator(n_bins=n_bins, strategy=strategy)
     validated = {str(name): calibrator._validate_fit_data(probabilities, y_true)[0] for name, probabilities in y_prob_dict.items()}
     labels = np.asarray(y_true)
 

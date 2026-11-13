@@ -29,6 +29,19 @@ def test_calibration_comparison_rejects_empty_mapping():
         plot_calibration_comparison(np.array([0, 1]), {}, show=False)
 
 
+def test_comparison_uses_quantile_bins_for_curve_and_ece():
+    from hscredit.core.viz import get_series_colors
+
+    probabilities = np.linspace(0.01, 0.10, 10)
+    labels = np.array([0] * 5 + [0, 0, 1, 1, 1])
+    fig = plot_calibration_comparison(labels, {"未校准": probabilities}, n_bins=2, strategy="quantile", show=False)
+    line = fig.axes[0].lines[0]
+    np.testing.assert_allclose(line.get_xdata(), [0.03, 0.08])
+    np.testing.assert_allclose(line.get_ydata(), [0.0, 0.6])
+    assert fig.axes[1].patches[1].get_height() == pytest.approx((0.03 + 0.52) / 2)
+    assert line.get_color() == get_series_colors(1)[0]
+
+
 def test_probability_calibrator_plot_reuses_custom_target_by_default():
     """拟合时的自定义目标列应自动贯穿绘图入口。"""
     values, labels = make_classification(n_samples=80, n_features=4, random_state=18)

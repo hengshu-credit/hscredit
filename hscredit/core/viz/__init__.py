@@ -25,6 +25,7 @@
 - Gain增益图 (gain_plot)
 - 混淆矩阵图 (confusion_matrix_plot)
 - 校准曲线图 (calibration_plot)
+- 概率分布与分档校准偏差图 (calibration_bias_plot)
 - 评分分布对比图 (score_dist_plot)
 - 评分分箱效果图 (score_bin_plot)
 - 决策阈值分析图 (threshold_analysis_plot)
@@ -68,6 +69,7 @@ from .risk_plots import (
     gain_plot,
     confusion_matrix_plot,
     calibration_plot,
+    calibration_bias_plot,
     # 评分卡
     score_dist_plot,
     score_bin_plot,
@@ -183,6 +185,7 @@ __all__ = [
     "gain_plot",
     "confusion_matrix_plot",
     "calibration_plot",
+    "calibration_bias_plot",
     # 评分卡
     "score_dist_plot",
     "score_bin_plot",

@@ -20,6 +20,7 @@ import re
 import os
 import copy
 import math
+from numbers import Real
 import posixpath
 import shutil
 import tempfile
@@ -33,6 +34,9 @@ import pandas as pd
 from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.comments import Comment
 from openpyxl.drawing.image import Image
+from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
+from openpyxl.drawing.xdr import XDRPositiveSize2D
+from openpyxl.utils.units import pixels_to_EMU
 from openpyxl import load_workbook, Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.worksheet.hyperlink import Hyperlink
@@ -189,6 +193,7 @@ class ExcelWriter:
         # 数据透视表规格缓存，保存时注入 pivotCache/pivotTable 部件
         # openpyxl 不支持创建数据透视表，故在 save() 后对 xlsx 进行 XML 注入
         self._pivot_specs: List[Dict[str, Any]] = []
+        self._picture_rows = []
         # 数据透视图规格缓存：记录需在对应 chart XML 中注入 pivotSource 的透视图
         self._pivot_chart_specs: List[Dict[str, Any]] = []
 
@@ -1148,17 +1153,26 @@ class ExcelWriter:
             start_col = get_column_letter(start_col)
 
         # 插入图片
-        image = Image(fig)
-        scale = min(figsize[0] / image.width, figsize[1] / image.height)
-        image.width, image.height = image.width * scale, image.height * scale
+        image = self._scaled_picture(fig, figsize)
         worksheet.add_image(image, f"{start_col}{start_row}")
 
-        # Excel 行高使用磅，图片尺寸使用像素。保留原来的最小预留区域，
-        # 对模板中的矮行和隐藏行按实际物理高度继续向下寻找边界。
         row_px = 17.5 if self.system == "mac" else 16.0
         default_px = min(row_px, (worksheet.sheet_format.defaultRowHeight or 15.0) * 96 / 72)
+        end_row = self._row_after_picture(worksheet, start_row, image.height, default_px)
+        return max(end_row, start_row + math.ceil(figsize[1] / row_px)), column_index_from_string(start_col) + 8
+
+    @staticmethod
+    def _scaled_picture(path, size):
+        picture = Image(path)
+        scale = min(size[0] / picture.width, size[1] / picture.height)
+        picture.width, picture.height = picture.width * scale, picture.height * scale
+        return picture
+
+    @staticmethod
+    def _row_after_picture(worksheet, start_row, height, default_px):
+        """按可见行的物理高度定位第一行未被图片占用的位置。"""
         end_row = start_row
-        remaining = image.height
+        remaining = height
         while remaining > 0:
             if end_row > 1048576:
                 raise ValueError("工作表剩余的可见行高不足以容纳图片")
@@ -1166,16 +1180,57 @@ class ExcelWriter:
             if dimension is None or not dimension.hidden:
                 remaining -= default_px if dimension is None or dimension.height is None else dimension.height * 96 / 72
             end_row += 1
-        return max(end_row, start_row + max(1, math.ceil(figsize[1] / row_px))), column_index_from_string(start_col) + 8
+        return end_row
 
     def _insert_figure_row(self, worksheet, figures, row, col, figsize, padding):
-        """并排插图后，从最下方的图片边界开始预留表头间距。"""
-        bottom = row
-        for figure in figures:
-            end_row, end_col = self.insert_pic2sheet(worksheet, figure, (row, col), figsize=figsize)
-            bottom = max(bottom, end_row)
-            col = end_col - 1
+        """共享尺寸沿用原布局；逐图尺寸按实际边界紧凑排列。"""
+        figures = [figures] if isinstance(figures, (str, os.PathLike)) else list(figures)
+        if not any(figures):
+            return row
+
+        def size_pair(size):
+            return isinstance(size, (tuple, list)) and len(size) == 2 and all(isinstance(v, Real) and not isinstance(v, bool) and math.isfinite(v) and v > 0 for v in size)
+
+        if size_pair(figsize):
+            bottom = row
+            for figure in filter(None, figures):
+                end_row, end_col = self.insert_pic2sheet(worksheet, figure, (row, col), figsize=figsize)
+                bottom = max(bottom, end_row)
+                col = end_col - 1
+            return bottom + max(0, int(padding or 0))
+        if not isinstance(figsize, (tuple, list)) or len(figsize) != len(figures) or not all(size_pair(size) for size in figsize):
+            raise ValueError("figsize 需要一对正数（宽、高），或与 figures 一一对应的尺寸列表")
+
+        images = [self._scaled_picture(path, size) for path, size in zip(figures, figsize) if path]
+        default_px = (worksheet.sheet_format.defaultRowHeight or 15.0) * 96 / 72
+        bottom = self._row_after_picture(worksheet, row, max(pic.height for pic in images), default_px)
+        for pic in images:
+            worksheet.add_image(pic, f"{get_column_letter(col)}{row}")
+        self._picture_rows.append((worksheet, row, col, images))
         return bottom + max(0, int(padding or 0))
+
+    def _anchor_picture_rows(self):
+        """按保存时的最终列宽将像素偏移分解为合法的单元格锚点。"""
+        for sheet, row, col, images in self._picture_rows:
+            offset = 0
+            # Excel 的标准列宽换算以 96 DPI 下的 7 像素数字宽度为基准。
+            digit_px = 7
+            for image in images:
+                while col <= 16384:
+                    dimension = sheet.column_dimensions.get(get_column_letter(col))
+                    if dimension is None:
+                        dimension = next((d for d in sheet.column_dimensions.values() if (d.min or 0) <= col <= (d.max or 0)), None)
+                    width = self._effective_column_width(sheet, col)
+                    width_px = 0 if dimension and dimension.hidden else int((width + int(128 / digit_px) / 256) * digit_px)
+                    if offset < width_px:
+                        break
+                    offset -= width_px
+                    col += 1
+                else:
+                    raise ValueError("工作表剩余的可见列宽不足以容纳图片")
+                origin = AnchorMarker(col=col - 1, row=row - 1, colOff=pixels_to_EMU(offset))
+                image.anchor = OneCellAnchor(_from=origin, ext=XDRPositiveSize2D(pixels_to_EMU(image.width), pixels_to_EMU(image.height)))
+                offset += image.width + 8
 
     def _styled_chart_title(self, text: str):
         """构建带 hscredit 字体/主题色样式的图表标题对象。
@@ -2943,7 +2998,7 @@ class ExcelWriter:
         :type show_row_totals: bool
         :param show_col_totals: 是否显示列总计，默认为True
         :type show_col_totals: bool
-        :param theme_style: 是否套用适配 ``theme_color`` 的 hscredit 主题样式，默认为True
+        :param theme_style: 是否套用 writer 的主题色、字体和字号，默认为True
         :type theme_style: bool
         :param style: 透视表样式名，默认为None（ ``theme_style`` 为True时用主题样式，否则用内置 PivotStyleLight16）
         :type style: Optional[str]
@@ -3299,6 +3354,8 @@ class ExcelWriter:
                     styles_xml,
                     self.theme_color,
                     stripe_color,
+                    self.font,
+                    self.fontsize,
                 )
                 for spec in self._pivot_specs:
                     if spec.get("_theme"):
@@ -3395,6 +3452,8 @@ class ExcelWriter:
                     want_theme=want_theme,
                     theme_color=self.theme_color,
                     stripe_color=stripe_color,
+                    font=self.font,
+                    fontsize=self.fontsize,
                     custom_numfmts=custom_numfmts,
                     theme_style_name=theme_style_name,
                 )
@@ -3675,6 +3734,7 @@ class ExcelWriter:
         descriptor, temporary = tempfile.mkstemp(prefix=".hscredit-", suffix=".xlsx", dir=os.path.dirname(destination))
         os.close(descriptor)
         try:
+            self._anchor_picture_rows()
             self.workbook.save(temporary)
             self._inject_sparklines(temporary)
             self._inject_pivots(temporary)
@@ -3791,7 +3851,7 @@ def _metric_color_role(column):
     """从内向外识别指标层，兼容（标签，指标）及（指标，数据集）表头。"""
     for level in reversed(column if isinstance(column, tuple) else (column,)):
         name = re.sub(r"[（(][^（）()]*[）)]$", "", str(level).strip().upper())
-        if any(part in name for part in ("坏账改善", "风险改善", "逾期改善")):
+        if name in {"通过率变化", "坏账率变化"} or any(part in name for part in ("坏账改善", "风险改善", "逾期改善")):
             return "improvement"
         if "LIFT" in name:
             return "lift"
@@ -4004,7 +4064,7 @@ def dataframe2excel(
     start_row: int = 2,
     mode: str = "replace",
     figures: Optional[Union[str, List[str]]] = None,
-    figsize: Tuple[int, int] = (600, 350),
+    figsize: Union[Tuple[int, int], Sequence[Tuple[int, int]]] = (600, 350),
     image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
     auto_filter: bool = False,
@@ -4080,8 +4140,8 @@ def dataframe2excel(
     :type mode: str
     :param figures: 需要插入的图片路径，默认为None
     :type figures: Optional[Union[str, List[str]]]
-    :param figsize: 图片显示区域的最大宽、高（像素），默认 (600, 350)，保留原始宽高比。
-    :type figsize: Tuple[int, int]
+    :param figsize: 图片最大宽、高（像素），默认共用 (600, 350)。也可按 figures 顺序传入尺寸列表，每张图独立等比缩放。
+    :type figsize: Tuple[int, int] or list of tuples
     :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :type image_bottom_padding_rows: int
     :param writer_params: ExcelWriter参数，默认为None
@@ -4164,13 +4224,7 @@ def dataframe2excel(
 
     # 插入图片
     if figures is not None:
-        if isinstance(figures, str):
-            figures = [figures]
-
-        figures = [pic for pic in figures if pic]
-
-        if figures:
-            start_row = writer._insert_figure_row(worksheet, figures, start_row, start_col, figsize, image_bottom_padding_rows)
+        start_row = writer._insert_figure_row(worksheet, figures, start_row, start_col, figsize, image_bottom_padding_rows)
 
     # 处理merge_column参数
     if kwargs.get("merge_column") is not None:

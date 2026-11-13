@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import {computed,ref,watch} from 'vue'
 import FeatureSection from './FeatureSection.vue'
 import DataTable from './DataTable.vue'
@@ -50,12 +51,14 @@ async function save(file){try{await download(props.job.id,file)}catch(e){ElMessa
       <section v-if="selectable&&result.candidates?.length">
         <h3>{{result.strategy_mode==='pair'?'二维分箱规则表':['binary','multiway'].includes(result.strategy_mode)?'树节点规则表':'单变量分箱规则表'}}</h3>
         <p class="muted">名称可修改；多选后按“或”合并为一条规则，也可逐条加入规则集。切换数据集可核对同一规则的命中表现。</p>
-        <el-table :data="candidates" row-key="id" @selection-change="chosen=$event" max-height="420">
-          <el-table-column type="selection" width="40"/>
-          <el-table-column label="规则名称" min-width="176"><template #default="{row}"><el-input v-model="row.name" aria-label="规则名称"/></template></el-table-column>
-          <el-table-column v-for="metric in ['样本总数','样本占比','坏样本率','LIFT值']" :key="metric" :label="metric==='样本总数'?'命中样本数':metric" min-width="92"><template #default="{row}">{{row.metrics?.[dataset]?.[metric]==null?'—':Number(row.metrics[dataset][metric].toPrecision(5))}}</template></el-table-column>
-          <el-table-column prop="expression" label="精确执行表达式" min-width="272"/>
-        </el-table>
+        <TableFrame max-height="420" v-slot="{tableSize}">
+          <el-table v-bind="tableSize" :data="candidates" row-key="id" @selection-change="chosen=$event">
+            <el-table-column type="selection" width="40"/>
+            <el-table-column label="规则名称" min-width="176"><template #default="{row}"><el-input v-model="row.name" aria-label="规则名称"/></template></el-table-column>
+            <el-table-column v-for="metric in ['样本总数','样本占比','坏样本率','LIFT值']" :key="metric" :label="metric==='样本总数'?'命中样本数':metric" min-width="92"><template #default="{row}">{{row.metrics?.[dataset]?.[metric]==null?'—':Number(row.metrics[dataset][metric].toPrecision(5))}}</template></el-table-column>
+            <el-table-column prop="expression" label="精确执行表达式" min-width="272"/>
+          </el-table>
+        </TableFrame>
         <div class="download-bar"><el-button :disabled="!chosen.length" @click="emit('select',chosen.map(r=>({...r})))">逐条加入规则集</el-button><el-button :disabled="!chosen.length" @click="emit('select',[{name:chosen.map(r=>r.name).join(' 或 ').slice(0,100),expression:chosen.map(r=>'('+r.expression+')').join(' | ')}])">合并选中分箱并命名</el-button></div>
       </section>
       <section v-if="primaryTable"><h3>{{primaryTable}}</h3><DataTable :rows="result.tables[primaryTable]"/><div class="report-visual-grid"><ReportImage v-for="img in images.filter(i=>i.title==='树图'||i.title===dataset+' / 2D分箱图')" :key="img.file" :job="job.id" :file="img.file" :title="img.title"/></div></section>

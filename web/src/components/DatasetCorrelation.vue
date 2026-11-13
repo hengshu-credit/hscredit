@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import {computed, inject, ref, shallowRef, watch} from 'vue'
 import {InfoFilled} from '@element-plus/icons-vue'
 import {api} from '../api'
@@ -131,12 +132,14 @@ const chart = computed(() => {
         <Chart :option="chart" :theme-key="themeKey" aria-label="字段相关性热力图"
           :style="{height:chartHeight+'px',minWidth:(128+result.columns.length*42)+'px'}"/>
       </div>
-      <el-table v-else-if="result" :data="tableRows" height="var(--matrix-table-height)" stripe aria-label="相关性表">
-        <el-table-column prop="name" label="字段" fixed width="136" show-overflow-tooltip/>
-        <el-table-column v-for="(name,j) in result.columns" :key="j" :label="name" align="right" min-width="106" show-overflow-tooltip>
-          <template #default="{row}"><span :title="method(row.name,name)">{{display(row.values[j])}}</span></template>
-        </el-table-column>
-      </el-table>
+      <TableFrame v-else-if="result" height="var(--matrix-table-height)" v-slot="{tableSize}">
+        <el-table v-bind="tableSize" :data="tableRows" stripe aria-label="相关性表">
+          <el-table-column prop="name" label="字段" fixed width="136" show-overflow-tooltip/>
+          <el-table-column v-for="(name,j) in result.columns" :key="j" :label="name" align="right" min-width="106" show-overflow-tooltip>
+            <template #default="{row}"><span :title="method(row.name,name)">{{display(row.values[j])}}</span></template>
+          </el-table-column>
+        </el-table>
+      </TableFrame>
       <div v-if="error" class="matrix-error" role="alert">
         {{error}} <el-button link type="primary" @click="retry++">重试</el-button>
       </div>
@@ -164,7 +167,7 @@ const chart = computed(() => {
 .matrix-heading{display:grid;grid-template-columns:auto 1fr;margin:14px 0 10px}
 .matrix-heading [role=status]{text-align:right;font-size:12px}
 .matrix-window{position:relative;min-width:0;min-height:var(--matrix-chart-height)}
-.matrix-window[data-view=table]{min-height:var(--matrix-table-height)}
+.matrix-window[data-view=table]{min-height:0}.matrix-window[data-view=table]:not(:has(.table-frame)){min-height:var(--matrix-table-height)}
 .matrix-chart{height:var(--matrix-chart-height);overflow:auto;overscroll-behavior:contain}
 .matrix-error{position:absolute;inset:0 0 auto;z-index:4;display:flex;justify-content:center;align-items:center;gap:8px;padding:6px 10px;background:var(--danger-bg);color:var(--danger);overflow-wrap:anywhere}
 .matrix-pages{justify-content:flex-end;gap:8px 20px;margin-top:12px;color:var(--muted);font-size:12px}

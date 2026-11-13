@@ -354,6 +354,23 @@ def test_iv_and_ks_highlight_flags_control_their_own_indicators():
     assert "linear-gradient" not in style_bin_table(data, condition_cols=[]).to_html()
 
 
+def test_swap_summary_styles_formatted_metrics_without_changing_text():
+    changes = ["通过率变化(绝对)", "通过率变化(相对)", "坏账率变化(绝对)", "坏账率变化(相对)"]
+    values = ["-0.25", "25.00%", "0.00%", "-", None]
+    frame = pd.DataFrame({**{name: values for name in changes}, "坏样本率": ["0.08", "12.00%", "0.1", "-", None], "LIFT": ["0.85", "1.25", "1.00", None, None]})
+    styler = style_bin_table(frame)
+    styles = styler._compute().ctx
+    for column in range(len(changes)):
+        assert "#A3ABF5 0.0000%" in dict(styles[0, column])["background-image"]
+        assert "#F76E6C 100.0000%" in dict(styles[1, column])["background-image"]
+        assert "calc(50% - 0.5px)" in dict(styles[2, column])["background-image"]
+        assert all("background-image" not in dict(styles[row, column]) for row in (3, 4))
+    assert dict(styles[1, 4])["background-color"] == "#f76e6c"
+    assert dict(styles[1, 5])["background-color"] == "#d4145a"
+    pd.testing.assert_frame_equal(styler.data, frame)
+    assert ">-25.00%</td>" in styler.to_html() and ">-</td>" in styler.to_html()
+
+
 def test_woe_uses_signed_colors_and_neutral_share_respects_custom_theme():
     from hscredit.excel.writer import _metric_colors
 

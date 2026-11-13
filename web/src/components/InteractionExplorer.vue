@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import {computed,defineAsyncComponent,reactive,ref,shallowRef,watch} from 'vue'
 import {api} from '../api'
 import Chart from './Chart.vue'
@@ -72,9 +73,9 @@ const count=n=>n?.toLocaleString()??'—'
     <header class="result-heading"><h2>分析结果</h2><span class="muted">{{job.name}} · {{count(props.result.total)}} 行 · {{props.result.axes.length}} 个字段</span></header>
     <section v-if="targetCounts.length" class="target-results" aria-label="目标标签概况">
       <h3>目标标签概况</h3>
-      <div class="target-table"><table><thead><tr><th v-for="key in ['标签','有效样本','好样本','坏样本','剔除样本','坏样本率']" :key="key">{{key}}</th></tr></thead>
+      <TableFrame v-slot="{viewportStyle}"><div class="target-table" :style="viewportStyle"><table><thead><tr><th v-for="key in ['标签','有效样本','好样本','坏样本','剔除样本','坏样本率']" :key="key">{{key}}</th></tr></thead>
         <tbody><tr v-for="row in targetCounts" :key="row['标签']"><th scope="row">{{row['标签']}}</th><td v-for="key in ['有效样本','好样本','坏样本','剔除样本']" :key="key">{{count(row[key])}}</td><td>{{row['坏样本率']==null?'—':(100*row['坏样本率']).toFixed(2)+'%'}}</td></tr></tbody>
-      </table></div>
+      </table></div></TableFrame>
       <div class="target-controls"><label>图表目标标签 <select v-model="targetName"><option value="">全部样本</option><option v-for="row in targetCounts" :key="row['标签']">{{row['标签']}}</option></select></label>
         <label v-if="targetName">样本范围 <select v-model="population"><option value="valid">有效样本</option><option value="good">好样本</option><option value="bad">坏样本</option></select></label>
         <span v-if="targetName&&!loadingSample&&!targetError" class="muted">当前样本 {{count(result.total)}} 行</span>
@@ -133,7 +134,7 @@ const count=n=>n?.toLocaleString()??'—'
         <p v-if="card.format==='box'" class="muted">须线为最小值和最大值，箱体显示上下四分位数及中位数。</p>
         <p v-else-if="card.dist.kind==='date'" class="muted">{{card.dist.distribution_note}}</p>
         <p v-else-if="card.dist.kind==='text'" class="muted">按非缺失文本的字符数统计。</p>
-        <details v-if="card.stats.length"><summary>字段统计{{targetName?'（完整分析样本）':''}}</summary><table><thead><tr><th>统计指标</th><th>统计值</th></tr></thead><tbody><tr v-for="r in card.stats" :key="JSON.stringify([r.group,r.name])"><td>{{r.group?r.group+' · ':''}}{{r.name}}</td><td>{{r.value}}</td></tr></tbody></table></details>
+        <details v-if="card.stats.length"><summary>字段统计{{targetName?'（完整分析样本）':''}}</summary><TableFrame v-slot="{viewportStyle}"><div class="stats-scroll" :style="viewportStyle"><table><thead><tr><th>统计指标</th><th>统计值</th></tr></thead><tbody><tr v-for="r in card.stats" :key="JSON.stringify([r.group,r.name])"><td>{{r.group?r.group+' · ':''}}{{r.name}}</td><td>{{r.value}}</td></tr></tbody></table></div></TableFrame></details>
         <details v-if="card.dist.by_group?.length"><summary>按 {{result.target}} 汇总</summary><DataTable :rows="card.dist.by_group" :height="260"/></details>
       </section>
     </div>
@@ -144,6 +145,7 @@ const count=n=>n?.toLocaleString()??'—'
 
 <style scoped>
 .exploration-result{container-type:inline-size}
+.stats-scroll{overflow:auto}
 .target-results h3{font-size:14px;margin:14px 0 6px}.target-table{overflow:auto;max-height:230px}.target-table table{border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}.target-table :is(th,td){padding:5px 12px;text-align:right;border-bottom:1px solid var(--line-soft)}.target-table th:first-child{text-align:left}.target-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:8px 0;font-size:13px}
 .results-grid{display:grid;gap:10px;grid-template-columns:repeat(var(--columns,3),minmax(0,1fr))}
 .results-grid>.section-title{grid-column:1/-1}

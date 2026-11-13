@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import {computed, onMounted, ref} from 'vue'
 import {api} from '../api'
 
@@ -89,13 +90,15 @@ onMounted(() => load())
       <el-button v-if="ready" link type="primary" @click="editRetention">保存期限 · {{retention === null ? '永久' : retention+' 天'}}</el-button>
     </div>
     <el-alert v-if="error" type="error" :title="error" :closable="false"/>
-    <el-table v-loading="loading" :data="rows" stripe empty-text="暂无匹配的调用记录">
-      <el-table-column label="调用时间" min-width="166"><template #default="{row}">{{stamp(row.started_at)}}</template></el-table-column>
-      <el-table-column label="HTTP 状态" width="110"><template #default="{row}"><el-tag :type="row.status >= 400 ? 'danger' : 'success'">{{row.status}}</el-tag></template></el-table-column>
-      <el-table-column label="耗时" width="105"><template #default="{row}">{{row.duration_ms.toFixed(1)}} ms</template></el-table-column>
-      <el-table-column prop="id" label="调用编号" min-width="190" show-overflow-tooltip/>
-      <el-table-column width="82"><template #default="{row}"><el-button link type="primary" @click="inspect(row.id)">详情</el-button></template></el-table-column>
-    </el-table>
+    <TableFrame v-slot="{tableSize}">
+      <el-table v-bind="tableSize" v-loading="loading" :data="rows" stripe empty-text="暂无匹配的调用记录">
+        <el-table-column label="调用时间" min-width="166"><template #default="{row}">{{stamp(row.started_at)}}</template></el-table-column>
+        <el-table-column label="HTTP 状态" width="110"><template #default="{row}"><el-tag :type="row.status >= 400 ? 'danger' : 'success'">{{row.status}}</el-tag></template></el-table-column>
+        <el-table-column label="耗时" width="105"><template #default="{row}">{{row.duration_ms.toFixed(1)}} ms</template></el-table-column>
+        <el-table-column prop="id" label="调用编号" min-width="190" show-overflow-tooltip/>
+        <el-table-column width="82"><template #default="{row}"><el-button link type="primary" @click="inspect(row.id)">详情</el-button></template></el-table-column>
+      </el-table>
+    </TableFrame>
     <el-pagination v-if="total" :current-page="page" :page-size="20" :total="total" layout="total, prev, pager, next" @current-change="load"/>
   </el-drawer>
   <el-dialog v-model="settingsOpen" title="调用记录保存期限" width="min(460px, 94vw)" append-to-body>

@@ -19,6 +19,7 @@ SECTION_ANCHORS = {
     "数据挖掘": "showcase-eda",
     "Excel 写入": "showcase-excel",
     "数据库读写": "showcase-database",
+    "风控平台": "showcase-web",
     "Agent 能力": "showcase-skills",
     "手工拆分与多数据集策略报告": "gallery-trees",
     "常用图表": "gallery-diagnostics",
@@ -97,6 +98,7 @@ def _expand_readme(app, docname, source):
                         line += "\n\n" + description.lstrip(" ·")
             lines.append(line)
         text = "\n".join(lines)
+        text = text.replace("](hscredit/resources/datasets/hscredit-flow.svg)", "](../hscredit/resources/datasets/hscredit-flow.svg)")
         text = re.sub(
             r"!\[([^\]]*)\]\((docs/assets/readme/[^)]+)\)",
             lambda m: f'<p><a href="{m[2]}"><img src="{m[2]}" alt="{escape(m[1], quote=True)}"></a></p>',

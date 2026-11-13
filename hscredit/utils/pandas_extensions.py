@@ -43,7 +43,7 @@ from .targets import TargetInput
 
 logger = logging.getLogger(__name__)
 import numpy as np
-from typing import Optional, List, Dict, Any, Literal, Union, Tuple, TYPE_CHECKING
+from typing import Optional, List, Dict, Any, Literal, Union, Tuple, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..excel import ExcelWriter
@@ -322,7 +322,7 @@ def _dataframe_save(
     start_row: int = 2,
     mode: str = "replace",
     figures: Optional[Union[str, List[str]]] = None,
-    figsize: Tuple[int, int] = (600, 350),
+    figsize: Union[Tuple[int, int], Sequence[Tuple[int, int]]] = (600, 350),
     image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
     centered_bar_cols: Optional[List] = None,
@@ -352,7 +352,7 @@ def _dataframe_save(
     :param start_row: 起始行，默认为2
     :param mode: 写入模式，默认为"replace"
     :param figures: 需要插入的图片路径，默认为None
-    :param figsize: 图片显示区域的最大宽、高（像素），默认 (600, 350)，保留原始宽高比。
+    :param figsize: 共用的图片最大宽高，或与 figures 一一对应的尺寸列表（像素），等比缩放。
     :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :param centered_bar_cols: 单元格中点为零轴的双向数据条列。
     :param centered_bar_rows: 按行设置居中双向数据条。
@@ -400,11 +400,7 @@ def _dataframe_save(
 
         # 插入图片
         if figures is not None:
-            if isinstance(figures, str):
-                figures = [figures]
-            figures = [pic for pic in figures if pic]
-            if figures:
-                start_row = writer._insert_figure_row(worksheet, figures, start_row, start_col, figsize, image_bottom_padding_rows)
+            start_row = writer._insert_figure_row(worksheet, figures, start_row, start_col, figsize, image_bottom_padding_rows)
 
         # 处理merge_column参数
         if "merge_column" in kwargs and kwargs["merge_column"]:
@@ -506,7 +502,7 @@ def _series_save(
     start_row: int = 2,
     mode: str = "replace",
     figures: Optional[Union[str, List[str]]] = None,
-    figsize: Tuple[int, int] = (600, 350),
+    figsize: Union[Tuple[int, int], Sequence[Tuple[int, int]]] = (600, 350),
     image_bottom_padding_rows: int = 1,
     writer_params: Optional[Dict] = None,
     centered_bar_cols: Optional[List] = None,
@@ -537,7 +533,7 @@ def _series_save(
     :param start_row: 起始行，默认为2
     :param mode: 写入模式，默认为"replace"
     :param figures: 需要插入的图片路径，默认为None
-    :param figsize: 图片显示区域的最大宽、高（像素），默认 (600, 350)，保留原始宽高比。
+    :param figsize: 共用的图片最大宽高，或与 figures 一一对应的尺寸列表（像素），等比缩放。
     :param image_bottom_padding_rows: 图片区与下方表格之间的额外空行数，默认为1
     :param centered_bar_cols: 单元格中点为零轴的双向数据条列。
     :param centered_bar_rows: 按行设置居中双向数据条。
@@ -625,6 +621,21 @@ def _is_numeric_table_column(series):
     return pd.api.types.is_numeric_dtype(series.dtype) and not pd.api.types.is_bool_dtype(series.dtype) and not pd.api.types.is_complex_dtype(series.dtype)
 
 
+def _table_metric_values(series):
+    """将报告中已格式化的指标解析为条件格式用数值，保留单元格原有显示文本。"""
+    if _is_numeric_table_column(series):
+        return series
+    if not (pd.api.types.is_object_dtype(series.dtype) or pd.api.types.is_string_dtype(series.dtype)):
+        return None
+    text = series.astype("string").str.strip()
+    text = text.mask(text.isin(["", "-"]))
+    percent = text.str.endswith("%", na=False)
+    numbers = pd.to_numeric(text.str.removesuffix("%"), errors="coerce")
+    if (text.notna() & numbers.isna()).any():
+        return None
+    return numbers.astype(float).where(~percent, numbers / 100)
+
+
 def _select_table_columns(df, columns):
     """按完整列名或层级名选择指标，支持指标位于标签内层或外层。"""
     if columns is None:
@@ -652,10 +663,12 @@ def _apply_table_color_blocks(styler, df, columns, condition_color, theme_color=
     from ..excel.writer import _is_bin_share, _metric_color_role, _metric_scale_colors, _resolve_condition_value
 
     for col in columns:
-        if not _is_numeric_table_column(df[col]):
+        numbers = _table_metric_values(df[col])
+        if numbers is None:
             continue
         detail = totals is not None and _is_bin_share(col)
-        values = (df[col].iloc[~totals] if detail else df[col]).dropna().astype(float)
+        numbers = numbers.iloc[~totals] if detail else numbers
+        values = numbers.dropna().astype(float)
         values = values[np.isfinite(values)]
         if values.empty:
             continue
@@ -680,7 +693,7 @@ def _apply_table_color_blocks(styler, df, columns, condition_color, theme_color=
             norm = Normalize(low, high)
         cmap = LinearSegmentedColormap.from_list("table_condition", anchors, N=257)
 
-        def color_cell(value, *, norm=norm, cmap=cmap):
+        def color_cell(value):
             if pd.isna(value) or not np.isfinite(value):
                 return ""
             rgba = cmap(norm(float(value)))
@@ -688,7 +701,8 @@ def _apply_table_color_blocks(styler, df, columns, condition_color, theme_color=
             text_color = "#000000" if luminance > 0.5 else "#ffffff"
             return f"background-color: {to_hex(rgba)}; color: {text_color}"
 
-        styler = map_styler(styler, color_cell, subset=(~totals, [col]) if detail else [col])
+        styles = [color_cell(value) for value in numbers]
+        styler = styler.apply(lambda _, css=styles: css, subset=(~totals, [col]) if detail else [col])
     return styler
 
 
@@ -706,9 +720,10 @@ def _apply_centered_bars(styler, df, columns, condition_color, theme_color):
     from ..excel.writer import _metric_colors, _resolve_condition_value
 
     for col in columns:
-        if not _is_numeric_table_column(df[col]):
+        numbers = _table_metric_values(df[col])
+        if numbers is None:
             continue
-        values = df[col].dropna()
+        values = numbers.dropna()
         finite = values[np.isfinite(values)]
         if finite.empty:
             continue
@@ -716,7 +731,7 @@ def _apply_centered_bars(styler, df, columns, condition_color, theme_color):
         custom = _resolve_condition_value(condition_color, col, None)
         negative, _, positive = [_table_hex_color(c) for c in _metric_colors("坏账改善", theme_color, custom)]
 
-        def draw(value, *, bound=bound, negative=negative, positive=positive):
+        def draw(value):
             if pd.isna(value) or not np.isfinite(value):
                 return ""
             axis = "linear-gradient(90deg, transparent calc(50% - 0.5px), #85829D calc(50% - 0.5px), #85829D calc(50% + 0.5px), transparent calc(50% + 0.5px))"
@@ -728,7 +743,8 @@ def _apply_centered_bars(styler, df, columns, condition_color, theme_color):
             bar = f"linear-gradient(90deg, transparent {left:.4f}%, {color} {left:.4f}%, {color} {right:.4f}%, transparent {right:.4f}%)"
             return f"background-image: {axis}, {bar}"
 
-        styler = map_styler(styler, draw, subset=[col])
+        styles = [draw(value) for value in numbers]
+        styler = styler.apply(lambda _, css=styles: css, subset=[col])
     return styler
 
 
@@ -1266,8 +1282,6 @@ def _style_bin_table(
         auto_roles = {"share", "hit_rate", "good_share", "bad_share", "good_rate", "auc", "psi", "missing"}
         auto_roles.update(role for role, enabled in [("risk", highlight_bad_rate), ("lift", highlight_lift), ("ks", highlight_ks), ("iv", highlight_iv)] if enabled)
         for col in df_display.columns:
-            if not _is_numeric_table_column(df_display[col]):
-                continue
             role = _metric_color_role(col)
             if role == "improvement":
                 centered_columns.add(col)

@@ -13,6 +13,7 @@ from hscredit.core.metrics import iv, ks
 from hscredit.core.viz import (
     approval_rate_trend_plot,
     bad_rate_trend_plot,
+    calibration_bias_plot,
     calibration_plot,
     confusion_matrix_plot,
     get_palette,
@@ -92,6 +93,40 @@ def test_calibration_plot_uses_observed_mean_probability_and_keeps_zero():
     model_line = fig.axes[0].lines[1]
     np.testing.assert_allclose(model_line.get_xdata(), [0.245, 0.995])
     plt.close(fig)
+
+
+def test_calibration_bias_plot_uses_common_cohort_and_raw_bins(tmp_path):
+    data = pd.DataFrame({"原始": [0., 0., 1., 1., 0.5], "逾期": [0, 60, 0, 80, 90]}, index=list("abcde"))
+    calibrated = pd.Series([.2, .4, .7, .9, np.nan], index=data.index).iloc[::-1]
+    fig, axes = plt.subplots(1, 2)
+    first_position = axes[0].get_position().bounds
+    path = tmp_path / "figures" / "bias.svg"
+    result, detail = calibration_bias_plot(
+        data, "原始", overdue="逾期", dpds=[30], calibrated={"方法": calibrated}, n_bins=2,
+        axes=axes, save=path, return_frame=True,
+    )
+    assert result is fig and axes[0].get_position().bounds == pytest.approx(first_position)
+    assert len(fig.axes) == 2 and path.is_file()
+    np.testing.assert_array_equal(detail["样本数"], [2, 2, 2, 2])
+    np.testing.assert_allclose(detail["实际坏样本率"], .5)
+    np.testing.assert_allclose(detail["平均预测概率"], [0, 1, .3, .8])
+    np.testing.assert_allclose(detail["预测偏差(百分点)"], [-50, 50, -20, 30])
+    heat = axes[1].collections[0]
+    assert heat.cmap.name == "hscredit_diverging"
+    np.testing.assert_allclose(heat.get_array().reshape(2, 2), [[-50, 50], [-20, 30]])
+    plt.close(fig)
+
+
+def test_calibration_bias_plot_keeps_equal_scores_in_one_bin():
+    data = pd.DataFrame({"原始": [.5] * 4, "校准": [.25] * 4, "目标": [0, 1, 0, np.nan]})
+    fig, detail = calibration_bias_plot(data, "原始", "目标", calibrated=["校准"], return_frame=True)
+    assert detail["风险档"].tolist() == [1, 1] and detail["样本数"].tolist() == [3, 3]
+    np.testing.assert_allclose(detail["预测偏差(百分点)"], 100 * (np.array([.5, .25]) - 1 / 3))
+    plt.close(fig)
+    with pytest.raises(ValueError, match="范围"):
+        calibration_bias_plot(data, [1.01, .1, .2, .3], "目标")
+    with pytest.raises(ValueError, match="有效"):
+        calibration_bias_plot(data, "原始", "目标", calibrated={"缺失": [np.nan] * 4})
 
 
 def test_score_bin_plot_honors_ax_and_n_bins():

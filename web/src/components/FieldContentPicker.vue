@@ -349,7 +349,7 @@ onBeforeUnmount(()=>{stopTimer();window.removeEventListener('pointerup',endDrag)
 .picker-manual-button{justify-self:center}
 .field-picker-dialog .el-dialog__headerbtn{height:44px;width:44px}
 .field-picker-dialog .el-dialog__body{position:relative}
-.picker-workspace{display:grid;grid-template-columns:var(--picker-sidebar) minmax(0,1fr);height:var(--picker-height);color:var(--text)}
+.picker-workspace{resize:vertical;overflow:hidden;min-height:170px;max-height:74dvh;display:grid;grid-template-columns:var(--picker-sidebar) minmax(0,1fr);height:var(--picker-height);color:var(--text)}
 .picker-categories{background:var(--soft);border-right:1px solid var(--border);padding:10px 6px;min-height:0;overflow:auto}
 .picker-categories button{width:100%;display:flex;align-items:center;justify-content:space-between;gap:4px;min-height:35px;padding:6px 9px;
   border:0;border-left:2px solid transparent;background:transparent;color:var(--text);font:inherit;font-size:13px;cursor:pointer;text-align:left}

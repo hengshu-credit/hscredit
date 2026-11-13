@@ -19,8 +19,10 @@
 采用函数式API设计，与hscredit.core.viz模块风格保持一致。
 """
 
+from collections.abc import Mapping
+
 from hscredit.utils.dates import date_groups
-from hscredit.utils.arguments import analysis_inputs
+from hscredit.utils.arguments import analysis_inputs, bind_column
 
 from ...utils.targets import TargetInput, bind_targets, reject_legacy_target_keywords
 
@@ -50,7 +52,9 @@ from .utils import (
     NEUTRAL_COLOR,
     get_series_colors,
     make_colormap,
+    make_diverging_cmap,
     make_risk_cmap,
+    _create_subplots,
     _layout_top_center_legend,
 )
 from ..._lazy import LazyModule
@@ -851,6 +855,137 @@ def score_dist_plot(
     if save:
         save_figure(fig, save, dpi=dpi)
 
+    return fig
+
+
+def calibration_bias_plot(
+    data: pd.DataFrame,
+    score,
+    target: Optional[TargetInput] = None,
+    *,
+    calibrated=None,
+    overdue=None,
+    dpds=None,
+    overdue_operator=">",
+    del_grey=False,
+    handle_missing_target="drop",
+    n_bins: int = 10,
+    hist_bins: int = 18,
+    axes=None,
+    figsize=(13, 4.6),
+    title="概率校准",
+    colors=None,
+    save=None,
+    dpi: int = 240,
+    return_frame: bool = False,
+):
+    """绘制原始坏样本概率分布，以及同一风险档内各方法相对实测坏率的偏差。
+
+    :param data: 评估样本，每行一笔订单。
+    :param score: 未校准的坏样本概率，传列名或等长一维数据。Series 按索引对齐。
+    :param target: 单个评估标签，支持列名、标签向量或函数。也可用 overdue 和 dpds 指定一个逾期口径。
+    :param calibrated: 校准概率列名列表，或方法名到概率列／一维数据的映射。
+    :param overdue: 逾期天数字段，与 dpds 配对使用。
+    :param dpds: 逾期天数阈值。
+    :param overdue_operator: 逾期比较符，默认严格大于。
+    :param del_grey: 是否按标签口径剔除灰样本。
+    :param handle_missing_target: 缺失标签处理，默认 drop。
+    :param n_bins: 按原始概率等频划分的档数；相同概率保持同档，重复边界合并。
+    :param hist_bins: 左侧概率直方图的分箱数。
+    :param axes: 可选的同一画布上的两个 Axes，依次绘制直方图、热力图。
+    :param figsize: 独立画布的宽、高（英寸）。
+    :param title: 图表标题。嵌入时用作右图标题，不覆盖外部画布标题。
+    :param colors: 自定义热力图色阶，从低估到高估；默认使用品牌蓝、近白和副主题红。
+    :param save: 图片保存路径，格式由后缀决定。
+    :param dpi: 导出图片分辨率。
+    :param return_frame: 为 True 时同时返回各档的样本数、实际坏率、平均预测概率与偏差明细。
+    :return: Figure，或 (Figure, DataFrame)。所有面板只使用标签和各方法概率均有效的样本。
+
+    >>> fig = calibration_bias_plot(df, "原始概率", target="坏样本", calibrated={"Platt": "校准概率"})  # doctest: +SKIP
+    """
+    for name, value in (("n_bins", n_bins), ("hist_bins", hist_bins)):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or value < 1:
+            raise ValueError(f"{name} 必须是正整数")
+    if calibrated is None:
+        calibrated = {}
+    elif not isinstance(calibrated, Mapping):
+        columns = [calibrated] if isinstance(calibrated, str) else calibrated
+        if not isinstance(columns, (list, tuple, pd.Index)) or not all(isinstance(c, str) for c in columns):
+            raise TypeError("calibrated 必须是概率列名、列名列表或方法名到概率的映射")
+        if len(set(columns)) != len(columns):
+            raise ValueError("校准概率列名不能重复")
+        calibrated = {name: name for name in columns}
+    methods = {"未校准": score}
+    for name, values in calibrated.items():
+        if not isinstance(name, str) or not name.strip() or name == "未校准":
+            raise ValueError("校准方法名必须为非空字符串，“未校准”保留给原始概率")
+        methods[name] = values
+
+    frame, labels = bind_targets(data, target, overdue, dpds, del_grey, overdue_operator, handle_missing_target=handle_missing_target)
+    if len(labels) != 1:
+        raise ValueError("每张校准偏差图需要一个标签口径")
+    predictions = {}
+    for name, values in methods.items():
+        bound, column = bind_column(frame, values, name)
+        if column is None:
+            raise ValueError(f"{name}缺少预测概率")
+        if pd.api.types.is_complex_dtype(bound[column]) or pd.api.types.is_datetime64_any_dtype(bound[column]):
+            raise ValueError(f"{name}预测概率必须为实数")
+        try:
+            probabilities = pd.to_numeric(bound[column], errors="raise").astype(float)
+        except (ValueError, TypeError):
+            raise ValueError(f"{name}预测概率必须为数值") from None
+        if not probabilities.dropna().between(0, 1).all():
+            raise ValueError(f"{name}预测概率必须在 [0, 1] 范围内")
+        predictions[name] = probabilities
+    scores = pd.DataFrame(predictions, index=frame.index)
+    observed = frame[labels.columns[0]]
+    valid = observed.notna() & scores.notna().all(axis=1)
+    if not valid.any():
+        raise ValueError("没有标签和各方法概率均有效的样本")
+    observed, scores = observed[valid], scores[valid]
+    raw = scores["未校准"]
+    bands = pd.qcut(raw, q=n_bins, labels=False, duplicates="drop") if raw.nunique() > 1 else np.zeros(len(raw), dtype=int)
+    actual = observed.groupby(bands, observed=True)
+    rates, counts = actual.mean(), actual.size()
+    means = scores.groupby(bands, observed=True).mean()
+    gap = means.sub(rates, axis=0).mul(100)
+    gap.index = pd.RangeIndex(1, len(gap) + 1, name="风险档")
+
+    if axes is None:
+        fig, (hist, heat) = _create_subplots(1, 2, figsize=figsize, width_ratios=[1, 2.5])
+    else:
+        if len(axes) != 2 or not all(isinstance(axis, plt.Axes) for axis in axes) or axes[0] is axes[1] or axes[0].figure is not axes[1].figure:
+            raise ValueError("axes 需要同一画布上的两个不同坐标轴")
+        hist, heat = axes
+        fig = hist.figure
+    score_dist_plot(raw.rename("原始预测概率"), ax=hist, n_bins=hist_bins, kde=False, show_stats=False, title="原始预测概率分布", fontsize=11)
+    hist.xaxis.set_major_formatter(PercentFormatter(1, decimals=0))
+    hist.axvline(observed.mean(), color=BAD_RATE_COLOR, linestyle="--", label=f"实际坏样本率 {observed.mean():.2%}")
+    hist.legend(frameon=False, fontsize=9)
+
+    cmap = make_diverging_cmap() if colors is None else make_colormap("calibration_bias", colors)
+    limit = np.abs(gap.to_numpy()).max() or 1.0
+    sns.heatmap(
+        gap.T, ax=heat, cmap=cmap, vmin=-limit, vmax=limit, cbar=False, annot=True, fmt="+.2f",
+        xticklabels=[f"{i}档\n{rate:.1%}" for i, rate in zip(gap.index, rates)], yticklabels=True,
+    )
+    heat.tick_params(axis="both", labelrotation=0)
+    heat.set(xlabel="原始概率从低到高 · 各档实际坏样本率", ylabel="", title="平均预测概率 − 实际坏样本率（百分点）")
+    setup_axis_style(heat)
+    if axes is None:
+        fig.suptitle(f"{title} · 有效样本 {len(raw):,} 笔" if title else f"有效样本 {len(raw):,} 笔", fontweight="bold")
+        fig.tight_layout()
+    elif title:
+        heat.set_title(f"{title} · 预测偏差（百分点）")
+    save_figure(fig, save, dpi=dpi)
+    if return_frame:
+        detail = pd.concat([
+            pd.DataFrame({"风险档": gap.index, "方法": name, "样本数": counts.to_numpy(), "实际坏样本率": rates.to_numpy(),
+                          "平均预测概率": means[name].to_numpy(), "预测偏差(百分点)": gap[name].to_numpy()})
+            for name in methods
+        ], ignore_index=True)
+        return fig, detail
     return fig
 
 

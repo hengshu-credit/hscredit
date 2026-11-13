@@ -45,7 +45,7 @@ class BaseCalibrator(TrainingProcessMixin, ArtifactSerializableMixin, BaseEstima
         self._validate_configuration()
         if self.strategy == "quantile":
             boundaries = np.quantile(y_prob, np.linspace(0, 1, self.n_bins + 1))
-            boundaries = np.concatenate(([0.0], boundaries, [1.0]))
+            boundaries[0], boundaries[-1] = 0.0, 1.0
         else:
             boundaries = np.linspace(0, 1, self.n_bins + 1)
         return np.unique(np.clip(boundaries, 0.0, 1.0))

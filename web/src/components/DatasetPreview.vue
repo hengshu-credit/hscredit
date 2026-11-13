@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import {computed, inject, ref, watch} from 'vue'
 import {Search} from '@element-plus/icons-vue'
 import {api} from '../api'
@@ -52,16 +53,18 @@ watch([page, conditions, keyword, retry], async (_, __, onCleanup) => {
     </TableFilters>
     <div v-if="error" role="alert">{{error}} <el-button link type="primary" @click="retry++">重试</el-button></div>
     <template v-else>
-      <el-table v-loading="loading" :data="preview.rows" :max-height="theme.table==='fixed'?380:''" stripe empty-text="无匹配数据">
-        <el-table-column v-for="c in dataset.columns" :key="c.name" :prop="c.name" :label="c.name" min-width="124" show-overflow-tooltip>
-          <template #header><ColumnProfile :dataset-id="dataset.id" :revision="revision" :column="c.name" :theme-key="themeKey"/></template>
-          <template #default="{row}">
-            <span v-if="row[c.name] == null" class="muted" title="缺失值">—</span>
-            <span v-else-if="row[c.name] === ''" class="muted">空字符串</span>
-            <template v-else>{{row[c.name]}}</template>
-          </template>
-        </el-table-column>
-      </el-table>
+      <TableFrame :max-height="theme.table==='fixed'?380:''" v-slot="{tableSize}">
+        <el-table v-bind="tableSize" v-loading="loading" :data="preview.rows" stripe empty-text="无匹配数据">
+          <el-table-column v-for="c in dataset.columns" :key="c.name" :prop="c.name" :label="c.name" min-width="124" show-overflow-tooltip>
+            <template #header><ColumnProfile :dataset-id="dataset.id" :revision="revision" :column="c.name" :theme-key="themeKey"/></template>
+            <template #default="{row}">
+              <span v-if="row[c.name] == null" class="muted" title="缺失值">—</span>
+              <span v-else-if="row[c.name] === ''" class="muted">空字符串</span>
+              <template v-else>{{row[c.name]}}</template>
+            </template>
+          </el-table-column>
+        </el-table>
+      </TableFrame>
       <el-pagination v-model:current-page="page" :total="preview.total" :page-size="20" :pager-count="5" layout="total,prev,pager,next"/>
     </template>
   </section>

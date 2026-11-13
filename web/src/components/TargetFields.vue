@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import FieldSelect from "./FieldSelect.vue"
 import {computed, ref, watch} from 'vue'
 import DictionaryTargets from './DictionaryTargets.vue'
@@ -73,11 +74,13 @@ async function loadPreview() {
       <section v-else class="target-section"><div class="preview-heading"><h3>样本分布 <small>{{config.conditions.length}} 个口径</small></h3>
         <el-button :loading="busy" @click="loadPreview">预览样本分布</el-button></div>
         <p v-if="message" class="target-error" role="alert">{{message}}</p>
-        <el-table v-if="preview" :data="preview" stripe max-height="240" size="small">
-          <el-table-column prop="标签" label="标签" min-width="120"><template #default="{row,$index}">{{row.标签}} <el-tag v-if="training&&$index===(draft.mode==='target'?0:config.primaryIndex)" size="small">主标签</el-tag></template></el-table-column>
-          <el-table-column v-for="k in ['有效样本','好样本','坏样本','剔除样本']" :key="k" :prop="k" :label="k" min-width="72" align="right"/>
-          <el-table-column label="坏样本率" min-width="80" align="right"><template #default="{row}">{{row.坏样本率===null?'—':(100*row.坏样本率).toFixed(2)+'%'}}</template></el-table-column>
-        </el-table>
+        <TableFrame v-if="preview" max-height="240" v-slot="{tableSize}">
+          <el-table v-bind="tableSize" :data="preview" stripe size="small">
+            <el-table-column prop="标签" label="标签" min-width="120"><template #default="{row,$index}">{{row.标签}} <el-tag v-if="training&&$index===(draft.mode==='target'?0:config.primaryIndex)" size="small">主标签</el-tag></template></el-table-column>
+            <el-table-column v-for="k in ['有效样本','好样本','坏样本','剔除样本']" :key="k" :prop="k" :label="k" min-width="72" align="right"/>
+            <el-table-column label="坏样本率" min-width="80" align="right"><template #default="{row}">{{row.坏样本率===null?'—':(100*row.坏样本率).toFixed(2)+'%'}}</template></el-table-column>
+          </el-table>
+        </TableFrame>
       </section>
     </template>
   </section>

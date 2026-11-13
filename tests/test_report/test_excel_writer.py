@@ -1299,27 +1299,45 @@ class TestDataframe2Excel:
         assert ws["D3"].number_format == "0.00%"
         assert ws["E3"].number_format != "0.00%"
 
-    def test_write_with_figures_keeps_gap_before_header(self, monkeypatch):
-        """测试插图后表头会自动下移，避免被图片覆盖"""
+    @pytest.mark.parametrize("entry", ["dataframe2excel", "save"])
+    def test_independent_figure_sizes_and_compact_header(self, tmp_path, entry):
+        from PIL import Image
+        from openpyxl.utils.units import pixels_to_EMU
 
-        def fake_insert_pic2sheet(self, worksheet, fig, insert_space, figsize=(600, 250)):
-            if isinstance(insert_space, str):
-                row = int("".join(ch for ch in insert_space if ch.isdigit()))
-                col = 2
-            else:
-                row, col = insert_space
-            return row + 10, col + 8
-
-        monkeypatch.setattr(ExcelWriter, "insert_pic2sheet", fake_insert_pic2sheet)
-
+        left, right = tmp_path / "分箱.png", tmp_path / "月份.png"
+        Image.new("RGB", (400, 200)).save(left)
+        Image.new("RGB", (800, 200)).save(right)
         writer = ExcelWriter()
         ws = writer.get_sheet_by_name("Test")
+        ws.sheet_format.defaultRowHeight = 18
+        ws.sheet_format.customHeight = True
         df = pd.DataFrame({"A": [1, 2], "B": [3, 4]})
+        options = dict(figures=[left, None, right], figsize=[(600, 350), (80, 80), (1200, 650)], auto_width=True)
+        if entry == "save":
+            df.save(writer, worksheet=ws, **options)
+        else:
+            dataframe2excel(df, writer, sheet_name=ws, **options)
+        # 两张图均为 300px 高；13 行 × 24px 足以容纳，默认再留一行。
+        assert ws["B16"].value == "A"
+        path = tmp_path / "报告.xlsx"
+        writer.save(path)
+        workbook = load_workbook(path)
+        anchors = [image.anchor for image in workbook.active._images]
+        assert [(a.ext.cx, a.ext.cy) for a in anchors] == [(pixels_to_EMU(w), pixels_to_EMU(300)) for w in (600, 1200)]
+        first, second = (a._from for a in anchors)
+        assert first.col == 1 and first.colOff == 0 and first.row == second.row == 1
+        assert second.col > first.col
+        consumed = sum(int((writer._effective_column_width(ws, i) + 18 / 256) * 7) for i in range(first.col + 1, second.col + 1))
+        assert pixels_to_EMU(consumed) + second.colOff == pixels_to_EMU(608)
+        workbook.close()
 
-        dataframe2excel(df, writer, sheet_name=ws, figures=["dummy.png"], start_row=2)
-
-        assert ws["B12"].value is None
-        assert ws["B13"].value == "A"
+    @pytest.mark.parametrize("figsize", [[(100, 20)], [(10, 20), (0, 10)], (10, float("nan"))])
+    def test_invalid_figure_sizes_fail_before_adding_images(self, figsize):
+        writer = ExcelWriter()
+        ws = writer.get_sheet_by_name("图表")
+        with pytest.raises(ValueError, match="figsize"):
+            dataframe2excel(pd.DataFrame({"A": [1]}), writer, sheet_name=ws, figures=["a.png", "b.png"], figsize=figsize)
+        assert not ws._images
 
     @pytest.mark.parametrize("entry", ["dataframe2excel", "save"])
     def test_tall_first_picture_clears_short_rows_before_header(self, tmp_path, entry):
@@ -1590,7 +1608,7 @@ class TestPivotTable:
         pivot_style_names = re.findall(r'<tableStyle name="([^"]+)"[^>]*pivot="1"', styles_xml)
         assert len(pivot_style_names) == len(set(pivot_style_names))
         assert pivot_style_names.count("HSCreditPivotStyle") == 1
-        assert '<dxfs count="2">' in styles_xml
+        assert '<dxfs count="3">' in styles_xml
         self._assert_all_xml_wellformed(self.test_file)
         reloaded = load_workbook(self.test_file)
         assert len(reloaded["透视分析一"]._pivots) == 1
@@ -1650,7 +1668,7 @@ class TestPivotTable:
         assert styles_xml.count('name="HSCreditPivotStyle2"') == 1
         assert 'name="HSCreditPivotStyle3"' not in styles_xml
         assert 'rgb="FF3F1DBA"' in styles_xml
-        assert '<dxfs count="4">' in styles_xml
+        assert '<dxfs count="6">' in styles_xml
 
     def test_source_worksheet_must_belong_to_writer_workbook(self):
         """外部 Workbook 的 Worksheet 不能生成指向当前文件之外的无效数据源。"""
@@ -1835,6 +1853,27 @@ class TestPivotTable:
         ws = writer.get_sheet_by_name("透视表")
         with pytest.raises(ValueError):
             writer.insert_pivot_table2sheet(ws, self.df, "B2", rows="商品类别", values=[("放款金额", "median")])
+
+    def test_same_color_pivots_keep_their_writer_fonts_on_append(self):
+        """同色透视表按字体和字号区分，刷新区域使用明确的全表字体。"""
+        for index, (font, size) in enumerate([("Arial", 10), ("等线", 10), ("等线", 12), ("等线", 12)]):
+            writer = ExcelWriter(style_excel=self.test_file if index else None, font=font, fontsize=size)
+            writer.insert_pivot_table2sheet(worksheet=f"透视{index}", data=self.df, pivot_anchor="B2", rows="商品类别", values=[("放款金额", "sum")])
+            writer.save(self.test_file)
+
+        root = ET.fromstring(self._read(self.test_file, "xl/styles.xml"))
+        styles = {s.get("name"): s for s in root.findall("{*}tableStyles/{*}tableStyle")}
+        dxfs = list(root.find("{*}dxfs"))
+        for index, (font, size, suffix) in enumerate([("Arial", 10, ""), ("等线", 10, "2"), ("等线", 12, "3"), ("等线", 12, "3")], 1):
+            pivot = ET.fromstring(self._read(self.test_file, f"xl/pivotTables/pivotTable{index}.xml"))
+            name = pivot.find("{*}pivotTableStyleInfo").get("name")
+            assert name == "HSCreditPivotStyle" + suffix
+            element = styles[name].find("{*}tableStyleElement[@type='wholeTable']")
+            definition = dxfs[int(element.get("dxfId"))].find("{*}font")
+            assert definition.find("{*}name").get("val") == font
+            assert float(definition.find("{*}sz").get("val")) == size
+            scheme = definition.find("{*}scheme")
+            assert scheme is None or scheme.get("val") == "none"  # openpyxl 重存时省略空字体方案
 
     def test_pivot_theme_style_and_number_formats_injected(self):
         """数据透视表主题样式应适配 writer.theme_color，自定义数字格式应写入 styles.xml。"""

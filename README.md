@@ -9,12 +9,15 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="MIT License"></a>
 </p>
 
-<p align="center"><strong>面向信贷风控的全流程量化工具箱</strong></p>
+<p align="center"><strong>面向信贷全生命周期的量化风控工具箱</strong></p>
 
 <p align="center">🔍 鉴真伪 · 📊 斟信用 · ⚖️ 衡风险 · 🎯 枢定策</p>
 
+信贷风控贯穿获客、授信、用信和贷后管理。在风险可控的前提下扩大盈利业务规模，追求的是**利润额最大化**。在规模不减的前提下降低欺诈与信用损失，追求的是**利润率最大化**。模型识别客群间的风险差异，策略结合产品的收入、成本和预期损失，将风险分层用于准入、额度、定价和催收决策。
 
-**hscredit（衡枢真信）** 是面向信贷风控的 Python 工具箱：从授信数据中筛选能区分风险的变量，用评分卡、机器学习或决策树构建模型与规则，再用历史样本回测新策略的通过率和坏账率。分箱、编码和筛选可直接接入 sklearn Pipeline；从变量初筛到上线评审，都能沿用同一套逾期定义。
+**hscredit（衡枢真信）** 是面向信贷风控的开源 Python 工具箱，涵盖数据接入与探索、特征分箱与编码、变量筛选、评分卡与机器学习建模，以及规则挖掘与策略回测。工具箱支持模型调优、评估与解释，可生成风控图表和 Excel 评审报告，导出评分卡或发布模型与规则预测服务。各模块可在 Python 中组合使用，也可通过 Web 工作台或 Agent Skills 调用。
+
+<a href="docs/assets/brand/hscredit-architecture.svg"><img src="docs/assets/brand/hscredit-architecture.svg" alt="hscredit 信贷风控全生命周期架构，从技术依赖、功能模块和综合评估到风险策略、模型及业务目标" width="100%"></a>
 
 ## 为什么选 hscredit？
 
@@ -141,7 +144,8 @@ writer.save("综合报告.xlsx")
 <tr style="background:#ffffff;"><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;"><a href="hscredit/core/eda" style="color:#c02dd4;"><strong>数据挖掘</strong></a></td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">EDA&nbsp;·&nbsp;VIZ&nbsp;·&nbsp;自动报告</td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">数据摘要、KS、相关性、分布、混淆矩阵、PSI、坏率趋势、多标签报告</td></tr>
 <tr style="background:#dee1fb;"><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;"><a href="hscredit/excel" style="color:#c02dd4;"><strong>Excel 写入</strong></a></td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">原生工作簿交付</td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">条件格式、图片、超链接、冻结窗格、透视表、行高列宽</td></tr>
 <tr style="background:#ffffff;"><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;"><a href="hscredit/database" style="color:#c02dd4;"><strong>数据库读写</strong></a></td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">7&nbsp;类&nbsp;SQL&nbsp;·&nbsp;2&nbsp;类&nbsp;NoSQL</td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">连接池、参数化查询、流式读取、分批写入、元数据</td></tr>
-<tr style="background:#dee1fb;"><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;"><a href="skills/CATALOG.md" style="color:#c02dd4;"><strong>Agent 能力</strong></a></td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">8&nbsp;个&nbsp;Skills</td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">分箱、建模、规则、筛选、绘图与报告交付的自然语言入口</td></tr>
+<tr style="background:#dee1fb;"><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;"><a href="#风控平台" style="color:#c02dd4;"><strong>风控平台</strong></a></td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">浏览器工作台&nbsp;·&nbsp;FastAPI</td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">数据集划分、变量 EDA、规则挖掘、模型选型、三方数据测试、在线预测服务</td></tr>
+<tr style="background:#ffffff;"><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;"><a href="skills/CATALOG.md" style="color:#c02dd4;"><strong>Agent 能力</strong></a></td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">8&nbsp;个&nbsp;Skills</td><td nowrap style="padding:8px 12px; white-space:nowrap; border:0;">分箱、建模、规则、筛选、绘图与报告交付的自然语言入口</td></tr>
 </tbody>
 </table>
 </div>
@@ -204,45 +208,15 @@ python -m pip check
 
 ## 功能展示
 
-<a href="#数据集" style="color:#c02dd4;">数据集</a> · <a href="#特征分箱" style="color:#c02dd4;">特征分箱</a> · <a href="#特征编码" style="color:#c02dd4;">特征编码</a> · <a href="#特征筛选" style="color:#c02dd4;">特征筛选</a> · <a href="#风控建模" style="color:#c02dd4;">风控建模</a> · <a href="#规则分析" style="color:#c02dd4;">规则分析</a> · <a href="#数据挖掘" style="color:#c02dd4;">数据挖掘</a> · <a href="#excel-写入" style="color:#c02dd4;">Excel 写入</a> · <a href="#数据库读写" style="color:#c02dd4;">数据库读写</a> · <a href="#agent-能力" style="color:#c02dd4;">Agent 能力</a> · <a href="#公共方法" style="color:#c02dd4;">公共方法</a>
+<a href="#数据集" style="color:#c02dd4;">数据集</a> · <a href="#特征分箱" style="color:#c02dd4;">特征分箱</a> · <a href="#特征编码" style="color:#c02dd4;">特征编码</a> · <a href="#特征筛选" style="color:#c02dd4;">特征筛选</a> · <a href="#风控建模" style="color:#c02dd4;">风控建模</a> · <a href="#规则分析" style="color:#c02dd4;">规则分析</a> · <a href="#数据挖掘" style="color:#c02dd4;">数据挖掘</a> · <a href="#excel-写入" style="color:#c02dd4;">Excel 写入</a> · <a href="#数据库读写" style="color:#c02dd4;">数据库读写</a> · <a href="#风控平台" style="color:#c02dd4;">风控平台</a> · <a href="#agent-能力" style="color:#c02dd4;">Agent 能力</a> · <a href="#公共方法" style="color:#c02dd4;">公共方法</a>
 
 <a href="examples/29_readme_showcase.ipynb" style="color:#c02dd4;">完整 Notebook 示例</a>
 
 ### 数据集
 
-现金贷订单可按需读取授信特征、放款信息和逐月逾期表现。通过 PyPI 安装后，首次加载优先从 GitHub Release 下载 357.89 MiB 的 Parquet。GitHub 连接失败或 5 秒内平均下载速度低于 100 KiB/s 时，会尝试 Gitee 镜像。文件通过 SHA-256 校验后即可离线使用。用 `split=True` 分开取数，再按业务表现期定义标签，即可跟踪同一变量在不同月份和客群中的风险变化。库中也提供 German Credit、Titanic 和 Iris 数据集，用于比较建模方法。
+hscredit 现金贷数据集包含 **111,929 笔放款订单、8,516 个字段**。每行对应一笔订单，关联 8,493 个授信时点特征、9 个订单字段和 14 个贷后逾期字段，可用于变量分析、策略回测和评分建模。
 
-<div style="max-width:100%; overflow-x:auto;">
-<table style="white-space:nowrap; border-collapse:collapse; font-size:13px;">
-<thead><tr><th style="background:#2639E9; color:white; padding:8px 12px;">项目</th><th style="background:#2639E9; color:white; border-left:2px solid white; padding:8px 12px;">内容</th></tr></thead>
-<tbody>
-<tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">数据集名称</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;"><code>hscredit</code></td></tr>
-<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">格式</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">Parquet 文件 357.89 MiB，完整 DataFrame 约 7.16 GiB</td></tr>
-<tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">行数 / 字段数</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">111,929 / 8,516</td></tr>
-<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">唯一订单 / 唯一客户</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">111,929 / 110,283，同一客户可有多笔订单</td></tr>
-<tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">资金方 / 流量渠道</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">6 / 8</td></tr>
-<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">授信时间范围</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">2023-12-15 09:01:02 至 2024-06-17 21:34:05</td></tr>
-<tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">借款申请时间范围（<code>放款时间</code>）</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">2023-12-15 00:00:00 至 2024-06-17 23:57:25</td></tr>
-<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">观察时点 / 抽数日期</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;"><code>etl_date = 2025-11-07</code></td></tr>
-<tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">拆分后的字段数</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">订单信息 9，逾期数据 14，授信时点特征 X 8,493</td></tr>
-<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">订单信息</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;"><code>放款编码</code>、<code>用户编码</code>、<code>loan_amt</code>、<code>periods</code>、<code>放款银行</code>、<code>流量渠道</code>、<code>授信时间</code>、<code>放款时间</code>、<code>etl_date</code></td></tr>
-<tr style="background:#ffffff;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">逾期数据</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;"><code>DPD</code>、<code>CURRENT_DPD</code>、<code>MOB1</code>、<code>MOB2</code>、<code>MOB3</code>、<code>MOB4</code>、<code>MOB5</code>、<code>MOB6</code>、<code>MOB7</code>、<code>MOB8</code>、<code>MOB9</code>、<code>MOB10</code>、<code>MOB11</code>、<code>MOB12</code></td></tr>
-<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">授信特征</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">多头查询、贷款账户与余额、还款压力、杠杆率、信用卡使用、公积金等授信时点风险信息。</td></tr>
-<tr style="background:#dee1fb;"><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">数据详情描述</td><td nowrap style="padding:7px 12px; border:0; white-space:nowrap;">每行是一笔现金贷放款订单，关联授信时的特征、审批额度与期数，以及放款后的逐期逾期表现。</td></tr>
-</tbody></table>
-</div>
-
-<a href="https://hscredit.hengshucredit.com/datasets.html" style="color:#c02dd4;">数据集文档</a>
-
-MOB1 的 0 天、30 天口径用于短期欺诈风险代理分析，MOB6 的对应口径用于长期信用风险分析。下例以 **MOB6 > 30** 为建模目标。
-
-```python
-from hscredit import hscredit_dataset
-
-order, overdue, X = hscredit_dataset(
-    split=True, columns=["用户编码", "授信时间", "MOB1", "MOB6", "BASE_X187"]
-)
-```
+![现金贷业务流程：流量推送、授信给额、用户借款、出账还款](hscredit/resources/datasets/hscredit-flow.svg)
 
 <details>
 <summary>数据加载、标签与训练集划分</summary>
@@ -250,7 +224,7 @@ order, overdue, X = hscredit_dataset(
 ```python
 import numpy as np
 import pandas as pd
-import hscredit
+from hscredit import hscredit_dataset
 from sklearn.model_selection import GroupShuffleSplit
 
 field_map = {
@@ -269,10 +243,11 @@ field_map = {
     "DK_X515": "现行房贷本月应还款_求和",
     "DK_X1948": "现用贷款本月应还款最大",
 }
+category_map = {"BASE_X61": "行业", "BASINF_X19": "学位"}
 data = hscredit_dataset(
-    columns=["用户编码", "授信时间", "loan_amt", "MOB1", "MOB6", "GROUP", "BASE_X257", "BASE_X304", *field_map]
+    columns=["用户编码", "授信时间", "loan_amt", "MOB1", "MOB6", "GROUP", "BASE_X257", "BASE_X304", *field_map, *category_map]
 )
-df = data.rename(columns=field_map).copy()
+df = data.rename(columns={**field_map, **category_map}).copy()
 df["授信时间"] = pd.to_datetime(df["授信时间"])
 df["授信月份"] = df["授信时间"].dt.to_period("M").astype(str)
 for overdue in ["MOB1", "MOB6"]:
@@ -297,8 +272,6 @@ labels = {"overdue": ["MOB1", "MOB6"], "dpds": [0, 30], "overdue_operator": ">"}
 ```
 
 </details>
-
-<a href="docs/assets/readme/showcase/label-summary.png"><img src="docs/assets/readme/showcase/label-summary.png" alt="四种逾期标签"></a>
 
 ### 特征分箱
 
@@ -407,10 +380,11 @@ bins_2d.show()
 
 <a href="https://hscredit.hengshucredit.com/showcase.html#gallery-bin-tables" style="color:#c02dd4;">在文档中查看分箱统计表</a>
 
-<details>
-<summary>自定义分箱优化目标</summary>
+#### 自定义目标分箱
 
-两个分箱方案的总 IV 可能很接近，但最高风险箱的坏样本率相差很大。制定拦截规则时，可以给最高风险箱的 Lift 加权，让切点更贴合拦截目标。如果策略需要尽量少的档位，也可以给每个额外分箱设置代价，在区分度相近时优先选择切点较少的方案。
+scikit-learn 的 `KBinsDiscretizer` 提供等宽、等频和聚类三种策略，OptBinning 的二分类分箱支持在约束下优化 IV 等预设指标。两者的标准接口均未提供自定义业务目标函数的入口。[scikit-learn 接口](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.KBinsDiscretizer.html) · [OptBinning 接口](https://gnpalencia.org/optbinning/binning_binary.html)
+
+hscredit 将切点选择建模为**带约束的优化问题**。通过 `objective` 指定评分函数，通过箱数、每箱最小样本占比和坏样本率单调性限定可行方案。例如，制定拦截策略时，可以要求最多分 4 箱、每箱至少覆盖 5% 的样本，再按「总 IV + 0.2 × 最高风险箱 Lift」选择切点，兼顾整体区分度与高风险客群识别。`ORBinning` 对自定义目标按函数得分搜索可行分区，IV 等内置目标还可交给 OR-Tools CP-SAT 求解。
 
 `OptimalBinning` 的 `or_tools`、`cp_sat` 和 `genetic` 三种方法都支持下表的复合目标。每个目标都最大化 **总 IV × `iv_weight` + 附加指标 × 对应权重**。`iv_weight` 默认为 1.0。Lift 是箱内坏样本率与总体坏样本率之比，下表的“偏离”指 Lift 与 1 的绝对差。
 
@@ -443,6 +417,7 @@ feature = "最近12个月多头查询次数"
 X_query = X_train[[feature]]
 binner = ORBinning(
     max_n_bins=4,
+    min_bin_size=0.05,
     objective=CustomObjectives.max_lift_iv(lift_weight=0.2),
     n_jobs=1,
 )
@@ -456,6 +431,7 @@ def iv_with_bin_cost(bin_stats, total_good, total_bad, *, cost):
 
 compact_binner = ORBinning(
     max_n_bins=4,
+    min_bin_size=0.05,
     objective=iv_with_bin_cost,
     objective_params={"cost": 0.01},
     n_jobs=1,
@@ -464,8 +440,6 @@ compact_binner.fit(X_query, y_train)
 print("侧重高风险箱的切点", binner.splits_[feature])
 print("计入分箱代价的切点", compact_binner.splits_[feature])
 ```
-
-</details>
 
 <details>
 <summary>分箱图与跨期趋势</summary>
@@ -554,12 +528,18 @@ binner = OptimalBinning(method="quantile", max_n_bins=4, n_jobs=1).fit(X_train, 
 woe = WOEEncoder(n_jobs=1).fit(binner.transform(X_train, metric="indices"), y_train)
 woe.transform(binner.transform(X_test, metric="indices")).show()
 
+category_cols = ["GROUP", "行业", "学位"]
+category_train = train[category_cols]
+category_test = test[category_cols]
+# 每种已知学位取一笔测试订单，两个编码器展示同一组样本。
+preview = category_test.replace(["--", "nan"], np.nan).dropna().drop_duplicates("学位").head(6)
 for encoder in [
-    TargetEncoder(cv=3, n_jobs=1),
+    TargetEncoder(training_mode="oof", cv=3, random_state=42, n_jobs=1),
     CatBoostEncoder(random_state=42, n_jobs=1),
 ]:
-    encoder.fit_transform(train[["GROUP"]], y_train)
-    encoder.transform(test[["GROUP"]]).show()
+    encoder.fit_transform(category_train, y_train)
+    encoded = encoder.transform(category_test)
+    preview.join(encoded.add_suffix("编码")).reset_index(drop=True).show()
 
 pipeline = Pipeline(
     [
@@ -573,29 +553,27 @@ pipeline.transform(X_test).show()
 
 </details>
 
+下表展示同一批测试订单的客群（`GROUP`）、行业和学位，以及各类别按训练集映射得到的编码值。
+
 <table>
 <tr>
-  <th width="1%" align="left">TargetEncoder</th>
-  <th>WOEEncoder</th>
+  <th width="50%">TargetEncoder · 目标均值编码</th>
+  <th width="50%">CatBoostEncoder · 有序目标编码</th>
 </tr>
 <tr>
-  <td colspan="2" align="center">
-    <a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="TargetEncoder" width="8.00%"></a>
-    <a href="docs/assets/readme/showcase/encoder-woe.png"><img src="docs/assets/readme/showcase/encoder-woe.png" alt="WOEEncoder" width="89.00%"></a>
-  </td>
+  <td><a href="docs/assets/readme/showcase/encoder-target.png"><img src="docs/assets/readme/showcase/encoder-target.png" alt="客群、行业和学位的原始类别与目标均值编码" width="100%"></a></td>
+  <td><a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="相同测试样本的客群、行业和学位 CatBoost 编码" width="100%"></a></td>
 </tr>
 </table>
 
 <table>
 <tr>
-  <th width="1%" align="left">CatBoostEncoder</th>
-  <th>Pipeline · 分箱与 WOE</th>
+  <th width="50%">WOEEncoder</th>
+  <th width="50%">Pipeline · 分箱与 WOE</th>
 </tr>
 <tr>
-  <td colspan="2" align="center">
-    <a href="docs/assets/readme/showcase/encoder-catboost.png"><img src="docs/assets/readme/showcase/encoder-catboost.png" alt="CatBoostEncoder" width="8.00%"></a>
-    <a href="docs/assets/readme/showcase/encoder-pipeline.png"><img src="docs/assets/readme/showcase/encoder-pipeline.png" alt="Pipeline · 分箱与 WOE" width="89.00%"></a>
-  </td>
+  <td><a href="docs/assets/readme/showcase/encoder-woe.png"><img src="docs/assets/readme/showcase/encoder-woe.png" alt="WOEEncoder" width="100%"></a></td>
+  <td><a href="docs/assets/readme/showcase/encoder-pipeline.png"><img src="docs/assets/readme/showcase/encoder-pipeline.png" alt="Pipeline · 分箱与 WOE" width="100%"></a></td>
 </tr>
 </table>
 
@@ -728,7 +706,7 @@ card.scorecard_scale().show()
 
 <a href="https://hscredit.hengshucredit.com/showcase.html#gallery-scorecard" style="color:#c02dd4;">在文档中查看评分卡示例</a>
 
-**XGBoost 与超参数搜索。** 用 `.tune()` 指定搜索空间，也可用 `AutoTuner` 的预设空间；Dashboard 查看搜索过程，Pareto 前沿比较多个优化目标。
+**全流程超参搜索。** `ModelTuner` 支持对整个 sklearn Pipeline 联合调参。例如，用 `{"分箱__max_n_bins": [4, 6], "模型__max_depth": [2, 4]}` 同时选择分箱数和模型树深，各步骤在交叉验证的训练折内拟合，选定参数后用 `get_best_model()` 重训完整流程。单个模型也可直接调用 `.tune()`。下例用 XGBoost 搜索树深和学习率，先优化验证 AUC，再用 Pareto 前沿比较 AUC 与训练、验证 KS 差异。
 
 ```python
 from hscredit import XGBoost, AutoTuner
@@ -761,6 +739,25 @@ pareto_tuner = AutoTuner.create(
 pareto_tuner.fit(X_num, y_train, n_trials=8)
 pareto_tuner.plot_pareto_front().show()
 ```
+
+**搜索框架与参数配置。** 下表用同一组 XGBoost 参数展示可直接替换的 `search_space` 写法。`sp` 为 hscredit 提供的兼容声明，`stats` 为 SciPy 分布。各写法均由 Optuna 执行，共用交叉验证、评估指标和结果接口。
+
+```python
+import numpy as np
+from hscredit.core.models.tuning import search_space as sp
+from scipy import stats
+```
+
+| 框架 / 空间写法 | `search_space` 配置示例 | 参数含义 |
+| --- | --- | --- |
+| scikit-learn · GridSearchCV 风格 | `{"max_depth": [2, 3, 4], "learning_rate": [0.03, 0.1]}` | 两组离散候选，共 6 种组合 |
+| scikit-learn · RandomizedSearchCV 风格 | `{"max_depth": stats.randint(2, 5), "learning_rate": stats.loguniform(0.03, 0.1)}` | 树深取 2–4，学习率按对数尺度搜索 |
+| scikit-optimize（skopt）风格 | `{"max_depth": sp.Integer(2, 4), "learning_rate": sp.Real(0.03, 0.1, prior="log-uniform")}` | 显式声明整数维度与对数实数维度 |
+| Hyperopt 风格 | `{"max_depth": sp.choice("max_depth", [2, 3, 4]), "learning_rate": sp.loguniform("learning_rate", np.log(0.03), np.log(0.1))}` | `choice` 指定候选值，`loguniform` 的上下界取自然对数 |
+| Bayesian Optimization（pbounds）风格 | `{"max_depth": (2, 4, int), "learning_rate": (0.03, 0.1)}` | 元组指定含两端的区间，树深限定为整数，学习率按线性尺度搜索 |
+| Optuna 分布 | `{"max_depth": sp.IntDistribution(2, 4), "learning_rate": sp.FloatDistribution(0.03, 0.1, log=True)}` | 也支持直接传入 `optuna.distributions` 的原生分布对象 |
+
+采样算法由 `sampler` 指定，例如 `"tpe"`、`"random"` 或多目标搜索的 `"nsgaii"`。要完整遍历首行的 6 种组合，令 `grid` 为该行字典，在 `AutoTuner.create(...)` 中传入 `search_space=grid, sampler="grid", sampler_kwargs={"search_space": grid}`，并设置 `n_trials=6`。
 
 ![hscredit 主题的 Optuna 搜索过程看板](docs/assets/readme/showcase/tuning-dashboard.png)
 
@@ -913,6 +910,36 @@ amount_report.get_metrics().show()
 <a href="docs/assets/readme/showcase/report-regression.png"><img src="docs/assets/readme/showcase/report-regression.png" alt="回归模型性能报告：预测误差与均值基准、训练集与测试集预测分箱、实际与预测及残差分布"></a>
 
 按原始额度口径，测试集的平均绝对误差为 1,947.49，训练集为 1,940.93。<a href="docs/assets/readme/showcase/regression-model-report.xlsx?raw=true" download style="color:#c02dd4;">下载金额回归报告</a>
+
+**概率校准。** 评分卡通过坏好比 `p / (1 - p)` 将预测坏样本概率 `p` 换算为分数。概率分布反映模型把客户集中在哪些风险区间，校准则检验这些概率是否符合实际表现。例如，预测概率约为 10% 的一组订单，若模型校准良好，到同一表现期应约有 10% 成为坏样本。[scorecardpipeline 评分卡转换说明](https://github.com/itlubber/scorecardpipeline/blob/a5865d8300a02da260942af4f23dc8c9f3ec92f8/docs/source/quickstart.md#评分卡转换)
+
+| `ProbabilityCalibrator` 方法 | 如何调整原始概率 |
+| --- | --- |
+| `platt`（别名 `sigmoid`） | 在对数坏好比上拟合逻辑回归，调整整体概率水平和斜率。 |
+| `isotonic`（保序回归） | 学习单调非递减映射，相邻风险水平可合并为相同概率。 |
+| `beta` | 分别对 `log(p)` 和 `−log(1 − p)` 加权，允许低概率端与高概率端采用不同幅度的修正。 |
+| `histogram`（直方图分箱） | 按原始概率分箱，以校准集各箱的实际坏样本率作为该箱的预测概率，支持等频和等宽分箱。 |
+
+以下沿用现金贷评分卡，以 **MOB6 > 30** 为坏样本，按客户分开训练、校准和测试。16,798 笔测试订单的平均预测概率为 **9.07%**，实际坏样本率为 **9.01%**。`viz.calibration_bias_plot` 按原始概率固定分档，用同一批订单比较各方法。热力图中蓝色表示低估，红色表示高估，数值为该档平均预测概率减去实际坏样本率（百分点）。
+
+<a href="docs/assets/readme/showcase/probability-calibration-bias.png"><img src="docs/assets/readme/showcase/probability-calibration-bias.png" alt="评分卡原始概率分布及未校准、Platt、保序回归、Beta、直方图校准在同一风险档的预测偏差" width="100%"></a>
+
+```python
+from hscredit.core import viz
+
+# predictions 保存各方法在同一测试集的坏样本概率。
+evaluation = pd.DataFrame(predictions, index=y_eval.index)
+fig, bias = viz.calibration_bias_plot(
+    evaluation, score="未校准", target=y_eval, calibrated=["Platt", "保序回归", "Beta", "直方图"],
+    n_bins=10, title="评分卡概率校准 · MOB6 > 30", return_frame=True,
+)
+```
+
+`plot_calibration_comparison` 在同一测试集上对照四种方法和未校准基线。各方法按自身预测概率等频分箱，点在对角线上方表示低估风险，下方表示高估。右图的 Brier 分数衡量逐笔概率预测的均方误差，ECE 衡量各箱按样本占比加权的平均绝对校准误差，两者均越低越好。
+
+<a href="docs/assets/readme/showcase/probability-calibration.png"><img src="docs/assets/readme/showcase/probability-calibration.png" alt="未校准与四种概率校准方法的可靠性曲线、Brier 分数和期望校准误差" width="100%"></a>
+
+本次测试中，未校准时 ECE 为 **0.71 个百分点**，四种校准方法为 **0.76–1.16 个百分点**，原评分卡的整体校准误差最低。[校准 API](docs/api/calibration.rst) · [可复现 Notebook](examples/29_readme_showcase.ipynb#概率校准)
 
 **评分卡部署。** 将同一张评分卡导出为 PMML，供评分引擎直接计算客户分数。Python 服务也可保存并加载整张评分卡，用原始授信字段得到分数。
 
@@ -1238,27 +1265,30 @@ auto_feature_analysis(
 from hscredit.excel import ExcelWriter, dataframe2excel
 from hscredit.core.viz import bin_plot, bin_trend_plot
 
-bin_plot(credit_bins, save="分箱.png")
+bin_plot(credit_bins, title="BASE_X257 分箱 · 信用风险MOB6@60", figsize=(12, 6), dpi=130, save="分箱.png")
 bin_trend_plot(
-    trend_data, feature="BASE_X257", target="信用风险MOB6@60", date="授信时间", n_jobs=1, save="月份.png"
+    trend_data, feature="BASE_X257", target="信用风险MOB6@60", date="授信时间", freq="M",
+    max_n_bins=4, max_cols=4, figsize=(24, 7), title="按授信月份的分箱表现", n_jobs=1, dpi=120, save="月份.png",
 )
 writer = ExcelWriter()
+sheet = writer.get_sheet_by_name("分箱分析")
+sheet.sheet_format.defaultRowHeight = 18
+sheet.sheet_format.customHeight = True
 dataframe2excel(
     bins,
     writer,
-    sheet_name="分箱分析",
+    sheet_name=sheet,
     title="BASE_X257 · 双标签分箱报告",
     figures=["分箱.png", "月份.png"],
-    image_bottom_padding_rows=4,
+    figsize=[(600, 350), (1200, 650)],
+    image_bottom_padding_rows=1,
     percent_cols=["样本占比", "坏样本率", "坏账改善"],
     color_cols=["样本占比", "坏样本率", "LIFT值"],
     centered_bar_cols=["坏账改善"],
     auto_width=True,
 )
-sheet = writer.get_sheet_by_name("分箱分析")
 writer.set_freeze_panes(sheet, "D5")
 writer.set_column_width(sheet, "B", 26)
-writer.set_row_height(sheet, 2, 30)
 writer.insert_value2sheet(sheet, "B1", "查看透视分析", bold=True, font_color="2639E9")
 writer.insert_hyperlink2sheet(sheet, "B1", sheet="透视分析", target_space="B2")
 writer.insert_pivot_table2sheet(
@@ -1284,6 +1314,10 @@ writer.insert_pivot_table2sheet(
     ],
     theme_style=True,
 )
+# 三张工作表共用默认行高，固定后 Excel 不再按内容逐行调高。
+for worksheet in writer.workbook.worksheets:
+    worksheet.sheet_format.defaultRowHeight = 18
+    worksheet.sheet_format.customHeight = True
 writer.save("Excel功能展示.xlsx")
 ```
 
@@ -1291,7 +1325,9 @@ writer.save("Excel功能展示.xlsx")
 
 <a href="docs/assets/readme/showcase/excel-showcase.png"><img src="docs/assets/readme/showcase/excel-showcase.png" alt="分箱表、多图与条件格式"></a>
 
-<a href="docs/assets/readme/showcase/excel-pivot.png"><img src="docs/assets/readme/showcase/excel-pivot.png" alt="客群与授信月份原生透视表"></a>
+**原生数据透视表。** 按客群和授信月份汇总额度与金额占比，刷新后沿用 `ExcelWriter` 的字体、字号和主题色。
+
+<a href="docs/assets/readme/showcase/excel-pivot.png"><img src="docs/assets/readme/showcase/excel-pivot.png" alt="客群与授信月份原生透视表，展示额度合计、金额占比和总计"></a>
 
 <a href="docs/assets/readme/showcase/excel-showcase.xlsx?raw=true" download style="color:#c02dd4;">下载 Excel 功能展示工作簿</a>
 
@@ -1304,8 +1340,8 @@ writer.save("Excel功能展示.xlsx")
 | SQL | MySQL / MariaDB、Hive、Impala、Oracle、StarRocks、ClickHouse、MaxCompute | 参数化查询、流式读取、批量与流式写入、表结构检查；依后端能力选择模式 |
 | NoSQL | MongoDB、Redis | 统一 `read / read_one / read_many` 与 `write / write_one / write_many`，文档 / 键值操作 |
 
-<details>
-<summary>SQL 流式读写</summary>
+
+**SQL 流式读写**
 
 ```python
 import os
@@ -1330,10 +1366,9 @@ with Database("mysql", **connection) as source, Database(
         )
 ```
 
-</details>
 
-<details>
-<summary>NoSQL 文档读写</summary>
+
+**NoSQL 文档读写**
 
 ```python
 with Database(
@@ -1343,28 +1378,9 @@ with Database(
     mongo.write_many("credit_features_demo", [{"样本编号": "演示001", "评分": 650}])
 ```
 
-</details>
 
 <a href="docs/api/database.rst" style="color:#c02dd4;">数据库 API</a>
 
-### Agent 能力
-
-通过自然语言调用八个 Skills，从发现可用操作、评估变量和筛选特征，到训练解释模型、回测规则、绘图和交付 Excel。可以让 ChatGPT 针对一个问题返回结果，也可以让它在同一份数据上依次调用多个能力。
-
-```bash
-python skills/install.py --suite hscredit
-```
-
-| Skill | 功能与作用 | 用户对 ChatGPT 说 | 返回结果 |
-| --- | --- | --- | --- |
-| <a href="skills/hscredit/SKILL.md" style="color:#c02dd4;">hscredit</a> | 发现能力、选择操作与规划流程 | “我上传了现金贷数据，请帮我规划变量分析和建模流程，并选择合适的 hscredit 能力。” | 识别字段与目标，选择分箱、筛选、建模和报告入口 |
-| <a href="skills/hsbin/SKILL.md" style="color:#c02dd4;">hsbin</a> | 比较分箱方法，评估变量分档风险与稳定性 | “请调用 hsbin，分析 BASE_X187 在 MOB1、MOB6 的 0 天和 30 天口径下的表现，比较分箱方法。” | 多标签分箱表、方法摘要和分箱图 |
-| <a href="skills/hsselect/SKILL.md" style="color:#c02dd4;">hsselect</a> | 筛选候选特征，解释保留或剔除原因 | “请用 hsselect 以 MOB6 > 30 筛选这批授信字段，告诉我保留和剔除的原因。” | 特征清单、阶段汇总与逐特征决策 |
-| <a href="skills/hsmodel/SKILL.md" style="color:#c02dd4;">hsmodel</a> | 训练、调优、解释模型并导出推理制品 | “请用 hsmodel 训练 XGBoost，以 AUC 调参，在独立测试集评估并解释高风险样本。” | 最佳模型、测试指标与解释表；SHAP 图通过 hsviz 生成 |
-| <a href="skills/hsrule/SKILL.md" style="color:#c02dd4;">hsrule</a> | 执行规则、评估规则集和策略置换效果 | “请调用 hsrule，比较多头查询和月应还额规则，分析置入置出及客群差异。” | 多规则效果、策略置换结果和迭代报告 |
-| <a href="skills/hsviz/SKILL.md" style="color:#c02dd4;">hsviz</a> | 绘制变量、模型、评分和稳定性图表 | “请用 hsviz 为这份模型预测结果绘制 KS、ROC、混淆矩阵和按授信月份的坏率趋势。” | hscredit 字体与配色的原生图表 |
-| <a href="skills/hsreport/SKILL.md" style="color:#c02dd4;">hsreport</a> | 汇总变量、模型或策略的完整分析报告 | “请调用 hsreport，把训练集和测试集的四种 MOB 标签整理成可下载的模型评估 Excel。” | 多数据集、多标签的最终报告工作簿 |
-| <a href="skills/hsexcel/SKILL.md" style="color:#c02dd4;">hsexcel</a> | 编排多表、图像与单元格格式 | “请用 hsexcel 把分箱表和两张图写入 Excel，设置百分比、条件格式、冻结窗口和客群汇总表。” | 包含多表、图像与格式的最终 Excel |
 
 ## 公共方法
 
@@ -1383,7 +1399,7 @@ sample = orders.iloc[np.random.choice(len(orders), size=2000, replace=False)].co
 
 ### DataFrame 与 Series 的并行 apply
 
-`import hscredit` 会注册 pandas 访问器。`n_jobs=2` 指定最多使用两个工作单元，适合拆分较耗时的自定义函数。下面分别按行估算每期本金、按元素划分逾期档位。
+`import hscredit` 后，直接用 `.hscredit.apply(...)` 即可按默认并行配置执行，自动分配并行预算并显示进度。下面用 DataFrame 按行估算每期本金，用 Series 按元素划分逾期档位。
 
 ```python
 def principal_per_period(row):
@@ -1396,10 +1412,12 @@ def overdue_band(days):
         return "超过30天"
     return "1至30天" if days > 0 else "0天"
 
-principal = sample[["loan_amt", "periods"]].hscredit(n_jobs=2).apply(
-    principal_per_period, axis=1
-)
-bands = sample["MOB3"].hscredit(n_jobs=2).apply(overdue_band)
+terms = sample[["loan_amt", "periods"]]
+principal = terms.hscredit.apply(principal_per_period, axis=1)
+bands = sample["MOB3"].hscredit.apply(overdue_band)
+
+# 也可显式限制并行预算并关闭进度条
+principal_limited = terms.hscredit(n_jobs=2, bar=False).apply(principal_per_period, axis=1)
 ```
 
 ### 单字段与分组描述
@@ -1441,6 +1459,41 @@ save_pickle({"额度": amount_profile, "渠道": channel_profile}, "字段描述
 profiles = load_pickle("字段描述.pkl")
 profiles["渠道"].head()
 ```
+
+
+### 风控平台
+
+支持训练集、测试集和时间外样本划分，提供各数据集的分布统计、单变量 EDA 和多变量交互分析。策略挖掘涵盖单变量分箱、双变量交叉分箱和多变量决策树规则提取，可跨样本回测规则集的通过率与坏样本率。模型构建支持特征筛选、超参数搜索和多模型对比选型。平台可生成策略评估、模型评估和三方数据测试报告，并将规则集或模型发布为在线预测 API。
+
+运行 `python -m hscredit web --demo` 打开示例工作台。[平台使用指南](docs/platform.md)
+
+**功能演示**
+
+<a href="docs/assets/readme/showcase/web-datasets.png"><img src="docs/assets/readme/showcase/web-datasets.png" alt="衡枢风控平台数据集管理" width="100%"></a>
+
+<a href="docs/assets/readme/showcase/web-tree-report.png"><img src="docs/assets/readme/showcase/web-tree-report.png" alt="衡枢风控平台决策树规则挖掘" width="100%"></a>
+
+<a href="docs/assets/readme/showcase/web-swap-out-report.png"><img src="docs/assets/readme/showcase/web-swap-out-report.png" alt="衡枢风控平台策略置换报告，两条规则在三个逾期口径下的通过率与坏样本率变化" width="100%"></a>
+
+### Agent 能力
+
+通过自然语言调用八个 Skills，从发现可用操作、评估变量和筛选特征，到训练解释模型、回测规则、绘图和交付 Excel。可以让 ChatGPT 针对一个问题返回结果，也可以让它在同一份数据上依次调用多个能力。
+
+```bash
+python skills/install.py --suite hscredit
+```
+
+| Skill | 功能与作用 | 用户对 ChatGPT 说 | 返回结果 |
+| --- | --- | --- | --- |
+| <a href="skills/hscredit/SKILL.md" style="color:#c02dd4;">hscredit</a> | 发现能力、选择操作与规划流程 | “我上传了现金贷数据，请帮我规划变量分析和建模流程，并选择合适的 hscredit 能力。” | 识别字段与目标，选择分箱、筛选、建模和报告入口 |
+| <a href="skills/hsbin/SKILL.md" style="color:#c02dd4;">hsbin</a> | 比较分箱方法，评估变量分档风险与稳定性 | “请调用 hsbin，分析 BASE_X187 在 MOB1、MOB6 的 0 天和 30 天口径下的表现，比较分箱方法。” | 多标签分箱表、方法摘要和分箱图 |
+| <a href="skills/hsselect/SKILL.md" style="color:#c02dd4;">hsselect</a> | 筛选候选特征，解释保留或剔除原因 | “请用 hsselect 以 MOB6 > 30 筛选这批授信字段，告诉我保留和剔除的原因。” | 特征清单、阶段汇总与逐特征决策 |
+| <a href="skills/hsmodel/SKILL.md" style="color:#c02dd4;">hsmodel</a> | 训练、调优、解释模型并导出推理制品 | “请用 hsmodel 训练 XGBoost，以 AUC 调参，在独立测试集评估并解释高风险样本。” | 最佳模型、测试指标与解释表；SHAP 图通过 hsviz 生成 |
+| <a href="skills/hsrule/SKILL.md" style="color:#c02dd4;">hsrule</a> | 执行规则、评估规则集和策略置换效果 | “请调用 hsrule，比较多头查询和月应还额规则，分析置入置出及客群差异。” | 多规则效果、策略置换结果和迭代报告 |
+| <a href="skills/hsviz/SKILL.md" style="color:#c02dd4;">hsviz</a> | 绘制变量、模型、评分和稳定性图表 | “请用 hsviz 为这份模型预测结果绘制 KS、ROC、混淆矩阵和按授信月份的坏率趋势。” | hscredit 字体与配色的原生图表 |
+| <a href="skills/hsreport/SKILL.md" style="color:#c02dd4;">hsreport</a> | 汇总变量、模型或策略的完整分析报告 | “请调用 hsreport，把训练集和测试集的四种 MOB 标签整理成可下载的模型评估 Excel。” | 多数据集、多标签的最终报告工作簿 |
+| <a href="skills/hsexcel/SKILL.md" style="color:#c02dd4;">hsexcel</a> | 编排多表、图像与单元格格式 | “请用 hsexcel 把分箱表和两张图写入 Excel，设置百分比、条件格式、冻结窗口和客群汇总表。” | 包含多表、图像与格式的最终 Excel |
+
 
 ## 品牌色与语义配色
 

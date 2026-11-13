@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import {requestSchema, rulesSchema} from '../editor-context'
 import CodeEditor from './CodeEditor.vue'
 import ServiceCalls from './ServiceCalls.vue'
@@ -23,7 +24,9 @@ onMounted(refresh)
 </script>
 <template>
   <el-alert v-if="error" :title="error" type="error" closable @close="error=''"/>
-  <section class="panel"><div class="panel-heading"><h2>已发布服务</h2><div><el-button @click="refresh">刷新</el-button><el-button type="primary" @click="publishing=true">发布服务</el-button></div></div><el-table :data="services"><el-table-column prop="name" label="服务名称"/><el-table-column label="状态"><template #default="{row}"><el-tag :type="row.enabled?'success':'info'">{{row.enabled?'已上线':'已下线'}}</el-tag></template></el-table-column><el-table-column prop="endpoint" label="预测API" min-width="224"/><el-table-column label="管理" min-width="320"><template #default="{row}"><el-button link type="primary" @click="callService=row">调用记录</el-button><el-button link @click="docs(row)">文档与调试</el-button><el-button link @click="toggle(row)">{{row.enabled?'下线':'上线'}}</el-button><el-button link @click="rotate(row)">重新生成令牌</el-button></template></el-table-column></el-table></section>
+  <section class="panel"><div class="panel-heading"><h2>已发布服务</h2><div><el-button @click="refresh">刷新</el-button><el-button type="primary" @click="publishing=true">发布服务</el-button></div></div><TableFrame v-slot="{tableSize}">
+  <el-table v-bind="tableSize" :data="services"><el-table-column prop="name" label="服务名称"/><el-table-column label="状态"><template #default="{row}"><el-tag :type="row.enabled?'success':'info'">{{row.enabled?'已上线':'已下线'}}</el-tag></template></el-table-column><el-table-column prop="endpoint" label="预测API" min-width="224"/><el-table-column label="管理" min-width="320"><template #default="{row}"><el-button link type="primary" @click="callService=row">调用记录</el-button><el-button link @click="docs(row)">文档与调试</el-button><el-button link @click="toggle(row)">{{row.enabled?'下线':'上线'}}</el-button><el-button link @click="rotate(row)">重新生成令牌</el-button></template></el-table-column></el-table>
+</TableFrame></section>
   <el-dialog v-model="publishing" title="发布推理服务" width="min(760px, 95vw)" :close-on-click-modal="!busy"><el-alert v-if="error" :title="error" type="error" :closable="false"/>
     <el-form label-position="top"><div class="form-grid"><el-form-item label="服务名称"><el-input v-model="name" maxlength="100"/></el-form-item><el-form-item label="发布来源"><el-select v-model="source"><el-option label="策略／模型任务产物" value="job"/><el-option label="手工上传 hscredit 模型" value="upload"/><el-option label="手写 RuleSet" value="rules"/></el-select></el-form-item>
       <template v-if="source==='job'"><el-form-item label="成功任务"><el-select v-model="jobId" filterable><el-option v-for="j in jobs" :key="j.id" :value="j.id" :label="`${j.dataset_name} · ${j.created_at}`"/></el-select></el-form-item><el-form-item label="模型文件"><el-select v-model="file"><el-option v-for="f in selected?.artifacts.filter(f=>f.startsWith('model')&&f.endsWith('.joblib'))||[]" :key="f" :value="f"/></el-select></el-form-item></template>

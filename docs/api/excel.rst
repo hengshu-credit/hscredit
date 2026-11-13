@@ -51,6 +51,13 @@ Excel ``hscredit.excel``
 删除批注；传 ``Comment`` 对象时保留其作者、宽度和高度。这里生成的是普通文本批注，不支持
 账号头像或在线会话式评论界面；详见 `openpyxl 批注文档 <https://openpyxl.readthedocs.io/en/stable/comments.html>`_。
 
+.. rubric:: 多图并排写入
+
+``dataframe2excel(..., figures=[左图, 右图], figsize=[(600, 350), (1200, 650)])``
+可为每张图指定独立的宽高上限（像素），保留原始宽高比。传单个尺寸对时所有图片共用。
+传入逐图尺寸时，多图顶端对齐，按实际宽度从左到右排列。设置 ``image_bottom_padding_rows=0`` 时，
+表头接在最高图片下方的第一个完整行。自定义默认行高应在插图前设置。
+
 .. rubric:: 行高与列宽
 
 ``set_row_height`` 设置单行固定高度，``adjust_rows_height`` 与 ``adjust_columns_width``

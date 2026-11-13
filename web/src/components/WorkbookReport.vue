@@ -5,11 +5,13 @@ import {Document, Download, FullScreen, Grid, List} from '@element-plus/icons-vu
 import {api, download} from '../api'
 import {ROWS, COLUMN_WIDTH, useWorkbookViewport} from '../workbook-viewport'
 import ReportImage from './ReportImage.vue'
+import TableFrame from './TableFrame.vue'
 
 const props = defineProps({job:{type:Object,required:true}, foldable:Boolean, preferredFile:String})
 const root = ref(null), opened = ref(!props.foldable), fullscreen = ref(false)
 const files = computed(() => (props.job.artifacts || []).filter(name=>name.endsWith('.xlsx')))
 const file=ref(''), sheet=ref(''), pane=ref(null), saving=ref(false)
+const readerHeight=ref(null)
 const path=computed(()=>'/jobs/'+props.job.id+'/workbooks/'+encodeURIComponent(file.value))
 // 一个窗口容纳常规订单与金额宽表，更宽的工作表仍按可见列加载。
 const windowSpan=64
@@ -119,7 +121,8 @@ onBeforeUnmount(()=>document.removeEventListener('fullscreenchange',onFullscreen
             </el-select>
             <span>{{preview.height.toLocaleString()}} 行 · {{preview.width}} 列</span>
           </div>
-          <article ref="pane" class="sheet-viewport" :style="{'--content-height':offsets.at(-1)+'px'}" tabindex="0" :aria-label="preview.sheet+'工作表内容'" @scroll.passive="scroll">
+          <TableFrame v-model="readerHeight" class="sheet-frame" v-slot="{viewportStyle}">
+          <article ref="pane" class="sheet-viewport" :style="[viewportStyle,{'--content-height':offsets.at(-1)+'px'}]" tabindex="0" :aria-label="preview.sheet+'工作表内容'" @scroll.passive="scroll">
             <div class="sheet-canvas" :style="{height:offsets.at(-1)+'px',width:wide?preview.width*COLUMN_WIDTH+'px':'100%'}">
             <section v-for="paper in papers" :key="preview.sheet+':'+paper.first" class="sheet-band" :style="{top:offsets[paper.first-1]+'px'}">
               <div v-measure="paper" class="report-paper" :class="{'wide-paper':wide}">
@@ -135,7 +138,7 @@ onBeforeUnmount(()=>document.removeEventListener('fullscreenchange',onFullscreen
                 <template v-else>{{block.cell.text}}</template>
               </p>
               <div v-else-if="block.type==='pictures'" class="report-figures" :style="blockStyle(block)" :data-row="block.row">
-                <ReportImage v-for="p in block.pictures" :key="p.index+'-'+p.col+'-'+p.row" lazy :path="path+'/images/'+p.index+'?sheet='+encodeURIComponent(preview.sheet)" :title="preview.sheet+' · 图 '+(p.index+1)"/>
+                <ReportImage v-for="p in block.pictures" :key="p.index+'-'+p.col+'-'+p.row" lazy :tree="file==='tree_report.xlsx'" :path="path+'/images/'+p.index+'?sheet='+encodeURIComponent(preview.sheet)" :title="preview.sheet+' · 图 '+(p.index+1)"/>
               </div>
               <div v-else class="report-tables" :class="{parallel:block.tables}">
               <div v-for="part in (block.tables || [block])" :key="part.left" class="report-table-scroll" :style="tableStyle(part,block)" tabindex="0" role="region" :aria-label="preview.sheet+'表格'">
@@ -153,6 +156,7 @@ onBeforeUnmount(()=>document.removeEventListener('fullscreenchange',onFullscreen
             </section>
             </div>
           </article>
+          </TableFrame>
           <footer class="reader-paging">
             <span>行 {{(currentPage-1)*ROWS+1}}–{{Math.min(preview.height,currentPage*ROWS)}} / {{preview.height}}</span>
             <span role="status" class="load-state">{{pending?'正在读取…':''}}</span>

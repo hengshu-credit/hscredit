@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import {computed} from 'vue'
 import {modelDescription,modelOptions,modelParameterSpecs,selectedModelParameters} from '../model-options'
 import OptionalParameters from './OptionalParameters.vue'
@@ -41,18 +42,20 @@ function applyModel(key,values,extra){
   </el-form-item></div>
   <OptionalParameters context="estimator" v-if="!sharedEditor&&!compare&&rows.length" :key="rows[0].key" :title="rows[0].name+'参数'" :specs="rows[0].specs" :values="rows[0].params"
     :extensions="extraGroup(rows[0])" :overrides="extraValues(rows[0])" @apply="(values,extra)=>applyModel(rows[0].key,values,extra)"/>
-  <el-table v-if="compare&&rows.length" :data="rows" row-key="key" stripe aria-label="对比模型参数列表" class="comparison-models">
-    <el-table-column prop="className" label="类名" min-width="150" show-overflow-tooltip/>
-    <el-table-column prop="name" label="模型名" min-width="105" show-overflow-tooltip/>
-    <el-table-column prop="description" label="描述" min-width="175" show-overflow-tooltip/>
-    <el-table-column prop="json" label="参数" min-width="185" :show-overflow-tooltip="{popperClass:'model-params-tip'}">
-      <template #default="{row}"><code class="model-json" :aria-label="row.name+'参数 JSON'">{{row.json}}</code></template>
-    </el-table-column>
-    <el-table-column label="操作" width="94" fixed="right"><template #default="{row}">
-      <OptionalParameters context="estimator" :key="row.key" row-editor :title="row.name+'参数'" :specs="row.specs" :values="row.params"  :extensions="extraGroup(row)" :overrides="extraValues(row)" @apply="(values,extra)=>applyModel(row.key,values,extra)"/>
+  <TableFrame v-if="compare&&rows.length" v-slot="{tableSize}">
+    <el-table v-bind="tableSize" :data="rows" row-key="key" stripe aria-label="对比模型参数列表" class="comparison-models">
+      <el-table-column prop="className" label="类名" min-width="150" show-overflow-tooltip/>
+      <el-table-column prop="name" label="模型名" min-width="105" show-overflow-tooltip/>
+      <el-table-column prop="description" label="描述" min-width="175" show-overflow-tooltip/>
+      <el-table-column prop="json" label="参数" min-width="185" :show-overflow-tooltip="{popperClass:'model-params-tip'}">
+        <template #default="{row}"><code class="model-json" :aria-label="row.name+'参数 JSON'">{{row.json}}</code></template>
+      </el-table-column>
+      <el-table-column label="操作" width="94" fixed="right"><template #default="{row}">
+        <OptionalParameters context="estimator" :key="row.key" row-editor :title="row.name+'参数'" :specs="row.specs" :values="row.params"  :extensions="extraGroup(row)" :overrides="extraValues(row)" @apply="(values,extra)=>applyModel(row.key,values,extra)"/>
 
-    </template></el-table-column>
-  </el-table>
+      </template></el-table-column>
+    </el-table>
+  </TableFrame>
 </template>
 
 <style>

@@ -366,6 +366,7 @@ else:
         "gain_plot",
         "confusion_matrix_plot",
         "calibration_plot",
+        "calibration_bias_plot",
         "score_dist_plot",
         "score_bin_plot",
         "threshold_analysis_plot",

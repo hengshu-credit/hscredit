@@ -804,6 +804,20 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
     ws = writer.get_sheet_by_name(sheet)
     left_col = 2
     right_col = left_col + len(left.columns) + 1
+    sizes = []
+    for path, table in zip(figures or (), (left, right)):
+        with Image.open(path) as image:
+            # 相比原来的表宽适当放大，限制宽树在工作表中的初始占用，保留原图供缩放。
+            width = min(image.width, 1600, len(table.columns) * 78)
+            sizes.append((width, width * image.height / image.width))
+    if sizes and right is not None:
+        # 左树宽于订单表时，将金额图和金额表一起右移，中间仍有空列。
+        available = 0
+        col = left_col
+        while available < sizes[0][0]:
+            available += int(writer._effective_column_width(ws, col) * 7)
+            col += 1
+        right_col = max(right_col, col + 1)
     end_col = right_col + len(right.columns) - 1 if right is not None else left_col + len(left.columns) - 1
     writer.insert_value2sheet(ws, (row, left_col), value=title, style="header_middle", align={"horizontal": "left"}, end_space=(row, end_col))
     writer.insert_value2sheet(
@@ -830,10 +844,7 @@ def _write_pair(writer, sheet, row, title, left, right, description, figures=Non
         )
         if figures:
             path = figures[index]
-            with Image.open(path) as image:
-                width = min(1400, len(table.columns) * 61)
-                size = (width, round(width * image.height / image.width))
-            end, _ = writer.insert_pic2sheet(ws, path, (subtitle + 2, col), figsize=size)
+            end, _ = writer.insert_pic2sheet(ws, path, (subtitle + 2, col), figsize=sizes[index])
             ws._images[-1].ref = BytesIO(Path(path).read_bytes())
             table_row = max(table_row, end + 1)
     end_row = table_row

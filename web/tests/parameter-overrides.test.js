@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {parameterRows, parseRows} from '../src/parameter-overrides.js'
+import {parameterRows, parseRows, parameterDocument, readParameterDocument} from '../src/parameter-overrides.js'
 import {orderParameters} from '../src/workflow-parameters.js'
 
 const groups={binning:{params:{monotonic:{},missing_separate:{},user_splits:{},special_codes:{},cat_cutoff:{}},methods:{tree:{max_depth:{}}}}}
@@ -31,4 +31,55 @@ test('切换算法、重复参数及无效 JSON 都不能静默提交',()=>{
   assert.throws(()=>parseRows(rows,groups,'quantile'),/max_depth/)
   assert.throws(()=>parseRows([...rows,...rows],groups,'tree'),/重复/)
   assert.throws(()=>parseRows([{...rows[0],text:'[1,'}],groups,'tree'),/JSON/)
+})
+
+const specs = [
+  {key:'method', default:'quantile', choices:['quantile','tree'].map(value=>({value}))},
+  {key:'max_n_bins', default:5, min:2, max:50},
+]
+const plain = obj => JSON.parse(JSON.stringify(obj))
+
+test('表单直接输入文本和布尔值，JSON 改名、改值、删除后可继续用表单编辑',()=>{
+  const rows = [
+    {scope:'binning', name:'monotonic', text:'auto_asc_desc'},
+    {scope:'binning', name:'missing_separate', text:'true'},
+  ]
+  const document = parameterDocument(specs, {method:'tree',max_n_bins:8}, parseRows(rows,groups,'tree'), groups)
+  assert.deepEqual(document, {method:'tree',max_n_bins:8,monotonic:'auto_asc_desc',missing_separate:true})
+  delete document.monotonic
+  delete document.max_n_bins
+  Object.assign(document, {missing_separate:false, max_depth:2, special_codes:[0], cat_cutoff:null})
+  const {values,overrides} = readParameterDocument(JSON.stringify(document),specs,groups)
+  assert.deepEqual(values, {method:'tree',max_n_bins:5})
+  assert.deepEqual(plain(overrides), {binning:{missing_separate:false,max_depth:2,special_codes:[0],cat_cutoff:null}})
+  assert.deepEqual(plain(parseRows(parameterRows(overrides),groups,values.method)),plain(overrides))
+})
+
+test('JSON 字符串中的保留字、结构和空白往返后保留原始类型',()=>{
+  for(const value of ['auto', 'true', 'False', 'null', '12', '[]', '{', '', '  名称 ', '"标签"', false, 0, [], {x:[1,null]}]){
+    const {overrides} = readParameterDocument(JSON.stringify({monotonic:value}),[],groups)
+    const rows = parameterRows(overrides)
+    assert.deepEqual(parseRows(rows,groups).binning.monotonic,value)
+  }
+})
+
+test('模型参数、搜索空间对象和多个用途的同名值独立往返',()=>{
+  const modelSpecs = [...specs, {key:'model:method',apiName:'method',default:'platt'},
+    {key:'model:max_depth',apiName:'max_depth',default:3,jsonValue:true}, {key:'search_spaces',default:'{}',type:'json'}]
+  const modelGroups = {roc:{params:{title:{}}}, ks:{params:{title:{}}}}
+  const doc = {method:'tree','model.method':'beta',max_depth:null,search_spaces:{rf:{max_depth:[2,5]}},'roc.title':'ROC','ks.title':'KS'}
+  const {values,overrides} = readParameterDocument(JSON.stringify(doc),modelSpecs,modelGroups)
+  assert.equal(values['model:method'],'beta')
+  assert.equal(values['model:max_depth'],null)
+  assert.deepEqual(JSON.parse(values.search_spaces),doc.search_spaces)
+  assert.deepEqual(parameterDocument(modelSpecs,values,overrides,modelGroups),{...doc,max_n_bins:5})
+  assert.throws(()=>readParameterDocument('{"title":"?"}',modelSpecs,modelGroups),/roc.title.*ks.title/)
+})
+
+test('无效文档、重复键、错误类型和不适用于当前方法的参数被拒绝',()=>{
+  for (const json of ['{', '[]', 'null','{"missing_separate":true,"missing_separate":false}',
+    '{"monotonic":true,"binning.monotonic":false}', '{"missing_sep":true}', '{"max_depth":4}',
+    '{"max_n_bins":"6"}', '{"max_n_bins":80}', '{"method":"unknown"}', '{"toString.title":42}']){
+    assert.throws(()=>readParameterDocument(json,specs,groups))
+  }
 })

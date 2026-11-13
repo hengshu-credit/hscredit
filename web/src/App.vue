@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './components/TableFrame.vue'
 import {addFields} from './field-selection'
 import FieldSelect from "./components/FieldSelect.vue"
 import SamplePlan from './components/SamplePlan.vue'
@@ -274,26 +275,28 @@ onBeforeUnmount(()=>{clearInterval(timer);compactQuery.removeEventListener('chan
               </div>
             </div>
             <el-empty v-if="!datasets.length" description="导入第一份数据，开始风控分析"><el-button type="primary" @click="uploadOpen=true">导入数据集</el-button></el-empty>
-            <el-table v-else ref="assetTable" :data="assetTree" default-expand-all :indent="24" stripe :max-height="theme.table==='fixed'?420:''" @row-click="clickAsset" @row-dblclick="toggleAssetBranch" row-key="id" :row-class-name="({row})=>row.id===datasetId?'current-row':''">
-              <el-table-column label="数据集名称" min-width="240"><template #default="{row}">
-                <span class="dataset-name" :class="{'dataset-group':row.isGroup||row.group_path}" :title="row.children.length?(row.isGroup?'双击展开或折叠':'单击预览，双击展开或折叠'):undefined"><el-icon><FolderOpened v-if="row.isGroup||row.group_path"/><Coin v-else/></el-icon>{{row.name}}</span>
-              </template></el-table-column>
-              <el-table-column prop="rows" label="样本量" width="96" sortable/>
-              <el-table-column label="字段数" width="80"><template #default="{row}"><template v-if="!row.isGroup">{{row.columns.length}}</template></template></el-table-column>
-              <el-table-column label="缺失比例" width="96"><template #default="{row}"><template v-if="!row.isGroup">{{(row.missing_rate*100).toFixed(2)}}%</template></template></el-table-column>
-              <el-table-column label="导入时间" min-width="160"><template #default="{row}"><template v-if="!row.isGroup">{{new Date(row.created_at).toLocaleString()}}</template></template></el-table-column>
-              <el-table-column label="操作" width="224" :fixed="compact?undefined:'right'"><template #default="{row}">
-                <template v-if="!row.isGroup">
-                  <el-button v-if="row.parent_id&&!row.group_path" link type="primary" title="调整生成此子集的方案" @click.stop="editSplit(row)">重划</el-button>
-                  <el-button link type="primary" :title="row.group_path?'调整分组并更新整体方案':row.parent_id?'划分此子集':'配置数据集划分'" @click.stop="openSplit(row)">{{row.parent_id&&!row.group_path?'细分':'划分'}}</el-button>
-                  <el-button v-if="!row.parent_id" link type="primary" title="复制数据集并配置新划分" :loading="copyingId===row.id" :disabled="!!copyingId" @click.stop="copyAndSplit(row)">复制</el-button>
-                  <el-button link type="primary" title="加工字段" @click.stop="openProcessing(row)">加工</el-button>
-                  <el-button v-if="!row.group_path" link type="primary" title="修改数据集名称" @click.stop="renameDataset(row)">改名</el-button>
-                  <el-button v-if="row.parent_id&&!row.group_path" link type="danger" title="删除所属划分方案" @click.stop="removeSplit(row)">删除</el-button>
-                  <el-button v-else-if="!row.parent_id" link type="danger" title="删除数据集" @click.stop="deleteDataset(row)">删除</el-button>
-                </template>
-              </template></el-table-column>
-            </el-table></section>
+            <TableFrame v-else :max-height="theme.table==='fixed'?420:''" v-slot="{tableSize}">
+              <el-table v-bind="tableSize" ref="assetTable" :data="assetTree" default-expand-all :indent="24" stripe @row-click="clickAsset" @row-dblclick="toggleAssetBranch" row-key="id" :row-class-name="({row})=>row.id===datasetId?'current-row':''">
+                <el-table-column label="数据集名称" min-width="240"><template #default="{row}">
+                  <span class="dataset-name" :class="{'dataset-group':row.isGroup||row.group_path}" :title="row.children.length?(row.isGroup?'双击展开或折叠':'单击预览，双击展开或折叠'):undefined"><el-icon><FolderOpened v-if="row.isGroup||row.group_path"/><Coin v-else/></el-icon>{{row.name}}</span>
+                </template></el-table-column>
+                <el-table-column prop="rows" label="样本量" width="96" sortable/>
+                <el-table-column label="字段数" width="80"><template #default="{row}"><template v-if="!row.isGroup">{{row.columns.length}}</template></template></el-table-column>
+                <el-table-column label="缺失比例" width="96"><template #default="{row}"><template v-if="!row.isGroup">{{(row.missing_rate*100).toFixed(2)}}%</template></template></el-table-column>
+                <el-table-column label="导入时间" min-width="160"><template #default="{row}"><template v-if="!row.isGroup">{{new Date(row.created_at).toLocaleString()}}</template></template></el-table-column>
+                <el-table-column label="操作" width="224" :fixed="compact?undefined:'right'"><template #default="{row}">
+                  <template v-if="!row.isGroup">
+                    <el-button v-if="row.parent_id&&!row.group_path" link type="primary" title="调整生成此子集的方案" @click.stop="editSplit(row)">重划</el-button>
+                    <el-button link type="primary" :title="row.group_path?'调整分组并更新整体方案':row.parent_id?'划分此子集':'配置数据集划分'" @click.stop="openSplit(row)">{{row.parent_id&&!row.group_path?'细分':'划分'}}</el-button>
+                    <el-button v-if="!row.parent_id" link type="primary" title="复制数据集并配置新划分" :loading="copyingId===row.id" :disabled="!!copyingId" @click.stop="copyAndSplit(row)">复制</el-button>
+                    <el-button link type="primary" title="加工字段" @click.stop="openProcessing(row)">加工</el-button>
+                    <el-button v-if="!row.group_path" link type="primary" title="修改数据集名称" @click.stop="renameDataset(row)">改名</el-button>
+                    <el-button v-if="row.parent_id&&!row.group_path" link type="danger" title="删除所属划分方案" @click.stop="removeSplit(row)">删除</el-button>
+                    <el-button v-else-if="!row.parent_id" link type="danger" title="删除数据集" @click.stop="deleteDataset(row)">删除</el-button>
+                  </template>
+                </template></el-table-column>
+              </el-table>
+            </TableFrame></section>
           <DatasetPreview v-if="selected" :key="`${selected.id}:${selected.revision||1}`" :dataset="selected" :theme-key="themeKey">
             <el-button v-if="selected.parent_id&&!selected.group_path" title="调整所属划分方案" @click="editSplit(selected)">重划</el-button>
             <el-button v-else @click="openSplit(selected)">划分</el-button>

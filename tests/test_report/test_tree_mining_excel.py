@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from openpyxl import load_workbook
+from PIL import Image
 
 from hscredit import MultiwayTreeExtractor
 from hscredit.excel import ExcelWriter
@@ -70,6 +71,14 @@ def test_shared_rule_apis_and_excel(tree, data, tmp_path, long_format):
     node_ids = tree.get_rule_table()["节点编号"].tolist()
     expressions = tree.get_rule_table()["组合策略"].tolist()
     for ordinal, ((header, column), image) in enumerate(zip(headers, detail._images)):
+        with Image.open(image.ref) as source:
+            display_width = image.anchor.ext.cx / 9525
+            assert min(source.width, 1401) - 1 <= display_width <= min(source.width, 1600)
+            assert image.anchor.ext.cy / image.anchor.ext.cx == pytest.approx(source.height / source.width)
+            if ordinal % 2 == 0:
+                next_column = headers[ordinal + 1][1]
+                available = sum(int(ExcelWriter._effective_column_width(detail, c) * 7) for c in range(column, next_column - 1))
+                assert display_width <= available + 1
         image_start = image.anchor._from.row + 1
         assert image_start < header
         assert image.anchor._from.col + 1 == column

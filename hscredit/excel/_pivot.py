@@ -584,22 +584,24 @@ def _to_argb(color: str) -> str:
     return hex_color if len(hex_color) == 8 else "FF" + hex_color
 
 
-def build_theme_dxfs(theme_color: str, stripe_color: str) -> List[str]:
-    """构建主题样式所需的两个 dxf（表头：主题色底白字加粗；斑马纹：浅色调底）。"""
+def build_theme_dxfs(theme_color: str, stripe_color: str, font: str, fontsize: float) -> List[str]:
+    """构建表头、斑马纹和全表字体的差异样式。"""
     header = _to_argb(theme_color)
     stripe = _to_argb(stripe_color)
     header_dxf = ('<dxf><font><b/><color rgb="FFFFFFFF"/></font>' '<fill><patternFill patternType="solid">' '<fgColor rgb="{c}"/><bgColor rgb="{c}"/></patternFill></fill></dxf>').format(c=header)
     stripe_dxf = ('<dxf><fill><patternFill patternType="solid">' '<fgColor rgb="{c}"/><bgColor rgb="{c}"/></patternFill></fill></dxf>').format(c=stripe)
-    return [header_dxf, stripe_dxf]
+    # 显式取消工作簿字体方案，否则 Excel 刷新时可能以模板字体覆盖 name。
+    font_dxf = '<dxf><font><name val="{}"/><sz val="{}"/><scheme val="none"/></font></dxf>'.format(_esc(font), fontsize)
+    return [header_dxf, stripe_dxf, font_dxf]
 
 
-def build_theme_tablestyle(name: str, header_dxf_id: int, stripe_dxf_id: int) -> str:
+def build_theme_tablestyle(name: str, header_dxf_id: int, stripe_dxf_id: int, font_dxf_id: int) -> str:
     """构建引用上述 dxf 的数据透视表 tableStyle（表头 + 首行斑马纹 + 总计行同表头色）。"""
-    return ('<tableStyle name="{name}" table="0" pivot="1" count="3">' '<tableStyleElement type="headerRow" dxfId="{h}"/>' '<tableStyleElement type="firstRowStripe" dxfId="{s}"/>' '<tableStyleElement type="totalRow" dxfId="{h}"/>' "</tableStyle>").format(name=_esc(name), h=header_dxf_id, s=stripe_dxf_id)
+    return ('<tableStyle name="{name}" table="0" pivot="1" count="4">' '<tableStyleElement type="wholeTable" dxfId="{f}"/>' '<tableStyleElement type="headerRow" dxfId="{h}"/>' '<tableStyleElement type="firstRowStripe" dxfId="{s}"/>' '<tableStyleElement type="totalRow" dxfId="{h}"/>' "</tableStyle>").format(name=_esc(name), h=header_dxf_id, s=stripe_dxf_id, f=font_dxf_id)
 
 
-def resolve_theme_pivot_style_name(styles_xml: str, theme_color: str, stripe_color: str) -> str:
-    """复用同色主题透视表样式，或为不同主题色分配唯一名称。"""
+def resolve_theme_pivot_style_name(styles_xml: str, theme_color: str, stripe_color: str, font: str, fontsize: float) -> str:
+    """复用颜色、字体和字号均一致的透视表样式。"""
     root = ET.fromstring(styles_xml)
     namespace = root.tag.split("}", 1)[0] + "}" if root.tag.startswith("{") else ""
     dxfs_element = root.find("{}dxfs".format(namespace))
@@ -610,7 +612,7 @@ def resolve_theme_pivot_style_name(styles_xml: str, theme_color: str, stripe_col
     desired_stripe = _to_argb(stripe_color)
     used_names = {style.attrib.get("name", "") for style in table_styles}
 
-    def referenced_fill_color(style: ET.Element, element_type: str) -> Optional[str]:
+    def referenced_dxf(style: ET.Element, element_type: str) -> Optional[ET.Element]:
         style_element = next(
             (element for element in style if element.tag.rsplit("}", 1)[-1] == "tableStyleElement" and element.attrib.get("type") == element_type),
             None,
@@ -618,18 +620,23 @@ def resolve_theme_pivot_style_name(styles_xml: str, theme_color: str, stripe_col
         if style_element is None:
             return None
         try:
-            dxf = dxfs[int(style_element.attrib["dxfId"])]
+            return dxfs[int(style_element.attrib["dxfId"])]
         except (KeyError, ValueError, IndexError):
             return None
-        foreground = next(
-            (element for element in dxf.iter() if element.tag.rsplit("}", 1)[-1] == "fgColor"),
-            None,
-        )
+
+    def referenced_fill_color(style: ET.Element, element_type: str) -> Optional[str]:
+        dxf = referenced_dxf(style, element_type)
+        foreground = dxf.find(".//{*}fgColor") if dxf is not None else None
         return foreground.attrib.get("rgb", "").upper() if foreground is not None else None
 
     for style in table_styles:
         style_name = style.attrib.get("name", "")
         if not style_name.startswith(THEME_PIVOT_STYLE_NAME):
+            continue
+        whole = referenced_dxf(style, "wholeTable")
+        family = whole.find("{*}font/{*}name") if whole is not None else None
+        size = whole.find("{*}font/{*}sz") if whole is not None else None
+        if family is None or family.get("val") != font or size is None or float(size.get("val", 0)) != fontsize:
             continue
         if referenced_fill_color(style, "headerRow") == desired_header and referenced_fill_color(style, "firstRowStripe") == desired_stripe:
             return style_name
@@ -647,6 +654,8 @@ def apply_pivot_styles(
     want_theme: bool,
     theme_color: str,
     stripe_color: str,
+    font: str,
+    fontsize: float,
     custom_numfmts: Optional[List[Tuple[int, str]]] = None,
     theme_style_name: Optional[str] = None,
 ) -> str:
@@ -656,6 +665,8 @@ def apply_pivot_styles(
     :param want_theme: 是否注入主题透视表样式
     :param theme_color: 主题色（表头底色）
     :param stripe_color: 斑马纹底色（一般为主题色浅色调）
+    :param font: 全表字体名称
+    :param fontsize: 全表字号（磅）
     :param custom_numfmts: 待注入的自定义数字格式 [(numFmtId, formatCode)]
     :param theme_style_name: 已解析的工作簿唯一主题样式名，默认自动解析
     :return: 修改后的 styles.xml 文本
@@ -687,6 +698,8 @@ def apply_pivot_styles(
         styles_xml,
         theme_color,
         stripe_color,
+        font,
+        fontsize,
     )
     existing_theme_style = _re.search(
         r'<(?:[\w.-]+:)?tableStyle\b[^>]*\bname="{}"'.format(_re.escape(theme_style_name)),
@@ -696,7 +709,7 @@ def apply_pivot_styles(
         return styles_xml
 
     # 2) dxfs：先取现有数量以确定新 dxf 索引
-    dxfs = build_theme_dxfs(theme_color, stripe_color)
+    dxfs = build_theme_dxfs(theme_color, stripe_color, font, fontsize)
     m_self = _re.search(r'<dxfs count="(\d+)"\s*/>', styles_xml)
     m = _re.search(r'<dxfs count="(\d+)">', styles_xml)
     if m_self:
@@ -721,7 +734,7 @@ def apply_pivot_styles(
     header_id, stripe_id = base, base + 1
 
     # 3) tableStyles：追加自定义 pivot 样式
-    tablestyle = build_theme_tablestyle(theme_style_name, header_id, stripe_id)
+    tablestyle = build_theme_tablestyle(theme_style_name, header_id, stripe_id, base + 2)
     m_self = _re.search(r"<tableStyles ([^>]*?)\s*/>", styles_xml)
     m = _re.search(r"<tableStyles ([^>]*?)>", styles_xml)
     if m_self:

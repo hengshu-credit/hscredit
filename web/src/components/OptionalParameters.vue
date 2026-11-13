@@ -3,12 +3,13 @@ import {computed,ref,watch} from 'vue'
 import {Search,Setting} from '@element-plus/icons-vue'
 import FieldSelect from './FieldSelect.vue'
 import CodeEditor from './CodeEditor.vue'
-import {availableParameters,parameterRows,parseRows} from '../parameter-overrides'
+import {availableParameters,parameterRows,parameterText,parseParameterValue,parseRows,parameterDocument,readParameterDocument} from '../parameter-overrides'
 import {orderParameters,parameterGroup} from '../workflow-parameters'
 const props=defineProps({context:{type:String,required:true},specs:{type:Array,required:true},values:{type:Object,required:true},title:{type:String,default:'运行参数'},rowEditor:Boolean,extensions:{type:Object,default:()=>({})},overrides:{type:Object,default:()=>({})}})
 const emit=defineEmits(['change','apply','update:overrides'])
 const opened=ref(false), filter=ref(''), query=ref(''), draft=ref({}), rows=ref([])
 const view=ref('common'), scrollArea=ref(null)
+const mode=ref('form'), jsonText=ref('')
 const adding=ref(false), newScope=ref(''), newName=ref(''), newText=ref(''), addError=ref('')
 const clone=v=>v==null?v:JSON.parse(JSON.stringify(v))
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b)
@@ -16,8 +17,13 @@ const value=s=>props.values[s.key]===undefined?s.default:props.values[s.key]
 const display=v=>v===undefined?'由底层决定':JSON.stringify(v)
 const sampler=computed(()=>{
   const row=rows.value.find(r=>r.scope==='tuner'&&r.name==='sampler')
-  try{return row?JSON.parse(row.text):'random'}catch{return 'random'}
+  try{return row?parseParameterValue(row.text,row.name):'random'}catch{return 'random'}
 })
+function selectedOverride(spec){
+  const row=overridesById.value.get(spec.id)
+  if(!row)return spec.default
+  try{return parseParameterValue(row.text,row.name)}catch{return undefined}
+}
 const entries=computed(()=>{
   const entries=props.specs.map(spec=>({...spec,group:parameterGroup(spec),id:spec.key}))
   for(const [scope,group] of Object.entries(props.extensions)){
@@ -76,26 +82,49 @@ function add(){
 }
 const changed=computed(()=>props.specs.filter(s=>(!s.when||s.when(props.values))&&!same(value(s),s.default)))
 const overrideCount=computed(()=>parameterRows(props.overrides).length)
+const snapshot=computed(()=>{
+  try{
+    if(mode.value==='json')return readParameterDocument(jsonText.value,props.specs,props.extensions)
+    const values={...draft.value}
+    for(const s of props.specs.filter(s=>s.jsonValue||s.type==='json')){
+      let parsed
+      try{parsed=parseParameterValue(values[s.key],s.label)}catch{throw Error(s.label+' 需要有效的 JSON 值')}
+      if(s.jsonValue){
+        if(parsed!==null&&!Number.isFinite(parsed))throw Error(s.label+' 需要数值或 null')
+        values[s.key]=parsed
+      }else if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error(s.label+' 需要 JSON 对象')
+    }
+    return {values,overrides:parseRows(rows.value,props.extensions,values.method)}
+  }catch(e){return {error:e.message}}
+})
 const validation=computed(()=>{
-  if(rows.value.some(r=>r.scope==='selector')&&draft.value.selector==='none')return '请先选择特征筛选方法'
-  if(rows.value.some(r=>r.scope==='selector'&&['regularization','bin_params'].includes(r.name))&&draft.value.selector==='null')return 'regularization 和 bin_params 用于 IV 筛选'
-  if(rows.value.some(r=>r.scope==='score_transform')&&draft.value.scorecard===false)return '请先启用概率转评分'
-  if(rows.value.some(r=>r.scope==='importance')&&draft.value.explain===false)return '请启用 SHAP 与变量交互，或删除模型解释图覆盖值' 
-  try{parseRows(rows.value,props.extensions,draft.value.method)}catch(e){return e.message}
-  if(draft.value.min_n_bins>draft.value.max_n_bins)return '最少分箱数不能超过最多分箱数'
-  if(draft.value.search && 'search_spaces' in draft.value){
-    try{const obj=JSON.parse(draft.value.search_spaces);if(!obj||Array.isArray(obj)||typeof obj!=='object')return '搜索空间需要填写 JSON 对象'}
-    catch{return '搜索空间不是有效的 JSON 对象'}
-  }
-  for(const s of props.specs.filter(s=>s.jsonValue)){
-    try{const parsed=JSON.parse(draft.value[s.key]);if(parsed!==null&&typeof parsed!=='number')return s.label+' 需要数值或 null'}catch{return s.label+' 需要有效的 JSON 值'}
-  }
+  const {values,overrides,error}=snapshot.value
+  if(error)return error
+  if(overrides.selector&&values.selector==='none')return '请先选择特征筛选方法'
+  if(overrides.selector&&('regularization' in overrides.selector||'bin_params' in overrides.selector)&&values.selector==='null')return 'regularization 和 bin_params 用于 IV 筛选'
+  if(overrides.score_transform&&values.scorecard===false)return '请先启用概率转评分'
+  if(overrides.importance&&values.explain===false)return '请启用 SHAP 与变量交互，或删除模型解释图覆盖值'
+  if(values.min_n_bins>values.max_n_bins)return '最少分箱数不能超过最多分箱数'
   return ''
 })
+function loadForm(values,overrides){
+  draft.value=Object.fromEntries(props.specs.map(s=>[s.key,s.jsonValue?JSON.stringify(values[s.key]):clone(values[s.key])]))
+  rows.value=parameterRows(overrides)
+}
 function edit(){
-  draft.value=Object.fromEntries(props.specs.map(s=>[s.key,s.jsonValue?JSON.stringify(value(s)):clone(value(s))]))
-  rows.value=parameterRows(props.overrides)
+  mode.value='form'
+  loadForm(Object.fromEntries(props.specs.map(s=>[s.key,value(s)])),props.overrides)
   selectView(common.value.length?'common':'all');adding.value=false;opened.value=true
+}
+function switchMode(next){
+  if(next===mode.value||adding.value||snapshot.value.error)return
+  const {values,overrides}=snapshot.value
+  if(next==='json')jsonText.value=JSON.stringify(parameterDocument(props.specs,values,overrides,props.extensions),null,2)
+  else {
+    loadForm(values,overrides)
+    selectView(modified.value.length?'modified':common.value.length?'common':'all')
+  }
+  mode.value=next
 }
 function resetVisible(){
   for(const s of visible.value){
@@ -105,10 +134,8 @@ function resetVisible(){
 }
 function apply(){
   if(validation.value)return
-  const overrides=clone(parseRows(rows.value,props.extensions,draft.value.method))
+  const {values,overrides}=clone(snapshot.value)
   if(!same(overrides,props.overrides))emit('update:overrides',overrides)
-  const values=clone(draft.value)
-  for(const s of props.specs.filter(s=>s.jsonValue))values[s.key]=JSON.parse(draft.value[s.key])
   emit('apply',values,overrides)
   if(!props.rowEditor)for(const s of props.specs)if(!same(value(s),values[s.key]))emit('change',s.key,values[s.key])
   opened.value=false
@@ -120,6 +147,11 @@ watch(()=>props.specs.map(s=>s.key).join('|'),()=>{opened.value=false})
   <div v-else class="config-summary"><div><strong>{{title}}</strong><small>可选</small><span :title="changed.map(s=>s.label).join('、')">{{changed.length?'已调整 '+changed.slice(0,2).map(s=>s.label).join('、')+(changed.length>2?' 等 '+changed.length+' 项':''):overrideCount?'':'使用默认参数'}}{{overrideCount?' 底层参数 '+overrideCount+' 项':''}}</span></div>
     <el-button plain :icon="Setting" @click="edit">配置{{title}}</el-button></div>
   <el-dialog v-model="opened" :title="'配置'+title" class="parameter-dialog" width="min(1060px, 96vw)" align-center append-to-body destroy-on-close :close-on-click-modal="false">
+    <el-radio-group :model-value="mode" aria-label="参数编辑方式" class="parameter-mode" @update:model-value="switchMode">
+      <el-radio-button value="form" :disabled="mode==='json'&&!!snapshot.error">表单</el-radio-button>
+      <el-radio-button value="json" :disabled="mode==='form'&&(adding||!!snapshot.error)">JSON 编辑器</el-radio-button>
+    </el-radio-group>
+    <template v-if="mode==='form'">
     <div class="parameter-views" role="group" aria-label="参数范围">
       <button v-for="v in views" :key="v.id" type="button" :aria-pressed="v.id===view" @click="selectView(v.id)">{{v.label}} <span>{{v.items.length}}</span></button>
     </div>
@@ -133,10 +165,10 @@ watch(()=>props.specs.map(s=>s.key).join('|'),()=>{opened.value=false})
     </div>
     <div v-if="adding" class="custom-parameter">
       <el-select v-model="newScope" aria-label="自定义参数用途" @change="newName='';newText='';addError=''"><el-option v-for="(g,key) in extensions" :key="key" :label="g.label" :value="key"/></el-select>
-      <el-select v-model="newName" aria-label="自定义参数名" placeholder="选择或输入参数名" filterable allow-create default-first-option @change="name=>{newText=JSON.stringify(suggestions[name]?.default)??'';addError=''}">
+      <el-select v-model="newName" aria-label="自定义参数名" placeholder="选择或输入参数名" filterable allow-create default-first-option @change="name=>{newText=parameterText(suggestions[name]?.default)??'';addError=''}">
         <el-option v-for="(_,key) in suggestions" :key="key" :value="key" :label="key"/>
       </el-select>
-      <el-input v-model="newText" aria-label="自定义参数值" placeholder='JSON 值，如 false 或 "auto"'/>
+      <el-input v-model="newText" aria-label="自定义参数值" placeholder="参数值，如 false 或 auto"/>
       <el-button @click="add">添加</el-button><el-button link @click="adding=false">取消添加</el-button>
       <small v-if="addError" role="alert">{{addError}}</small>
     </div>
@@ -153,7 +185,7 @@ watch(()=>props.specs.map(s=>s.key).join('|'),()=>{opened.value=false})
             <template v-else>{{s.description||'当前接口未提供说明'}}</template>
           </td>
           <td class="param-control"><div v-if="s.scope" class="params-value">
-            <el-select v-if="s.choices" :model-value="overridesById.has(s.id)?JSON.parse(overridesById.get(s.id).text):s.default" :aria-label="s.group+' '+s.key" @change="v=>setOverride(s.scope,s.key,JSON.stringify(v))">
+            <el-select v-if="s.choices" :model-value="selectedOverride(s)" :aria-label="s.group+' '+s.key" @change="v=>setOverride(s.scope,s.key,parameterText(v))">
               <el-option v-for="v in s.choices" :key="String(v)" :label="v===null?'默认':String(v)" :value="v"/>
             </el-select>
             <el-input v-else :model-value="overridesById.get(s.id)?.text??''" :placeholder="display(s.default)" :aria-label="s.group+' '+s.key" @update:model-value="v=>setOverride(s.scope,s.key,v)"/>
@@ -172,13 +204,19 @@ watch(()=>props.specs.map(s=>s.key).join('|'),()=>{opened.value=false})
       </table>
       <p v-if="!visible.length" class="params-empty">{{view==='modified'?'暂无已调整的参数':'没有匹配的参数'}}</p>
     </div>
-    <small v-if="visible.some(s=>s.scope&&!s.choices)||adding" class="params-note muted">底层参数使用 JSON，文本加双引号。清空覆盖值后使用默认值。</small>
+    <small v-if="visible.some(s=>s.scope&&!s.choices)||adding" class="params-note muted">文本可直接输入，数组和对象使用 JSON。清空覆盖值可恢复默认值。</small>
+    </template>
+    <template v-else>
+      <CodeEditor v-model="jsonText" :label="title+' JSON'" :rows="15"/>
+      <small class="params-note muted">可直接填写参数名；同名参数用“用途.参数名”区分。删除参数可恢复默认值。</small>
+    </template>
     <el-alert v-if="validation" :title="validation" type="error" :closable="false"/>
-    <template #footer><div class="parameter-footer"><el-button link :disabled="!visible.length" @click="resetVisible">恢复当前列表默认值</el-button><span/><el-button @click="opened=false">取消</el-button><el-button type="primary" :disabled="!!validation||adding" @click="apply">应用配置</el-button></div></template>
+    <template #footer><div class="parameter-footer"><el-button v-if="mode==='form'" link :disabled="!visible.length" @click="resetVisible">恢复当前列表默认值</el-button><span/><el-button @click="opened=false">取消</el-button><el-button type="primary" :disabled="!!validation||adding" @click="apply">应用配置</el-button></div></template>
   </el-dialog>
 </template>
 
 <style scoped>
+.parameter-mode{align-self:flex-start;margin-bottom:12px}
 .parameter-views{display:flex;gap:18px;border-bottom:1px solid var(--border);margin-bottom:12px}
 .parameter-views button{display:inline-flex;gap:6px;align-items:baseline;border:0;border-bottom:2px solid transparent;background:transparent;padding:4px 2px 9px;color:var(--muted);font:inherit;font-weight:600;cursor:pointer}
 .parameter-views button[aria-pressed=true]{color:var(--accent-text);border-bottom-color:currentColor}
@@ -189,7 +227,7 @@ watch(()=>props.specs.map(s=>s.key).join('|'),()=>{opened.value=false})
 .params-toolbar>span{color:var(--muted);font-size:12px}.params-toolbar>.el-button{margin-left:auto}
 .custom-parameter{flex-wrap:wrap;margin-bottom:12px}.custom-parameter>.el-select,.custom-parameter>.el-input{flex:1;min-width:125px}
 .custom-parameter small{width:100%;color:var(--el-color-danger)}
-.params-scroll{overflow:auto;min-height:0;border:1px solid var(--border);border-radius:var(--radius)}
+.params-scroll{resize:vertical;overflow:auto;min-height:0;border:1px solid var(--border);border-radius:var(--radius)}
 .params-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;text-align:left;font-size:13px}
 .params-table th,.params-table td{padding:8px 12px;overflow-wrap:anywhere;border-bottom:1px solid var(--line-soft);vertical-align:middle}
 .params-table tbody tr:last-child>:is(th,td){border-bottom:0}

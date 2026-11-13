@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import {computed, ref, watch, inject} from 'vue'
 import {ElMessage} from 'element-plus'
 import {taskModules, taskModule, taskName, taskUrl, taskStatusType} from '../task-center'
@@ -41,17 +42,19 @@ function created(job) {
   </template>
   <section v-else class="panel"><div class="panel-heading"><h2>历史任务</h2><span class="muted" role="status">显示 {{filtered.length}} / {{rows.length}} 个任务</span></div>
     <TableFilters :key="module" v-model="drafts" :fields="fields" :rows="rows"/>
-    <el-table :data="filtered.slice((page-1)*20,page*20)" row-key="id" stripe :max-height="theme.table==='fixed'?520:undefined" :empty-text="rows.length?'没有符合条件的任务':'该模块还没有提交过任务'">
-      <el-table-column label="任务" min-width="136"><template #default="{row}"><a :href="taskUrl(module,row.id)">{{taskName(row)}}</a></template></el-table-column>
-      <el-table-column label="数据集" min-width="142"><template #default="{row}">{{row.dataset_name}} · v{{row.dataset_revision||1}}</template></el-table-column>
-      <el-table-column label="提交时间" min-width="158"><template #default="{row}">{{new Date(row.created_at).toLocaleString()}}</template></el-table-column>
-      <el-table-column label="状态" width="86"><template #default="{row}"><el-tag :type="taskStatusType(row.status)">{{row.status}}</el-tag></template></el-table-column>
-      <el-table-column label="进度与结果" min-width="170"><template #default="{row}"><el-progress v-if="runningStatuses.includes(row.status)" :percentage="row.progress"/><span :title="row.message">{{row.message}}</span></template></el-table-column>
-      <el-table-column label="操作" min-width="190"><template #default="{row}">
-        <el-button link type="primary" @click="open(row)">{{row.status==='成功'?'查看报告':'查看详情'}}</el-button><el-button link @click="editing=row">重新配置</el-button>
-        <el-button v-if="runningStatuses.includes(row.status)" link type="danger" :loading="row.status==='停止中'||stopping.includes(row.id)" @click="emit('stop',row)">停止</el-button>
-      </template></el-table-column>
-    </el-table>
+    <TableFrame :max-height="theme.table==='fixed'?520:undefined" v-slot="{tableSize}">
+      <el-table v-bind="tableSize" :data="filtered.slice((page-1)*20,page*20)" row-key="id" stripe :empty-text="rows.length?'没有符合条件的任务':'该模块还没有提交过任务'">
+        <el-table-column label="任务" min-width="136"><template #default="{row}"><a :href="taskUrl(module,row.id)">{{taskName(row)}}</a></template></el-table-column>
+        <el-table-column label="数据集" min-width="142"><template #default="{row}">{{row.dataset_name}} · v{{row.dataset_revision||1}}</template></el-table-column>
+        <el-table-column label="提交时间" min-width="158"><template #default="{row}">{{new Date(row.created_at).toLocaleString()}}</template></el-table-column>
+        <el-table-column label="状态" width="86"><template #default="{row}"><el-tag :type="taskStatusType(row.status)">{{row.status}}</el-tag></template></el-table-column>
+        <el-table-column label="进度与结果" min-width="170"><template #default="{row}"><el-progress v-if="runningStatuses.includes(row.status)" :percentage="row.progress"/><span :title="row.message">{{row.message}}</span></template></el-table-column>
+        <el-table-column label="操作" min-width="190"><template #default="{row}">
+          <el-button link type="primary" @click="open(row)">{{row.status==='成功'?'查看报告':'查看详情'}}</el-button><el-button link @click="editing=row">重新配置</el-button>
+          <el-button v-if="runningStatuses.includes(row.status)" link type="danger" :loading="row.status==='停止中'||stopping.includes(row.id)" @click="emit('stop',row)">停止</el-button>
+        </template></el-table-column>
+      </el-table>
+    </TableFrame>
     <el-pagination v-if="filtered.length>20" v-model:current-page="page" :page-size="20" :total="filtered.length" layout="prev,pager,next"/>
   </section>
   <TaskReconfigure v-if="editing" :key="editing.id" :job="editing" :datasets="datasets" :catalog="catalog" :parameter-catalog="parameterCatalog" @close="editing=null" @created="created"/>

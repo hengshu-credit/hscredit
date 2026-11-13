@@ -1,4 +1,5 @@
 <script setup>
+import TableFrame from './TableFrame.vue'
 import {computed,provide,ref,watch} from 'vue'
 import {ElMessage} from 'element-plus'
 import {api} from '../api'
@@ -82,7 +83,9 @@ async function apply(){
       <h3>{{groupPath?'整体方案划分结果预览':'划分结果预览'}}</h3>
       <el-alert v-if="preview.excluded_rows" :title="`本次有 ${preview.excluded_rows.toLocaleString()} 行被排除，不进入结果数据集；可展开查看划分明细。`" type="warning" :closable="false" show-icon/>
       <el-alert v-if="preview.empty_datasets?.length" class="split-tree-empty" :title="`以下结果没有样本，将不创建空数据集：${preview.empty_datasets.join('、')}`" type="info" :closable="false"/>
-      <el-table :data="preview.parts" stripe><el-table-column prop="name" label="数据集名称" min-width="156"/><el-table-column prop="rows" label="实际行数" width="92"/><el-table-column label="占源数据比例" width="108"><template #default="{row}">{{(row.fraction*100).toFixed(2)}}%</template></el-table-column><el-table-column v-if="preview.parts.some(p=>p.groups!==undefined)" prop="groups" label="分组数" width="84"/><el-table-column v-if="preview.parts.some(p=>p.time_min)" label="时间范围" min-width="220"><template #default="{row}">{{row.time_min?`${row.time_min} ～ ${row.time_max}`:"—"}}</template></el-table-column><el-table-column prop="path" label="划分路径" min-width="250" show-overflow-tooltip/></el-table>
+      <TableFrame v-slot="{tableSize}">
+        <el-table v-bind="tableSize" :data="preview.parts" stripe><el-table-column prop="name" label="数据集名称" min-width="156"/><el-table-column prop="rows" label="实际行数" width="92"/><el-table-column label="占源数据比例" width="108"><template #default="{row}">{{(row.fraction*100).toFixed(2)}}%</template></el-table-column><el-table-column v-if="preview.parts.some(p=>p.groups!==undefined)" prop="groups" label="分组数" width="84"/><el-table-column v-if="preview.parts.some(p=>p.time_min)" label="时间范围" min-width="220"><template #default="{row}">{{row.time_min?`${row.time_min} ～ ${row.time_max}`:"—"}}</template></el-table-column><el-table-column prop="path" label="划分路径" min-width="250" show-overflow-tooltip/></el-table>
+      </TableFrame>
       <el-collapse v-if="preview.trace"><el-collapse-item title="查看逐步划分明细"><DataTable :rows="preview.trace.map(t=>({'路径':t.path,'动作':t.action,'输入行数':t.input_rows??null,'命中或输出行数':t.rows,'数据集':t.name||'','排除原因':t.reason||''}))" height="360"/></el-collapse-item></el-collapse>
       <el-collapse><el-collapse-item v-for="(part,index) in preview.parts" :key="index" :title="`${part.name} · 前 5 行样本`" :name="index"><DataTable :rows="part.preview" height="260"/><template v-if="part.strata"><h4>分层类别样本数（最多显示 50 类）</h4><DataTable :rows="part.strata" height="200"/></template></el-collapse-item></el-collapse>
     </section>

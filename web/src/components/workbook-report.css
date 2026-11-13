@@ -34,7 +34,7 @@ th[colspan]:not([colspan="1"]){text-align:center}td[rowspan]:not([rowspan="1"]){
 .group-label::after{inset-inline:6px 10px;bottom:0;height:1px;background:color-mix(in srgb,var(--table-rule) 65%,var(--table-head))}
 .wide-paper .grouped-header th{overflow:hidden;text-overflow:ellipsis}
 .number-cell{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.emphasis{font-weight:650}
-.report-figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:12px}.report-figures :deep(.report-image){min-width:0;padding:10px;background:var(--soft)}.report-figures :deep(h3){margin:0 0 8px;font-size:12px;color:var(--muted)}
+.report-figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:12px}.report-figures :deep(.report-image){min-width:0;padding:10px;background:var(--soft)}.report-figures :deep(h3){font-size:12px;color:var(--muted)}
 .reader-paging{flex-wrap:wrap;justify-content:space-between;border-top:1px solid var(--line-soft);padding:8px 16px;margin-top:auto}.reader-paging>div{flex-wrap:wrap}.reader-paging .el-pagination{margin:0}
 .reader-feedback{display:grid;gap:14px;padding:20px;min-height:140px;align-content:center;justify-items:start}
 .workbook:fullscreen{height:100%;width:100%;margin:0;display:flex;flex-direction:column;border:0}.workbook:fullscreen .reader-layout{flex:1;min-height:0}.workbook:fullscreen .report-paper{max-height:none;min-height:0;flex:1}.workbook:fullscreen .sheet-list{max-height:calc(100vh - 150px)}
@@ -45,12 +45,14 @@ th[colspan]:not([colspan="1"]){text-align:center}td[rowspan]:not([rowspan="1"]){
 }
 @container (max-width:410px){.reader-actions{width:100%}.reader-actions .el-button:last-child{margin-left:auto}.reader-paging{padding:6px 10px}}
 
-.sheet-viewport{position:relative;overflow:auto;overflow-anchor:none;height:clamp(290px,60vh,720px);min-height:0;overscroll-behavior:contain;scrollbar-gutter:stable}
+.sheet-viewport{display:block;position:relative;overflow:auto;overflow-anchor:none;height:clamp(290px,60vh,720px);min-height:0;overscroll-behavior:contain;scrollbar-gutter:stable}
 :root[data-table=auto] .sheet-viewport{height:min(clamp(290px,60vh,720px),var(--content-height))}
 .sheet-canvas{position:relative;min-width:100%}.sheet-band{position:absolute;left:0;right:0}.wide-paper{padding-inline:0}
 .wide-paper .report-table-scroll{overflow:clip}.wide-paper .report-heading,.wide-paper .report-paragraph,.wide-paper .report-figures,.empty-window{box-sizing:border-box;padding-inline:14px}
 .reader-paging{min-height:44px}.reader-paging .load-state{margin-left:auto}.reader-error{display:flex;gap:8px;padding:6px 12px}
 .workbook:fullscreen .sheet-viewport{flex:1;height:auto}.workbook:fullscreen .report-paper{overflow:visible}
+.workbook:fullscreen .sheet-frame,.workbook:fullscreen .sheet-frame :deep(.table-frame-content){display:contents}
+.workbook:fullscreen .sheet-frame :deep(.table-height-handle){display:none}
 
 .report-tables{min-width:0;display:flex;align-items:flex-start;gap:14px}
 .report-tables>.report-table-scroll{flex:1;min-width:0}
@@ -58,5 +60,6 @@ th[colspan]:not([colspan="1"]){text-align:center}td[rowspan]:not([rowspan="1"]){
 .wide-paper .report-tables{gap:0}.wide-paper .report-table-scroll{flex:none}
 .report-figures{display:flex;flex-wrap:wrap;align-items:flex-start}
 .report-figures :deep(.report-image){width:min(100%,560px);box-sizing:border-box}
-.report-figures :deep(.el-image__inner){display:block;max-height:min(34vh,300px);object-fit:contain}
+.report-figures :deep(.report-image:not(.tree-figure)){--figure-height:min(34vh,300px)}
+.report-figures :deep(.tree-figure){width:100%}
 @container (max-width:700px){.report-paper:not(.wide-paper) .parallel{flex-direction:column}.report-paper:not(.wide-paper) .parallel>.report-table-scroll{width:100%;flex:auto}}

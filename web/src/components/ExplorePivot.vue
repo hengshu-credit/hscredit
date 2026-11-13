@@ -1,12 +1,14 @@
 <script setup>
 import {computed,ref,watch} from 'vue'
 import {api} from '../api'
+import TableFrame from './TableFrame.vue'
 
 const props=defineProps({axes:Array,rowFields:Array,columnFields:Array,job:Object,group:String,target:String,population:String})
 const emit=defineEmits(['summary'])
 const rows=ref([...props.rowFields]),cols=ref([...props.columnFields]),value=ref(''),method=ref('rows'),buckets=ref(true)
 const page=ref(1),columnPage=ref(1),nested=ref(true),totals=ref(true),rowHeight=ref(28),cellWidth=ref(94),digits=ref('auto')
 const retry=ref(0),result=ref(null),busy=ref(false),error=ref('')
+const tableHeight=ref(null)
 const methods={rows:'样本数',count:'有效计数',nunique:'去重计数',sum:'求和',mean:'平均值',median:'中位数',min:'最小值',max:'最大值'}
 const fields=computed(()=>props.axes.filter(axis=>props.rowFields.includes(axis.name)||props.columnFields.includes(axis.name)))
 const valueFields=computed(()=>fields.value.filter(c=>['rows','count','nunique'].includes(method.value)||c.kind==='numeric'))
@@ -47,15 +49,16 @@ function transpose(){
 const spec=computed(()=>({rows:shownRows.value,columns:shownCols.value,value:value.value||null,aggregation:method.value,buckets:buckets.value,group:props.group??null,target:props.target||null,population:props.population||'valid'}))
 const ready=computed(()=>rows.value.length&&cols.value.length&&(method.value==='rows'||value.value))
 watch(spec,()=>{page.value=1;columnPage.value=1},{flush:'sync'})
-watch([spec,page,columnPage,retry],async ([settings,r,c],_,cleanup)=>{
+watch([spec,page,columnPage,retry],async ([settings,r,c],previous,cleanup)=>{
   const controller=new AbortController()
   cleanup(()=>controller.abort())
-  result.value=null;error.value='';busy.value=!!ready.value
-  if(!ready.value)return
+  error.value='';busy.value=!!ready.value
+  if(settings!==previous[0])result.value=null
+  if(!ready.value){result.value=null;return}
   try{
     const data=await api('/jobs/'+props.job.id+'/pivot',{method:'POST',body:JSON.stringify({...settings,page:r,column_page:c}),signal:controller.signal})
     if(!controller.signal.aborted)result.value=data
-  }catch(e){if(!controller.signal.aborted)error.value=e.message}
+  }catch(e){if(!controller.signal.aborted){result.value=null;error.value=e.message}}
   finally{if(!controller.signal.aborted)busy.value=false}
 },{immediate:true})
 const label=v=>v??'（缺失）'
@@ -97,11 +100,12 @@ function span(keys,i,level){
       <label v-if="cols.length>1">列展开至 <select v-model.number="colDepth" aria-label="列展开至"><option :value="0">全部层级</option><option v-for="n in cols.length-1" :key="n" :value="n">第 {{n}} 层</option></select></label>
     </div></details>
     <p v-if="error" role="alert">{{error}} <el-button link @click="retry++">重试</el-button></p>
-    <p v-if="busy" role="status">正在计算透视表…</p>
+    <p v-if="busy&&!result" role="status">正在计算透视表…</p>
     <p v-else-if="!ready" role="status">请选择行字段、列字段和当前聚合需要的值字段。</p>
     <template v-else-if="result">
       <p class="muted">{{shownRows.join(' / ')}} ＼ {{shownCols.join(' / ')}} · {{value}} {{methods[method]}} · {{result.samples.toLocaleString()}} 行样本</p>
-      <div v-if="result.samples" class="pivot-scroll" tabindex="0">
+      <TableFrame v-if="result.samples" v-model="tableHeight" v-slot="{viewportStyle}">
+      <div class="pivot-scroll" :style="viewportStyle" :aria-busy="busy" tabindex="0">
         <table aria-label="字段交叉透视表" :style="{'--cell-width':cellWidth+'px','--cell-height':rowHeight+'px'}">
           <thead><tr v-for="level in (nested?shownCols.length:1)" :key="level">
             <th v-if="level===1" :rowspan="nested?shownCols.length:1" :colspan="nested?shownRows.length:1">{{shownRows.join(' / ')}} ＼ {{shownCols.join(' / ')}}</th>
@@ -114,7 +118,7 @@ function span(keys,i,level){
           </tr></tbody>
           <tfoot v-if="totals"><tr><th :colspan="nested?shownRows.length:1">列合计</th><td v-for="(v,j) in result.column_totals" :key="j">{{display(v)}}</td><td>{{display(result.total)}}</td></tr></tfoot>
         </table>
-      </div><p v-else class="muted">没有有效配对样本</p>
+      </div></TableFrame><p v-else class="muted">没有有效配对样本</p>
       <div class="pivot-pages" v-if="result.row_count>30||result.column_count>12">
         <label v-if="result.row_count>30">行页 <el-pagination v-model:current-page="page" :total="result.row_count" :page-size="30" small layout="prev,pager,next"/></label>
         <label v-if="result.column_count>12">列页 <el-pagination v-model:current-page="columnPage" :total="result.column_count" :page-size="12" small layout="prev,pager,next"/></label>
