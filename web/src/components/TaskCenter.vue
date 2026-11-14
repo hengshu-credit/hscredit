@@ -8,6 +8,7 @@ import TaskDetail from './TaskDetail.vue'
 import TaskReconfigure from './TaskReconfigure.vue'
 import TableFilters from './TableFilters.vue'
 import {filterRows, useTableFilters} from '../table-filters'
+import {rememberForm} from '../form-drafts'
 
 const props = defineProps({module:String, id:String, jobs:Array, datasets:Array, parameterCatalog:Object, catalog:Object, stopping:Array})
 const emit = defineEmits(['stop','created'])
@@ -21,8 +22,11 @@ const fields = [
   {key:'date', label:'提交日期', read:job => new Date(job.created_at).toLocaleDateString()},
 ]
 const filtered = computed(() => filterRows(rows.value, fields, conditions.value))
-watch(() => props.module, () => { drafts.value = []; page.value = 1 })
-watch(conditions, () => { page.value = 1 })
+watch(conditions, () => { page.value = 1 }, {flush:'sync'})
+rememberForm('task-list/'+props.module, () => ({filters:drafts.value,page:page.value}), saved => {
+  drafts.value=saved.filters || []
+  page.value=saved.page || 1
+})
 watch(() => filtered.value.length, count => { page.value = Math.min(page.value, Math.max(1, Math.ceil(count/20))) })
 watch(() => [props.module,props.id], () => { editing.value = null })
 function selectModule(module) { location.hash = taskUrl(module) }

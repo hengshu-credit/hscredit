@@ -1,4 +1,5 @@
 import {computed, reactive, watch} from 'vue'
+import {datasetDraftKey,readDraft,writeDraft} from './form-drafts.js'
 
 export const sampleUses = {
   summary: {primary:'分析样本', batch:'批量变量探索', help:'按所选字段分别分析每份样本。'},
@@ -10,11 +11,18 @@ export const sampleUses = {
 }
 
 export function useSamplePlan(datasets, primaryId, context, tree) {
-  const drafts = reactive(Object.fromEntries(Object.keys(sampleUses).map(k => [k, {
-    batch: [], evaluations: [], test: '', psi: '', testMode:'holdout', fraction:0.25,
-  }])))
-  const draft = computed(() => drafts[context.value] || drafts.summary)
+  const defaults = () => ({batch:[], evaluations:[], test:'', psi:'', testMode:'holdout', fraction:0.25})
+  const drafts = new Map()
   const assets = computed(() => new Map(datasets.value.map(d => [d.id, d])))
+  const draftKey = computed(() => {
+    const asset = assets.value.get(primaryId.value)
+    return asset && sampleUses[context.value] ? datasetDraftKey(asset,'samples/'+context.value) : ''
+  })
+  const draft = computed(() => {
+    const key = draftKey.value
+    if (!drafts.has(key)) drafts.set(key,reactive({...defaults(),...(key ? readDraft(key) : null)}))
+    return drafts.get(key)
+  })
   const groupParents = computed(() => {
     const parents = new Map()
     function visit(row) {
@@ -35,6 +43,7 @@ export function useSamplePlan(datasets, primaryId, context, tree) {
     if (!secondary(d.psi)) d.psi = ''
     d.evaluations = d.evaluations.filter(id => secondary(id) && (d.testMode !== 'external' || id !== d.test))
   }, {flush:'sync'})
+  watch(draft, value=>{if(draftKey.value) writeDraft(draftKey.value,value)}, {deep:true})
   const runDatasets = computed(() => [primaryId.value, ...draft.value.batch].map(id => assets.value.get(id)).filter(Boolean))
   function binding(id) {
     const asset = assets.value.get(id)

@@ -93,10 +93,10 @@ export function useExploration({config,api,refresh,onError,clearError,runDataset
     finally{if(rev===revision)following.value=false}
   }
 
-  async function view(row){
-    revision++;settled='';pending.value=null;lastRun='';clearError()
+  async function view(row,trackingKey=requested.value){
+    revision++;settled='';pending.value=null;lastRun='';requested.value=trackingKey;clearError()
     jobId.value=row.id;currentJob.value=row;eda.value=null;applied.value=null;following.value=true
     await settle([row])
   }
-  return {eda,loading,following,runningCurrentConfig,jobId,currentJob,summaryCurrent,summaryLoading,chartsCurrent,load,settle,reset,view}
+  return {eda,loading,following,runningCurrentConfig,jobId,currentJob,summaryCurrent,summaryLoading,chartsCurrent,trackingKey:requested,load,settle,reset,view}
 }

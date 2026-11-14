@@ -110,7 +110,7 @@ async function main() {
         await toggle(analysis);
         assert(await install.evaluate(a => a.closest("li").classList.contains("current")), "相邻目录被自动收起");
         await toggle(analysis); // 收起也应保持位置。
-        const section = page.locator(`${nav} a[href^="#"]`).filter({ hasNot: page.locator("button") }).first();
+        const section = page.locator(`${nav} a[href^="#"]:visible`).filter({ hasNot: page.locator("button") }).first();
         await prepare(section);
         const before = await state(section);
         await section.click();
@@ -225,7 +225,7 @@ async function main() {
         await ready();
         const shortcuts = page.locator("#readme-showcase > p").filter({ has: page.locator('a[href="#showcase-dataset"]') }).locator("a");
         assert.deepEqual(await shortcuts.allTextContents(),
-            ["数据集", "特征分箱", "特征编码", "特征筛选", "风控建模", "规则分析", "数据挖掘", "Excel 写入", "数据库读写", "Agent 能力", "公共方法"]);
+            ["数据集", "特征分箱", "特征编码", "特征筛选", "风控建模", "规则分析", "数据挖掘", "Excel 写入", "数据库读写", "风控平台", "Agent 能力", "公共方法"]);
         for (const shortcut of await shortcuts.all()) {
             const href = await shortcut.getAttribute("href");
             const sideLink = page.locator(`${nav} .toctree-l2 > a[href^="#"]`).filter({ hasText: await shortcut.innerText() });
@@ -239,9 +239,9 @@ async function main() {
         await shortcuts.filter({ hasText: "风控建模" }).click();
         await ready();
         assert.equal(await model.getAttribute("aria-current"), "location", "风控建模的锚点被子节抢占");
-        const reports = model.locator("..").getByText("模型评估与上线报告", { exact: true });
+        const reports = model.locator("..").getByText("模型上线评估报告", { exact: true });
         const reportLinks = reports.locator("..").locator(":scope > ul > li > a");
-        assert.deepEqual(await reportLinks.allTextContents(), ["分类模型预测逾期", "回归模型预测金额"]);
+        assert.deepEqual(await reportLinks.allTextContents(), ["分类模型的区分度与分段风险", "回归模型的误差与基准"]);
         if (!await reportLinks.first().isVisible()) { await toggle(reports); }
         await prepare(reportLinks.last());
         await reportLinks.last().click();

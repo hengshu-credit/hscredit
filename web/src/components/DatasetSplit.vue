@@ -3,6 +3,7 @@ import TableFrame from './TableFrame.vue'
 import {computed,provide,ref,watch} from 'vue'
 import {ElMessage} from 'element-plus'
 import {api} from '../api'
+import {datasetDraftKey,readDraft,writeDraft} from '../form-drafts'
 import DataTable from './DataTable.vue'
 import SplitEditor from './SplitEditor.vue'
 import {datasetPlans,uniqueSampleName,restoreSplitConfig,sampleRows} from '../split-editor'
@@ -16,11 +17,13 @@ const emit=defineEmits(['update:modelValue','saved'])
 const preview=ref(null),previewKey=ref(''),error=ref(''),previewing=ref(false),saving=ref(false)
 const tree=ref(datasetNode('')),editorKey=ref(0)
 const plan=ref(null)
+let loadedKey=''
 const groupPath=computed(()=>props.dataset?.group_path)
 const plans=computed(()=>datasetPlans(props.datasets.filter(d=>!d.group_path),groupPath.value?props.dataset.parent_id:props.dataset?.id))
 const siblingNames=ref([])
 const occupied=computed(()=>[...siblingNames.value,...props.datasets.filter(d=>!d.group_path&&(!plan.value||d.splitting?.plan_id!==plan.value.plan_id)).map(d=>d.name)])
 const query=computed(()=>plan.value?'?'+new URLSearchParams({plan_id:plan.value.plan_id,plan_revision:plan.value.plan_revision}):'')
+const selectionKey=()=>datasetDraftKey(props.dataset,'split-selected-plan')
 function selectPlan(id){
   const members=plans.value.get(id)||[]
   plan.value=members[0]?.splitting||null
@@ -33,6 +36,10 @@ function selectPlan(id){
     siblingNames.value=leafNames(tree.value).filter(name=>!owned.has(name))
     tree.value=branch.node
   }
+  loadedKey=datasetDraftKey(props.dataset,JSON.stringify(['split',plan.value?.plan_id,plan.value?.plan_revision,groupPath.value]))
+  const saved=readDraft(loadedKey)
+  if(saved)tree.value=saved
+  if(!groupPath.value)writeDraft(selectionKey(),id || 'new')
   editorKey.value++
   requestNumber++
   previewing.value=false
@@ -46,10 +53,12 @@ const payload=computed(()=>({expected_revision:revision.value,tree:serializeTree
 const validation=computed(()=>tree.value.type==='dataset'?'请选择一种方式开始划分':treeError(tree.value,occupied.value))
 const canSave=computed(()=>preview.value&&previewKey.value===fingerprint.value&&!validation.value&&!previewing.value&&!saving.value)
 watch(()=>props.modelValue,open=>{
-  if(open)selectPlan(props.planId||plans.value.keys().next().value)
-  else requestNumber++
+  if(!open){requestNumber++;return}
+  const saved=readDraft(selectionKey())
+  selectPlan(props.planId || (saved==='new'||plans.value.has(saved)?saved:plans.value.keys().next().value))
 })
 watch(fingerprint,()=>{preview.value=null;error.value=''})
+watch(tree,value=>{if(loadedKey && props.modelValue)writeDraft(loadedKey,value)}, {deep:true})
 async function doPreview(){
   if(validation.value)return
   const number=++requestNumber,key=fingerprint.value,id=props.dataset.id,body=JSON.stringify(payload.value)
@@ -61,7 +70,13 @@ async function doPreview(){
 async function apply(){
   if(!canSave.value)return
   saving.value=true;error.value=''
-  try{const result=await api(`/datasets/${props.dataset.id}/split-tree/apply${query.value}`,{method:'POST',body:JSON.stringify(payload.value)});emit('saved',result.datasets);emit('update:modelValue',false);ElMessage.success(`已保存划分方案，共 ${result.datasets.length} 个子集`)}
+  try{
+    const result=await api(`/datasets/${props.dataset.id}/split-tree/apply${query.value}`,{method:'POST',body:JSON.stringify(payload.value)})
+    writeDraft(loadedKey,null)
+    if(!groupPath.value)writeDraft(selectionKey(),result.datasets[0]?.splitting?.plan_id || null)
+    emit('saved',result.datasets);emit('update:modelValue',false)
+    ElMessage.success(`已保存划分方案，共 ${result.datasets.length} 个子集`)
+  }
   catch(e){error.value=e.message;preview.value=null}
   finally{saving.value=false}
 }
@@ -71,7 +86,7 @@ async function apply(){
   <el-dialog :model-value="modelValue" title="划分数据集" width="min(1320px, 97vw)" top="4vh" :close-on-click-modal="false" :close-on-press-escape="!saving" :show-close="!saving" @update:model-value="emit('update:modelValue',$event)">
     <div class="split-source"><strong>{{dataset?.name}}</strong><el-tag effect="plain">版本 {{revision}}</el-tag><span class="muted">{{dataset?.rows.toLocaleString()}} 行 · {{columns.length}} 个字段</span></div>
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false"/>
-    <el-form label-position="top" :disabled="saving">
+    <el-form @submit.prevent label-position="top" :disabled="saving">
       <el-form-item v-if="plans.size&&!groupPath" label="划分方案"><el-select :model-value="plan?.plan_id||'new'" aria-label="划分方案" @change="selectPlan">
         <el-option label="新建划分方案" value="new"/>
         <el-option v-for="[id,members] in plans" :key="id" :value="id" :label="members.map(d=>d.name).join('、')"/>

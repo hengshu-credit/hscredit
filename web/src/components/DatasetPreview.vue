@@ -4,6 +4,7 @@ import {computed, inject, ref, watch} from 'vue'
 import {Search} from '@element-plus/icons-vue'
 import {api} from '../api'
 import {useTableFilters} from '../table-filters'
+import {datasetDraftKey,rememberForm} from '../form-drafts'
 import ColumnProfile from './ColumnProfile.vue'
 import TableFilters from './TableFilters.vue'
 
@@ -21,6 +22,9 @@ function loadValues(field, query, signal) {
   return api(`/datasets/${props.dataset.id}/preview-values?${params}`, {signal})
 }
 watch(conditions, () => { page.value = 1 }, {flush:'sync'})
+rememberForm(datasetDraftKey(props.dataset,'preview'),
+  () => ({filters:drafts.value,search:search.value,keyword:keyword.value,page:page.value}),
+  saved => {drafts.value=saved.filters;search.value=saved.search;keyword.value=saved.keyword;page.value=saved.page})
 watch([page, conditions, keyword, retry], async (_, __, onCleanup) => {
   const controller = new AbortController()
   onCleanup(() => controller.abort())

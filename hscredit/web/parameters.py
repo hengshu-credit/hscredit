@@ -16,10 +16,7 @@ def parameter_specs(target, *, exclude=(), include=None):
         doc += "\n" + (inspect.getdoc(target.__init__) or "")
     # Sphinx 的参数正文可跨行，直到下一项指令或未缩进的章节开始。
     parameter_docs = r"^[ \t]*:param (\w+):[ \t]*(.*?)(?=\n[ \t]*:\w|\n\S|\Z)"
-    descriptions = {
-        name: text.strip().replace("``", "")
-        for name, text in re.findall(parameter_docs, doc, re.MULTILINE | re.DOTALL)
-    }
+    descriptions = {name: text.strip().replace("``", "") for name, text in re.findall(parameter_docs, doc, re.MULTILINE | re.DOTALL)}
     specs = {}
     for name, param in inspect.signature(target).parameters.items():
         if name in exclude or (include is not None and name not in include):

@@ -5,6 +5,7 @@ import FieldSelect from "./FieldSelect.vue"
 import {computed,nextTick,provide,ref,watch} from 'vue'
 import {ElMessage,ElMessageBox} from 'element-plus'
 import {api} from '../api'
+import {datasetDraftKey,readDraft,writeDraft} from '../form-drafts'
 import {emptyNode,fieldNode,literalNode,operationNode,replaceNode,fieldsBefore,describeNode,configuredRules,expressionComplete,switchRuleMode} from '../processing'
 import FxNode from './FxNode.vue'
 import FieldContentPicker from './FieldContentPicker.vue'
@@ -14,8 +15,8 @@ provide('fieldPickerDataset',computed(()=>props.dataset))
 const emit=defineEmits(['update:modelValue','saved'])
 const rules=ref([]),active=ref(0),error=ref(''),preview=ref(null),previewing=ref(false),saving=ref(false),saveAs=ref(false),name=ref(''),tab=ref('editor')
 const picker=ref(false),pickPath=ref([]),previewKey=ref('');let requestNumber=0
-const formulaEditing=ref(false),formulaText=ref(''),formulaError=ref(''),formulaParsing=ref(false),formulaInput=ref()
-const drafts=new Map(),textDrafts=new Map();let loadedDataset=''
+const formulaError=ref(''),formulaParsing=ref(false),formulaInput=ref()
+let loadedKey=''
 const fields=computed(()=>fieldsBefore(props.dataset?.columns||[],rules.value,active.value))
 const current=computed(()=>rules.value[active.value]),revision=computed(()=>props.dataset?.revision||1)
 const fingerprint=computed(()=>JSON.stringify({id:props.dataset?.id,revision:revision.value,rules:configuredRules(rules.value)}))
@@ -23,22 +24,37 @@ const rulesValid=computed(()=>rules.value.length>0&&rules.value.every(r=>r.targe
 const canApply=computed(()=>preview.value&&!formulaEditing.value&&!formulaParsing.value&&previewKey.value===fingerprint.value&&(!saveAs.value||name.value.trim()))
 const history=computed(()=>props.dataset?.history?.length?props.dataset.history:[{revision:revision.value,at:props.dataset?.created_at,description:'初始数据',columns:props.dataset?.columns?.length}])
 watch(fingerprint,()=>{preview.value=null;previewKey.value='';requestNumber++})
-watch([()=>props.modelValue,()=>props.dataset?.id],([opened,id])=>{
-  if(!opened){if(loadedDataset)drafts.set(loadedDataset,{rules:structuredClone(configuredDraft()),active:active.value,saveAs:saveAs.value,name:name.value});return}
-  error.value='';preview.value=null;previewKey.value='';tab.value='editor'
-  if(id===loadedDataset&&rules.value.length)return
-  loadedDataset=id
-  const saved=drafts.get(id)
-  rules.value=saved?.rules||[];active.value=saved?.active||0;saveAs.value=props.dataset?.storage==='indices'||saved?.saveAs||false;name.value=saved?.name||`${props.dataset?.name||'数据'} · 加工结果`
+const formulaEditing=computed(()=>current.value?.formulaDraft !== undefined)
+const formulaText=computed({
+  get:()=>current.value?.formulaDraft ?? '',
+  set:text=>{if(current.value)current.value.formulaDraft=text},
+})
+watch([()=>props.modelValue,()=>props.dataset?.id,revision],([opened,id])=>{
+  requestNumber++
+  preview.value=null;previewKey.value='';previewing.value=false;error.value='';formulaError.value=''
+  if(!opened || !id)return
+  const key=datasetDraftKey(props.dataset,'processing')
+  if(key===loadedKey)return
+  loadedKey=key
+  const saved=readDraft(key)
+  rules.value=saved?.rules || []
+  active.value=saved?.active || 0
+  tab.value=saved?.tab || 'editor'
+  saveAs.value=props.dataset.storage==='indices' || !!saved?.saveAs
+  name.value=saved?.name ?? props.dataset.name+' · 加工结果'
   if(!saved)addRule()
 })
-function configuredDraft(){return JSON.parse(JSON.stringify(rules.value))}
-watch(()=>current.value?._id,(id,previous)=>{
-  if(previous&&formulaEditing.value)textDrafts.set(previous,formulaText.value)
-  formulaEditing.value=!!id&&textDrafts.has(id);formulaText.value=textDrafts.get(id)||'';formulaError.value=''
-})
-async function startFormulaEdit(){if(!current.value||saving.value)return;formulaText.value=textDrafts.get(current.value._id)??describeNode(current.value.expression);formulaEditing.value=true;formulaError.value='';preview.value=null;await nextTick();formulaInput.value?.focus()}
-function cancelFormulaEdit(){if(current.value)textDrafts.delete(current.value._id);formulaEditing.value=false;formulaError.value=''}
+watch(()=>({rules:rules.value,active:active.value,tab:tab.value,saveAs:saveAs.value,name:name.value}),draft=>{
+  if(loadedKey)writeDraft(loadedKey,draft)
+},{deep:true})
+watch(()=>current.value?._id,()=>{formulaError.value=''})
+async function startFormulaEdit(){
+  if(!current.value||saving.value)return
+  formulaText.value=describeNode(current.value.expression)
+  formulaError.value='';preview.value=null
+  await nextTick();formulaInput.value?.focus()
+}
+function cancelFormulaEdit(){if(current.value)delete current.value.formulaDraft;formulaError.value=''}
 async function parseFormula(){
   if(formulaParsing.value||!current.value||!formulaText.value.trim())return
   const id=current.value._id,key=fingerprint.value,text=formulaText.value
@@ -46,7 +62,7 @@ async function parseFormula(){
   try{
     const value=await api(`/datasets/${props.dataset.id}/processing/parse`,{method:'POST',body:JSON.stringify({text,expected_revision:revision.value,prior_rules:configuredRules(rules.value.slice(0,active.value).filter(r=>r.target.trim()&&expressionComplete(r.expression)))})})
     if(current.value?._id!==id||fingerprint.value!==key||formulaText.value!==text){formulaError.value='配置已变化，请重新解析';return}
-    current.value.expression=value.expression;textDrafts.delete(id);formulaEditing.value=false
+    current.value.expression=value.expression;cancelFormulaEdit()
   }catch(e){formulaError.value=e.message}finally{formulaParsing.value=false}
 }
 function addRule(){const first=fields.value.find(f=>f.valueType==='numeric')?.name||fields.value[0]?.name;rules.value.push({_id:crypto.randomUUID(),mode:'add',target:'',expression:operationNode(fieldNode(first))});active.value=rules.value.length-1}
@@ -55,7 +71,7 @@ function moveRule(direction){const to=active.value+direction;if(to<0||to>=rules.
 function chooseField(field){current.value.expression=replaceNode(current.value.expression,pickPath.value,fieldNode(field))}
 function setMode(mode){Object.assign(current.value,switchRuleMode(current.value,mode,fields.value))}
 function template(kind){cancelFormulaEdit();const value=fields.value.find(f=>f.valueType==='numeric')?.name||'',f=()=>fieldNode(value),n=literalNode,op=(a,o,b)=>({kind:'OPERATION',terms:[{operand:a},{operator:o,operand:b}]});if(kind==='scale')current.value.expression=op(f(),'*',n(1));if(kind==='missing')current.value.expression={kind:'FUNCTION',name:'where',args:[{kind:'FUNCTION',name:'isnan',args:[f()]},n(0),f()]};if(kind==='clip')current.value.expression={kind:'FUNCTION',name:'clip',args:[f(),n(0),n(100)]};if(kind==='label')current.value.expression={kind:'FUNCTION',name:'where',args:[op(f(),'>',n(30)),n(1),n(0)]}}
-async function doPreview(){const key=fingerprint.value,number=++requestNumber;previewing.value=true;error.value='';preview.value=null;try{const result=await api(`/datasets/${props.dataset.id}/processing/preview`,{method:'POST',body:JSON.stringify({rules:configuredRules(rules.value),expected_revision:revision.value})});if(number===requestNumber&&key===fingerprint.value){preview.value=result;previewKey.value=key}}catch(e){if(number===requestNumber)error.value=e.message}finally{previewing.value=false}}
+async function doPreview(){const key=fingerprint.value,number=++requestNumber;previewing.value=true;error.value='';preview.value=null;try{const result=await api(`/datasets/${props.dataset.id}/processing/preview`,{method:'POST',body:JSON.stringify({rules:configuredRules(rules.value),expected_revision:revision.value})});if(props.modelValue&&number===requestNumber&&key===fingerprint.value){preview.value=result;previewKey.value=key}}catch(e){if(number===requestNumber)error.value=e.message}finally{previewing.value=false}}
 async function apply(){if(!canApply.value)return;saving.value=true;error.value='';try{const result=await api(`/datasets/${props.dataset.id}/processing/apply`,{method:'POST',body:JSON.stringify({rules:configuredRules(rules.value),expected_revision:preview.value.revision,save_as:saveAs.value,name:saveAs.value?name.value:null})});ElMessage.success(saveAs.value?'已另存加工后的数据集':'字段加工已保存');emit('saved',result);emit('update:modelValue',false)}catch(e){error.value=e.message;preview.value=null}finally{saving.value=false}}
 async function restore(version){try{await ElMessageBox.confirm(`将当前数据恢复为版本 ${version} 的内容，并保留全部历史版本。`,'恢复数据版本',{confirmButtonText:'恢复',cancelButtonText:'取消',type:'warning'})}catch{return}saving.value=true;try{const result=await api(`/datasets/${props.dataset.id}/processing/restore`,{method:'POST',body:JSON.stringify({revision:version,expected_revision:revision.value})});emit('saved',result);emit('update:modelValue',false);ElMessage.success('已恢复数据版本')}catch(e){error.value=e.message}finally{saving.value=false}}
 </script>
@@ -65,7 +81,7 @@ async function restore(version){try{await ElMessageBox.confirm(`将当前数据�
   <el-tabs v-model="tab"><el-tab-pane label="ƒx 加工配置" name="editor"><div class="processing-layout">
     <aside class="processing-steps"><div class="processing-section-label">配置字段 <small>按顺序执行</small></div><button v-for="(rule,index) in rules" :key="rule._id" :class="{active:active===index}" @click="active=index"><span class="processing-step-number">{{index+1}}</span><div><strong>{{rule.target||'未命名字段'}}</strong><small>{{rule.mode==='add'?'新增字段':'更新字段'}}</small></div></button><el-button :disabled="rules.length>=30||saving||formulaParsing" @click="addRule">＋ 添加字段</el-button></aside>
     <div v-if="current" class="processing-editor"><div class="processing-rule-toolbar"><h3>字段 {{active+1}} · {{current.mode==='add'?'新增字段':'更新原字段'}}</h3><div><el-button size="small" :disabled="active===0||saving" @click="moveRule(-1)">上移</el-button><el-button size="small" :disabled="active===rules.length-1||saving" @click="moveRule(1)">下移</el-button><el-button size="small" type="danger" :disabled="saving||formulaParsing" @click="removeRule(active)">删除字段</el-button></div></div>
-      <el-form label-position="top" :disabled="saving"><div class="form-grid"><el-form-item label="处理方式"><el-radio-group :model-value="current.mode" @update:model-value="setMode"><el-radio-button value="add">新增字段</el-radio-button><el-radio-button value="replace">更新原字段</el-radio-button></el-radio-group></el-form-item><el-form-item label="目标字段" class="span-two" required><el-input v-if="current.mode==='add'" v-model="current.target" placeholder="输入新字段名称" aria-label="新字段名称" maxlength="150"/><FieldSelect v-else v-model="current.target" :fields="fields" label="待更新字段"/></el-form-item></div>
+      <el-form @submit.prevent label-position="top" :disabled="saving"><div class="form-grid"><el-form-item label="处理方式"><el-radio-group :model-value="current.mode" @update:model-value="setMode"><el-radio-button value="add">新增字段</el-radio-button><el-radio-button value="replace">更新原字段</el-radio-button></el-radio-group></el-form-item><el-form-item label="目标字段" class="span-two" required><el-input v-if="current.mode==='add'" v-model="current.target" placeholder="输入新字段名称" aria-label="新字段名称" maxlength="150"/><FieldSelect v-else v-model="current.target" :fields="fields" label="待更新字段"/></el-form-item></div>
       <div class="fx-toolbar"><strong>ƒx 组合表达式</strong><el-dropdown @command="template"><el-button size="small">常用加工 ⌄</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="scale">乘系数 / 单位换算</el-dropdown-item><el-dropdown-item command="missing">数值缺失填补</el-dropdown-item><el-dropdown-item command="clip">上下限截断</el-dropdown-item><el-dropdown-item command="label">条件标签</el-dropdown-item></el-dropdown-menu></template></el-dropdown><el-button size="small" @click="current.expression=operationNode(current.expression)">包入一层括号</el-button></div>
       <p class="muted">选择字段或常量，追加运算符；函数参数和运算项都支持继续组合。可引用前序字段的结果。</p>
       <FxNode :key="current._id" v-model="current.expression" :fields="fields" :catalog="catalog" @pick="pickPath=$event;picker=true" @remove="current.expression=emptyNode()"/>

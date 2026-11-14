@@ -2,6 +2,7 @@
 import TableFrame from './TableFrame.vue'
 import {computed, onMounted, ref} from 'vue'
 import {api} from '../api'
+import {rememberForm} from '../form-drafts'
 
 const props = defineProps({service: {type: Object, required: true}})
 const emit = defineEmits(['close'])
@@ -16,6 +17,9 @@ const shorten = computed(() => mode.value === 'days' && (retention.value === nul
 const validDays = computed(() => Number.isInteger(days.value) && days.value >= 1 && days.value <= 36500)
 const stamp = seconds => new Date(seconds * 1000).toLocaleString('zh-CN', {hour12:false})
 let generation = 0
+rememberForm('service-calls/'+props.service.id,
+  () => ({search:search.value,applied:appliedSearch.value,failed:failedOnly.value,page:page.value}),
+  saved => {search.value=saved.search;appliedSearch.value=saved.applied;failedOnly.value=saved.failed;page.value=saved.page})
 
 async function load(number = 1) {
   const current = ++generation
@@ -77,7 +81,7 @@ async function save() {
   }
 }
 
-onMounted(() => load())
+onMounted(() => load(page.value))
 </script>
 
 <template>
@@ -103,7 +107,7 @@ onMounted(() => load())
   </el-drawer>
   <el-dialog v-model="settingsOpen" title="调用记录保存期限" width="min(460px, 94vw)" append-to-body>
     <el-radio-group v-model="mode" aria-label="保存方式"><el-radio-button value="forever">永久保存</el-radio-button><el-radio-button value="days">按天保存</el-radio-button></el-radio-group>
-    <el-form v-if="mode==='days'" label-position="top" class="retention-days"><el-form-item label="保留最近多少天"><el-input-number v-model="days" :min="1" :max="36500" :precision="0" :controls="false"/></el-form-item></el-form>
+    <el-form @submit.prevent v-if="mode==='days'" label-position="top" class="retention-days"><el-form-item label="保留最近多少天"><el-input-number v-model="days" :min="1" :max="36500" :precision="0" :controls="false"/></el-form-item></el-form>
     <p v-if="shorten" class="muted">保存后将立即删除本服务超期的历史记录，删除后无法恢复。</p>
     <el-alert v-if="settingsError" type="error" :title="settingsError" :closable="false"/>
     <template #footer><el-button @click="settingsOpen=false">取消</el-button><el-button type="primary" :loading="saving" :disabled="mode==='days' && !validDays" @click="save">保存期限</el-button></template>

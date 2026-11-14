@@ -1,6 +1,8 @@
 <script setup>
 import TargetConfig from './TargetConfig.vue'
-import {useTargetConfig} from '../target-config'
+import {copyTargetDraft,useTargetConfig} from '../target-config'
+import {datasetDraftKey,rememberForm} from '../form-drafts'
+import {modelResultSelection,followModelResult} from '../model-result'
 import {computed,ref,reactive,watch,onBeforeUnmount} from 'vue'
 import {api} from '../api'
 import OptionalParameters from './OptionalParameters.vue'
@@ -18,7 +20,21 @@ const sampleOverrides=ref({})
 const targetConfig=useTargetConfig(()=>props.dataset,'training')
 const form=reactive({library_params:{},features:[],models:['logistic'],model_params:{},model_fit_params:{},cv:3,threshold:0.5,search:false,n_iter:10,selector:'none',selector_threshold:0.02,scorecard:false,pdo:20,base_score:600,explain:false})
 const columns=computed(()=>props.dataset?.columns||[]),models=computed(()=>props.catalog.models||{}),availableFeatures=computed(()=>columns.value.filter(c=>!targetConfig.sources.includes(c.name)))
-watch(()=>props.dataset?.id,()=>{job.value=null;explainJob.value=null;form.features=[];form.amount=null;sampleDataset.value=props.dataset?.id||''},{immediate:true})
+sampleDataset.value=props.dataset.id
+const selection=modelResultSelection(props.dataset,props.compare)
+followModelResult(()=>selection.selected.value.jobId,job,api,message=>{error.value=message})
+followModelResult(()=>selection.selected.value.explainId,explainJob,api,message=>{error.value=message})
+rememberForm(datasetDraftKey(props.dataset,props.compare?'compare':'experiment'),
+  () => ({form,target:targetConfig.draft,searchText:searchText.value,sampleText:sampleText.value,sampleDataset:sampleDataset.value,sampleOverrides:sampleOverrides.value,modelFile:modelFile.value}),
+  saved => {
+    Object.assign(form,saved.form)
+    if (saved.target) copyTargetDraft(targetConfig.draft,saved.target)
+    searchText.value=saved.searchText ?? '{}'
+    sampleText.value=saved.sampleText ?? '1'
+    sampleDataset.value=saved.sampleDataset ?? props.dataset.id
+    sampleOverrides.value=saved.sampleOverrides || {}
+    modelFile.value=saved.modelFile || 'model.joblib'
+  })
 watch(()=>targetConfig.sources.slice(),names=>{form.features=form.features.filter(c=>!names.includes(c))})
 const searchSchema = computed(() => modelParametersSchema(form.models, models.value))
 const specs=computed(()=>[
@@ -83,6 +99,7 @@ async function run(){
   busy.value=true
   error.value=''
   const token=++resultRequest
+  const sequence=selection.begin()
   try{
     const body={
       ...form,...targetConfig.payload,...props.samplePlan.payload,kind:'model',workflow:true,
@@ -92,10 +109,11 @@ async function run(){
       search_spaces:form.search?JSON.parse(searchText.value):{},
     }
     const [created]=await submitDatasetRuns(api,body,props.runDatasets)
-    if(token===resultRequest){
+    if(token===resultRequest && selection.select(sequence,created.id)){
       job.value=created
       sampleDataset.value=created.dataset_id
       explainJob.value=null
+      modelFile.value='model.joblib'
     }
     await refresh()
   }catch(e){error.value=e.message}finally{busy.value=false}
@@ -107,22 +125,32 @@ async function refresh(){
 }
 async function open(row){
   const token=++resultRequest
+  const sequence=selection.begin()
   try{
     const record=await api('/jobs/'+row.id)
-    if(token!==resultRequest)return
+    if(token!==resultRequest || !selection.select(sequence,record.id))return
     job.value=record
     sampleDataset.value=row.dataset_id
     explainJob.value=null
     modelFile.value='model.joblib'
   }catch(e){if(token===resultRequest)error.value=e.message}
 }
-async function explain(){try{const rows=sampleText.value.split(',').map(v=>Number(v.trim())-1);if(rows.some(n=>!Number.isInteger(n)||n<0))throw Error('请输入从 1 开始的行号，多个行号用逗号分隔');explainJob.value=await api('/jobs',{method:'POST',body:JSON.stringify({kind:'explain',workflow:true,dataset_id:sampleDataset.value,source_job:job.value.id,model_file:modelFile.value,sample_rows:rows,library_params:sampleOverrides.value})})}catch(e){error.value=e.message}}
+async function explain(){
+  const source=job.value.id
+  const sequence=selection.begin()
+  try{
+    const rows=sampleText.value.split(',').map(v=>Number(v.trim())-1)
+    if(rows.some(n=>!Number.isInteger(n)||n<0))throw Error('请输入从 1 开始的行号，多个行号用逗号分隔')
+    const created=await api('/jobs',{method:'POST',body:JSON.stringify({kind:'explain',workflow:true,dataset_id:sampleDataset.value,source_job:source,model_file:modelFile.value,sample_rows:rows,library_params:sampleOverrides.value})})
+    if(job.value?.id===source && selection.selected.value.jobId===source && selection.select(sequence,source,created.id))explainJob.value=created
+  }catch(e){error.value=e.message}
+}
 async function stop(){try{job.value=await api(`/jobs/${job.value.id}/stop`,{method:'POST'})}catch(e){error.value=e.message}}
 const poll=setInterval(refresh,2500);refresh();onBeforeUnmount(()=>clearInterval(poll))
 </script>
 <template>
   <section class="panel config-panel"><el-alert v-if="error" :title="error" type="error" :closable="false"/>
-    <el-form label-position="top"><TargetConfig :config="targetConfig" :dataset="dataset"/>
+    <el-form @submit.prevent label-position="top"><TargetConfig :config="targetConfig" :dataset="dataset"/>
       <ModelSelection shared-editor v-model:models="form.models" v-model:parameters="form.model_params" v-model:fit-parameters="form.model_fit_params" :catalog="models" :compare="compare"/>
       <OptionalParameters context="model" :specs="allSpecs" :values="settings" :extensions="groups" v-model:overrides="overrides" @change="setOption"/>
 

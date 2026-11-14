@@ -2,6 +2,7 @@
 import TableFrame from './TableFrame.vue'
 import {computed,defineAsyncComponent,reactive,ref,shallowRef,watch} from 'vue'
 import {api} from '../api'
+import {rememberForm} from '../form-drafts'
 import Chart from './Chart.vue'
 import DataTable from './DataTable.vue'
 import ExplorePivot from './ExplorePivot.vue'
@@ -16,6 +17,16 @@ const filters=reactive(new Map()),show3D=ref(true),labelled=ref(true),jointView=
 const targetName=ref(''),population=ref('valid'),targetCounts=shallowRef(props.result.target_counts||[])
 const result=shallowRef(props.result),targetError=ref(''),loadingSample=ref(false),retry=ref(0)
 const appliedTarget=ref(''),appliedPopulation=ref('valid')
+const defaults={width:64,top:425,bottom:305,columns:3,chartHeight:280}
+const layout=reactive({...defaults})
+rememberForm('explore-view/'+props.job.id,
+  ()=>({layout,filters:[...filters],joint:jointView.value,show3D:show3D.value,labelled:labelled.value,target:targetName.value,population:population.value}),
+  saved=>{
+    Object.assign(layout,saved.layout)
+    for(const [key,value] of saved.filters)filters.set(key,value)
+    jointView.value=saved.joint;show3D.value=saved.show3D;labelled.value=saved.labelled
+    targetName.value=saved.target;population.value=saved.population
+  })
 watch([targetName,population,retry],async ([name,sample],_,cleanup)=>{
   const controller=new AbortController()
   cleanup(()=>controller.abort())
@@ -23,17 +34,17 @@ watch([targetName,population,retry],async ([name,sample],_,cleanup)=>{
   loadingSample.value=!!name
   const path='/jobs/'+props.job.id+'/target-view'
   try{
+    if(props.job.hasTargets&&!props.result.target_counts&&!targetCounts.value.length){
+      const counts=await api(path,{signal:controller.signal})
+      if(controller.signal.aborted)return
+      targetCounts.value=counts
+    }
     if(name){
       const chart=await api(path+'?'+new URLSearchParams({target:name,population:sample}),{signal:controller.signal})
       if(controller.signal.aborted)return
       result.value=chart
     }else{
       result.value=props.result
-      if(props.job.hasTargets&&!props.result.target_counts&&!targetCounts.value.length){
-        const counts=await api(path,{signal:controller.signal})
-        if(controller.signal.aborted)return
-        targetCounts.value=counts
-      }
     }
     appliedTarget.value=name
     appliedPopulation.value=sample
@@ -53,9 +64,7 @@ const pairs=computed(()=>(result.value?.pairs||[]).map(pair=>{
   const group=labels.includes(filters.get(key))?filters.get(key):null
   return {pair,key,names,choices,format,labels,group,option:format==='table'?null:pairChart(pair,result.value.axes,format,group)}
 }))
-const defaults={width:64,top:425,bottom:305,columns:3,chartHeight:280}
 const pivotBrief=ref(null)
-const layout=reactive({...defaults})
 const gridStyle=computed(()=>({'--main-width':layout.width+'%','--top-height':layout.top+'px','--bottom-height':layout.bottom+'px','--columns':layout.columns,'--chart-height':layout.chartHeight+'px'}))
 const pairBrief=computed(()=>{
   const item=pairs.value[0]

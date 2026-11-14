@@ -883,7 +883,7 @@ def calibration_bias_plot(
 
     :param data: 评估样本，每行一笔订单。
     :param score: 未校准的坏样本概率，传列名或等长一维数据。Series 按索引对齐。
-    :param target: 单个评估标签，支持列名、标签向量或函数。也可用 overdue 和 dpds 指定一个逾期口径。
+    :param target: 单个评估标签，支持列名、Series、ndarray、list 或 callable，与 overdue 和 dpds 生成的逾期标签互斥。
     :param calibrated: 校准概率列名列表，或方法名到概率列／一维数据的映射。
     :param overdue: 逾期天数字段，与 dpds 配对使用。
     :param dpds: 逾期天数阈值。
@@ -967,8 +967,16 @@ def calibration_bias_plot(
     cmap = make_diverging_cmap() if colors is None else make_colormap("calibration_bias", colors)
     limit = np.abs(gap.to_numpy()).max() or 1.0
     sns.heatmap(
-        gap.T, ax=heat, cmap=cmap, vmin=-limit, vmax=limit, cbar=False, annot=True, fmt="+.2f",
-        xticklabels=[f"{i}档\n{rate:.1%}" for i, rate in zip(gap.index, rates)], yticklabels=True,
+        gap.T,
+        ax=heat,
+        cmap=cmap,
+        vmin=-limit,
+        vmax=limit,
+        cbar=False,
+        annot=True,
+        fmt="+.2f",
+        xticklabels=[f"{i}档\n{rate:.1%}" for i, rate in zip(gap.index, rates)],
+        yticklabels=True,
     )
     heat.tick_params(axis="both", labelrotation=0)
     heat.set(xlabel="原始概率从低到高 · 各档实际坏样本率", ylabel="", title="平均预测概率 − 实际坏样本率（百分点）")
@@ -980,11 +988,7 @@ def calibration_bias_plot(
         heat.set_title(f"{title} · 预测偏差（百分点）")
     save_figure(fig, save, dpi=dpi)
     if return_frame:
-        detail = pd.concat([
-            pd.DataFrame({"风险档": gap.index, "方法": name, "样本数": counts.to_numpy(), "实际坏样本率": rates.to_numpy(),
-                          "平均预测概率": means[name].to_numpy(), "预测偏差(百分点)": gap[name].to_numpy()})
-            for name in methods
-        ], ignore_index=True)
+        detail = pd.concat([pd.DataFrame({"风险档": gap.index, "方法": name, "样本数": counts.to_numpy(), "实际坏样本率": rates.to_numpy(), "平均预测概率": means[name].to_numpy(), "预测偏差(百分点)": gap[name].to_numpy()}) for name in methods], ignore_index=True)
         return fig, detail
     return fig
 

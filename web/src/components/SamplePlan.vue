@@ -15,7 +15,7 @@ const error=computed(()=>{
   return ''
 })
 function apply(){if(!error.value){Object.assign(props.plan.draft,d.value);opened.value=false}}
-watch(()=>[props.context,props.primary,props.plan.runDatasets[0]?.revision],()=>{opened.value=false})
+watch([()=>props.context,()=>props.primary,()=>props.plan.runDatasets[0]?.revision],()=>{opened.value=false})
 const summary=computed(()=>{
   const saved=props.plan.draft, parts=[]
   if(props.context==='model')parts.push(({external:'独立测试集',holdout:'分层留出 '+Math.round(saved.fraction*100)+'%',train:'训练集内评估'})[saved.testMode])

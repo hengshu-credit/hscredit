@@ -67,7 +67,7 @@ def _select_query(sql, db_type):
         from sqlglot import exp, parse
         from sqlglot.errors import SqlglotError
     except ImportError:
-        raise ValueError('缺少 SQL 解析依赖，请在平台环境安装 hscredit[web]') from None
+        raise ValueError("缺少 SQL 解析依赖，请在平台环境安装 hscredit[web]") from None
 
     dialect = {"impala": "hive", "maxcompute": "hive"}.get(db_type, db_type)
     sql = sql.strip().removesuffix(";").rstrip()

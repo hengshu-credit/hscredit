@@ -143,14 +143,17 @@ def _dataset_blocks(url):
 
 def _write_dataset(blocks, path, source, *, monitor_speed=False, append=False):
     """写入并校验数据；GitHub 的测速窗口低于阈值时暂停并保留迭代位置。"""
-    with path.open("ab" if append else "wb") as output, create_progress_bar(
-        desc=f"下载 hscredit 数据集（{source}）",
-        total=_DATASET_BYTES,
-        initial=output.tell(),
-        unit="B",
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as progress:
+    with (
+        path.open("ab" if append else "wb") as output,
+        create_progress_bar(
+            desc=f"下载 hscredit 数据集（{source}）",
+            total=_DATASET_BYTES,
+            initial=output.tell(),
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as progress,
+    ):
         total = output.tell()
         bytes_at_window_start = total
         started = monotonic()

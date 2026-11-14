@@ -2312,9 +2312,6 @@ class ManualTreeExtractor(ParallelizableMixin):
         if data_work.empty:
             raise ValueError(f"节点 {node} 在传入数据中无命中样本，无法进行人工分裂")
 
-        # 先删除该节点的旧子树
-        self.delete_node(node)
-
         # 指定 missing 时，将该特征缺失等价为该数值后再寻找阈值/统计样本，
         # 使节点样本数与规则（按 missing 路由缺失）口径一致，并兼容旧版 sklearn
         if self.missing is not None:
@@ -2370,7 +2367,8 @@ class ManualTreeExtractor(ParallelizableMixin):
         # 故新分裂节点缺失值路由方向为 0（走右），与 manual_split 的样本统计口径一致。
         missing_go_to_left_new = [0, 0, 0]
 
-        # 插入到指定节点
+        # 新分裂准备好后替换旧子树，一次手工分裂只记一条调整记录。
+        self._remove_descendants(node)
         (
             self._tree_info.children_left,
             self._tree_info.children_right,
@@ -2451,6 +2449,22 @@ class ManualTreeExtractor(ParallelizableMixin):
         >>> ext.delete_node(node=3)
         """
         self._check_fitted()
+        self._remove_descendants(node)
+        self.edit_history_ = list(getattr(self, "edit_history_", [])) + [
+            {
+                "序号": len(getattr(self, "edit_history_", [])) + 1,
+                "操作": "剪枝",
+                "节点编号": node,
+                "分裂特征": "",
+                "切分点": [],
+                "类别分组": [],
+            }
+        ]
+        self._generate_rules()
+        return self
+
+    def _remove_descendants(self, node: int) -> None:
+        """移除旧子树，调整标记；由调用方记录本次用户操作。"""
         removed = set(_find_subtree_node_ids(self._tree_info, node)) - {node}
         adjusted_nodes = {old - sum(removed_node < old for removed_node in removed) for old in self._manual_split_nodes | {node} if old not in removed}
 
@@ -2476,18 +2490,6 @@ class ManualTreeExtractor(ParallelizableMixin):
         )
 
         self._manual_split_nodes = adjusted_nodes
-        self.edit_history_ = list(getattr(self, "edit_history_", [])) + [
-            {
-                "序号": len(getattr(self, "edit_history_", [])) + 1,
-                "操作": "剪枝",
-                "节点编号": node,
-                "分裂特征": "",
-                "切分点": [],
-                "类别分组": [],
-            }
-        ]
-        self._generate_rules()
-        return self
 
     # -------------------------------------------------------------------------
     # 规则生成

@@ -5,7 +5,7 @@ import FieldSelect from "./components/FieldSelect.vue"
 import SamplePlan from './components/SamplePlan.vue'
 import {useSamplePlan} from './sample-plan'
 import TargetConfig from './components/TargetConfig.vue'
-import {useTargetConfig} from './target-config'
+import {copyTargetDraft,useTargetConfig} from './target-config'
 import {computed,onMounted,onBeforeUnmount,provide,reactive,ref,watch} from 'vue'
 import {ElMessage,ElMessageBox} from 'element-plus'
 import {Coin,FolderOpened,DataAnalysis,Connection,Cpu,DocumentChecked,Setting,InfoFilled,Upload,ArrowRight,Refresh,List,Operation} from '@element-plus/icons-vue'
@@ -39,9 +39,11 @@ import ExploreFieldBoard from './components/ExploreFieldBoard.vue'
 import BatchResultPicker from './components/BatchResultPicker.vue'
 import WorkbookReport from './components/WorkbookReport.vue'
 import {submitDatasetRuns} from './dataset-runs'
+import {datasetDraftKey,readDraft,writeDraft} from './form-drafts'
 
 const menus=[{id:'datasets',name:'数据管理',icon:Coin,desc:'统一管理分析数据，建立可复用的风控数据资产。'}, {id:'explore',name:'数据探索',icon:DataAnalysis,desc:'从分布、缺失与相关性出发，理解每一个变量。'}, {id:'strategy',name:'策略挖掘',icon:Connection,desc:'探索变量分箱与高风险规则，形成可检验的策略假设。'}, {id:'model',name:'模型构建',icon:Cpu,desc:'训练模型，比较效果与解释预测。'}, {id:'services',name:'PaaS 服务',icon:Connection,desc:'发布模型与规则 API。'}, {id:'third_party',name:'三方测试',icon:DocumentChecked,desc:'评估三方变量价值，生成自动特征分析报告。'}, {id:'tasks',name:'任务管理',icon:List}]
-const modelTab=ref('experiment'), page=ref('datasets')
+const modelTab=ref(readDraft('model-tab')==='compare'?'compare':'experiment'), page=ref('datasets')
+watch(modelTab, value=>writeDraft('model-tab',value))
 const centerModule=ref('explore'), detailId=ref(''), thirdJobId=ref('')
 const current=computed(()=>menus.find(m=>m.id===page.value)),datasets=ref([]),jobs=ref([]),catalog=ref({models:{}}),datasetId=ref(''),busy=ref(false),error=ref(''),drawer=ref(false)
 provide('platformJobs',jobs)
@@ -51,8 +53,10 @@ const datasetTree=computed(()=>datasetHierarchy(datasets.value))
 const assetTree=computed(()=>assetHierarchy(datasetTree.value))
 const samplePlan=useSamplePlan(datasets,datasetId,sampleContext,assetTree)
 const runDatasets=computed(()=>samplePlan.runDatasets)
-let explicitlyEmpty=false
-function selectPrimary(id){explicitlyEmpty=!id;datasetId.value=id}
+const lastDataset=readDraft('primary-dataset')
+let explicitlyEmpty=lastDataset===''
+function selectPrimary(id){explicitlyEmpty=!id;datasetId.value=id||''}
+watch(datasetId,id=>writeDraft('primary-dataset',id))
 let saved;try{saved=JSON.parse(localStorage.getItem(THEME_KEY)||'{}')}catch{saved={}}
 const theme=reactive(normalizeTheme(saved)),themeKey=computed(()=>JSON.stringify(theme)),systemTheme=matchMedia('(prefers-color-scheme: dark)')
 let savedTheme=normalizeTheme(saved)
@@ -96,7 +100,8 @@ provide('fieldPickerDataset',selected)
 const numeric=computed(()=>columns.value.filter(c=>c.kind==='numeric')),dates=computed(()=>columns.value.filter(c=>c.kind==='date'))
 const reportTarget=useTargetConfig(()=>selected.value,'report')
 const summaryTarget=useTargetConfig(()=>selected.value,'explore')
-const form=reactive({features:[],library_params:{},method:'quantile',max_n_bins:5,min_n_bins:1,min_bin_size:1,date:null,amount:null,freq:'M',pictures:['bin','ks'],corr:false,dropna:false,margins:true,long_format:false})
+const newReportForm=()=>({features:[],library_params:{},method:'quantile',max_n_bins:5,min_n_bins:1,min_bin_size:1,date:null,amount:null,freq:'M',pictures:['bin','ks'],corr:false,dropna:false,margins:true,long_format:false})
+const form=reactive(newReportForm())
 const availableFeatures=computed(()=>columns.value.filter(c=>!reportTarget.sources.includes(c.name)))
 function selectAllFeatures(){
   const {names,overflow}=addFields(form.features,availableFeatures.value.map(c=>c.name),200)
@@ -124,24 +129,48 @@ const formatsFor=name=>fieldChoices(kindOf(name))
 const combinations=computed(()=>axes.value.flatMap((x,i)=>axes.value.slice(i+1).map(y=>({key:JSON.stringify([x,y]),name:x+' × '+y,choices:pairChoices([kindOf(x),kindOf(y)])}))))
 const stoppingJobs=ref([])
 const exploreConfig=computed(()=>({dataset_id:datasetId.value,dataset_revision:selected.value?.revision||1,workflow:true,library_params:summaryParams.value,features:axes.value,feature:axes.value[0]||null,group:chartGroup.value||null,bins:histBins.value??20,freq:hasDate.value?timeFreq.value||'M':'M',...summaryTarget.payload,...(sampleContext.value==='summary'?samplePlan.payload:{})}))
-const {eda,loading:edaLoading,following:followingExplore,runningCurrentConfig,jobId:exploreJobId,currentJob:exploreJob,view:viewExploreJob,chartsCurrent,load:submitExplore,settle,reset:resetExplore}=useExploration({config:exploreConfig,runDatasets,api,refresh,clearError:()=>{error.value=''},onError:message=>{error.value=message;ElMessage.error(message)}})
+const {eda,loading:edaLoading,following:followingExplore,runningCurrentConfig,jobId:exploreJobId,trackingKey:exploreTrackingKey,currentJob:exploreJob,view:viewExploreJob,chartsCurrent,load:submitExplore,settle,reset:resetExplore}=useExploration({config:exploreConfig,runDatasets,api,refresh,clearError:()=>{error.value=''},onError:message=>{error.value=message;ElMessage.error(message)}})
 function loadExplore(){if(axes.value.length&&!summaryTarget.error)return submitExplore()}
 const settleExplore=()=>settle(jobs.value)
-watch([datasetId,()=>selected.value?.revision||1],()=>{
-  summaryParams.value={};form.library_params={};noteOpen.value=false;thirdJobId.value='';resetExplore();timeFreq.value='M'
+const analysisKey=computed(()=>selected.value && datasetDraftKey(selected.value,'analysis'))
+watch(analysisKey,key=>{
+  summaryParams.value={};Object.assign(form,newReportForm());noteOpen.value=false;thirdJobId.value='';resetExplore();timeFreq.value='M';histBins.value=20
   form.date=selected.value?.default_date||dates.value[0]?.name||null;form.amount=selected.value?.default_amount||null
   form.features=selected.value?.default_features?.filter(c=>!reportTarget.sources.includes(c))||columns.value.filter(c=>!reportTarget.sources.includes(c.name)&&c.kind!=='date'&&!/(^id$|编号|编码|流水号|^MOB\d|DPD)/i.test(c.name)).map(c=>c.name).slice(0,30)
   axes.value=[numeric.value.find(c=>form.features.includes(c.name))?.name||columns.value[0]?.name].filter(Boolean)
   chartGroup.value='';formats.clear();pairFormats.clear()
+  const draft=key && readDraft(key)
+  if (draft) {
+    if(draft.reportTarget) copyTargetDraft(reportTarget.draft,draft.reportTarget)
+    if(draft.summaryTarget) copyTargetDraft(summaryTarget.draft,draft.summaryTarget)
+    Object.assign(form,draft.form)
+    axes.value=draft.axes
+    chartGroup.value=draft.group
+    histBins.value=draft.bins
+    timeFreq.value=draft.freq
+    summaryParams.value=draft.summaryParams
+    for(const [name,value] of draft.formats) formats.set(name,value)
+    for(const [name,value] of draft.pairFormats) pairFormats.set(name,value)
+  }
+  if(key){
+    thirdJobId.value=readDraft(key+'/third-result') || ''
+    const saved=readDraft(key+'/explore-result')
+    const previous=jobs.value.find(row=>row.id===saved?.id && row.kind==='explore')
+    if(previous)viewExploreJob(previous,saved.trackingKey)
+  }
   if(page.value==='datasets'&&datasetId.value)explicitlyEmpty=false
 })
+watch([exploreJobId,exploreTrackingKey],([id,trackingKey])=>{if(id && analysisKey.value)writeDraft(analysisKey.value+'/explore-result',{id,trackingKey})})
+watch(thirdJobId,id=>{if(id && analysisKey.value)writeDraft(analysisKey.value+'/third-result',id)})
+watch(()=>({form,reportTarget:reportTarget.draft,summaryTarget:summaryTarget.draft,axes:axes.value,group:chartGroup.value,bins:histBins.value,freq:timeFreq.value,summaryParams:summaryParams.value,formats:[...formats],pairFormats:[...pairFormats]}),
+  draft=>{if(analysisKey.value) writeDraft(analysisKey.value,draft)}, {deep:true,flush:'post'})
 async function guard(fn){try{error.value='';return await fn()}catch(e){error.value=e.message;ElMessage.error(e.message)}}
 async function refresh(){await guard(async()=>{
   const [d,j]=await Promise.all([api('/datasets'),api('/jobs')])
   datasets.value=d;jobs.value=j
   const available=new Set(d.map(item=>item.id))
   if(!available.has(datasetId.value)&&!explicitlyEmpty){
-    datasetId.value=d.find(item=>!item.parent_id)?.id||d[0]?.id||''
+    datasetId.value=(!datasetId.value && available.has(lastDataset) ? lastDataset : d.find(item=>!item.parent_id)?.id)||d[0]?.id||''
   }
 })}
 async function stopJob(row){
@@ -219,6 +248,7 @@ async function submit(){if(!datasetId.value||!form.features.length){ElMessage.wa
   if(reportTarget.error)throw new Error(reportTarget.error)
   const config={...form,...reportTarget.payload,kind:'third_party',dataset_id:datasetId.value,dataset_revision:selected.value.revision||1}
   const created=await submitDatasetRuns(api,config,runDatasets.value)
+  writeDraft(datasetDraftKey({id:config.dataset_id,revision:config.dataset_revision},'analysis')+'/third-result',created[0].id)
   if(datasetId.value===config.dataset_id && (selected.value?.revision||1)===config.dataset_revision)thirdJobId.value=created[0].id
   ElMessage.success(`已提交 ${created.length} 个三方测试任务`);await refresh()
 });submitting.value=false}
@@ -236,11 +266,16 @@ const reportOptions=computed(()=>[
   option('margins','分箱合计行','在分箱表末尾显示合计',true),option('long_format','长表输出','按标签分行展示',false),
 ])
 let timer,polling=false
+async function refreshCatalog(){
+  await guard(async()=>{catalog.value=await api('/catalog')})
+  await refresh()
+}
+window.addEventListener('hscredit-api-ready',refreshCatalog)
 watch(page, value => {
   if (value==='tasks') guard(async()=>{jobs.value=await api('/jobs')})
 })
-onMounted(async()=>{busy.value=true;await guard(async()=>{catalog.value=await api('/catalog')});await refresh();busy.value=false;timer=setInterval(async()=>{if(polling)return;polling=true;try{jobs.value=await api('/jobs');if(error.value.startsWith('状态刷新失败：'))error.value='';await settleExplore()}catch(e){error.value=`状态刷新失败：${e.message}`}finally{polling=false}},2500)})
-onBeforeUnmount(()=>{clearInterval(timer);compactQuery.removeEventListener('change',onCompact);systemTheme.removeEventListener('change',onSystemTheme);window.removeEventListener('hashchange',onHash)})
+onMounted(async()=>{busy.value=true;await refreshCatalog();busy.value=false;timer=setInterval(async()=>{if(polling)return;polling=true;try{jobs.value=await api('/jobs');if(error.value.startsWith('状态刷新失败：'))error.value='';await settleExplore()}catch(e){error.value=`状态刷新失败：${e.message}`}finally{polling=false}},2500)})
+onBeforeUnmount(()=>{clearInterval(timer);compactQuery.removeEventListener('change',onCompact);systemTheme.removeEventListener('change',onSystemTheme);window.removeEventListener('hashchange',onHash);window.removeEventListener('hscredit-api-ready',refreshCatalog)})
 </script>
 
 <template>
@@ -305,7 +340,7 @@ onBeforeUnmount(()=>{clearInterval(timer);compactQuery.removeEventListener('chan
           <DatasetSummary v-if="selected" :dataset="selected"/>
           <DatasetCorrelation v-if="selected" :key="`correlation:${selected.id}:${selected.revision||1}`" :dataset="selected" :theme-key="themeKey"/>
         </template>
-        <TaskCenter v-else-if="page==='tasks'" :module="centerModule" :id="detailId" :jobs="jobs" :datasets="datasets" :catalog="catalog.models" :parameter-catalog="catalog.parameters" :stopping="stoppingJobs" @stop="stopJob" @created="registerJob"/>
+        <TaskCenter v-else-if="page==='tasks'" :key="centerModule" :module="centerModule" :id="detailId" :jobs="jobs" :datasets="datasets" :catalog="catalog.models" :parameter-catalog="catalog.parameters" :stopping="stoppingJobs" @stop="stopJob" @created="registerJob"/>
         <template v-else>
           <SamplePlan :compact="page==='explore'" v-if="page!=='services'" :context="sampleContext" :primary="datasetId" :plan="samplePlan" :tree="assetTree" @primary="selectPrimary"><el-popover v-if="selected?.note" v-model:visible="noteOpen" placement="bottom-end" :width="compact?280:420" trigger="click" :content="selected.note"><template #reference><el-button class="dataset-note-trigger" text :icon="InfoFilled">数据说明</el-button></template></el-popover><el-button link type="primary" @click="navigate('datasets')">管理数据集 <el-icon><ArrowRight/></el-icon></el-button></SamplePlan>
           <ServiceWorkbench v-if="page==='services'" :dataset="selected" :datasets="datasets"/>
@@ -338,7 +373,7 @@ onBeforeUnmount(()=>{clearInterval(timer);compactQuery.removeEventListener('chan
           </template>
           <template v-else>
             <section class="panel config-panel"><div class="panel-heading"><h2><el-icon><Operation/></el-icon> 三方评估配置</h2><el-tag effect="plain">字段随数据集联动</el-tag></div>
-              <el-form label-position="top">
+              <el-form @submit.prevent label-position="top">
                 <TargetConfig :config="reportTarget" :dataset="selected"/>
                 <div class="form-grid">
                   <el-form-item label="分析特征" class="full-width" required><div class="feature-field"><FieldSelect v-model="form.features" :fields="availableFeatures" multiple :limit="200" label="分析特征" placeholder="选择参与分析的字段"/><el-button @click="selectAllFeatures">全选</el-button><el-button @click="form.features=[]">清空</el-button></div><span class="form-help">已选择 {{form.features.length}} 个特征。标签已排除；请主动排除客户标识和放款后产生的字段。</span></el-form-item>

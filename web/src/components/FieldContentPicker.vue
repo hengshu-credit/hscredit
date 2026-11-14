@@ -252,7 +252,7 @@ watch([category,manual], ([key, isManual]) => {
 })
 watch(writer,el=>{if(el&&manual.value)el.focus()},{flush:'post'})
 watch(()=>props.initialText,text=>{if(props.modelValue&&manual.value)input.value=text},{flush:'sync'})
-watch(() => [dataset.value?.id, dataset.value?.revision], () => {
+watch([() => dataset.value?.id, () => dataset.value?.revision], () => {
   if (props.modelValue) emit('update:modelValue', false)
 })
 onMounted(()=>{window.addEventListener('pointerup',endDrag);window.addEventListener('blur',cancelDrag);window.addEventListener('pointercancel',cancelDrag)})

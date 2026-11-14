@@ -1,4 +1,4 @@
-// API 重载完成后重新挂载页面，重新读取模型、参数和数据目录。
+// API 重载后刷新目录，保留当前页面与正在编辑的表单。
 let instance
 let pending = false
 let disposed = false
@@ -19,7 +19,7 @@ async function checkInstance() {
     const previous = instance ?? sessionStorage.getItem('hscredit-dev-instance')
     instance = data.instance
     sessionStorage.setItem('hscredit-dev-instance', instance)
-    if (previous !== instance) location.reload()
+    if (previous !== instance) window.dispatchEvent(new Event('hscredit-api-ready'))
   } catch {
     // 服务重载期间可能短暂断开，下次检查继续连接。
   } finally {

@@ -36,9 +36,16 @@ class SSHTunnel(BaseModel):
                 raise ValueError("无法读取 SSH 私钥，请检查私钥文件及其解密口令") from None
         methods = {"password": ["password"], "key": ["publickey"], "key_password": ["publickey", "password"]}
         options = dict(
-            host=self.host.strip(), port=self.port, username=self.username.strip(),
-            password=password, client_keys=[key] if key else None, preferred_auth=methods[self.auth],
-            agent_path=None, config=None, connect_timeout=15, disable_trivial_auth=True,
+            host=self.host.strip(),
+            port=self.port,
+            username=self.username.strip(),
+            password=password,
+            client_keys=[key] if key else None,
+            preferred_auth=methods[self.auth],
+            agent_path=None,
+            config=None,
+            connect_timeout=15,
+            disable_trivial_auth=True,
         )
         fingerprint = self.host_fingerprint.strip()
         if fingerprint:
@@ -105,7 +112,7 @@ async def database_route(request):
     try:
         import asyncssh
     except ImportError:
-        raise ValueError('缺少 SSH 依赖，请在平台环境安装 hscredit[web]') from None
+        raise ValueError("缺少 SSH 依赖，请在平台环境安装 hscredit[web]") from None
     try:
         async with asyncssh.connect(**request.tunnel.ssh_options(asyncssh)) as ssh:
             listener, options, proxy = await _forward_database(ssh, request.db_type, options)

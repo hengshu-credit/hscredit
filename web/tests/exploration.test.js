@@ -36,6 +36,20 @@ test('重复进入页面和点击更新复用已完成结果，也不重复提�
   assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,0)
 })
 
+test('恢复探索任务后仅重新读取结果，修改字段仍可运行新任务',async()=>{
+  const {state,config,submissions}=setup()
+  await state.load()
+  const row={id:state.jobId.value,status:'成功'}, key=state.trackingKey.value
+  state.reset()
+  await state.view(row,key)
+  assert.ok(state.eda.value)
+  await state.load()
+  assert.equal(submissions().length,1)
+  config.value.feature='年龄'
+  await state.load()
+  assert.equal(submissions().length,2)
+})
+
 test('字典的首项和比较值参与概况缓存，服务端补齐空值仍能复用',async()=>{
   const {state,config,complete,jobs}=setup()
   Object.assign(config.value,{target:{甲:{field:'A'},乙:{field:'B',operator:'>',value:3}},target_order:['甲','乙']})

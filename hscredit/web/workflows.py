@@ -109,6 +109,30 @@ def single_sections(bundle, frames, labels_by_dataset, config, binner, feature):
                         bundle.plot(f"{prefix} / {title} / {group_name}", lambda: bin_overdues_plot(bin_table=group_table, n_jobs=1, **{"title": f"{feature} · {group_name}", **library_options(config, "target_plot")}))
 
 
+def apply_tree_edits(tree, training, mode, edits):
+    """按页面行序调整当前树；旧任务未记录操作类型时按分裂处理。"""
+    for index, edit in enumerate(edits, start=1):
+        try:
+            node = edit.get("node")
+            if type(node) is not int or node < 0:
+                raise ValueError("节点编号必须为非负整数")
+            action = edit.get("action", "split")
+            if action == "prune":
+                tree.delete_node(node)
+            elif action != "split":
+                raise ValueError("操作类型必须为分裂或剪枝")
+            elif mode == "binary":
+                tree.manual_split(training, feature=edit["feature"], threshold=edit["threshold"], node=node)
+            else:
+                tree.manual_split(training, feature=edit["feature"], thresholds=edit.get("thresholds"), category_groups=edit.get("category_groups"), node=node)
+        except IndexError as exc:
+            raise ValueError(f"第 {index} 行手工调整失败：节点 {node} 不存在") from exc
+        except KeyError as exc:
+            raise ValueError(f"第 {index} 行手工调整缺少字段：{exc}") from exc
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"第 {index} 行手工调整失败：{exc}") from exc
+
+
 def strategy_workflow(workspace, config, directory, progress):
     from hscredit.core.binning import OptimalBinning, OptimalBinning2D
     from hscredit.core.binning.spec import BinSpec
@@ -148,11 +172,7 @@ def strategy_workflow(workspace, config, directory, progress):
     else:
         options = {"target": target, "features": features, "max_depth": config["tree_depth"], "min_samples_leaf": config["tree_min_samples"], "n_jobs": 1}
         tree = (ManualTreeExtractor(**options, random_state=config["random_state"], **library_options(config, "binary_tree")) if mode == "binary" else MultiwayTreeExtractor(**options, max_n_bins=config["max_n_bins"], **library_options(config, "multiway_tree"))).fit(training)
-        for edit in config.get("tree_edits", []):
-            if mode == "binary":
-                tree.manual_split(training, feature=edit["feature"], threshold=edit["threshold"], node=edit["node"])
-            else:
-                tree.manual_split(training, feature=edit["feature"], thresholds=edit.get("thresholds"), category_groups=edit.get("category_groups"), node=edit["node"])
+        apply_tree_edits(tree, training, mode, config.get("tree_edits", []))
         candidates = [rule_payload(r) for r in tree.get_rules()]
         leaves = {r["name"] for r in candidates}
         branches = [rule_payload(r) for r in tree.get_rules(leaf_only=False) if r.name not in leaves and r.expr != "True"]

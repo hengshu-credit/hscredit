@@ -67,6 +67,36 @@ def test_strategy_modes_use_executable_rules_and_evaluate_other_samples(prepared
         assert any(k.startswith("报告预览") for k in result["tables"])
 
 
+@pytest.mark.parametrize("mode", ["binary", "multiway"])
+@pytest.mark.parametrize("prune_last", [True, False])
+def test_ordered_tree_edits_determine_reported_leaves(prepared, mode, prune_last):
+    from hscredit.core.rules import Rule
+
+    workspace, data, config, output = prepared
+    split = {"node": 0, "feature": "评分", **({"threshold": 0.25} if mode == "binary" else {"thresholds": [0.25]})}
+    prune = {"node": 0, "action": "prune"}
+    config.update(strategy_mode=mode, tree_edits=[split, prune] if prune_last else [prune, split])
+    result = strategy_workflow(workspace, config, output, lambda *args: None)
+    masks = [Rule(rule["expression"]).predict(data).to_numpy() for rule in result["candidates"]]
+    expected = [np.ones(len(data), dtype=bool)] if prune_last else [data["评分"] <= 0.25, data["评分"] > 0.25]
+    np.testing.assert_array_equal(masks, expected)
+    tree = joblib.load(output / "tree.joblib")
+    assert len(tree.edit_history_) == 2
+    assert tree.edit_history_[int(prune_last)]["操作"] == "剪枝"
+
+
+def test_tree_edits_accept_more_than_thirty_rows_and_identify_invalid_node(prepared):
+    from hscredit.report.mining import ManualTreeExtractor
+    from hscredit.web.workflows import apply_tree_edits
+
+    _, data, config, _ = prepared
+    edits = [{"node": 0, "action": "prune"}] * 31 + [{"node": 1, "action": "prune"}]
+    assert JobRequest(**{**config, "tree_edits": edits}).tree_edits == edits
+    tree = ManualTreeExtractor(target="标签", features=["评分"]).fit(data)
+    with pytest.raises(ValueError, match="第 32 行.*节点 1 不存在"):
+        apply_tree_edits(tree, data, "binary", edits)
+
+
 def test_rule_order_and_combination_report_are_real(prepared):
     workspace, data, config, output = prepared
     config.update(kind="ruleset", selected_rules=[{"name": "正分", "expression": "评分 > 0"}, {"name": "高金额", "expression": "金额 > 50"}], rule_logic="and")

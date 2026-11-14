@@ -307,8 +307,7 @@ def test_explore_filtered_results_follow_task_labels_and_revision(client, frame)
     frame["MOB1"] = np.resize([0, 10, 35, None], len(frame)).astype(float)
     frame["MOB6"] = np.resize([None, 0, 45], len(frame)).astype(float)
     identifier = upload(client, frame)["id"]
-    job = run_job(client, identifier, "explore", workflow=True, features=["评分", "金额", "日期"], group="渠道",
-                  target=None, label_mode="overdue", overdue=["MOB1", "MOB6"], dpds=[30], del_grey=True)
+    job = run_job(client, identifier, "explore", workflow=True, features=["评分", "金额", "日期"], group="渠道", target=None, label_mode="overdue", overdue=["MOB1", "MOB6"], dpds=[30], del_grey=True)
     url = f"/api/jobs/{job['id']}"
     counts = job["result"]["interaction"]["target_counts"]
     assert [row["标签"] for row in counts] == ["MOB1_30+", "MOB6_30+"]
@@ -382,14 +381,14 @@ def test_token_access(tmp_path):
 
 def test_brand_svg_has_browser_supported_media_type(tmp_path, monkeypatch):
     import mimetypes
-    import re
+    from importlib.resources import files
 
     mimetypes.init()
     monkeypatch.setitem(mimetypes.types_map, ".svg", "image/svg")
     with TestClient(create_app(tmp_path)) as client:
-        html = client.get("/").text
-        logo_url = re.search(r'href="([^"]+\.svg)"', html).group(1)
-        response = client.get(logo_url)
+        assets = files("hscredit").joinpath("resources").joinpath("platform").joinpath("assets")
+        svg = next(asset for asset in assets.iterdir() if asset.name.startswith("wechat-") and asset.name.endswith(".svg"))
+        response = client.get(f"/assets/{svg.name}")
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/svg+xml"
         assert b"<svg" in response.content

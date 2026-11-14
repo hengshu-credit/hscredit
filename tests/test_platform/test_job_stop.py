@@ -64,13 +64,7 @@ def test_parallel_jobs_release_one_slot_and_keep_results_separate(tmp_path, monk
         dataset = client.app.state.workspace.add_dataset(pd.DataFrame({"x": [1, 2]}), "并发验证")
         script = tmp_path / "worker.py"
         script.write_text(
-            "import json, sys, time\n"
-            "from pathlib import Path\n"
-            "job = sys.argv[1]\n"
-            "Path('ready').touch()\n"
-            "while not Path('finish').exists(): time.sleep(.05)\n"
-            "Path('output.txt').write_text(job)\n"
-            "Path('outcome.json').write_text(json.dumps({'ok': True, 'result': {'artifacts': ['output.txt']}}))\n",
+            "import json, sys, time\n" "from pathlib import Path\n" "job = sys.argv[1]\n" "Path('ready').touch()\n" "while not Path('finish').exists(): time.sleep(.05)\n" "Path('output.txt').write_text(job)\n" "Path('outcome.json').write_text(json.dumps({'ok': True, 'result': {'artifacts': ['output.txt']}}))\n",
             encoding="utf-8",
         )
         monkeypatch.setattr(client.app.state.jobs, "_command", lambda job: [sys.executable, str(script), job])

@@ -14,7 +14,7 @@ const summary=computed(()=>{
   const name=props.training&&props.config.purpose==='training'?'主标签 · '+props.config.primary:props.config.conditions[0]
   return modes[props.config.draft.mode]+' · '+name+(props.config.conditions.length>1?'（共 '+props.config.conditions.length+' 个口径）':'')
 })
-watch(()=>[props.dataset.id,props.dataset.revision],()=>{opened.value=false})
+watch([()=>props.dataset.id,()=>props.dataset.revision],()=>{opened.value=false})
 function edit(){copyTargetDraft(editor.draft,props.config.draft);opened.value=true}
 function apply(){if(!editor.error){copyTargetDraft(props.config.draft,editor.draft);opened.value=false;emit('applied',props.config.payload)}}
 </script>

@@ -96,20 +96,27 @@ def test_calibration_plot_uses_observed_mean_probability_and_keeps_zero():
 
 
 def test_calibration_bias_plot_uses_common_cohort_and_raw_bins(tmp_path):
-    data = pd.DataFrame({"原始": [0., 0., 1., 1., 0.5], "逾期": [0, 60, 0, 80, 90]}, index=list("abcde"))
-    calibrated = pd.Series([.2, .4, .7, .9, np.nan], index=data.index).iloc[::-1]
+    data = pd.DataFrame({"原始": [0.0, 0.0, 1.0, 1.0, 0.5], "逾期": [0, 60, 0, 80, 90]}, index=list("abcde"))
+    calibrated = pd.Series([0.2, 0.4, 0.7, 0.9, np.nan], index=data.index).iloc[::-1]
     fig, axes = plt.subplots(1, 2)
     first_position = axes[0].get_position().bounds
     path = tmp_path / "figures" / "bias.svg"
     result, detail = calibration_bias_plot(
-        data, "原始", overdue="逾期", dpds=[30], calibrated={"方法": calibrated}, n_bins=2,
-        axes=axes, save=path, return_frame=True,
+        data,
+        "原始",
+        overdue="逾期",
+        dpds=[30],
+        calibrated={"方法": calibrated},
+        n_bins=2,
+        axes=axes,
+        save=path,
+        return_frame=True,
     )
     assert result is fig and axes[0].get_position().bounds == pytest.approx(first_position)
     assert len(fig.axes) == 2 and path.is_file()
     np.testing.assert_array_equal(detail["样本数"], [2, 2, 2, 2])
-    np.testing.assert_allclose(detail["实际坏样本率"], .5)
-    np.testing.assert_allclose(detail["平均预测概率"], [0, 1, .3, .8])
+    np.testing.assert_allclose(detail["实际坏样本率"], 0.5)
+    np.testing.assert_allclose(detail["平均预测概率"], [0, 1, 0.3, 0.8])
     np.testing.assert_allclose(detail["预测偏差(百分点)"], [-50, 50, -20, 30])
     heat = axes[1].collections[0]
     assert heat.cmap.name == "hscredit_diverging"
@@ -118,13 +125,13 @@ def test_calibration_bias_plot_uses_common_cohort_and_raw_bins(tmp_path):
 
 
 def test_calibration_bias_plot_keeps_equal_scores_in_one_bin():
-    data = pd.DataFrame({"原始": [.5] * 4, "校准": [.25] * 4, "目标": [0, 1, 0, np.nan]})
+    data = pd.DataFrame({"原始": [0.5] * 4, "校准": [0.25] * 4, "目标": [0, 1, 0, np.nan]})
     fig, detail = calibration_bias_plot(data, "原始", "目标", calibrated=["校准"], return_frame=True)
     assert detail["风险档"].tolist() == [1, 1] and detail["样本数"].tolist() == [3, 3]
-    np.testing.assert_allclose(detail["预测偏差(百分点)"], 100 * (np.array([.5, .25]) - 1 / 3))
+    np.testing.assert_allclose(detail["预测偏差(百分点)"], 100 * (np.array([0.5, 0.25]) - 1 / 3))
     plt.close(fig)
     with pytest.raises(ValueError, match="范围"):
-        calibration_bias_plot(data, [1.01, .1, .2, .3], "目标")
+        calibration_bias_plot(data, [1.01, 0.1, 0.2, 0.3], "目标")
     with pytest.raises(ValueError, match="有效"):
         calibration_bias_plot(data, "原始", "目标", calibrated={"缺失": [np.nan] * 4})
 

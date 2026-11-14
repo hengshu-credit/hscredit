@@ -19,8 +19,13 @@ def source(tmp_path, monkeypatch):
     monkeypatch.setattr(MySQLAdapter, "load_driver", lambda self: driver)
     monkeypatch.setattr(MySQLAdapter, "load_pool_class", lambda self: FakePooledDB)
     body = {
-        "name": "评分样本", "db_type": "mysql", "address": "db.test", "port": 3306,
-        "username": "reader", "password": "test-only-secret", "database": "risk",
+        "name": "评分样本",
+        "db_type": "mysql",
+        "address": "db.test",
+        "port": 3306,
+        "username": "reader",
+        "password": "test-only-secret",
+        "database": "risk",
         "sql": "WITH loan AS (SELECT customer_id FROM loans) SELECT loan.customer_id AS 客户编号, s.score AS 评分 FROM loan JOIN scores s ON s.id = loan.customer_id WHERE s.score >= 600",
     }
     with TestClient(create_app(tmp_path)) as client:

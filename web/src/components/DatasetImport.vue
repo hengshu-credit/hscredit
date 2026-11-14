@@ -2,6 +2,7 @@
 import {computed, reactive, ref, shallowRef, watch} from 'vue'
 import {Upload} from '@element-plus/icons-vue'
 import {api} from '../api'
+import {rememberForm} from '../form-drafts'
 
 const open = defineModel({type:Boolean})
 const emit = defineEmits(['imported'])
@@ -67,21 +68,25 @@ async function testConnection(){
 function resetConnection() {
   Object.assign(connection, {address:'', port:ports[engine.value], database:'', username:'', password:'', secure:false, auth_mechanism:engine.value === 'impala' ? 'NOSASL' : 'PLAIN'})
 }
-watch(engine, resetConnection)
+watch(engine, resetConnection,{flush:'sync'})
 watch(() => connection.secure, secure => {
   if (engine.value === 'clickhouse' && [8123,8443].includes(connection.port)) connection.port = secure ? 8443 : 8123
 })
+rememberForm('dataset-import', () => ({
+  source:source.value,name:name.value,sheet:sheet.value,encoding:encoding.value,engine:engine.value,sql:sql.value,
+  connection:{address:connection.address,port:connection.port,database:connection.database,secure:connection.secure,auth_mechanism:connection.auth_mechanism},
+  useTunnel:useTunnel.value,tunnel:{host:tunnel.host,port:tunnel.port,auth:tunnel.auth,host_fingerprint:tunnel.host_fingerprint},
+}), saved => {
+  source.value=saved.source;name.value=saved.name;sheet.value=saved.sheet;encoding.value=saved.encoding
+  engine.value=saved.engine;sql.value=saved.sql;useTunnel.value=saved.useTunnel
+  Object.assign(connection,saved.connection)
+  Object.assign(tunnel,saved.tunnel)
+})
 watch(open, visible => {
   if (!visible) {
-    source.value = 'file'
-    engine.value = 'mysql'
-    resetConnection()
-    useTunnel.value = false
-    resetTunnel()
-    testMessage.value = ''
-    name.value = sql.value = error.value = sheet.value = ''
-    encoding.value = 'utf-8-sig'
-    file.value = null
+    connection.password = tunnel.password = tunnel.passphrase = ''
+    keyFile.value = null
+    testMessage.value = error.value = ''
   }
 })
 async function submit() {
@@ -101,6 +106,7 @@ async function submit() {
       const body = {...await connectionBody(), name:name.value.trim(), sql:sql.value}
       dataset = await api('/datasets/database',{method:'POST',body:JSON.stringify(body)})
     }
+    file.value = null
     open.value = false
     emit('imported',dataset)
   } catch (e) {

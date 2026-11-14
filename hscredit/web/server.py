@@ -143,7 +143,7 @@ class JobRequest(TargetOptions):
     sample_rows: List[int] = Field(default_factory=list, max_items=10)
     tree_depth: int = Field(default=3, ge=1, le=10)
     tree_min_samples: int = Field(default=10, ge=1)
-    tree_edits: List[Dict[str, Any]] = Field(default_factory=list, max_items=30)
+    tree_edits: List[Dict[str, Any]] = Field(default_factory=list)
     selected_rules: List[Dict[str, str]] = Field(default_factory=list, max_items=200)
     rule_logic: Literal["or", "and"] = "or"
     rule_name: str = Field(default="规则集", max_length=100)

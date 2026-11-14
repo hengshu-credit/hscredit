@@ -81,7 +81,7 @@ dependencies = [
 [project.optional-dependencies]
 web = [
     "psutil>=5.9",
-    "asyncssh>=2.14.2,<3",
+    "asyncssh[bcrypt]>=2.14.2,<3",
     "PySocks>=1.7.1,<2",
     "sqlglot>=26,<28",
     "optuna>=3.0.0",

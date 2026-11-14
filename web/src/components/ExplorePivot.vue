@@ -1,6 +1,7 @@
 <script setup>
 import {computed,ref,watch} from 'vue'
 import {api} from '../api'
+import {rememberForm} from '../form-drafts'
 import TableFrame from './TableFrame.vue'
 
 const props=defineProps({axes:Array,rowFields:Array,columnFields:Array,job:Object,group:String,target:String,population:String})
@@ -49,6 +50,15 @@ function transpose(){
 const spec=computed(()=>({rows:shownRows.value,columns:shownCols.value,value:value.value||null,aggregation:method.value,buckets:buckets.value,group:props.group??null,target:props.target||null,population:props.population||'valid'}))
 const ready=computed(()=>rows.value.length&&cols.value.length&&(method.value==='rows'||value.value))
 watch(spec,()=>{page.value=1;columnPage.value=1},{flush:'sync'})
+rememberForm(JSON.stringify(['pivot',props.job.id,props.rowFields,props.columnFields]),
+  ()=>({rows:rows.value,cols:cols.value,value:value.value,method:method.value,buckets:buckets.value,nested:nested.value,totals:totals.value,rowHeight:rowHeight.value,cellWidth:cellWidth.value,digits:digits.value,rowDepth:rowDepth.value,colDepth:colDepth.value,page:page.value,columnPage:columnPage.value}),
+  saved=>{
+    rows.value=saved.rows;cols.value=saved.cols;value.value=saved.value;method.value=saved.method
+    buckets.value=saved.buckets;nested.value=saved.nested;totals.value=saved.totals
+    rowHeight.value=saved.rowHeight;cellWidth.value=saved.cellWidth;digits.value=saved.digits
+    rowDepth.value=saved.rowDepth;colDepth.value=saved.colDepth
+    page.value=saved.page;columnPage.value=saved.columnPage
+  })
 watch([spec,page,columnPage,retry],async ([settings,r,c],previous,cleanup)=>{
   const controller=new AbortController()
   cleanup(()=>controller.abort())

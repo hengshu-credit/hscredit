@@ -1,5 +1,5 @@
 <script setup>
-import {computed, provide, ref, watch} from 'vue'
+import {computed, onScopeDispose, provide, ref, watch} from 'vue'
 import {api} from '../api'
 import {taskName} from '../task-center'
 import CodeEditor from './CodeEditor.vue'
@@ -11,12 +11,23 @@ import {binningOptions} from '../workflow-parameters'
 import OptionalParameters from './OptionalParameters.vue'
 import ModelSelection from './ModelSelection.vue'
 import {selectedModelParameters} from '../model-options'
+import {readDraft,writeDraft} from '../form-drafts'
 
 const props = defineProps({job:Object, datasets:Array, parameterCatalog:Object, catalog:{type:Object,default:()=>({})}})
 const emit = defineEmits(['close','created'])
+let visible=true
+onScopeDispose(()=>{visible=false})
 const draft = ref({...JSON.parse(JSON.stringify(props.job.config)),
   dataset_revision:props.job.dataset_revision || props.job.config.dataset_revision || 1})
 const advanced = ref(false), json = ref(''), error = ref(''), busy = ref(false)
+const draftKey='reconfigure/'+props.job.id
+const saved=readDraft(draftKey)
+if(saved){draft.value=saved.config;advanced.value=saved.advanced;json.value=saved.json}
+watch([draft,advanced,json],()=>writeDraft(draftKey,{config:draft.value,advanced:advanced.value,json:json.value}),{deep:true})
+function cancel(){
+  writeDraft(draftKey,null)
+  emit('close')
+}
 const columns = ref([]), datasetError = ref('')
 const source = ref(null)
 provide('fieldPickerDataset',source)
@@ -29,7 +40,7 @@ watch([advanced, json], ([opened, text]) => {
   if (!config || typeof config !== 'object') return
   const binding = {dataset_id: config.dataset_id, dataset_revision: config.dataset_revision, models: Array.isArray(config.models) ? config.models : []}
   if (JSON.stringify(binding) !== JSON.stringify(jsonBinding.value)) jsonBinding.value = binding
-})
+}, {immediate:true})
 const binding = computed(() => jsonBinding.value || draft.value)
 const configSchema = computed(() => taskConfigSchema(draft.value, columns.value, props.datasets, props.catalog, binding.value.models || []))
 function replaceLabels(payload){
@@ -90,7 +101,8 @@ async function submit() {
       config.other=null
     }
     const job = await api('/jobs', {method:'POST', body:JSON.stringify(config)})
-    emit('created', job)
+    writeDraft(draftKey,null)
+    if(visible)emit('created', job)
   } catch (e) { error.value = e.message } finally { busy.value = false }
 }
 </script>
@@ -99,7 +111,7 @@ async function submit() {
     <div class="panel-heading"><span>{{taskName(job)}} · {{job.dataset_name}}</span><el-button link type="primary" @click="switchMode">{{advanced?'返回常用参数':'编辑完整配置'}}</el-button></div>
     <CodeEditor v-if="advanced" v-model="json" label="完整任务配置" :schema="configSchema"
       :expression-context="job.kind==='ruleset' ? {fields:columns, embedded:true, ruleProperty:'selected_rules'} : undefined" :rows="8"/>
-    <el-form v-else label-position="top" class="form-grid">
+    <el-form @submit.prevent v-else label-position="top" class="form-grid">
       <el-form-item label="主样本" required><el-select :model-value="draft.dataset_id" filterable @change="selectDataset">
         <el-option v-if="!current" :value="draft.dataset_id" :label="job.dataset_name+'（原数据集）'"/>
         <el-option v-for="d in datasets" :key="d.id" :value="d.id" :label="d.name"/>
@@ -124,6 +136,6 @@ async function submit() {
       <el-form-item v-if="job.kind==='explain'" label="样本行号（从 1 开始）"><el-select :model-value="draft.sample_rows.map(n=>n+1)" multiple filterable allow-create default-first-option @update:model-value="v=>draft.sample_rows=v.map(n=>Number(n)-1)"/></el-form-item>
     </el-form>
     <el-alert v-if="error||(!advanced&&datasetError)" :title="error||datasetError" type="error" :closable="false"/>
-    <template #footer><el-button :disabled="busy" @click="emit('close')">取消</el-button><el-button type="primary" :loading="busy" @click="submit">提交新任务</el-button></template>
+    <template #footer><el-button :disabled="busy" @click="cancel">取消</el-button><el-button type="primary" :loading="busy" @click="submit">提交新任务</el-button></template>
   </el-dialog>
 </template>

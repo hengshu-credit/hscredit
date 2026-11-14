@@ -76,6 +76,9 @@ def _expand_readme(app, docname, source):
             elif in_examples and line.startswith("### "):
                 module = line[4:]
                 line = _section(2, module)
+            elif in_examples and module and line.startswith(("#### ", "##### ")):
+                # README 模块在展示页升一级，其下的功能标题保持相对层级。
+                line = line[1:]
             elif in_examples and module is None:
                 # 把 README 的模块快捷入口及配套 Notebook 放在文档页首。
                 # 用 Sphinx 引用生成链接，避免中文版标题在两种渲染器中产生不同的 ID。
@@ -102,6 +105,12 @@ def _expand_readme(app, docname, source):
         text = re.sub(
             r"!\[([^\]]*)\]\((docs/assets/readme/[^)]+)\)",
             lambda m: f'<p><a href="{m[2]}"><img src="{m[2]}" alt="{escape(m[1], quote=True)}"></a></p>',
+            text,
+        )
+        # 正文中的仓库相对链接与 HTML 链接共用文档页的目标地址。
+        text = re.sub(
+            r"(?<!!)\[([^\]\n]+)\]\(((?:docs|examples)/[^\s)]+)\)",
+            lambda m: f'<a href="{escape(m[2], quote=True)}">{escape(m[1])}</a>',
             text,
         )
         chunks[i] = re.sub(r'\b(href|src)="([^"]+)"', lambda m: _doc_link(m, path.parent), text)
