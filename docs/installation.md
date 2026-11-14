@@ -1,13 +1,12 @@
 # 安装
 
 `hscredit` 当前源码支持 **Python 3.9–3.15**。基础安装包含常用风控分析和 SHAP 解释；
-Boosting、深度学习、调参、PMML、数据库驱动与风控平台按需安装。已发布的
-[PyPI 0.1.4 主包](https://pypi.org/project/hscredit/0.1.4/)要求 Python `<3.15`，
-Python 3.15 请按下文专节从当前适配源码安装。
+Boosting、深度学习、调参、PMML、数据库驱动与风控平台按需安装。
+[PyPI 0.1.6](https://pypi.org/project/hscredit/0.1.6/) 支持同一 Python 版本范围。
 
 ## 基础安装
 
-Python 3.9–3.14 可直接从 PyPI 安装：
+Python 3.9–3.15 可直接从 PyPI 安装：
 
 ```bash
 python -m pip install hscredit
@@ -19,8 +18,7 @@ python -m pip install hscredit
 
 ## 可选能力
 
-以下命令适用于 PyPI 安装。Python 3.15 在当前适配源码目录中使用
-`python -m pip install ".[扩展名]"`；`boost` 和 `pmml` 的兼容依赖准备见下文。
+以下命令适用于 PyPI 安装。从源码安装可在仓库根目录执行 `python -m pip install ".[扩展名]"`。Python 3.15 的 `boost` 和 `pmml` 兼容依赖准备见下文。
 
 | 安装命令 | 适用场景 |
 |:---|:---|

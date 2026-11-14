@@ -3,8 +3,8 @@
   "skill": "hsselect",
   "hscredit": {
     "package": "hscredit",
-    "repository": "https://github.com/hscredit/hscredit.git",
-    "ref": "v0.1.5.post1"
+    "repository": "https://github.com/hengshu-credit/hscredit.git",
+    "ref": "v0.1.6"
   },
   "extras": [
     "skills"

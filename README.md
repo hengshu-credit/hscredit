@@ -36,7 +36,7 @@
 - **规则挖掘与增量回测。** 二叉树和多叉树支持自动挖掘、手工拆分与剪枝。单规则评估覆盖率和风险集中度，规则集按执行顺序核算每条规则的新增命中。新旧策略置换分析分别列出新增放行与拦截的客群、笔数和金额。
 - **多维交叉比较。** 分箱、评分分段和规则节点均可跨样本集、月份、客群和逾期标签对照。按订单笔数与金额分别统计，可识别整体坏样本率平稳、风险却向大额订单集中的情况。
 - **四类标准评审报告。** 三方数据分析、规则挖掘、模型上线和策略上线报告各有标准入口，均可直接生成 Excel。指标摘要、分组明细和图表可合入同一工作簿，支持多级表头、条件格式和原生透视表，评审人员可在 Excel 中调整汇总维度、复核结论。
-- **安装与复现。** `pip install hscredit` 即可安装分箱、筛选、评分卡、SHAP 解释和 Excel 报告所需的基础组件，无需分别安装其他评分卡工具包。提升树、神经网络、调参及数据库驱动按需安装。发布版支持 Python 3.9–3.15，配套 API 文档和可执行 Notebook。[PyPI 发布信息](https://pypi.org/project/hscredit/0.1.5.post1/) · [API 参考](docs/api/index.rst) · [完整示例](examples/29_readme_showcase.ipynb)
+- **安装与复现。** `pip install hscredit` 即可安装分箱、筛选、评分卡、SHAP 解释和 Excel 报告所需的基础组件，无需分别安装其他评分卡工具包。提升树、神经网络、调参及数据库驱动按需安装。发布版支持 Python 3.9–3.15，配套 API 文档和可执行 Notebook。[PyPI 发布信息](https://pypi.org/project/hscredit/0.1.6/) · [API 参考](docs/api/index.rst) · [完整示例](examples/29_readme_showcase.ipynb)
 - **平台与 Agent。** Web 工作台可直接划分样本、编辑规则树、比较模型、导出报告，并将模型或规则集发布为预测 API。8 个 Agent Skills 将分箱、筛选、建模、回测、绘图和报告封装为可通过自然语言调用的操作。[平台指南](docs/platform.md) · [Skills 指南](docs/skills.md)
 
 <table>
@@ -191,7 +191,7 @@ python -m pip install "hscredit[tune]"          # 调参与搜索看板
 python -m pip install "hscredit[net]"           # TabPFN 等表格神经网络
 python -m pip install "hscredit[pmml]"          # PMML 导出与加载，需要 Java 11+
 python -m pip install "hscredit[database-all]"  # SQL / NoSQL 驱动
-python -m pip install ".[web]"                  # 风控平台，在当前源码目录执行
+python -m pip install "hscredit[web]"           # 风控平台
 python -m pip install "hscredit[all]"           # 安装全部依赖
 ```
 
@@ -199,7 +199,7 @@ python -m pip install "hscredit[all]"           # 安装全部依赖
 
 ### Python 3.15
 
-[PyPI 0.1.5.post1](https://pypi.org/project/hscredit/0.1.5.post1/) 已支持 Python 3.15，基础包可直接通过 `python -m pip install hscredit` 安装。如需安装当前源码版本，在已激活的虚拟环境中进入源码目录执行以下命令。
+[PyPI 0.1.6](https://pypi.org/project/hscredit/0.1.6/) 已支持 Python 3.15，基础包可直接通过 `python -m pip install hscredit` 安装。如需安装当前源码版本，在已激活的虚拟环境中进入源码目录执行以下命令。
 
 ```bash
 python -m pip install --upgrade pip
@@ -1654,7 +1654,7 @@ profiles["渠道"].head()
 
 hscredit 风控平台是本地运行的可视化工作台，用于三方数据评估、策略开发和模型验证。按客户或时间划分样本、定义逾期标签后，可分月份和客群比较变量覆盖率与区分度。策略人员可交互式拆分或剪枝规则树，在独立样本上回测命中率与坏样本率。建模人员可批量比较候选模型，核对训练集、测试集和时间外样本的评分表现。任务保留数据版本与运行参数，支持导出 Excel 评审报告，并将模型或规则集发布为预测 API。
 
-**启动方式。** 在仓库根目录执行 `python -m pip install ".[web]"` 安装平台依赖，再运行 `python -m hscredit web`。服务就绪后会自动在浏览器中打开 `http://127.0.0.1:8765/`，可上传文件或从数据库导入自有数据。如需预加载内置现金贷样本，启动命令使用 `python -m hscredit web --demo`。[平台使用指南](docs/platform.md)
+**启动方式。** 执行 `python -m pip install "hscredit[web]"` 安装平台依赖，再运行 `python -m hscredit web`。服务就绪后会自动在浏览器中打开 `http://127.0.0.1:8765/`，可上传文件或从数据库导入自有数据。如需预加载内置现金贷样本，启动命令使用 `python -m hscredit web --demo`。[平台使用指南](docs/platform.md)
 
 ### 数据集与样本划分
 
