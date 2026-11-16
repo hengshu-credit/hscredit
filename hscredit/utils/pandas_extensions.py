@@ -788,7 +788,7 @@ def _apply_table_layout(styler, theme_color="2639E9", fill=True, index=None):
                     ("color", "#ffffff"),
                     ("font-weight", "bold"),
                     ("text-align", "center"),
-                    ("font-size", "14px"),
+                    ("font-size", "12px"),
                     ("font-family", table_font),
                     ("padding", "8px 10px"),
                     ("border", "none"),
