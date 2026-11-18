@@ -173,11 +173,11 @@ def _loss_info(context) -> dict:
 
 def register_model_operations(registry) -> None:
     for name, handler, extras in [
-        ("model_fit", _model_fit, ("skills",)),
-        ("model_tune", _model_tune, ("skills", "tune")),
-        ("model_calibrate", _model_calibrate, ("skills",)),
-        ("model_explain", _model_explain, ("skills",)),
-        ("loss_info", _loss_info, ("skills",)),
+        ("model_fit", _model_fit, ()),
+        ("model_tune", _model_tune, ("tune",)),
+        ("model_calibrate", _model_calibrate, ()),
+        ("model_explain", _model_explain, ()),
+        ("loss_info", _loss_info, ()),
     ]:
         registry.register(OperationSpec("hsmodel", name, handler, extras=extras))
 
@@ -256,7 +256,7 @@ def register_rule_operations(registry) -> None:
         ("rule_swap_analysis", _rule_swap_analysis),
         ("rule_flow_report", _rule_flow_report),
     ]:
-        registry.register(OperationSpec("hsrule", name, handler, extras=("skills",)))
+        registry.register(OperationSpec("hsrule", name, handler))
 
 
 _SELECTOR_NAMES = {
@@ -308,7 +308,7 @@ def _selector_fit(context) -> dict:
 
 
 def register_selector_operations(registry) -> None:
-    registry.register(OperationSpec("hsselect", "selector_fit", _selector_fit, extras=("skills",)))
+    registry.register(OperationSpec("hsselect", "selector_fit", _selector_fit))
 
 
 _VIZ_NAMES = {
@@ -427,7 +427,7 @@ def _viz_plot(context) -> dict:
 
 
 def register_viz_operations(registry) -> None:
-    registry.register(OperationSpec("hsviz", "plot", _viz_plot, extras=("skills",)))
+    registry.register(OperationSpec("hsviz", "plot", _viz_plot))
 
 
 def _excel_export(context) -> dict:
@@ -464,8 +464,8 @@ def _excel_workbook(context) -> dict:
 
 
 def register_excel_operations(registry) -> None:
-    registry.register(OperationSpec("hsexcel", "dataframe_to_excel", _excel_export, extras=("skills",)))
-    registry.register(OperationSpec("hsexcel", "workbook", _excel_workbook, extras=("skills",)))
+    registry.register(OperationSpec("hsexcel", "dataframe_to_excel", _excel_export))
+    registry.register(OperationSpec("hsexcel", "workbook", _excel_workbook))
 
 
 def _capabilities(context) -> dict:
@@ -478,4 +478,4 @@ def _capabilities(context) -> dict:
 
 
 def register_hscredit_operations(registry) -> None:
-    registry.register(OperationSpec("hscredit", "capabilities", _capabilities, extras=("skills",)))
+    registry.register(OperationSpec("hscredit", "capabilities", _capabilities))

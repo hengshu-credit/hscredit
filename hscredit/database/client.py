@@ -18,6 +18,7 @@ from .metadata import MetadataInspection, metadata_frame, parse_targets
 from .json_projection import normalize_json_projection
 from .registry import canonical_adapter_name, get_adapter_class
 from .stream import QueryStream
+from .tunnel import TCP_DATABASES, DatabaseTunnel, SSHTunnelConfig
 from .types import PoolOptions, WRITE_MODES, WriteResult, validate_result_type
 from .writing import BatchWriteResult, iter_write_batches, split_qualified_name
 
@@ -33,6 +34,8 @@ class Database:
     :type pool_options: mapping or PoolOptions, optional
     :param adapter_options: 后端专有配置。
     :type adapter_options: mapping, optional
+    :param tunnel: SSH 跳板机配置，支持密码、公钥或组合认证。数据库连接参数仍填写跳板机可访问的地址。
+    :type tunnel: mapping, optional
 
     **属性**
 
@@ -47,12 +50,15 @@ class Database:
     :param connect_kwargs: 直接传给数据库驱动的连接关键字参数，例如 host、port、database、user；参数集合取决于所选后端。
     """
 
+    _tunnel: Optional[DatabaseTunnel] = None
+
     def __init__(
         self,
         database_type: str,
         *,
         pool_options: Optional[Mapping[str, Any]] = None,
         adapter_options: Optional[Mapping[str, Any]] = None,
+        tunnel: Optional[Mapping[str, Any]] = None,
         **connect_kwargs: Any,
     ):
         self.database_type = canonical_adapter_name(database_type)
@@ -62,13 +68,31 @@ class Database:
         adapter_class = get_adapter_class(self.database_type)
         pool_options_class = getattr(adapter_class, "pool_options_class", PoolOptions)
         self.pool_options = pool_options_class.from_mapping(pool_options)
+        if tunnel is not None:
+            if self.database_type not in TCP_DATABASES:
+                raise DatabaseCapabilityError(f"数据库 {self.database_type} 不支持通过 Database 建立 SSH 隧道")
+            if not isinstance(tunnel, Mapping):
+                raise ValidationError("tunnel 须为 SSH 配置映射")
+            try:
+                config = SSHTunnelConfig(**tunnel)
+            except TypeError:
+                raise ValidationError("请检查 SSH 配置字段并提供 host 和 username") from None
+            if self.database_type == "starrocks":
+                self.adapter_options["_ssh_tunnel"] = True
+            self._tunnel = DatabaseTunnel(self.database_type, connect_kwargs, config)
+            connect_kwargs = self._tunnel.connect_kwargs
+
         try:
             self.adapter = adapter_class(
                 connect_kwargs=dict(connect_kwargs),
                 pool_options=self.pool_options,
                 adapter_options=self.adapter_options,
             )
-        except Exception as exc:
+        except BaseException as exc:
+            if self._tunnel is not None:
+                self._tunnel.close()
+            if not isinstance(exc, Exception):
+                raise
             raise DatabaseConnectionError(f"初始化 {self.database_type} 数据库适配器失败，请检查连接参数和可选依赖") from exc
 
     @property
@@ -975,7 +999,7 @@ class Database:
             )
 
     def close(self) -> None:
-        """关闭连接池或原生客户端；重复调用不产生副作用。
+        """关闭连接池或原生客户端，再释放 SSH 隧道；重复调用不产生副作用。
 
         关闭后所有查询和写入方法都会抛出  :class:`~hscredit.exceptions.StateError` 。
         """
@@ -985,7 +1009,11 @@ class Database:
         try:
             self.adapter.close()
         finally:
-            self._closed = True
+            try:
+                if self._tunnel is not None:
+                    self._tunnel.close()
+            finally:
+                self._closed = True
 
     def __enter__(self) -> "Database":
         self._ensure_open()

@@ -180,4 +180,4 @@ def register_model_operations(registry):
         "component_create": component_create,
         "loss_info": component_create,
     }.items():
-        registry.register(OperationSpec("hsmodel", name, handler, extras=("skills", "tune") if name == "model_tune" else ("skills",)))
+        registry.register(OperationSpec("hsmodel", name, handler, extras=("tune",) if name == "model_tune" else ()))

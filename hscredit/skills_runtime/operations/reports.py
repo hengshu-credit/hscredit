@@ -254,4 +254,4 @@ def register_report_operations(registry) -> None:
         ]
     )
     for name, handler in handlers.items():
-        registry.register(OperationSpec("hsreport", name, handler, extras=("skills",)))
+        registry.register(OperationSpec("hsreport", name, handler))

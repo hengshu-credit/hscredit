@@ -19,7 +19,7 @@
 | MaxCompute | `pip install hscredit[db-maxcompute]` | PyODPS DB-API + 原生表读写 |
 | Redis | `pip install hscredit[db-redis]` | redis-py 原生 ConnectionPool / BlockingConnectionPool |
 | MongoDB | `pip install hscredit[db-mongodb]` | PyMongo MongoClient 内建连接池 |
-| 全部数据库 | `pip install hscredit[database-all]` | 安装以上全部驱动 |
+| 全部数据库 | `pip install hscredit[database-all]` | 安装以上全部数据库驱动 |
 
 缺少驱动时只会在创建对应 `Database` 时抛出中文 `DependencyError`，不会阻止其他 hscredit 模块导入。
 
@@ -56,6 +56,41 @@ with Database("mysql", **connect_params) as db:
 ```
 
 密码、AccessKey、Token 和带凭据 DSN 不会进入 `repr`、用户错误信息或日志。
+
+### 通过 SSH 隧道连接
+
+基础安装包含 SSH 隧道支持。按数据库类型安装驱动，例如 MySQL 使用 `pip install "hscredit[db-mysql]"`。在 `Database` 中用 `tunnel` 提供跳板机配置，`host` 和 `port` 仍填写跳板机可访问的数据库地址和端口。SSH 公钥认证需要跳板机已授权对应公钥，本地配置配对的私钥。
+
+```python
+import os
+from pathlib import Path
+
+from hscredit import Database
+
+with Database(
+    "mysql",
+    host="mysql.internal",
+    port=3306,
+    database="risk",
+    user="risk_user",
+    password=os.environ["MYSQL_PASSWORD"],
+    tunnel={
+        "host": "jump.example.com",
+        "port": 22,
+        "username": "jump_user",
+        "auth": "key",
+        "private_key_path": Path.home() / ".ssh" / "id_ed25519",
+        "passphrase": os.getenv("SSH_KEY_PASSPHRASE"),
+    },
+) as db:
+    frame = db.query("SELECT 1 AS ok")
+```
+
+`auth` 可选 `key`（公钥）、`password`（默认，跳板机登录密码）和 `key_password`（公钥与跳板机登录密码）。在 `tunnel` 中用 `password` 填跳板机登录密码，用 `passphrase` 解密私钥。可用 `private_key` 提供私钥内容，或用 `private_key_path` 提供文件路径。平台或 Python 进程使用当前运行账号的 `known_hosts` 校验跳板机，也可以用 `known_hosts` 指定文件，或用 `host_fingerprint` 指定已核验的 `SHA256:…` 主机指纹。
+
+`query`、`execute`、`executemany`、`stream_query` 和 `write` 继续使用各数据库原有的权限和参数。连接池复用实例的隧道，退出 `with` 或调用 `close()` 时先关闭数据库资源，再释放隧道。在 Jupyter 中可直接调用这些同步方法。
+
+`Database(tunnel=...)` 支持 MySQL / MariaDB、Hive、Impala、Oracle、ClickHouse 和 StarRocks 的单地址 TCP 连接。Oracle 的 `dsn` 使用 `主机[:端口]/服务名`，ClickHouse 分别提供 `host` 和 `port`。StarRocks 通过转发的 SQL 端口读写，使用默认 SQL 写入方式。MaxCompute 的 SSH 隧道查询可在工作台中使用。 [平台使用指南](platform-database-import)
 
 ## 类外快捷操作
 

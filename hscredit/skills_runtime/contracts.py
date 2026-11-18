@@ -92,10 +92,10 @@ def _validation_field(error) -> Optional[str]:
 def _validate(instance: Mapping[str, Any], schema: Mapping[str, Any]) -> None:
     try:
         from jsonschema import Draft202012Validator
-    except ImportError as exc:  # pragma: no cover - 仅在未安装 skills extra 时触发
+    except ImportError as exc:  # pragma: no cover
         raise SkillExecutionError(
             code="DEPENDENCY_MISSING",
-            message="缺少 Skills 请求校验依赖，请安装 hscredit[skills]",
+            message="无法导入 jsonschema，请检查 hscredit 的基础依赖安装",
             cause=exc,
         ) from exc
 

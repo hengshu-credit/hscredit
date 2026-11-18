@@ -14,14 +14,16 @@ except ImportError:  # pragma: no cover - Python 3.9/3.10
 ROOT = Path(__file__).parents[2]
 
 
-def test_parquet_engine_is_installed_with_the_base_package():
-    """防止默认安装缺失 Parquet 读写引擎。"""
+def test_base_package_includes_parquet_skills_validation_and_ssh_support():
+    """基础安装提供 Parquet、Skills 请求校验及加密 SSH 私钥支持。"""
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = {Requirement(value).name.lower() for value in config["project"]["dependencies"]}
+    dependencies = {Requirement(value) for value in config["project"]["dependencies"]}
     extras = config["project"]["optional-dependencies"]
 
-    assert "pyarrow" in dependencies
-    assert "parquet" not in extras
+    assert any(req.name.lower() == "pyarrow" for req in dependencies)
+    assert Requirement("jsonschema>=4.18") in dependencies
+    assert Requirement("asyncssh[bcrypt]>=2.14.2,<3") in dependencies
+    assert {"parquet", "skills", "db-ssh"}.isdisjoint(extras)
 
 
 def test_setuptools_packages_runtime_but_not_root_skill_directories():

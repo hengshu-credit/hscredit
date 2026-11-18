@@ -67,7 +67,8 @@ jobs:
   # 或未配置真实数据库服务的集成用例按条件跳过。
   test:
     name: 全功能测试 (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    # Python 3.9 没有 Ubuntu 26.04 构建，固定到仍提供该版本的 runner。
+    runs-on: ${{ matrix.python-version == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     env:
       HSCREDIT_STRICT_CI_SKIPS: "1"
       HSCREDIT_RUN_DATASET_TESTS: "1"
@@ -110,7 +111,8 @@ jobs:
 
   build-compat:
     name: 构建兼容 (Python ${{ matrix.python-version }}, setuptools ${{ matrix.setuptools-version }})
-    runs-on: ubuntu-latest
+    # 与全功能测试使用相同的 Python 3.9 runner，保留构建后端兼容矩阵。
+    runs-on: ${{ matrix.python-version == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:

@@ -9,7 +9,8 @@ on:
 
 jobs:
   installed-wheel:
-    runs-on: ubuntu-latest
+    # Python 3.9 没有 Ubuntu 26.04 构建，固定到仍提供该版本的 runner。
+    runs-on: ${{ matrix.python == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,7 +68,7 @@ jobs:
           PY
 
   legacy-lightgbm:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       MPLBACKEND: Agg
       PYTHONUTF8: "1"

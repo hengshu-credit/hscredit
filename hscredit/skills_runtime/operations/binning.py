@@ -472,4 +472,4 @@ def register_binning_operations(registry) -> None:
         ]
     )
     for name, handler in handlers.items():
-        registry.register(OperationSpec("hsbin", name, handler, extras=("skills",)))
+        registry.register(OperationSpec("hsbin", name, handler))

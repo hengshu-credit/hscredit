@@ -366,6 +366,7 @@ ORDER BY ORDINAL_POSITION
 
         del first_batch
         options = dict(dialect_options or {})
+        self._validate_stream_load_route(options)
         model = self._resolve_write_model(
             table_name,
             options,
@@ -380,6 +381,10 @@ ORDER BY ORDINAL_POSITION
         if mode == "r" and not key_columns:
             raise DatabaseCapabilityError(f"StarRocks {model} 覆盖写入必须指定键字段")
 
+    def _validate_stream_load_route(self, options: Mapping[str, Any]) -> None:
+        if self.adapter_options.get("_ssh_tunnel") and options.get("stream_load"):
+            raise DatabaseCapabilityError("StarRocks SSH 隧道转发 SQL 端口，请使用默认 SQL 写入方式")
+
     def _stream_load_request(
         self,
         table_name: str,
@@ -387,6 +392,7 @@ ORDER BY ORDINAL_POSITION
         batch_index: int,
         options: Mapping[str, Any],
     ) -> urllib_request.Request:
+        self._validate_stream_load_route(options)
         schema, table = self._schema_and_table(table_name)
         host = self.connect_kwargs.get("host")
         if not host:

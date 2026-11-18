@@ -18,9 +18,15 @@ Skill 负责校验请求、调用真实 hscredit API，并交付 Excel、图片�
 
 其他尚未拆分为独立 Skill 的方向见 `skills/ROADMAP.md`。
 
-独立安装的 8 个 Skill 使用官方仓库的 `v0.1.6` 标签构建隔离环境。默认按 Python 版本、hscredit 来源和所需扩展复用缓存。Parquet 由基础依赖 `pyarrow` 支持。
+从当前源码安装 hscredit 即可校验 Skill 请求和读写 Parquet，模型调参另需 `hscredit[tune]`。独立安装的 8 个 Skill 使用官方仓库的 `v0.1.6` 标签构建隔离环境，启动器会安装该标签所需的扩展。默认按 Python 版本、hscredit 来源和所需扩展复用缓存。
 
 Skill 文件与 Python 包需要分别更新。`environment.mode="current"` 使用当前解释器中的 hscredit，请先升级到匹配版本；安装器仍保留不覆盖已有 Skill 目录的行为。新主题看板通过 `hscredit dashboard` 启动，原生透视表通过 `ExcelWriter` Python API 创建，两者不属于当前 Skill JSON 操作。
+
+## 两种技术路线
+
+两条路线都能造工具，区别在于从哪里开始：**模型驱动先设计**，强模型参考知识库提出做法，根据验收反馈迭代；**工具驱动先复用**，已有工具按说明调用，有缺口时再由模型补建、验证。
+
+[![Agent Skills 两条技术路线对照：模型驱动的验收迭代，以及工具驱动的复用与补建分支](assets/brand/agent-skills-routes.png)](assets/brand/agent-skills-routes.svg)
 
 ## 安装 Skills
 
@@ -186,7 +192,7 @@ artifact，或者在用户明确同意后使用当前环境安装。
 默认 `environment.mode` 是 `isolated`：
 
 1. Skill 在用户缓存目录创建专用 venv。
-2. 根据操作和文件格式安装受控 hscredit extras。
+2. 安装 hscredit 及该版本执行当前操作所需的扩展。
 3. 后续请求按 Python 版本、hscredit 来源和 extras 复用同一环境。
 
 首次运行需要创建环境和安装依赖，耗时通常明显高于后续复用。Skill 不接受请求提供的任意包名、

@@ -83,18 +83,22 @@ def ensure_environment(
         return Path(sys.executable).resolve()
 
     hscredit_config = runtime_config.get("hscredit", {})
+    extras = plan.extras
     if source_override is not None:
         source = str(Path(source_override).resolve())
     else:
         repository = str(hscredit_config["repository"])
         ref = str(hscredit_config["ref"])
         source = f"git+{repository}@{ref}"
+        if ref == "v0.1.6":
+            # 此发布标签通过 skills 扩展安装 jsonschema。
+            extras = ("skills", *extras)
     version = f"{sys.version_info.major}.{sys.version_info.minor}"
-    key = environment_key(source, plan.extras, version)
+    key = environment_key(source, extras, version)
     root = Path(cache_root).resolve() if cache_root is not None else resolve_cache_root()
     environment_dir = root / key
     marker = environment_dir / ".hscredit-runtime.json"
-    expected = {"source": source, "extras": list(plan.extras), "python": version}
+    expected = {"source": source, "extras": list(extras), "python": version}
     python = environment_python(environment_dir)
     if plan.reuse and python.is_file() and marker.is_file():
         try:
@@ -109,7 +113,7 @@ def ensure_environment(
             message="没有可复用的隔离环境，且 install_missing=false 禁止安装",
             field="environment.install_missing",
         )
-    python = install_requirement(environment_dir, _requirement(source, plan.extras))
+    python = install_requirement(environment_dir, _requirement(source, extras))
     marker.write_text(json.dumps(expected, ensure_ascii=False, indent=2), encoding="utf-8")
     return python
 

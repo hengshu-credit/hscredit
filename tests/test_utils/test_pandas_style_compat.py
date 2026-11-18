@@ -1,6 +1,7 @@
 """规则表样式的新旧依赖分支与实际 HTML 渲染回归。"""
 
 from types import SimpleNamespace
+import inspect
 import pickle
 import warnings
 
@@ -214,6 +215,18 @@ def test_table_hides_row_numbers_but_retains_business_index(styler_factory, row_
     assert 'class="row_heading' in styler_factory(table, index=True).to_html()
     assert 'class="row_heading' not in styler_factory(table, index=False).to_html()
     pd.testing.assert_frame_equal(table, original)
+
+
+def test_dataframe_show_help_lists_renderer_options():
+    table = pd.DataFrame()
+    public = inspect.signature(table.show).parameters
+    renderer = inspect.signature(BinTableDisplay(table).show).parameters
+    assert public.keys() == renderer.keys()
+    for name, option in renderer.items():
+        if option.kind is not inspect.Parameter.VAR_KEYWORD:
+            assert public[name].kind is inspect.Parameter.KEYWORD_ONLY
+            assert public[name].default == option.default
+            assert f":param {name}:" in inspect.getdoc(table.show)
 
 
 def test_show_can_explicitly_keep_or_hide_index(monkeypatch):

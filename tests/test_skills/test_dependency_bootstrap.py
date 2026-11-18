@@ -18,7 +18,7 @@ def test_current_environment_install_requires_explicit_permission():
     request = {"environment": {"mode": "current", "install_missing": False}}
 
     with pytest.raises(SkillExecutionError) as exc_info:
-        plan_environment("hsbin", "feature_bin_stats", request, missing_extras=("skills",))
+        plan_environment("hsmodel", "model_tune", request, missing_extras=("tune",))
 
     assert exc_info.value.code == "DEPENDENCY_MISSING"
 
@@ -35,7 +35,6 @@ def test_object_ref_cannot_be_moved_to_an_isolated_interpreter():
             "hsbin",
             "optimal_binning_transform",
             request,
-            missing_extras=("skills",),
         )
 
     assert exc_info.value.code == "OBJECT_REF_REQUIRES_CURRENT_ENV"
@@ -50,7 +49,8 @@ def test_parquet_input_uses_only_the_operation_extras():
 
     extras = resolve_required_extras("hsbin", "feature_bin_stats", request)
 
-    assert extras == ("skills",)
+    assert extras == ()
+    assert resolve_required_extras("hsmodel", "model_tune", request) == ("tune",)
 
 
 @pytest.mark.parametrize("skill", ["hscredit", "hsbin", "hsreport", "hsmodel", "hsrule", "hsselect", "hsviz", "hsexcel"])
@@ -61,18 +61,23 @@ def test_standalone_launchers_use_base_parquet_dependency_and_release_ref(skill)
     directory = Path(__file__).parents[2] / "skills" / skill
     launcher = runpy.run_path(str(directory / "scripts" / "run.py"))
     request = {"operation": "capabilities", "inputs": {"data": {"kind": "file", "path": "sample.parquet"}}}
-    assert launcher["_extras"](request) == ("skills",)
-    assert launcher["_extras"]({**request, "operation": "model_tune"}) == ("skills", "tune")
+    extras = launcher["_extras"](request)
+    assert extras == ()
+    assert launcher["_extras"]({**request, "operation": "model_tune"}) == ("tune",)
     config = json.loads((directory / "runtime.json").read_text(encoding="utf-8"))
-    requirement, editable = launcher["_requirement"](config, ("skills",), None)
+    assert config["extras"] == (["tune"] if skill == "hsmodel" else [])
+    assert launcher["_requirement"](config, extras, directory) == (str(directory), True)
+    assert launcher["_requirement"](config, ("tune",), directory) == (f"{directory}[tune]", True)
+    requirement, editable = launcher["_requirement"](config, extras, None)
     assert requirement.endswith("@v" + __version__)
-    assert "[skills]" in requirement and not editable
+    package = "hscredit[skills]" if config["hscredit"]["ref"] == "v0.1.6" else "hscredit"
+    assert requirement.startswith(f"{package} @ ") and not editable
 
 
 def test_environment_key_is_order_independent():
     """防止相同依赖集合重复创建隔离环境。"""
-    first = environment_key("C:/repo", ("skills", "tune"), "3.14")
-    second = environment_key("C:/repo", ("tune", "skills"), "3.14")
+    first = environment_key("C:/repo", ("boost", "tune"), "3.14")
+    second = environment_key("C:/repo", ("tune", "boost"), "3.14")
 
     assert first == second
     assert len(first) == 16

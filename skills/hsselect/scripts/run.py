@@ -37,11 +37,7 @@ def _contains_object_ref(value):
 
 
 def _extras(request):
-    # Parquet 由基础依赖 pyarrow 提供，不再请求已移除的 parquet extra。
-    extras = {"skills"}
-    if request.get("operation") == "model_tune":
-        extras.add("tune")
-    return tuple(sorted(extras))
+    return ("tune",) if request.get("operation") == "model_tune" else ()
 
 
 def _cache_root():
@@ -69,7 +65,10 @@ def _repo_root(script_path):
 
 
 def _requirement(config, extras, repo_root):
-    suffix = f"[{','.join(extras)}]"
+    if repo_root is None and config["hscredit"]["ref"] == "v0.1.6":
+        # 此发布标签通过 skills 扩展安装 jsonschema。
+        extras = ("skills", *extras)
+    suffix = f"[{','.join(extras)}]" if extras else ""
     if repo_root is not None:
         return f"{repo_root}{suffix}", True
     package = config["hscredit"]["package"]

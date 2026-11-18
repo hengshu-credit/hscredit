@@ -1,6 +1,6 @@
 # 安装
 
-`hscredit` 当前源码支持 **Python 3.9–3.15**。基础安装包含常用风控分析和 SHAP 解释；
+`hscredit` 当前源码支持 **Python 3.9–3.15**。基础安装包含常用风控分析、SHAP 解释、Skills 请求校验和数据库 SSH 隧道支持。
 Boosting、深度学习、调参、PMML、数据库驱动与风控平台按需安装。
 [PyPI 0.1.6](https://pypi.org/project/hscredit/0.1.6/) 支持同一 Python 版本范围。
 

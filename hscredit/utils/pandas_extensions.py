@@ -797,7 +797,20 @@ def _apply_table_layout(styler, theme_color="2639E9", fill=True, index=None):
             },
             {
                 "selector": "thead tr:first-child th + th",
-                "props": [("border-left", "2px solid #ffffff")],
+                "props": [("position", "relative")],
+            },
+            {
+                "selector": "thead tr:first-child th + th::before",
+                "props": [
+                    ("content", '""'),
+                    ("position", "absolute"),
+                    ("left", "0"),
+                    ("top", "25%"),
+                    ("bottom", "25%"),
+                    ("width", "2px"),
+                    ("background-color", "#ffffff"),
+                    ("pointer-events", "none"),
+                ],
             },
             {
                 "selector": "tbody td, tbody th",
@@ -841,6 +854,8 @@ def _apply_table_layout(styler, theme_color="2639E9", fill=True, index=None):
 
     if not fill:
         styler = styler.set_table_styles([style for style in styler.table_styles if "nth-child" not in style["selector"]])
+        # 显式覆盖 Notebook 自带的行底色，保留单元格条件格式及 hover。
+        styler = styler.set_table_styles([{"selector": "tbody tr", "props": [("background-color", "#ffffff")]}], overwrite=False)
     return styler
 
 
@@ -893,44 +908,53 @@ class BinTableDisplay:
         centered_bar_cols: Optional[List] = None,
         **kwargs,
     ) -> "BinTableDisplay":
-        """展示美化的分箱表.
+        """在 Jupyter 中展示 DataFrame，按指标格式化数值，列表、字典等复杂值按文本显示。
 
-        :param max_rows: 默认值为 ``None`` 。最大显示行数
-        :type max_rows: Optional[int]
-        :param highlight_iv: 默认值为 ``True`` 。是否高亮 IV 值
-        :type highlight_iv: bool
-        :param highlight_bad_rate: 默认值为 ``True`` 。是否高亮坏样本率
-        :type highlight_bad_rate: bool
-        :param highlight_lift: 默认值为 ``True`` 。是否高亮 LIFT 值
-        :type highlight_lift: bool
-        :param highlight_ks: 默认值为 ``True`` 。是否高亮 KS 值
-        :type highlight_ks: bool
-        :param compact: 默认值为 ``False`` 。是否使用紧凑模式
-        :type compact: bool
-        :param precision: 默认值为 ``None`` 。自定义小数位数
-        :type precision: Optional[Dict[str, int]]
-        :param index_as_bin: 默认值为 ``False`` 。是否将分箱作为索引显示
-        :type index_as_bin: bool
-        :param percent_format: 是否将百分比相关列显示为百分比格式（默认True）
-        :type percent_format: bool
-        :param high_tech_style: 默认值为 ``False`` 。是否使用高科技/AI风格样式
-        :type high_tech_style: bool
-        :param kwargs: 其他参数
-        :param percent_cols: 百分比列；None 按指标名自动识别，[] 关闭自动百分比，显式名单优先于 percent_format。
-        :param condition_cols: 显式选择数据条列；与 color_cols 均为 None 时自动使用指标色阶，坏账改善使用居中双向数据条。[] 关闭自动高亮；数量类指标需显式指定。
-        :param centered_bar_cols: 选择居中双向数据条列，优先于 color_cols。
-        :param color_cols: 色阶列；与 condition_cols 均为 None 时按指标自动选择，[] 关闭自动高亮；与数据条重叠时色阶优先。
-        :param condition_color: 与 dataframe2excel 同名配置：六位十六进制单色（可带 #）、2/3 色列表，
-            或按列配置的字典。完整 tuple 优先，其次从内向外匹配层级名；未匹配沿用默认配色。
-            默认指标色阶从白色到指标色，常量列不着色；显式色阶超过三色取首/中/尾，显式单色以零为白色基准。坏账改善始终以零为中心。
-        :param theme_color: 表头主题色，默认 "2639E9"，同时影响隔行底色和 hover 配色。
-        :param fill: 是否启用隔行底色，默认 True；不影响表头、hover 和显式条件格式。
-        :param index: None 自动隐藏未命名整数行序号，保留命名、文本、日期和多级索引；True/False 强制显示/隐藏，不修改原始数据。
+        导入 hscredit 后可用 ``table.show(参数名=值)`` 调用，所有参数均可省略。
+        列名单传列表，如 ``["坏样本率"]``。多级表头可用层级名匹配所有同名列，
+        或用完整元组只选一列，如 ``[("训练集", "坏样本率")]``。
 
-        列名单使用列名或多级表头完整 tuple，也可按层级名称选择多个标签的同名列。
-        显式指定的列在 compact=True 时仍保留；复杂单元格始终按文本显示。
+        :param max_rows: 显示前几行，如 ``10``。默认 ``None`` 表示展示全部行。
+        :param compact: 传 ``True`` 只显示核心分箱列和列名单中显式指定的列。默认 ``False``。
+        :param index: 默认 ``None`` 自动隐藏未命名整数索引，保留业务索引。
+            传 ``True`` 总是显示索引，传 ``False`` 隐藏索引。
+        :param index_as_bin: 传 ``True`` 使用“分箱标签”列作为展示索引。默认 ``False``。
+        :param percent_format: 默认 ``True`` 按指标名自动设置百分比。传 ``False`` 关闭自动识别。
+        :param percent_cols: 默认 ``None`` 遵循 percent_format。传列名单只格式化选中的列，
+            如 ``["样本占比"]`` 将 0.125 显示为 12.50%。传 ``[]`` 关闭百分比。
+        :param precision: 小数位数字典，如 ``{"坏样本率": 1, "LIFT值": 3}``。
+            默认 ``None`` 使用各指标的预设精度。
+        :param condition_cols: 数据条列，如 ``["样本总数"]``。默认 ``None``。
+            当 condition_cols 和 color_cols 均为 ``None`` 时按指标自动高亮，
+            其中坏账改善使用双向数据条。任一项传入列表即切换为显式选择。
+        :param color_cols: 色阶列，如 ``["坏样本率"]``。默认 ``None``。
+            同一列同时选中普通数据条和色阶时使用色阶。单独传 ``color_cols=[]`` 可关闭自动高亮。
+        :param centered_bar_cols: 零点居中的双向数据条列，如 ``["坏账改善"]``。
+            负值向左，正值向右。同一列以双向数据条优先。默认 ``None``。
+        :param highlight_iv: 自动高亮 IV 指标，默认 ``True``。传 ``False`` 关闭。
+        :param highlight_bad_rate: 自动高亮坏样本率等风险指标，默认 ``True``。传 ``False`` 关闭。
+        :param highlight_lift: 自动高亮 LIFT 指标，默认 ``True``。传 ``False`` 关闭。
+        :param highlight_ks: 自动高亮 KS 指标，默认 ``True``。传 ``False`` 关闭。
+        :param condition_color: 默认 ``None`` 使用指标配色。可传六位十六进制颜色（可带 #）、
+            颜色列表（如 ``["FFFFFF", "F76E6C"]`` 从低到高），或按列配置的字典。
+            字典优先匹配完整列名，再从内向外匹配层级名。双向数据条的负、正两端分别取首色、末色。
+        :param theme_color: 表头主题色，也用于隔行底色和鼠标悬停配色。默认 ``"2639E9"``。
+        :param fill: 默认 ``True`` 启用隔行底色。传 ``False`` 关闭。
+        :param high_tech_style: 兼容参数，默认 ``False``，两种取值均使用当前表格样式。
+        :param kwargs: 为兼容已有调用而接收的额外关键字，当前会忽略。
+        :return: BinTableDisplay 展示器，可继续调用 export_html() 或 to_excel()。
 
-        :return: self，支持链式调用
+        **参考样例**
+
+        >>> import pandas as pd
+        >>> import hscredit
+        >>> table = pd.DataFrame({"样本总数": [80, 20], "坏样本率": [0.125, 0.25]})
+        >>> view = table.show(max_rows=10, compact=True, fill=False)
+        >>> view = table.show(percent_cols=["坏样本率"], precision={"坏样本率": 1},
+        ...                   condition_cols=["样本总数"], color_cols=["坏样本率"],
+        ...                   condition_color={"坏样本率": ["FFFFFF", "F76E6C"]})
+        >>> wide = pd.concat({"训练集": table, "验证集": table}, axis=1)
+        >>> view = wide.show(percent_cols=[("训练集", "坏样本率")])
         """
         self._styler = _style_bin_table(
             self._df,
@@ -1075,7 +1099,7 @@ def _style_bin_table(
     :param precision: 自定义小数位数，格式为 {'列名': 位数}
     :param index_as_bin: 是否将分箱作为索引显示
     :param percent_format: 是否将百分比相关列显示为百分比格式（默认True）
-    :param high_tech_style: 是否使用高科技/AI风格样式
+    :param high_tech_style: 兼容参数，两种取值均使用当前表格样式。
     :param percent_cols: 百分比列；None 按指标名自动识别，[] 关闭自动百分比，显式名单优先于 percent_format。
     :param condition_cols: 显式选择数据条列；与 color_cols 均为 None 时自动使用指标色阶，坏账改善使用居中双向数据条。[] 关闭自动高亮；数量类指标需显式指定。
     :param centered_bar_cols: 选择居中双向数据条列，优先于 color_cols。
@@ -1357,7 +1381,7 @@ def style_bin_table(
     :type index_as_bin: bool
     :param percent_format: 是否将百分比相关列显示为百分比格式（默认True）
     :type percent_format: bool
-    :param high_tech_style: 默认值为 ``False`` 。是否使用高科技/AI风格样式
+    :param high_tech_style: 兼容参数，默认 ``False``，两种取值均使用当前表格样式。
     :type high_tech_style: bool
     :param percent_cols: 百分比列；None 按指标名自动识别，[] 关闭自动百分比，显式名单优先于 percent_format。
     :param condition_cols: 显式选择数据条列；与 color_cols 均为 None 时自动使用指标色阶，坏账改善使用居中双向数据条。[] 关闭自动高亮；数量类指标需显式指定。
@@ -1545,20 +1569,53 @@ def style_rule_table(
     return styler
 
 
-def _show_method(self, **kwargs):
-    """展示美化的 DataFrame，复杂单元格按文本显示，数值指标保留条件格式.
+def _show_method(
+    self,
+    *,
+    max_rows: Optional[int] = None,
+    highlight_iv: bool = True,
+    highlight_bad_rate: bool = True,
+    highlight_lift: bool = True,
+    highlight_ks: bool = True,
+    compact: bool = False,
+    precision: Optional[Dict[str, int]] = None,
+    index_as_bin: bool = False,
+    percent_format: bool = True,
+    high_tech_style: bool = False,
+    percent_cols: Optional[List] = None,
+    condition_cols: Optional[List] = None,
+    color_cols: Optional[List] = None,
+    condition_color: Optional[Union[str, List[str], Dict[Any, Union[str, List[str]]]]] = None,
+    theme_color: str = "2639E9",
+    fill: bool = True,
+    index: Optional[bool] = None,
+    centered_bar_cols: Optional[List] = None,
+    **kwargs,
+) -> BinTableDisplay:
+    return BinTableDisplay(self).show(
+        max_rows=max_rows,
+        highlight_iv=highlight_iv,
+        highlight_bad_rate=highlight_bad_rate,
+        highlight_lift=highlight_lift,
+        highlight_ks=highlight_ks,
+        compact=compact,
+        precision=precision,
+        index_as_bin=index_as_bin,
+        percent_format=percent_format,
+        high_tech_style=high_tech_style,
+        percent_cols=percent_cols,
+        condition_cols=condition_cols,
+        color_cols=color_cols,
+        condition_color=condition_color,
+        theme_color=theme_color,
+        fill=fill,
+        index=index,
+        centered_bar_cols=centered_bar_cols,
+        **kwargs,
+    )
 
-    :param kwargs: 传递给 BinTableDisplay.show() 的参数
-    :return: BinTableDisplay 对象，支持链式调用
 
-    **参考样例**
-
-    >>> table = feature_bin_stats(data, 'score', target='target')
-    >>> table.show()
-    >>> table.show(compact=True)
-    """
-    display_obj = BinTableDisplay(self)
-    return display_obj.show(**kwargs)
+_show_method.__doc__ = BinTableDisplay.show.__doc__
 
 
 # =============================================================================

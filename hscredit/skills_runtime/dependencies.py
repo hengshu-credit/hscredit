@@ -11,17 +11,14 @@ from typing import Any, Mapping, Sequence, Tuple
 from .errors import SkillExecutionError
 
 _OPERATION_EXTRAS = {
-    "hsbin": {"*": ("skills",)},
-    "hsreport": {"*": ("skills",)},
-    "hscredit": {"*": ("skills",)},
-    "hsmodel": {
-        "model_tune": ("skills", "tune"),
-        "*": ("skills",),
-    },
-    "hsrule": {"*": ("skills",)},
-    "hsselect": {"*": ("skills",)},
-    "hsviz": {"*": ("skills",)},
-    "hsexcel": {"*": ("skills",)},
+    "hsbin": {},
+    "hsreport": {},
+    "hscredit": {},
+    "hsmodel": {"model_tune": ("tune",)},
+    "hsrule": {},
+    "hsselect": {},
+    "hsviz": {},
+    "hsexcel": {},
 }
 
 
@@ -50,8 +47,7 @@ def resolve_required_extras(skill: str, operation: str, request: Mapping[str, An
     skill_map = _OPERATION_EXTRAS.get(skill)
     if skill_map is None:
         raise SkillExecutionError(code="OPERATION_NOT_ALLOWED", message=f"未登记 Skill“{skill}”")
-    extras = set(skill_map.get(operation, skill_map.get("*", ())))
-    return tuple(sorted(extras))
+    return skill_map.get(operation, ())
 
 
 def environment_key(source: str, extras: Sequence[str], python_version: str) -> str:
