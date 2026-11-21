@@ -4,8 +4,7 @@
 随机种子、pickle IO、数据描述、Pandas 扩展（``df.summary()`` / ``df.save()`` /
 ``df.show()``）、日志等通用工具。``import hscredit`` 时自动注册 Pandas 扩展方法。
 
-DataFrame.show 的参数与用法
----------------------------
+.. rubric:: DataFrame.show 的参数与用法
 
 在 Notebook 中输入 ``table.show?``，或在 Python 中执行 ``help(table.show)``，
 可以查看每个参数的默认值和传值示例。调用时用关键字指定参数。
@@ -25,8 +24,7 @@ DataFrame.show 的参数与用法
 
 完整参数见 :meth:`hscredit.utils.BinTableDisplay.show`。
 
-工具 API
---------
+.. rubric:: 工具 API
 
 .. automodule:: hscredit.utils
    :members:
